@@ -1,0 +1,2166 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PokéScan → eBay Lister</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script type="importmap">
+{
+  "imports": {
+    "onnxruntime-web": "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.26.0/dist/ort.all.bundle.min.mjs",
+    "ppu-ocv/web": "https://cdn.jsdelivr.net/npm/ppu-ocv@3.3.0/index.web.js",
+    "ppu-ocv/canvas-web": "https://cdn.jsdelivr.net/npm/ppu-ocv@3.3.0/index.canvas-web.js"
+  }
+}
+</script>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --border:#2a2f3a;
+    --text:#eef0f3; --muted:#9aa3b2; --accent:#ffcb05; --accent2:#3d7dca;
+    --good:#3ba55d; --warn:#e0a12a; --bad:#e0553f; --radius:12px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:var(--bg); color:var(--text); padding-bottom:80px;
+  }
+  header{
+    background:linear-gradient(135deg,#2a3f9e,#3d7dca); padding:18px 16px; position:sticky; top:0; z-index:20;
+    box-shadow:0 2px 10px rgba(0,0,0,.3);
+  }
+  header h1{margin:0; font-size:19px; display:flex; align-items:center; gap:8px;}
+  header p{margin:4px 0 0; font-size:12.5px; color:#dbe6ff;}
+  .tabs{display:flex; gap:6px; margin-top:12px; flex-wrap:wrap;}
+  .tab-btn{
+    background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#fff;
+    padding:7px 12px; border-radius:20px; font-size:12.5px; cursor:pointer;
+  }
+  .tab-btn.active{background:#fff; color:#2a3f9e; font-weight:600;}
+  main{max-width:900px; margin:0 auto; padding:16px;}
+  .panel{
+    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
+    padding:16px; margin-bottom:16px;
+  }
+  .panel h2{margin:0 0 4px; font-size:15px;}
+  .panel .sub{color:var(--muted); font-size:12.5px; margin:0 0 14px;}
+  label{display:block; font-size:12.5px; color:var(--muted); margin:10px 0 4px;}
+  input[type=text], input[type=number], input[type=password], select, textarea{
+    width:100%; background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:10px; border-radius:8px; font-size:14px; font-family:inherit;
+  }
+  textarea{resize:vertical; min-height:70px;}
+  .row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;}
+  .row > *{flex:1; min-width:140px;}
+  button{
+    cursor:pointer; border:none; border-radius:8px; padding:10px 16px; font-size:13.5px; font-weight:600;
+  }
+  .btn-primary{background:var(--accent2); color:#fff;}
+  .btn-primary:hover{background:#2f68a8;}
+  .btn-gold{background:var(--accent); color:#1a1a1a;}
+  .btn-ghost{background:var(--panel2); color:var(--text); border:1px solid var(--border);}
+  .btn-danger{background:transparent; color:var(--bad); border:1px solid var(--bad);}
+  .btn-sm{padding:5px 9px; font-size:12px;}
+  .hint{font-size:11.5px; color:var(--muted); margin-top:4px;}
+  .badge{display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:10px; background:var(--panel2); color:var(--muted); margin-left:6px;}
+  .badge.ok{background:rgba(59,165,93,.18); color:var(--good);}
+  .badge.warn{background:rgba(224,161,42,.18); color:var(--warn);}
+  input[type=file]{display:none;}
+
+  /* ---- capture ---- */
+  .capture-zone{
+    border:2px dashed var(--border); border-radius:var(--radius); padding:18px; text-align:center;
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+  }
+  .capture-btns{display:flex; gap:10px; flex-wrap:wrap; justify-content:center;}
+  .video-wrap{position:relative; border-radius:var(--radius); overflow:hidden; background:#000; display:none;}
+  .video-wrap.active{display:block;}
+  video{width:100%; display:block; max-height:65vh; object-fit:cover; background:#000;}
+  .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none;}
+  .flash.show{opacity:.85; transition:opacity 0s;}
+  .flash:not(.show){transition:opacity .25s;}
+  .capture-fab{
+    position:absolute; bottom:16px; left:50%; transform:translateX(-50%); width:64px; height:64px;
+    border-radius:50%; background:#fff; border:4px solid var(--accent); font-size:24px;
+    display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(0,0,0,.4);
+  }
+  .cam-counter{
+    position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); color:#fff;
+    padding:4px 10px; border-radius:14px; font-size:12px;
+  }
+  .cam-stop{position:absolute; top:10px; left:10px; background:rgba(0,0,0,.6); color:#fff; border:none; border-radius:14px; padding:5px 12px; font-size:12px;}
+  .queue-strip{display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:4px;}
+  .queue-strip img{width:44px; height:60px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid var(--border);}
+
+  /* ---- identify: apercu de la file avec statut OCR ---- */
+  .qo-thumb{position:relative; flex-shrink:0; cursor:pointer;}
+  .qo-thumb img{width:48px; height:65px; object-fit:cover; border-radius:6px; border:1px solid var(--border); display:block;}
+  .qo-thumb.current img{border-color:var(--accent2); border-width:2px;}
+  .qo-badge{
+    position:absolute; bottom:-4px; right:-4px; font-size:14px; line-height:1;
+    background:var(--panel); border-radius:50%; padding:2px; box-shadow:0 1px 4px rgba(0,0,0,.5);
+  }
+  .progress-bar{height:6px; border-radius:4px; background:var(--panel2); overflow:hidden; margin-top:8px; display:none;}
+  .progress-bar .fill{height:100%; background:var(--accent2); width:0%; transition:width .15s;}
+
+  /* ---- identify ---- */
+  .identify-topbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:4px;}
+  .identify-topbar > *{flex:1; min-width:110px;}
+  .identify-photo-wrap{position:relative; text-align:center; background:#0a0a0a; border-radius:var(--radius); padding:10px; min-height:160px; display:flex; align-items:center; justify-content:center;}
+  .identify-photo{max-width:100%; max-height:46vh; border-radius:8px;}
+  .no-photo-placeholder{color:var(--muted); font-size:13px; padding:40px 10px;}
+  .confirm-overlay{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    background:rgba(10,14,20,.6); border-radius:var(--radius); opacity:0; pointer-events:none;
+  }
+  .confirm-overlay.show{opacity:1;}
+  .confirm-check{font-size:56px; color:var(--good); animation:checkPop .5s ease;}
+  @keyframes checkPop{0%{transform:scale(.3); opacity:0;} 55%{transform:scale(1.18); opacity:1;} 100%{transform:scale(1); opacity:1;}}
+  .search-results{max-height:320px; overflow-y:auto; margin-top:8px; display:flex; flex-direction:column; gap:6px;}
+  .result-item{
+    display:flex; gap:10px; align-items:center; background:var(--panel2); border:1px solid var(--border);
+    border-radius:8px; padding:8px; cursor:pointer;
+  }
+  .result-item:hover, .result-item.highlighted{border-color:var(--accent2); background:#212945;}
+  .result-item img{width:40px; height:56px; object-fit:contain; border-radius:4px; background:#0a0a0a;}
+  .result-info{flex:1; font-size:12.5px;}
+  .result-info b{font-size:13px;}
+  .result-price{font-size:12px; color:var(--good); font-weight:600; white-space:nowrap;}
+  .undo-bar{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#222; color:#fff;
+    padding:9px 10px 9px 16px; border-radius:24px; font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.4);
+    z-index:110; display:none; align-items:center; gap:10px;
+  }
+  .undo-bar.show{display:flex;}
+  .undo-bar button{background:var(--accent); color:#1a1a1a; padding:6px 12px; border-radius:16px; font-size:12px;}
+
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th,td{padding:8px 6px; border-bottom:1px solid var(--border); text-align:left; vertical-align:top;}
+  th{color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.03em;}
+  td input, td select{padding:6px 7px; font-size:12.5px;}
+  .thumb-cell img{width:38px; height:52px; object-fit:contain; border-radius:4px; background:#0a0a0a;}
+  .table-wrap{overflow-x:auto;}
+  .empty-state{color:var(--muted); text-align:center; padding:30px 10px; font-size:13.5px;}
+  .stat-row{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
+  .stat{background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:10px 14px; flex:1; min-width:120px;}
+  .stat .num{font-size:20px; font-weight:700;}
+  .stat .lbl{font-size:11px; color:var(--muted);}
+  .charlimit{font-size:11px; text-align:right; color:var(--muted);}
+  .charlimit.over{color:var(--bad); font-weight:600;}
+  .toast{
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#222; color:#fff;
+    padding:10px 18px; border-radius:20px; font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.4);
+    z-index:100; opacity:0; transition:opacity .25s;
+  }
+  .toast.show{opacity:1;}
+  .guide h3{font-size:14px; margin:18px 0 6px;}
+  .guide p, .guide li{font-size:13px; color:#c7cdd6; line-height:1.55;}
+  .guide code{background:var(--panel2); padding:1px 6px; border-radius:4px; font-size:12px;}
+  .guide table{margin-top:8px;}
+  .guide table th, .guide table td{border:1px solid var(--border);}
+  a{color:#7fb2ef;}
+  .section{display:none;}
+  .section.active{display:block;}
+  .flexend{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;}
+  .divider{height:1px; background:var(--border); margin:14px 0;}
+  .link-btn{background:none; border:none; color:#7fb2ef; text-decoration:underline; padding:0; font-size:12.5px; font-weight:400;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🃏 PokéScan → eBay Lister</h1>
+  <p>Capture en rafale ou en masse, identifie à toute vitesse, exporte pour eBay.</p>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="capture">📸 Capture (<span class="queue-badge">0</span>)</button>
+    <button class="tab-btn" data-tab="identify">⚡ Identifier (<span class="queue-badge">0</span>)</button>
+    <button class="tab-btn" data-tab="batch">📋 Lot (<span id="tab-count">0</span>)</button>
+    <button class="tab-btn" data-tab="export">⬇️ Export</button>
+    <button class="tab-btn" data-tab="settings">⚙️ Réglages</button>
+    <button class="tab-btn" data-tab="guide">📖 Guide</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- CAPTURE TAB -->
+  <section class="section active" id="section-capture">
+    <div class="panel">
+      <h2>📹 Caméra en direct (rafale)</h2>
+      <p class="sub">Garde la caméra ouverte et appuie sur le bouton pour chaque carte, sans jamais fermer/rouvrir l'appareil photo. Les photos s'accumulent dans une file, à identifier ensuite d'un coup dans l'onglet "Identifier".</p>
+      <div class="capture-btns" id="cam-start-row">
+        <button class="btn-gold" id="btn-start-cam">📹 Démarrer la caméra</button>
+      </div>
+      <div class="video-wrap" id="video-wrap">
+        <video id="video" autoplay playsinline muted></video>
+        <div class="flash" id="flash"></div>
+        <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
+        <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
+        <button class="capture-fab" id="btn-capture-frame">📸</button>
+      </div>
+      <div class="hint" id="cam-error"></div>
+      <div class="queue-strip" id="queue-strip"></div>
+    </div>
+
+    <div class="panel">
+      <h2>📥 Import en masse</h2>
+      <p class="sub">Tu as déjà pris toutes les photos avec l'appareil de ton téléphone ? Sélectionne-les toutes d'un coup (des dizaines ou centaines à la fois).</p>
+      <div class="capture-btns">
+        <button class="btn-primary" id="btn-bulk-import">📥 Choisir des photos en masse</button>
+      </div>
+      <input type="file" id="bulk-input" accept="image/*" multiple>
+      <div class="progress-bar" id="bulk-progress"><div class="fill" id="bulk-progress-fill"></div></div>
+      <div class="hint" id="bulk-status"></div>
+    </div>
+
+    <div class="panel">
+      <h2>📷 Photo unique (secours)</h2>
+      <p class="sub">Si la caméra en direct ne fonctionne pas sur ton appareil, utilise l'appareil photo natif carte par carte.</p>
+      <div class="capture-btns">
+        <button class="btn-ghost" id="btn-native-cam">📷 Prendre une photo</button>
+      </div>
+      <input type="file" id="native-cam-input" accept="image/*" capture="environment">
+    </div>
+  </section>
+
+  <!-- IDENTIFY TAB -->
+  <section class="section" id="section-identify">
+    <div class="panel">
+      <div class="identify-topbar">
+        <div>
+          <label>File d'attente</label>
+          <div style="padding-top:6px; font-weight:600;" id="identify-queue-label">0 carte(s) à identifier</div>
+        </div>
+        <div>
+          <label>État (appliqué à chaque ajout)</label>
+          <select id="sticky-condition">
+            <option value="NM">Near Mint (NM)</option>
+            <option value="LP">Lightly Played (LP)</option>
+            <option value="MP">Moderately Played (MP)</option>
+            <option value="HP">Heavily Played (HP)</option>
+            <option value="DMG">Damaged</option>
+          </select>
+        </div>
+        <div>
+          <label>Quantité</label>
+          <input type="number" id="sticky-qty" value="1" min="1">
+        </div>
+        <div>
+          <label>Set en cours (optionnel, accélère/fiabilise l'identification)</label>
+          <input type="text" id="current-set-hint" placeholder="ex: 151, MEW, Obsidian Flames..." autocomplete="off">
+        </div>
+      </div>
+      <div class="hint" id="current-set-hint-status"></div>
+      <div class="hint">
+        <button class="link-btn" id="btn-review-skipped">↩️ Cartes passées (<span id="skipped-count">0</span>) — les revoir</button>
+        &nbsp;·&nbsp;
+        <button class="link-btn" id="btn-toggle-ocr-debug">🔬 Debug OCR</button>
+      </div>
+
+      <div class="hint" id="queue-overview-summary" style="margin-top:8px;"></div>
+      <div class="queue-strip" id="queue-overview-strip"></div>
+
+      <div class="divider"></div>
+
+      <div class="identify-photo-wrap" id="identify-photo-wrap">
+        <img id="identify-photo" class="identify-photo" style="display:none;">
+        <div class="no-photo-placeholder" id="identify-placeholder">Aucune photo en attente.<br>Tu peux quand même chercher une carte et l'ajouter sans photo, ou aller dans l'onglet Capture.</div>
+        <div class="confirm-overlay" id="confirm-overlay"><div class="confirm-check">✅</div></div>
+      </div>
+
+      <div id="ocr-debug-panel" style="display:none; margin-top:10px; background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:10px;">
+        <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+          <div>
+            <div class="hint" style="margin:0 0 4px;">Bande lue (bas de carte)</div>
+            <img id="ocr-debug-preview" style="max-width:220px; border:1px solid var(--border); border-radius:4px; background:#000;">
+          </div>
+          <div style="flex:1; min-width:160px;">
+            <div class="hint" style="margin:0 0 4px;">Texte brut détecté</div>
+            <div id="ocr-debug-text" style="font-family:monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; color:var(--text);">—</div>
+          </div>
+        </div>
+        <p class="hint" style="margin-top:8px;">Si le texte est illisible ou mal cadré, ajuste "Zone OCR (% bas de carte)" dans les Réglages, en fonction de tes propres photos.</p>
+      </div>
+
+      <div class="row" style="margin-top:12px;">
+        <div>
+          <label>Nom de la carte</label>
+          <input type="text" id="search-name" placeholder="ex: Dracaufeu, Pikachu..." autocomplete="off">
+        </div>
+        <div>
+          <label>Set / édition (optionnel, filtre)</label>
+          <input type="text" id="search-set" placeholder="ex: Obsidian Flames" autocomplete="off">
+        </div>
+      </div>
+      <div class="hint" id="search-status"></div>
+      <div class="hint">Astuce clavier : tape le nom, flèches ↑↓ pour choisir, Entrée pour ajouter instantanément.</div>
+      <div class="search-results" id="search-results"></div>
+
+      <div class="flexend" style="margin-top:10px;">
+        <button class="btn-ghost" id="btn-skip-card">⏭ Passer cette carte</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- BATCH TAB -->
+  <section class="section" id="section-batch">
+    <div class="panel">
+      <div class="stat-row">
+        <div class="stat"><div class="num" id="stat-count">0</div><div class="lbl">Cartes dans le lot</div></div>
+        <div class="stat"><div class="num" id="stat-value">0 €</div><div class="lbl">Valeur totale estimée</div></div>
+        <div class="stat"><div class="num" id="stat-noimg">0</div><div class="lbl">Sans URL image</div></div>
+      </div>
+      <div class="table-wrap">
+        <table id="batch-table">
+          <thead>
+            <tr>
+              <th>Photo</th><th>SKU</th><th>Titre</th><th>État</th><th>Prix</th><th>Devise</th><th>Qté</th><th>URL image (pour eBay)</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="batch-tbody"></tbody>
+        </table>
+      </div>
+      <div class="empty-state" id="batch-empty">Aucune carte ajoutée pour le moment. Va dans l'onglet "Capture" puis "Identifier" pour commencer.</div>
+    </div>
+  </section>
+
+  <!-- EXPORT TAB -->
+  <section class="section" id="section-export">
+    <div class="panel">
+      <h2>Sauvegarder / reprendre ta session</h2>
+      <p class="sub">Comme tu as 1000+ cartes, tu ne feras probablement pas tout d'un coup. Sauvegarde ta progression dans un fichier, et recharge-le la prochaine fois (photos en attente + lot inclus).</p>
+      <div class="row">
+        <button class="btn-primary" id="btn-save-json">💾 Sauvegarder la progression (.json)</button>
+        <button class="btn-ghost" id="btn-load-json">📂 Charger une progression</button>
+        <input type="file" id="load-json-input" accept="application/json" style="display:none;">
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Exporter pour eBay</h2>
+      <p class="sub">Génère un CSV avec toutes les colonnes utiles. Colle les données dans le modèle officiel eBay (Seller Hub → Reports → Uploads) — voir le Guide pour la marche à suivre complète.</p>
+      <div class="row">
+        <button class="btn-gold" id="btn-export-csv">⬇️ Export CSV (données)</button>
+        <button class="btn-ghost" id="btn-export-zip">🗂️ Export photos (.zip)</button>
+      </div>
+      <p class="hint">Le CSV n'inclut pas les images en pièce jointe (eBay a besoin d'URLs publiques). Renseigne la colonne "URL image" dans l'onglet Lot après avoir hébergé tes photos — voir Guide.</p>
+    </div>
+  </section>
+
+  <!-- SETTINGS TAB -->
+  <section class="section" id="section-settings">
+    <div class="panel">
+      <h2>Source des données : TCGdex</h2>
+      <p class="sub">La recherche et les prix viennent de <a href="https://tcgdex.dev" target="_blank">TCGdex</a> (gratuit, sans clé, pas de limite documentée). Contrairement à l'ancienne source (Pokémon TCG API, en cours de dépréciation), TCGdex gère nativement les cartes en <b>français</b> et fournit des prix Cardmarket en <b>€</b> en plus des prix TCGPlayer en $.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Identification automatique (OCR bas de carte)</h2>
+      <p class="sub">À l'arrivée d'une photo, l'outil lit automatiquement le numéro imprimé en bas de carte (ex: <code>183/165</code>) <b>et</b> le nom du Pokémon, puis propose directement la carte trouvée — plus besoin de taper le nom si ça marche. Moteur : <b>PaddleOCR (PP-OCRv6)</b>, ~6 Mo de modèles téléchargés et mis en cache au premier scan. Confirme toujours d'un coup d'œil avant d'ajouter : c'est une aide, pas un remplacement du contrôle humain.</p>
+      <div class="row">
+        <div>
+          <label>OCR automatique</label>
+          <select id="ocr-enabled-toggle">
+            <option value="on">Activé</option>
+            <option value="off">Désactivé</option>
+          </select>
+        </div>
+        <div>
+          <label>Zone OCR (% hauteur de carte)</label>
+          <input type="number" id="ocr-crop-pct" value="10" min="4" max="30">
+        </div>
+        <div>
+          <button class="btn-ghost" id="btn-rebuild-set-map" style="margin-top:18px;">🔄 Recharger la table des sets</button>
+        </div>
+      </div>
+      <p class="hint" id="set-map-status">Table des sets (code → set) : pas encore chargée.</p>
+      <p class="hint">La carte elle-même est détectée dans la photo (pas seulement le bord de l'image), et cette zone est exprimée en % de la hauteur de la carte détectée — ça reste correct que la photo soit zoomée ou non. Ouvre "🔬 Debug OCR" dans l'onglet Identifier pour voir la bande lue et le texte brut détecté sur tes propres cartes, et ajuste ce réglage si besoin.</p>
+    </div>
+
+    <div class="panel">
+      <h2>Réglages par défaut</h2>
+      <div class="row">
+        <div>
+          <label>Devise</label>
+          <select id="currency-select">
+            <option value="EUR">EUR (€)</option>
+            <option value="USD">USD ($)</option>
+            <option value="GBP">GBP (£)</option>
+          </select>
+        </div>
+        <div>
+          <label>% du prix marché à appliquer</label>
+          <input type="number" id="price-pct-input" value="80">
+        </div>
+        <div>
+          <label>Catégorie eBay (ID)</label>
+          <input type="text" id="category-id-input" value="183454">
+        </div>
+      </div>
+      <p class="hint">183454 = "CCG Individual Cards", catégorie utilisée pour les cartes Pokémon à l'unité sur eBay. Vérifie qu'elle est toujours correcte via "Vendre un objet similaire" sur une annonce Pokémon existante — voir Guide.</p>
+      <label>Modèle de titre</label>
+      <input type="text" id="title-template-input" value="{name} {set} #{number} {rarity} Pokemon TCG {condition}">
+      <label>Modèle de description</label>
+      <textarea id="desc-template-input">Carte Pokémon : {name}
+Set : {set} ({number})
+Rareté : {rarity}
+État : {condition}
+
+Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute question.</textarea>
+      <p class="hint">Variables disponibles : {name} {set} {number} {rarity} {condition}</p>
+    </div>
+  </section>
+
+  <!-- GUIDE TAB -->
+  <section class="section guide" id="section-guide">
+    <div class="panel">
+      <h2>Comment utiliser cet outil, de A à Z</h2>
+
+      <h3>1. Ouvre ce fichier dans un vrai navigateur</h3>
+      <p>Pour que la recherche de cartes et la caméra fonctionnent, ouvre <code>pokemon-ebay-lister.html</code> directement dans Chrome/Safari (pas seulement dans l'aperçu de la conversation). Sur téléphone : télécharge le fichier puis ouvre-le, ou ajoute-le à l'écran d'accueil pour un accès rapide. La caméra en direct demande ton autorisation la première fois — accepte-la.</p>
+
+      <h3>2. Pas de clé API à configurer</h3>
+      <p>La recherche utilise <a href="https://tcgdex.dev" target="_blank">TCGdex</a>, gratuit et sans clé. Il gère nativement les cartes en français et fournit des prix Cardmarket (€) en plus de TCGPlayer ($).</p>
+
+      <h3>3. Deux façons de capturer en masse</h3>
+      <p><b>Caméra en direct :</b> onglet Capture → "Démarrer la caméra" → appuie sur le gros bouton rond pour chaque carte, sans jamais rien fermer. Les photos s'accumulent dans une file (visible en vignettes). Idéal si tu scannes carte par carte devant toi, en rythme.</p>
+      <p><b>Import en masse :</b> si tu préfères photographier tout ton stock d'abord avec l'appareil photo normal de ton téléphone, puis sélectionner toutes les photos d'un coup (l'app peut en avaler des centaines à la suite).</p>
+      <p>Les deux méthodes remplissent la même file d'attente, utilisée ensuite dans l'onglet Identifier.</p>
+
+      <h3>4. Identifie à toute vitesse</h3>
+      <p>Onglet Identifier : la photo en attente s'affiche, tu tapes le nom, tu cliques sur le bon résultat (ou Entrée au clavier). La carte est ajoutée <b>immédiatement</b> au lot avec l'état/quantité définis en haut (qui restent appliqués carte après carte, modifie-les seulement quand ça change), une animation ✅ confirme l'ajout, et la photo suivante apparaît automatiquement. Pas d'étape intermédiaire, pas d'arrêt. Si tu te trompes, un bouton "Annuler" apparaît quelques secondes après chaque ajout. Le prix et le titre exact restent modifiables plus tard dans l'onglet Lot si besoin.</p>
+
+      <h3>5. Sauvegarde régulièrement</h3>
+      <p>Avec 1000+ cartes, fais des sessions de 50-100 cartes puis sauvegarde ta progression (.json) dans l'onglet Export — la file d'attente restante et le lot sont inclus. Tu pourras la recharger plus tard, même sur un autre appareil.</p>
+
+      <h3>6. Héberge tes photos (obligatoire pour le CSV eBay)</h3>
+      <p>eBay a besoin d'une URL publique par image, pas d'un fichier local. Options simples :</p>
+      <ul>
+        <li><b>ImgBB</b> (imgbb.com) — gratuit, upload en masse, te donne une URL directe par image.</li>
+        <li><b>Postimages</b> (postimages.org) — gratuit, pas de compte requis.</li>
+        <li>Ou héberge-les toi-même si tu as déjà un espace web/cloud public.</li>
+      </ul>
+      <p>Exporte le ZIP de photos (onglet Export), les fichiers sont nommés par SKU. Upload-les sur l'un de ces services, puis colle chaque URL dans la colonne "URL image" du tableau (onglet Lot) avant l'export CSV final.</p>
+
+      <h3>7. Mise en ligne groupée sur eBay (sans compte développeur)</h3>
+      <p>Pas besoin d'API eBay pour lister en masse : Seller Hub le permet nativement.</p>
+      <ol>
+        <li>Va sur <b>eBay Seller Hub → Reports → Uploads</b>.</li>
+        <li>Télécharge le <b>modèle officiel eBay</b> (bouton "Créer un modèle" / "Download template") pour la catégorie Trading Cards — les noms de colonnes exacts viennent de ce modèle (ils peuvent changer, donc ne te fie pas uniquement à mon CSV).</li>
+        <li>Ouvre le CSV exporté par cet outil à côté du modèle eBay, et colle/mappe les colonnes correspondantes (Titre, Description, Prix, Quantité, État, URL image, SKU...).</li>
+        <li>Réimporte le fichier complété dans Seller Hub → Reports → Uploads.</li>
+      </ol>
+      <p class="hint">Astuce pour vérifier la catégorie et les "item specifics" attendus : ouvre une annonce Pokémon existante sur eBay, clique "Vendre un objet similaire" — ça pré-remplit tout correctement, utile pour comparer avec ton CSV.</p>
+
+      <h3>8. Correspondance des états de carte (condition)</h3>
+      <table>
+        <tr><th>Dans l'outil</th><th>ConditionID eBay</th><th>Descriptor (40001)</th></tr>
+        <tr><td>Near Mint (NM)</td><td>LIKE_NEW (cartes gradées) / USED_VERY_GOOD (non gradées)</td><td>400010 – Near Mint or Better</td></tr>
+        <tr><td>Lightly Played (LP)</td><td>USED_VERY_GOOD</td><td>400015 – Lightly Played (Excellent)</td></tr>
+        <tr><td>Moderately Played (MP)</td><td>USED_VERY_GOOD</td><td>400016 – Moderately Played (Very Good)</td></tr>
+        <tr><td>Heavily Played (HP)</td><td>USED_VERY_GOOD</td><td>400017 – Heavily Played (Poor)</td></tr>
+        <tr><td>Damaged</td><td>USED_VERY_GOOD</td><td>400017 (le plus proche) — décris précisément les dégâts en photo/texte</td></tr>
+      </table>
+      <p class="hint">Ces valeurs viennent de la documentation développeur eBay pour les trading cards. Vérifie-les côté eBay avant un gros envoi, les enums peuvent évoluer.</p>
+
+      <h3>9. Limites honnêtes de cet outil</h3>
+      <ul>
+        <li>L'identification n'est pas automatique par photo (pas de reconnaissance d'image) — tu confirmes toi-même via le nom + la vignette. C'est délibéré : plus fiable qu'une IA qui se trompe de set ou de rareté, et presque aussi rapide une fois le rythme pris.</li>
+        <li>Le prix suggéré vient de Cardmarket (marché EU, en €) quand disponible, sinon de TCGPlayer (marché US, en $) en secours — vérifie la devise affichée à côté du prix avant d'exporter.</li>
+        <li>L'envoi vers eBay n'est pas automatique (pas d'accès API développeur) : tu passes par l'import CSV natif d'eBay, qui reste rapide pour de gros volumes une fois en rythme.</li>
+        <li>La caméra en direct demande l'autorisation du navigateur et peut ne pas fonctionner sur tous les appareils/navigateurs — utilise l'import en masse ou la photo unique en secours.</li>
+      </ul>
+    </div>
+  </section>
+
+</main>
+
+<div class="toast" id="toast"></div>
+<div class="undo-bar" id="undo-bar">
+  <span id="undo-msg"></span>
+  <button id="btn-undo">Annuler</button>
+</div>
+
+<script>
+// ---------------- STATE ----------------
+let pendingQueue = [];   // {id, photo(dataUrl)}
+let skippedQueue = [];
+let batch = [];          // array of card entries
+let searchDebounce = null;
+let currentResults = [];
+let highlightedIndex = -1;
+let cameraStream = null;
+let capturedThisSession = 0;
+let lastAdd = null; // {batchIndex, requeuedPhoto}
+let undoTimeout = null;
+let identifyToken = 0;
+let ocrEnabled = true;
+let setAbbrMap = null; // {CODE: setId}, construite une fois via TCGdex /sets
+let setDenominatorMap = null; // {denominateur: [setId, ...]} triés du plus récent au plus ancien
+
+const $ = (id) => document.getElementById(id);
+
+// ---------------- TABS ----------------
+document.querySelectorAll('.tab-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.tab-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+    btn.classList.add('active');
+    $('section-'+btn.dataset.tab).classList.add('active');
+    if(btn.dataset.tab==='batch') renderBatch();
+    if(btn.dataset.tab==='identify') renderIdentify();
+  });
+});
+
+function toast(msg){
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'), 2200);
+}
+
+function updateQueueBadges(){
+  document.querySelectorAll('.queue-badge').forEach(el=> el.textContent = pendingQueue.length);
+}
+
+// ---------------- IMAGE COMPRESSION HELPER ----------------
+// IMPORTANT : la version compressée sert au STOCKAGE et à l'affichage (file d'attente,
+// export ZIP), jamais à l'OCR. Le ré-encodage JPEG 0.75 détruit les petits caractères :
+// mesuré sur une carte réelle, "198/165" devenait "98/63" après compression, ce qui
+// menait à identifier une carte totalement différente. L'analyse travaille donc sur le
+// fichier d'origine (voir `sourceBlob` sur les entrées de la file).
+function compressFileToDataUrl(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const canvas = document.createElement('canvas');
+        const maxW = 900;
+        const scale = Math.min(1, maxW/img.width);
+        canvas.width = img.width*scale;
+        canvas.height = img.height*scale;
+        canvas.getContext('2d').drawImage(img,0,0,canvas.width,canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', 0.75));
+      };
+      img.onerror = reject;
+      img.src = ev.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+// ---------------- OCR : LECTURE DU CODE BAS DE CARTE (set + numéro) ----------------
+// Format observé sur cartes réelles (validé sur photo) : un badge bas de carte
+// contenant le code du set (ex: "MEW") suivi du numéro "NNN/MMM" (ex: "183/165").
+//
+// Moteur : PaddleOCR (PP-OCRv6) via ONNX Runtime Web, et NON Tesseract. Comparé
+// directement sur les mêmes photos réelles : Tesseract n'a jamais réussi à lire un
+// seul numéro correctement (0/5), même sur un crop parfaitement isolé et net, à cause
+// de la police italique stylisée du bandeau. PaddleOCR lit ces mêmes numéros
+// exactement (183/165, 199/165, 170/165 tous corrects) et récupère en plus le nom
+// de la carte de façon fiable. Modèles ~6 Mo téléchargés et mis en cache au 1er usage.
+let ocrService = null;
+let ocrServicePromise = null;
+async function getOcrService(){
+  if(ocrService) return ocrService;
+  if(!ocrServicePromise){
+    ocrServicePromise = (async ()=>{
+      const { PaddleOcrService } = await import('https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web/index.js');
+      const svc = new PaddleOcrService();
+      await svc.initialize();
+      ocrService = svc;
+      return svc;
+    })();
+  }
+  return ocrServicePromise;
+}
+
+// Confusions de caractères classiques quand on sait qu'on attend un chiffre.
+// PaddleOCR lit souvent "183/I65" ou "o04/064" — normaliser ces sosies récupère
+// le numéro sans rien deviner (validé sur les sorties OCR réelles).
+const DIGIT_LOOKALIKES = {
+  'O':'0','o':'0','Q':'0','D':'0',
+  'I':'1','l':'1','i':'1','|':'1','!':'1',
+  'Z':'2','z':'2','E':'3','A':'4',
+  'S':'5','s':'5','G':'6','b':'6',
+  'T':'7','B':'8','g':'9','q':'9'
+};
+function normalizeDigits(s){
+  return s.split('').map(ch => DIGIT_LOOKALIKES[ch] ?? ch).join('');
+}
+
+// PaddleOCR attend un canvas (pas un élément <img>).
+async function dataUrlToCanvas(dataUrl){
+  const img = await loadImageEl(dataUrl);
+  const canvas = document.createElement('canvas');
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
+  canvas.getContext('2d').drawImage(img, 0, 0);
+  return canvas;
+}
+
+// Cherche le motif XXX/XXX autour de chaque "/" du texte, en normalisant les sosies
+// de chiffres de part et d'autre. Renvoie tous les candidats plausibles.
+function extractNumberCandidates(rawText){
+  const text = rawText || '';
+  const out = [];
+  for(let i=0; i<text.length; i++){
+    if(text[i] !== '/') continue;
+    const left = normalizeDigits(text.slice(Math.max(0,i-3), i)).replace(/\D/g,'');
+    const right = normalizeDigits(text.slice(i+1, i+4)).replace(/\D/g,'');
+    if(left.length >= 2 && right.length >= 2){
+      out.push({ number: left.replace(/^0+(?=\d)/,''), denominator: right.replace(/^0+(?=\d)/,'') });
+    }
+  }
+  return out;
+}
+
+function loadImageEl(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=> resolve(img);
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+// Détecte la position verticale (fraction 0-1 depuis le haut) du bord bas de la
+// CARTE dans la photo — indispensable dès que la photo laisse voir du fond/table
+// sous la carte : ancrer le recadrage sur le bord de l'image (comme avant) rate alors
+// complètement la ligne du numéro (constaté sur photos réelles avec marge visible).
+// Heuristique : on cherche, en remontant depuis le bas, la ligne avec la plus forte
+// transition claire/foncé (bordure nette de la carte) immédiatement suivie au-dessus
+// d'une zone à forte variance locale (texte/graphismes du bandeau du bas de carte).
+// Détecte la boîte englobante de la CARTE dans la photo (pas seulement son bord bas) :
+// une carte Pokémon a un format physique fixe, donc la position du numéro *relative
+// aux propres bords de la carte* est invariante au zoom/cadrage de la photo — alors
+// qu'une position relative aux bords de la PHOTO ne l'est pas (c'était le bug de fond
+// de l'approche précédente, qui nécessitait une marge de sécurité énorme et différente
+// à chaque photo). Validé visuellement : la boîte détectée colle précisément aux bords
+// de la carte sur plusieurs photos réelles.
+//
+// Méthode : profils d'activité (gradient local) par ligne et par colonne — le fond
+// (table/tissu) est comparativement uniforme, la carte (texte, illustration, bordures)
+// a une activité bien plus forte. On cherche la plus grande région contiguë au-dessus
+// d'un seuil, en tolérant de courts "trous" (marges internes uniformes de la carte,
+// ex. entre l'illustration et le texte) pour ne pas fragmenter la carte en plusieurs
+// blocs — sans quoi seule l'illustration (plus dense) était détectée, ratant le bandeau
+// du bas où se trouve le numéro.
+function detectCardBounds(img){
+  const w = 220, h = Math.round(img.naturalHeight * (w/img.naturalWidth));
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const data = ctx.getImageData(0,0,w,h).data;
+
+  const grey = new Float32Array(w*h);
+  for(let i=0, p=0; i<data.length; i+=4, p++) grey[p] = data[i]*0.3+data[i+1]*0.59+data[i+2]*0.11;
+  const activity = new Float32Array(w*h);
+  for(let y=1; y<h-1; y++){
+    for(let x=1; x<w-1; x++){
+      const gx = grey[y*w+x+1]-grey[y*w+x-1], gy = grey[(y+1)*w+x]-grey[(y-1)*w+x];
+      activity[y*w+x] = Math.abs(gx)+Math.abs(gy);
+    }
+  }
+  const rowProfile = new Float64Array(h);
+  for(let y=0; y<h; y++){ let s=0; for(let x=0;x<w;x++) s+=activity[y*w+x]; rowProfile[y]=s/w; }
+  const colProfile = new Float64Array(w);
+  for(let x=0; x<w; x++){ let s=0; for(let y=0;y<h;y++) s+=activity[y*w+x]; colProfile[x]=s/h; }
+
+  function findBounds(profile, n){
+    const max = Math.max(...profile);
+    const threshold = max*0.12;
+    const maxGap = Math.round(n*0.06);
+    let bestStart=0, bestEnd=n-1, bestLen=0, curStart=-1, gap=0;
+    for(let i=0; i<n; i++){
+      if(profile[i] > threshold){ if(curStart<0) curStart=i; gap=0; }
+      else if(curStart>=0){
+        gap++;
+        if(gap > maxGap){
+          const end = i-gap, len = end-curStart;
+          if(len>bestLen){ bestLen=len; bestStart=curStart; bestEnd=end; }
+          curStart=-1;
+        }
+      }
+    }
+    if(curStart>=0){ const end=n-1-gap, len=end-curStart; if(len>bestLen){bestLen=len;bestStart=curStart;bestEnd=end;} }
+    return [bestStart/n, bestEnd/n];
+  }
+
+  const [topFrac, bottomFrac] = findBounds(rowProfile, h);
+  const [leftFrac, rightFrac] = findBounds(colProfile, w);
+  return {topFrac, bottomFrac, leftFrac, rightFrac};
+}
+
+// Crop de la bande basse-gauche (le code set+numéro est toujours là, juste au-dessus
+// du bord de carte — se limiter à cette zone écarte le texte de règle/rappel et le
+// copyright qui polluaient l'OCR) + prétraitement au choix :
+// mode 'invert' : texte clair en relief sur fond sombre -> inversion + contraste fixe.
+// mode 'adaptive' : seuillage adaptatif local (voir plus bas) — nettement supérieur
+// quand le fond derrière le badge est texturé (illustration de la carte qui transparaît),
+// validé sur plusieurs photos réelles où l'inversion à contraste fixe et Otsu (seuil
+// global) échouaient tous les deux à isoler le texte du fond.
+// On fait tourner l'OCR sur les deux et on garde la meilleure confiance (petit
+// "ensemble" de variantes, sans changer de moteur OCR).
+function cropBottomBandForOcr(dataUrl, pct, mode='invert', widthPct=45, cardBounds=null){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let cropTop, cropH, cropLeft, cropW;
+      if(cardBounds != null){
+        // Tout est exprimé en % des dimensions de la CARTE détectée, jamais de la
+        // photo : c'est ce qui rend le crop invariant au zoom/cadrage (une carte a un
+        // format physique fixe, donc la position du numéro relative à ses propres
+        // bords ne change pas, contrairement à sa position relative aux bords de la photo).
+        const cardW = (cardBounds.rightFrac - cardBounds.leftFrac) * img.naturalWidth;
+        const cardH = (cardBounds.bottomFrac - cardBounds.topFrac) * img.naturalHeight;
+        const cardBottomY = cardBounds.bottomFrac * img.naturalHeight;
+        const marginBelowPct = 3; // petite marge de sécurité (en % de la hauteur de carte)
+        const bandBottom = Math.min(img.naturalHeight, cardBottomY + cardH*marginBelowPct/100);
+        cropH = Math.max(16, cardH * pct/100);
+        cropTop = Math.max(0, bandBottom - cropH);
+        cropH = bandBottom - cropTop;
+        cropLeft = cardBounds.leftFrac * img.naturalWidth;
+        cropW = Math.max(16, cardW * widthPct/100);
+      } else {
+        cropH = Math.max(16, Math.round(img.naturalHeight * pct/100));
+        cropTop = img.naturalHeight - cropH;
+        cropLeft = 0;
+        cropW = Math.max(16, Math.round(img.naturalWidth * widthPct/100));
+      }
+      const scale = 6;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(cropW * scale);
+      canvas.height = Math.round(cropH * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(img, cropLeft, cropTop, cropW, cropH, 0, 0, canvas.width, canvas.height);
+
+      // mode 'raw' : aucune binarisation — PaddleOCR a son propre pipeline de
+      // détection/prétraitement et donne de meilleurs résultats sur l'image couleur
+      // d'origine qu'sur une image déjà binarisée par nos soins.
+      if(mode === 'raw'){ resolve(canvas.toDataURL('image/png')); return; }
+
+      const idata = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const d = idata.data;
+
+      if(mode === 'adaptive'){
+        // Seuillage adaptatif local (moyenne mobile via image intégrale) : chaque
+        // pixel est comparé à la moyenne de son voisinage plutôt qu'à un seuil
+        // unique pour toute l'image (contrairement à Otsu) — neutralise le fond
+        // texturé de l'illustration derrière le badge, qui faisait échouer Otsu et
+        // l'inversion à contraste fixe. Validé empiriquement : c'est ce qui a permis
+        // de lire "170/165" et "078/064" correctement sur des photos où les deux
+        // autres modes échouaient complètement.
+        const w = canvas.width, h = canvas.height;
+        const n = w*h;
+        const grey = new Float32Array(n);
+        for(let i=0, p=0; i<d.length; i+=4, p++) grey[p] = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+        const integral = new Float64Array((w+1)*(h+1));
+        for(let y=0; y<h; y++){
+          let rowSum = 0;
+          for(let x=0; x<w; x++){
+            rowSum += grey[y*w+x];
+            integral[(y+1)*(w+1)+(x+1)] = integral[y*(w+1)+(x+1)] + rowSum;
+          }
+        }
+        const windowSize = Math.round(scale*3), C = 18;
+        const half = Math.floor(windowSize/2);
+        for(let y=0; y<h; y++){
+          for(let x=0; x<w; x++){
+            const x0=Math.max(0,x-half), x1=Math.min(w-1,x+half);
+            const y0=Math.max(0,y-half), y1=Math.min(h-1,y+half);
+            const area = (x1-x0+1)*(y1-y0+1);
+            const sum = integral[(y1+1)*(w+1)+(x1+1)] - integral[y0*(w+1)+(x1+1)] - integral[(y1+1)*(w+1)+x0] + integral[y0*(w+1)+x0];
+            const mean = sum/area;
+            const v = grey[y*w+x] < (mean - C) ? 0 : 255; // texte foncé sur fond clair (attendu par Tesseract)
+            const i = (y*w+x)*4;
+            d[i]=d[i+1]=d[i+2]=v;
+          }
+        }
+      } else {
+        for(let i=0; i<d.length; i+=4){
+          const grey = 255 - (d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11); // greyscale + invert
+          const v = Math.min(255, Math.max(0, (grey-128)*1.6 + 128)); // contraste
+          d[i]=d[i+1]=d[i+2]=v;
+        }
+      }
+      ctx.putImageData(idata, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = reject;
+    img.src = dataUrl;
+  });
+}
+
+function stripLeadingZero(s){ return s.replace(/^0+(?=\d)/,''); }
+
+function parseCardCode(rawText){
+  const text = (rawText||'').toUpperCase();
+  const codeCandidates = [...text.matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
+
+  // Le numéro de collection est toujours au format fixe XXX/XXX (3 chiffres des
+  // deux côtés, avec zéros de tête) — confirmé sur cartes réelles. Exiger ce format
+  // exact réduit nettement les faux positifs par rapport à une largeur variable.
+  let numMatch = text.match(/(\d{3})\s*\/\s*(\d{3})/);
+  if(numMatch){
+    return { number: stripLeadingZero(numMatch[1]), denominator: stripLeadingZero(numMatch[2]), codeCandidates };
+  }
+  // Repli tolérant : le séparateur "/" est souvent perdu au milieu d'un bloc de
+  // chiffres collés (ex: OCR "183X165" pour "183" + bruit + "165") — on cherche
+  // deux groupes de 3 chiffres séparés par au plus quelques caractères de bruit.
+  numMatch = text.match(/(\d{3})\D{0,3}(\d{3})/);
+  if(numMatch){
+    return { number: stripLeadingZero(numMatch[1]), denominator: stripLeadingZero(numMatch[2]), codeCandidates };
+  }
+  // Dernier repli, encore plus tolérant : le "bruit" entre les deux groupes est
+  // parfois un chiffre parasite plutôt qu'un caractère non-numérique (ex: OCR
+  // "1835165" pour "183" + "5" parasite + "165" — observé sur photos réelles avec
+  // seuillage adaptatif). Sans risque excessif de faux positif : la résolution finale
+  // exige de toute façon une correspondance réelle côté TCGdex, un mauvais découpage
+  // échoue juste silencieusement à se résoudre.
+  numMatch = text.match(/(\d{3})\d{0,2}(\d{3})/);
+  if(numMatch){
+    return { number: stripLeadingZero(numMatch[1]), denominator: stripLeadingZero(numMatch[2]), codeCandidates };
+  }
+  return { number: null, denominator: null, codeCandidates };
+}
+
+// ---------------- TABLE DES CODES DE SET (ex: "MEW" -> id TCGdex "sv03.5") ----------------
+// TCGdex n'expose ce code (`abbreviation.official`) que sur le détail de chaque set,
+// pas sur la liste globale -> on construit la table une fois (~220 requêtes), mise en
+// cache 30 jours dans localStorage.
+const SET_MAP_CACHE_KEY = 'tcgdex_set_map_v1';
+const SET_MAP_MAX_AGE_MS = 30*24*3600*1000;
+
+async function pLimit(items, limit, fn){
+  const results = new Array(items.length);
+  let i = 0;
+  async function worker(){
+    while(i < items.length){
+      const idx = i++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+  await Promise.all(new Array(Math.min(limit, items.length)).fill(0).map(worker));
+  return results;
+}
+
+// Renvoie { map: {CODE -> setId}, byDenominator: {denominateur -> [setId, ...] triés du plus récent au plus ancien} }.
+// Le dénominateur (`cardCount.official`, le total imprimé sur la carte) sert d'ancre de
+// repli quand le code lettré (ex "MEW") n'est pas OCRisable de façon fiable (police
+// stylisée bien plus dure à lire pour Tesseract que le simple numéro).
+async function loadSetAbbreviationMap(onProgress){
+  try{
+    const cached = JSON.parse(localStorage.getItem(SET_MAP_CACHE_KEY) || 'null');
+    if(cached && (Date.now() - cached.builtAt) < SET_MAP_MAX_AGE_MS && cached.byDenominator){
+      return {map: cached.map, byDenominator: cached.byDenominator};
+    }
+  } catch(e){ /* cache corrompu, on reconstruit */ }
+
+  const listRes = await fetchWithRetry('https://api.tcgdex.net/v2/en/sets', {}, {maxRetries:2});
+  if(!listRes.ok) throw new Error('HTTP '+listRes.status);
+  const list = await listRes.json();
+  const map = {};
+  const byDenominatorRaw = {}; // denominateur -> [{id, releaseDate}]
+  let done = 0;
+  await pLimit(list, 10, async (s)=>{
+    try{
+      const r = await fetchWithRetry(`https://api.tcgdex.net/v2/en/sets/${s.id}`, {}, {maxRetries:1, baseDelay:400});
+      if(r.ok){
+        const d = await r.json();
+        if(d.abbreviation?.official) map[d.abbreviation.official.toUpperCase()] = s.id;
+        const denom = d.cardCount?.official;
+        if(denom){
+          (byDenominatorRaw[denom] = byDenominatorRaw[denom] || []).push({id: s.id, releaseDate: d.releaseDate || ''});
+        }
+      }
+    } catch(e){ /* un set en échec n'empêche pas les autres */ }
+    done++;
+    if(onProgress) onProgress(done, list.length);
+  });
+
+  const byDenominator = {};
+  for(const [denom, entries] of Object.entries(byDenominatorRaw)){
+    byDenominator[denom] = entries
+      .sort((a,b)=> (b.releaseDate||'').localeCompare(a.releaseDate||'')) // plus récent d'abord
+      .map(e=>e.id);
+  }
+
+  localStorage.setItem(SET_MAP_CACHE_KEY, JSON.stringify({builtAt: Date.now(), map, byDenominator}));
+  return {map, byDenominator};
+}
+
+async function fetchCardExact(setId, number){
+  const tried = new Set();
+  for(const num of [number, number.padStart(3,'0'), number.padStart(2,'0'), String(parseInt(number,10))]){
+    if(tried.has(num)) continue;
+    tried.add(num);
+    try{
+      const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${setId}-${num}`, {}, {maxRetries:1, baseDelay:400});
+      if(r.ok) return normalizeCard(await r.json());
+    } catch(e){ /* essai suivant */ }
+  }
+  return null;
+}
+
+// Distance de Levenshtein — utilisée pour corriger un code de set mal lu vers
+// le plus proche code connu (correction lexicale contrainte par dictionnaire).
+function levenshtein(a, b){
+  const m = a.length, n = b.length;
+  const dp = Array.from({length: m+1}, ()=> new Array(n+1).fill(0));
+  for(let i=0;i<=m;i++) dp[i][0]=i;
+  for(let j=0;j<=n;j++) dp[0][j]=j;
+  for(let i=1;i<=m;i++){
+    for(let j=1;j<=n;j++){
+      dp[i][j] = a[i-1]===b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j-1], dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+
+function closestAbbreviations(code, maxDist=2){
+  if(!setAbbrMap) return [];
+  return Object.keys(setAbbrMap)
+    .map(abbr => ({abbr, dist: levenshtein(code, abbr)}))
+    .filter(e => e.dist>0 && e.dist<=maxDist)
+    .sort((a,b)=> a.dist-b.dist)
+    .map(e=>e.abbr);
+}
+
+// Cherche, dans un set déjà identifié, le numéro de collection le plus proche
+// de celui lu par l'OCR (utile quand le set est correctement lu mais pas le numéro).
+// ---------------- MATCHING VISUEL (dHash) ----------------
+// Les applis de scan de cartes du commerce (ex: "Valeur Carte TCG Scan") n'utilisent
+// PAS l'OCR comme mécanisme principal : elles comparent l'illustration entière de la
+// carte à une base de référence par hachage perceptuel (pHash/dHash), l'OCR ne servant
+// qu'en dernier recours pour départager des candidats visuellement proches. Validé ici
+// par une preuve de concept sur 3 photos réelles avant intégration : la bonne carte
+// ressortait 1ère ou 2ème sur des candidats plausibles, y compris sur une image dégradée.
+//
+// dHash : image réduite à 9x8 en niveaux de gris, hash de 64 bits basé sur le gradient
+// horizontal entre pixels voisins. Robuste aux variations d'éclairage/compression,
+// et beaucoup moins cher à calculer qu'un pHash (pas de DCT).
+function dHashFromCanvas(ctx, w, h){
+  const data = ctx.getImageData(0,0,w,h).data;
+  const grey = new Array(w*h);
+  for(let i=0, p=0; i<data.length; i+=4, p++){
+    grey[p] = data[i]*0.3+data[i+1]*0.59+data[i+2]*0.11;
+  }
+  let hash = 0n, bit = 0n;
+  for(let y=0; y<h; y++){
+    for(let x=0; x<w-1; x++){
+      if(grey[y*w+x] > grey[y*w+x+1]) hash |= (1n << bit);
+      bit++;
+    }
+  }
+  return hash;
+}
+
+function dHashFromImageSource(src){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = ()=>{
+      const w=9, h=8;
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      resolve(dHashFromCanvas(ctx, w, h));
+    };
+    img.onerror = reject;
+    img.src = src;
+  });
+}
+
+function hammingDistance(a, b){
+  let x = a ^ b, count = 0n;
+  while(x){ count += x & 1n; x >>= 1n; }
+  return Number(count);
+}
+
+const CARD_LIST_CACHE_KEY = 'tcgdex_set_cardlist_v1';
+const CARD_HASH_CACHE_KEY = 'tcgdex_card_hash_v1';
+
+function loadJsonCache(key){
+  try{ return JSON.parse(localStorage.getItem(key) || '{}'); } catch(e){ return {}; }
+}
+function saveJsonCache(key, obj){
+  try{ localStorage.setItem(key, JSON.stringify(obj)); } catch(e){ /* quota localStorage dépassé, tant pis pour le cache */ }
+}
+
+// Liste des cartes d'un set (id, localId, image) — mise en cache indéfiniment,
+// un set ne change pratiquement jamais une fois publié.
+async function getSetCardList(setId){
+  const cache = loadJsonCache(CARD_LIST_CACHE_KEY);
+  if(cache[setId]) return cache[setId];
+  const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/sets/${setId}`, {}, {maxRetries:1, baseDelay:400});
+  if(!r.ok) return [];
+  const detail = await r.json();
+  const list = (detail.cards || []).filter(c=>c.image).map(c=>({id:c.id, localId:c.localId, image:c.image}));
+  cache[setId] = list;
+  saveJsonCache(CARD_LIST_CACHE_KEY, cache);
+  return list;
+}
+
+// Hash de l'image de référence d'une carte — mis en cache indéfiniment (l'image
+// officielle d'une carte ne change pas). Coûteux la 1ère fois (téléchargement de
+// l'image), quasi gratuit ensuite pour tout le reste de la session/les sessions futures.
+async function getCardImageHash(cardId, imageBase){
+  const cache = loadJsonCache(CARD_HASH_CACHE_KEY);
+  if(cache[cardId]) return BigInt('0x'+cache[cardId]);
+  try{
+    const hash = await dHashFromImageSource(imageBase + '/high.webp');
+    cache[cardId] = hash.toString(16);
+    saveJsonCache(CARD_HASH_CACHE_KEY, cache);
+    return hash;
+  } catch(e){ return null; }
+}
+
+// Compare la photo à toutes les cartes des sets candidats (identifiés par le code ou
+// le dénominateur lus), retient la plus proche. Seuils calibrés sur la preuve de
+// concept (distances observées : ~15-25 pour une bonne correspondance, ~25-35 pour
+// une carte différente du même set/style).
+async function resolveCardByVisualMatch(photoDataUrl, candidateSetIds){
+  if(!photoDataUrl || !candidateSetIds.length) return null;
+  let photoHash;
+  try{ photoHash = await dHashFromImageSource(photoDataUrl); } catch(e){ return null; }
+
+  let best = null, bestDist = Infinity;
+  for(const setId of candidateSetIds){
+    const cards = await getSetCardList(setId);
+    for(const c of cards){
+      const hash = await getCardImageHash(c.id, c.image);
+      if(hash == null) continue;
+      const dist = hammingDistance(photoHash, hash);
+      if(dist < bestDist){ bestDist = dist; best = c; }
+    }
+  }
+  if(!best || bestDist > 32) return null;
+  // Toujours 'low' (jamais de certitude) : testé sur un vrai set complet (~200 cartes,
+  // pas juste une poignée de candidats) — sur une photo avec fond/décor visible autour
+  // de la carte, le hash global peut se tromper de carte tout en restant à une distance
+  // proche des bonnes correspondances. Sans recadrage précis de la carte au préalable
+  // (le "cadre de visée" du chantier 2), cette distance seule ne suffit pas à garantir
+  // une identification fiable — c'est une proposition à faire vérifier, pas un verdict.
+  const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${best.id}`, {}, {maxRetries:1, baseDelay:400});
+  if(r.ok) return {card: normalizeCard(await r.json()), distance: bestDist, confidence: 'low'};
+  return null;
+}
+
+async function findClosestNumberInSet(setId, number, maxDistance=5){
+  try{
+    const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/sets/${setId}`, {}, {maxRetries:1, baseDelay:400});
+    if(!r.ok) return null;
+    const setDetail = await r.json();
+    const target = parseInt(number, 10);
+    if(Number.isNaN(target)) return null;
+    let best = null, bestDist = Infinity;
+    for(const c of (setDetail.cards || [])){
+      const n = parseInt(c.localId, 10);
+      if(Number.isNaN(n)) continue;
+      const dist = Math.abs(n - target);
+      if(dist < bestDist){ bestDist = dist; best = c; }
+    }
+    if(best && bestDist <= maxDistance){
+      const r2 = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${best.id}`, {}, {maxRetries:1, baseDelay:400});
+      if(r2.ok) return { card: normalizeCard(await r2.json()), distance: bestDist };
+    }
+  } catch(e){ /* pas de proposition */ }
+  return null;
+}
+
+// Chaîne de résolution du plus fiable au plus tolérant. Le code lettré du set
+// (ex "MEW") s'est révélé peu fiable à l'OCR en pratique (police stylisée, illisible
+// pour Tesseract même sur un crop parfaitement isolé — validé sur photos réelles) ;
+// le dénominateur du numéro de collection (ex "165") est en revanche presque toujours
+// bien lu ET identifie le set à lui seul dans la grande majorité des cas (peu de sets
+// partagent le même total de cartes). Il devient donc l'ancre principale :
+// 1) code + numéro tels quels (haute confiance)
+// 2) dénominateur + numérateur tels quels, sur le(s) set(s) partageant ce total,
+//    en commençant par le plus récent (haute confiance : deux nombres indépendants
+//    doivent matcher exactement)
+// 3) dénominateur + numéro le plus proche dans ce(s) set(s) (confiance faible)
+// 4) code correct, numéro le plus proche dans ce set (confiance faible)
+// 5) code corrigé (Levenshtein) + numéro tel quel (confiance faible)
+// Ne renvoie jamais une carte au hasard : chaque étape exige une correspondance
+// réelle côté TCGdex, seule la tolérance sur la source (set/numéro lu) augmente.
+// Normalise un nom pour comparaison tolérante à l'OCR (accents, espaces, casse,
+// tirets) : "Dracaufeu-ex" et "DracaufeuEX" doivent se rapprocher.
+function normalizeName(s){
+  return (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+}
+
+// Le nom du Pokémon est lu de façon bien plus fiable que le numéro par PaddleOCR.
+// Quand plusieurs sets partagent le même dénominateur (ex: 165 -> ecard1 ET sv03.5),
+// le numéro seul est ambigu et peut résoudre vers une carte totalement différente
+// (constaté en test). Vérifier que le nom de la carte candidate apparaît dans le texte
+// OCR lève l'ambiguïté sans rien deviner.
+function cardNameAppearsInText(card, ocrText){
+  const name = normalizeName(card?.name);
+  if(!name || name.length < 4) return false;
+  return normalizeName(ocrText).includes(name.slice(0, Math.min(name.length, 10)));
+}
+
+// Mots qui apparaissent en haut de toutes les cartes et ne sont jamais le nom.
+const NAME_STOPWORDS = new Set([
+  'NIVEAU','NIVEAUI','NIVEAUZ','BASE','BASIC','STAGE','TALENT','POKEMON','POKEMONEX',
+  'EVOLUTION','EVOLUTIONDE','PV','HP','ILLUS','REGLE','RULE','ATTAQUE'
+]);
+
+// Le nom du Pokémon est le texte le plus fiablement lu par PaddleOCR (validé : même
+// sur les photos où le numéro est illisible, "Persian" et "Florizarreex" sortent
+// parfaitement). Il est toujours sur la première ligne de la carte, entouré du niveau
+// à gauche et des PV à droite -> on prend les tokens alphabétiques les plus longs des
+// premières lignes, hors mots de gabarit.
+function extractNameCandidates(ocrText){
+  const lines = (ocrText||'').split('\n').slice(0, 3);
+  const tokens = [];
+  for(const line of lines){
+    for(const raw of line.split(/[^A-Za-zÀ-ÖØ-öø-ÿ'\-]+/)){
+      const t = raw.replace(/^[\-']+|[\-']+$/g,'').trim();
+      if(t.length < 4) continue;
+      const up = normalizeName(t);
+      if(up.length < 4 || NAME_STOPWORDS.has(up)) continue;
+      tokens.push(t);
+    }
+  }
+  return [...new Set(tokens)].sort((a,b)=>b.length-a.length).slice(0, 3);
+}
+
+// Classe une liste de cartes candidates par ressemblance visuelle avec la photo
+// (empreinte perceptuelle dHash), pour départager plusieurs impressions d'un même nom.
+async function rankBriefsByVisualMatch(photoDataUrl, briefs, maxCandidates=25){
+  if(!photoDataUrl) return null;
+  let photoHash;
+  try{ photoHash = await dHashFromImageSource(photoDataUrl); } catch(e){ return null; }
+  let best = null, bestDist = Infinity;
+  for(const b of briefs.slice(0, maxCandidates)){
+    if(!b.image) continue;
+    const hash = await getCardImageHash(b.id, b.image);
+    if(hash == null) continue;
+    const dist = hammingDistance(photoHash, hash);
+    if(dist < bestDist){ bestDist = dist; best = b; }
+  }
+  return best ? {brief: best, distance: bestDist} : null;
+}
+
+async function fetchCardById(id){
+  try{
+    const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
+    if(r.ok) return normalizeCard(await r.json());
+  } catch(e){ /* carte introuvable */ }
+  return null;
+}
+
+// Repli par le nom : quand la résolution par numéro échoue (dénominateur mal lu, set
+// introuvable...), on cherche le nom lu dans TCGdex. Croisé avec le numérateur — lui
+// souvent correct même quand le dénominateur ne l'est pas — cela suffit en général à
+// désigner une carte unique. Sinon on classe les impressions par ressemblance visuelle.
+async function resolveCardByName(ocrText, number, photoDataUrl){
+  const candidates = extractNameCandidates(ocrText);
+  for(const cand of candidates){
+    // La recherche TCGdex fonctionne par sous-chaîne : on retire les suffixes de forme
+    // ("Florizarreex" -> "Florizarre") pour retrouver "Florizarre-ex" côté API.
+    const root = cand.replace(/(vmax|vstar|ex|gx|v)$/i, '').replace(/[^A-Za-zÀ-ÖØ-öø-ÿ]/g,'').trim();
+    if(root.length < 4) continue;
+    let briefs;
+    try{
+      const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards?name=${encodeURIComponent(root)}`, {}, {maxRetries:1, baseDelay:400});
+      if(!r.ok) continue;
+      briefs = await r.json();
+    } catch(e){ continue; }
+    if(!Array.isArray(briefs) || !briefs.length) continue;
+
+    // 1) Croisement avec le numérateur : signal très fort (deux lectures indépendantes).
+    if(number){
+      const sameNumber = briefs.filter(b => stripLeadingZero(String(b.localId||'')) === number);
+      if(sameNumber.length === 1){
+        const card = await fetchCardById(sameNumber[0].id);
+        if(card) return {card, confidence:'high', note:`nom "${root}" + #${number}`};
+      }
+      if(sameNumber.length > 1){
+        const ranked = await rankBriefsByVisualMatch(photoDataUrl, sameNumber);
+        const chosen = ranked ? ranked.brief : sameNumber[0];
+        const card = await fetchCardById(chosen.id);
+        if(card) return {card, confidence:'low', note:`nom "${root}" + #${number}, ${sameNumber.length} impressions${ranked?` (visuel, écart ${ranked.distance})`:''}`};
+      }
+    }
+
+    // 2) Pas de numéro exploitable : on départage les impressions visuellement.
+    const ranked = await rankBriefsByVisualMatch(photoDataUrl, briefs);
+    if(ranked && ranked.distance <= 24){
+      const card = await fetchCardById(ranked.brief.id);
+      if(card) return {card, confidence:'low', note:`nom "${root}" (visuel, écart ${ranked.distance})`};
+    }
+  }
+  return null;
+}
+
+async function resolveCardBestEffort(codeCandidates, number, denominator, photoDataUrl, ocrText){
+  const codeSets = codeCandidates.map(c=>setAbbrMap?.[c.toUpperCase()]).filter(Boolean);
+  const denomSets = denominator ? (setDenominatorMap?.[denominator] || []) : [];
+
+  if(number){
+    // Le dénominateur (lu de façon fiable) passe avant le code lettré (souvent mal lu
+    // et qui peut pointer un set arbitraire), et la confirmation par le nom prime sur
+    // tout : c'est le signal le plus fiable de PaddleOCR. Sans cet ordre, un code
+    // lettré fantaisiste résolvait une carte totalement différente (constaté en test).
+    const orderedSets = [...new Set([...denomSets, ...codeSets])];
+
+    if(ocrText){
+      for(const setId of orderedSets){
+        const card = await fetchCardExact(setId, number);
+        if(card && cardNameAppearsInText(card, ocrText)){
+          return {card, confidence:'high', note:`#${number}${denominator?'/'+denominator:''} (nom confirmé)`};
+        }
+      }
+    }
+    // Aucun nom confirmé : la correspondance reste possible mais n'est JAMAIS certaine,
+    // même si un seul set était candidat. Un numéro mal lu tombe très facilement sur une
+    // carte réelle mais fausse (constaté : "198/165" lu "98/63" désignait un Salamèche
+    // d'Expedition, présenté à tort comme certain). Le nom lu est le garde-fou : s'il ne
+    // colle pas, on rétrograde en "à vérifier" plutôt que d'affirmer.
+    for(const setId of orderedSets){
+      const card = await fetchCardExact(setId, number);
+      if(card) return {card, confidence:'low', note:`#${number}${denominator?'/'+denominator:''} (nom non confirmé)`};
+    }
+  }
+
+  // Repli par le nom, AVANT le matching visuel générique : le nom est le signal le
+  // plus fiable de PaddleOCR, alors que le matching visuel sur un set entier peut
+  // désigner une carte sans aucun rapport quand le set de départ est faux (constaté :
+  // un dénominateur mal lu menait à proposer "Pichu/Expedition" pour un Florizarre-ex).
+  const byName = await resolveCardByName(ocrText, number, photoDataUrl);
+  if(byName) return byName;
+
+  // Matching visuel (dHash) sur les sets déjà identifiés par code ou dénominateur —
+  // bien plus discriminant qu'une approximation numérique quand le numéro exact n'a
+  // pas pu être confirmé (voir résultats de la preuve de concept, technique utilisée
+  // par les applis de scan du commerce).
+  const candidateSetIds = [...new Set([...codeSets, ...denomSets, ...(currentSetHintId ? [currentSetHintId] : [])])];
+  const visual = await resolveCardByVisualMatch(photoDataUrl, candidateSetIds);
+  if(visual) return {card: visual.card, confidence: visual.confidence, note: `correspondance visuelle (écart ${visual.distance})`};
+
+  if(number){
+    for(const setId of denomSets){
+      const near = await findClosestNumberInSet(setId, number);
+      if(near) return {card: near.card, confidence:'low', note:`numéro approché (lu "${number}/${denominator}", écart ${near.distance})`};
+    }
+    for(const setId of codeSets){
+      const near = await findClosestNumberInSet(setId, number);
+      if(near) return {card: near.card, confidence:'low', note:`numéro approché (lu "${number}", écart ${near.distance})`};
+    }
+  }
+
+  // Un code trop court (2 lettres) corrigé par distance de Levenshtein a trop de
+  // chances de tomber "par hasard" sur un vrai code voisin -> faux positif confiant
+  // sur du bruit pur (constaté en test). On réserve cette correction aux codes d'au
+  // moins 3 lettres, et on resserre la tolérance à 1 caractère.
+  if(number){
+    for(const code of codeCandidates){
+      if(code.length < 3) continue;
+      for(const abbr of closestAbbreviations(code.toUpperCase(), 1)){
+        const card = await fetchCardExact(setAbbrMap[abbr], number);
+        if(card) return {card, confidence:'low', note:`code corrigé "${code}"→"${abbr}" #${number}`};
+      }
+    }
+  }
+
+  return {card:null, confidence:null, note:null};
+}
+
+function renderAutoResult(card, uncertain){
+  const resultsBox = $('search-results');
+  const price = getBestPrice(card);
+  currentResults = [card];
+  highlightedIndex = 0;
+  resultsBox.innerHTML = '';
+  const div = document.createElement('div');
+  div.className = 'result-item highlighted';
+  div.innerHTML = `
+    <img src="${card.images?.small || ''}" loading="lazy">
+    <div class="result-info">
+      ${uncertain ? '<span style="color:var(--warn);">🤔 à vérifier</span><br>' : ''}
+      <b>${card.name}</b><br>
+      ${card.set?.name || ''} · #${card.number} · ${card.rarity || '?'}
+    </div>
+    <div class="result-price">${price.market ? formatPrice(price) : '—'}</div>
+  `;
+  div.addEventListener('click', ()=> quickAdd(card));
+  resultsBox.appendChild(div);
+}
+
+// Analyse un item de la file une seule fois (résultat mis en cache sur l'item lui-même
+// via `_analysis`), pour ne jamais relancer l'OCR deux fois sur la même photo :
+// une fois pour l'aperçu de file (icônes), une fois pour la pré-sélection de la carte
+// courante — les deux consomment ce même cache.
+// Statuts : 'ok' (✅ résolu avec certitude), 'uncertain' (🤔 lecture partielle —
+// une proposition est quand même fournie si la chaîne de résolution en trouve une),
+// 'fail' (❌ vraiment rien lu, réservé au cas où l'OCR ne trouve NI numéro NI code).
+async function analyzeQueueItem(item){
+  if(item._analysis && item._analysis.status !== 'pending') return item._analysis;
+  const isCurrent = pendingQueue[0] === item;
+  item._analysis = { status: 'pending', card: null };
+  let objectUrl = null;
+  try{
+    const cropPct = parseFloat($('ocr-crop-pct')?.value) || 10;
+
+    // Source d'analyse = image d'ORIGINE quand on l'a encore, jamais la version
+    // compressée : le JPEG 0.75 efface les petits chiffres (mesuré : "198/165" lu
+    // "98/63" après compression -> carte identifiée totalement fausse).
+    // `instanceof Blob` et pas juste une vérification de présence : après un
+    // rechargement de progression .json, un ancien `sourceBlob` se retrouve désérialisé
+    // en objet vide (truthy) qui ferait planter createObjectURL.
+    let analysisSrc = item.photo;
+    if(item.sourceBlob instanceof Blob){
+      objectUrl = URL.createObjectURL(item.sourceBlob);
+      analysisSrc = objectUrl;
+    }
+
+    // Détecte la boîte englobante de la CARTE une seule fois par photo (pas de
+    // l'image) — le crop est ensuite dimensionné en % de la carte, invariant au
+    // zoom/cadrage de la photo (voir le commentaire de detectCardBounds).
+    let cardBounds = null;
+    try{
+      const imgEl = await loadImageEl(analysisSrc);
+      cardBounds = detectCardBounds(imgEl);
+    } catch(e){ /* détection impossible, on retombe sur le bord de l'image */ }
+
+    // PaddleOCR travaille mieux sur l'image couleur d'origine que sur une binarisation
+    // maison (son propre pipeline de détection s'en charge) : on lui donne le crop brut.
+    // Deux passes complémentaires, validées sur photos réelles :
+    //  - le crop bas de carte donne la meilleure résolution effective sur le numéro
+    //    (c'est lui qui a lu 183/165, 199/165 et 170/165 exactement) ;
+    //  - la pleine image rattrape les cas où la détection de bords se trompe et où le
+    //    crop tombe à côté (c'est elle qui avait lu 004/064).
+    const croppedRaw = await cropBottomBandForOcr(analysisSrc, cropPct, 'raw', 55, cardBounds);
+    if(isCurrent && $('ocr-debug-preview')) $('ocr-debug-preview').src = croppedRaw;
+
+    const svc = await getOcrService();
+    const texts = [];
+    try{
+      const resCrop = await svc.recognize(await dataUrlToCanvas(croppedRaw));
+      texts.push(resCrop.text || '');
+    } catch(e){ /* passe crop en échec, la pleine image peut encore réussir */ }
+    try{
+      const resFull = await svc.recognize(await dataUrlToCanvas(analysisSrc));
+      texts.push(resFull.text || '');
+    } catch(e){ /* passe pleine image en échec */ }
+
+    const rawText = texts.join('\n').trim();
+    item._analysis.rawText = rawText;
+    if(isCurrent && $('ocr-debug-text')){
+      $('ocr-debug-text').textContent = rawText || '(vide)';
+    }
+
+    // Candidats de numéro issus des deux passes, avec normalisation des sosies de
+    // chiffres ("183/I65" -> "183/165"). Le code lettré du set reste extrait en
+    // complément mais n'est plus le signal principal.
+    const candidates = extractNumberCandidates(rawText);
+    let number = candidates.length ? candidates[0].number : null;
+    let denominator = candidates.length ? candidates[0].denominator : null;
+    const codeCandidates = [...rawText.toUpperCase().matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
+    item._analysis.numberCandidates = candidates;
+
+    // Le nom lu est désormais un signal exploitable à part entière (repli par nom),
+    // donc on ne déclare "illisible" que si l'OCR n'a rendu ni numéro, ni code, ni
+    // nom plausible — et qu'aucun set n'a été indiqué manuellement.
+    const nameCandidates = extractNameCandidates(rawText);
+    item._analysis.nameCandidates = nameCandidates;
+    if(!number && !codeCandidates.length && !nameCandidates.length && !currentSetHintId){
+      item._analysis.status = 'fail';
+      return item._analysis;
+    }
+    item._analysis.number = number;
+    item._analysis.denominator = denominator;
+    item._analysis.code = codeCandidates[0] || null;
+
+    if(!setAbbrMap){
+      const loaded = await loadSetAbbreviationMap((done,total)=>{
+        if($('set-map-status')) $('set-map-status').textContent = `🔎 Chargement de la table des sets... (${done}/${total})`;
+      });
+      setAbbrMap = loaded.map;
+      setDenominatorMap = loaded.byDenominator;
+      if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+    }
+
+    if(number || codeCandidates.length || nameCandidates.length || currentSetHintId){
+      const result = await resolveCardBestEffort(codeCandidates, number, denominator, analysisSrc, rawText);
+      if(result.card){
+        item._analysis.card = result.card;
+        item._analysis.note = result.note;
+        // 'high' = code+numéro tels quels -> certain. 'low' = correction/approximation
+        // appliquée -> encore un doute, la carte proposée doit être vérifiée visuellement.
+        item._analysis.status = result.confidence === 'high' ? 'ok' : 'uncertain';
+        return item._analysis;
+      }
+    }
+    // Lecture partielle (numéro seul, ou code seul, ou rien n'a résolu) : doute,
+    // pas d'échec — on n'a simplement rien de fiable à proposer.
+    item._analysis.status = 'uncertain';
+    return item._analysis;
+  } catch(err){
+    item._analysis.status = 'uncertain';
+    item._analysis.error = err.message;
+    return item._analysis;
+  } finally {
+    // Libère l'image d'origine dès l'analyse terminée : sur 1000+ cartes, garder tous
+    // les originaux en mémoire ferait exploser la consommation. Le résultat d'analyse
+    // est mis en cache sur l'entrée, une réanalyse ultérieure retombera sur la version
+    // compressée — acceptable puisqu'elle n'a normalement plus lieu d'être.
+    if(objectUrl) URL.revokeObjectURL(objectUrl);
+    if(item._analysis && item._analysis.status !== 'pending') item.sourceBlob = null;
+  }
+}
+
+async function runAutoIdentify(myToken){
+  const item = pendingQueue[0];
+  if(!ocrEnabled || !item) return;
+  const status = $('search-status');
+  const setStatus = (msg)=>{
+    if(myToken !== identifyToken) return false;
+    if($('search-name').value.trim() !== '') return false; // l'utilisateur a déjà commencé à taper
+    status.textContent = msg;
+    return true;
+  };
+
+  if(!setStatus('🔎 Lecture automatique du code carte...')) return;
+  const result = await analyzeQueueItem(item);
+  if(myToken !== identifyToken || $('search-name').value.trim() !== '') return;
+  renderQueueOverview();
+
+  if(result.status === 'ok'){
+    renderAutoResult(result.card, false);
+    status.textContent = `✅ Code détecté : ${result.note} → ${result.card.name} — Entrée pour ajouter`;
+  } else if(result.status === 'uncertain' && result.card){
+    renderAutoResult(result.card, true);
+    status.textContent = `🤔 Proposition incertaine (${result.note}) → ${result.card.name} — vérifie avant d'ajouter`;
+  } else if(result.status === 'uncertain'){
+    setStatus(`🤔 Lecture partielle (${result.code || '?'} #${result.number || '?'}) mais aucune carte correspondante — cherche manuellement.`);
+  } else {
+    setStatus('❌ Code illisible — cherche le nom manuellement.');
+  }
+}
+
+// ---------------- APERÇU DE FILE : analyse de fond + icônes de statut ----------------
+let queueAnalysisRunning = false;
+const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exact (perf DOM)
+
+async function processQueueAnalysis(){
+  if(queueAnalysisRunning || !ocrEnabled) return;
+  queueAnalysisRunning = true;
+  try{
+    while(true){
+      const identifyTab = document.getElementById('section-identify');
+      if(!identifyTab || !identifyTab.classList.contains('active')) break;
+      const item = pendingQueue.find(it => !it._analysis || it._analysis.status === 'pending');
+      if(!item) break;
+      await analyzeQueueItem(item);
+      renderQueueOverview();
+    }
+  } finally {
+    queueAnalysisRunning = false;
+  }
+}
+
+function renderQueueOverview(){
+  const strip = $('queue-overview-strip');
+  const summary = $('queue-overview-summary');
+  if(!strip || !summary) return;
+
+  let ok=0, uncertain=0, fail=0, waiting=0;
+  for(const it of pendingQueue){
+    const s = it._analysis?.status;
+    if(s==='ok') ok++;
+    else if(s==='uncertain') uncertain++;
+    else if(s==='fail') fail++;
+    else waiting++;
+  }
+  summary.textContent = pendingQueue.length
+    ? `Aperçu file : ✅ ${ok} identifiée(s) · 🤔 ${uncertain} à vérifier · ❌ ${fail} illisible(s) · ⏳ ${waiting} en attente d'analyse`
+    : '';
+
+  strip.innerHTML = '';
+  pendingQueue.slice(0, QUEUE_OVERVIEW_LIMIT).forEach((item, idx)=>{
+    const badge = item._analysis?.status === 'ok' ? '✅'
+      : item._analysis?.status === 'uncertain' ? '🤔'
+      : item._analysis?.status === 'fail' ? '❌'
+      : '⏳';
+    const wrap = document.createElement('div');
+    wrap.className = 'qo-thumb' + (idx===0 ? ' current' : '');
+    wrap.title = item._analysis?.card
+      ? `${item._analysis.status==='ok' ? '✅' : '🤔 à vérifier'} : ${item._analysis.card.name} (${item._analysis.note})`
+      : (item._analysis?.status==='fail' ? '❌ Rien de lisible (ni code ni numéro)'
+        : item._analysis?.status==='uncertain' ? `🤔 Lu: ${item._analysis.code||'?'} #${item._analysis.number||'?'}, aucune carte trouvée même en tolérant les erreurs de lecture`
+        : 'Analyse en attente');
+    wrap.innerHTML = `<img src="${item.photo}" loading="lazy"><span class="qo-badge">${badge}</span>`;
+    wrap.addEventListener('click', ()=>{
+      if(idx===0) return;
+      const [moved] = pendingQueue.splice(idx,1);
+      pendingQueue.unshift(moved);
+      renderIdentify();
+    });
+    strip.appendChild(wrap);
+  });
+  if(pendingQueue.length > QUEUE_OVERVIEW_LIMIT){
+    const more = document.createElement('div');
+    more.className = 'hint';
+    more.style.cssText = 'display:flex; align-items:center; padding:0 6px; flex-shrink:0;';
+    more.textContent = `+${pendingQueue.length - QUEUE_OVERVIEW_LIMIT} autre(s)`;
+    strip.appendChild(more);
+  }
+}
+
+// `sourceBlob` = image d'origine, non recompressée, conservée uniquement le temps de
+// l'analyse OCR puis libérée (voir analyzeQueueItem). Un Blob ne pèse pas sur le tas JS
+// comme le ferait une dataURL base64, et il n'est pas sérialisé dans la sauvegarde .json.
+function pushToQueue(dataUrl, sourceBlob){
+  pendingQueue.push({id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl, sourceBlob:sourceBlob||null});
+  updateQueueBadges();
+  renderQueueStrip();
+  renderQueueOverview();
+  processQueueAnalysis();
+}
+
+function renderQueueStrip(){
+  const strip = $('queue-strip');
+  const last = pendingQueue.slice(-12);
+  strip.innerHTML = last.map(q=>`<img src="${q.photo}">`).join('');
+  $('cam-counter').textContent = `${capturedThisSession} capturée(s) · ${pendingQueue.length} en attente`;
+}
+
+// ---------------- LIVE CAMERA ----------------
+$('btn-start-cam').addEventListener('click', startCamera);
+$('btn-stop-cam').addEventListener('click', stopCamera);
+$('btn-capture-frame').addEventListener('click', captureFrame);
+
+async function startCamera(){
+  $('cam-error').textContent = '';
+  try{
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:960} },
+      audio:false
+    });
+    $('video').srcObject = cameraStream;
+    $('video-wrap').classList.add('active');
+    $('cam-start-row').style.display = 'none';
+    capturedThisSession = 0;
+    renderQueueStrip();
+  } catch(err){
+    $('cam-error').textContent = '⚠️ Caméra indisponible ('+err.message+'). Utilise "Import en masse" ou "Photo unique" ci-dessous à la place.';
+  }
+}
+
+function stopCamera(){
+  if(cameraStream){
+    cameraStream.getTracks().forEach(t=>t.stop());
+    cameraStream = null;
+  }
+  $('video-wrap').classList.remove('active');
+  $('cam-start-row').style.display = 'flex';
+}
+
+function captureFrame(){
+  const video = $('video');
+  if(!video.videoWidth) return;
+
+  // Pleine résolution du flux, en PNG sans perte : c'est cette image qui part à l'OCR.
+  const full = document.createElement('canvas');
+  full.width = video.videoWidth;
+  full.height = video.videoHeight;
+  full.getContext('2d').drawImage(video, 0, 0);
+
+  // Version réduite + JPEG pour le stockage/affichage uniquement.
+  const canvas = document.createElement('canvas');
+  const maxW = 900;
+  const scale = Math.min(1, maxW/video.videoWidth);
+  canvas.width = video.videoWidth*scale;
+  canvas.height = video.videoHeight*scale;
+  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
+
+  full.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
+
+  capturedThisSession++;
+  renderQueueStrip();
+  flashScreen();
+  if(navigator.vibrate) navigator.vibrate(40);
+}
+
+function flashScreen(){
+  const flash = $('flash');
+  flash.classList.add('show');
+  setTimeout(()=> flash.classList.remove('show'), 90);
+}
+
+// ---------------- BULK IMPORT ----------------
+$('btn-bulk-import').addEventListener('click', ()=> $('bulk-input').click());
+$('bulk-input').addEventListener('change', async (e)=>{
+  const files = [...e.target.files];
+  if(!files.length) return;
+  const bar = $('bulk-progress');
+  const fill = $('bulk-progress-fill');
+  bar.style.display = 'block';
+  let done = 0;
+  for(const file of files){
+    try{
+      const dataUrl = await compressFileToDataUrl(file);
+      pushToQueue(dataUrl, file); // le fichier d'origine sert à l'OCR, la version compressée au stockage
+    } catch(err){ /* skip unreadable file */ }
+    done++;
+    fill.style.width = Math.round(done/files.length*100)+'%';
+    $('bulk-status').textContent = `${done} / ${files.length} photo(s) traitée(s)...`;
+  }
+  bar.style.display = 'none';
+  $('bulk-status').textContent = `✅ ${files.length} photo(s) ajoutée(s) à la file d'attente.`;
+  e.target.value = '';
+  toast(`📥 ${files.length} photo(s) importée(s)`);
+});
+
+// ---------------- NATIVE SINGLE CAMERA ----------------
+$('btn-native-cam').addEventListener('click', ()=> $('native-cam-input').click());
+$('native-cam-input').addEventListener('change', async (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const dataUrl = await compressFileToDataUrl(file);
+  pushToQueue(dataUrl, file); // idem : OCR sur l'original, stockage sur la version compressée
+  e.target.value = '';
+  toast('📷 Photo ajoutée à la file.');
+});
+
+// ---------------- IDENTIFY: STICKY SETTINGS ----------------
+let stickyCondition = 'NM';
+let stickyQty = 1;
+$('sticky-condition').addEventListener('change', ()=> stickyCondition = $('sticky-condition').value);
+$('sticky-qty').addEventListener('input', ()=> stickyQty = parseInt($('sticky-qty').value)||1);
+
+// ---------------- SET EN COURS (indice manuel pour le matching visuel) ----------------
+// Quand l'OCR ne lit ni code ni dénominateur exploitable (photo difficile), il n'y a
+// aucun set candidat à comparer visuellement. En pratique on scanne souvent une même
+// boîte/set à la suite : cet indice, posé une fois, reste candidat pour le matching
+// visuel même quand l'OCR ne trouve rien — ça comble le trou constaté en test.
+let currentSetHintId = null;
+let allSetsListCache = null;
+async function resolveSetHint(query){
+  const status = $('current-set-hint-status');
+  query = query.trim();
+  if(!query){ currentSetHintId = null; status.textContent = ''; return; }
+
+  const upper = query.toUpperCase();
+  if(setAbbrMap && setAbbrMap[upper]){
+    currentSetHintId = setAbbrMap[upper];
+    status.textContent = `✅ Set détecté : code "${upper}" → ${currentSetHintId}`;
+    return;
+  }
+
+  status.textContent = '🔎 Recherche du set...';
+  try{
+    if(!allSetsListCache){
+      const r = await fetchWithRetry('https://api.tcgdex.net/v2/fr/sets', {}, {maxRetries:2});
+      if(!r.ok) throw new Error('HTTP '+r.status);
+      allSetsListCache = await r.json();
+    }
+    const lower = query.toLowerCase();
+    const match = allSetsListCache.find(s => (s.name||'').toLowerCase().includes(lower));
+    if(match){
+      currentSetHintId = match.id;
+      status.textContent = `✅ Set détecté : "${match.name}" (${match.id})`;
+    } else {
+      currentSetHintId = null;
+      status.textContent = `⚠️ Aucun set trouvé pour "${query}" — l'indice sera ignoré.`;
+    }
+  } catch(err){
+    currentSetHintId = null;
+    status.textContent = '⚠️ Erreur de recherche : '+err.message;
+  }
+}
+let setHintDebounce = null;
+$('current-set-hint').addEventListener('input', ()=>{
+  clearTimeout(setHintDebounce);
+  setHintDebounce = setTimeout(()=> resolveSetHint($('current-set-hint').value), 500);
+});
+
+function renderIdentify(){
+  const myToken = ++identifyToken;
+  updateQueueBadges();
+  $('identify-queue-label').textContent = `${pendingQueue.length} carte(s) à identifier`;
+  $('skipped-count').textContent = skippedQueue.length;
+  const img = $('identify-photo');
+  const placeholder = $('identify-placeholder');
+  if(pendingQueue.length){
+    img.src = pendingQueue[0].photo;
+    img.style.display = 'block';
+    placeholder.style.display = 'none';
+  } else {
+    img.style.display = 'none';
+    placeholder.style.display = 'block';
+  }
+  $('search-name').value = '';
+  $('search-set').value = '';
+  $('search-results').innerHTML = '';
+  $('search-status').textContent = '';
+  if($('ocr-debug-preview')){ $('ocr-debug-preview').src = ''; $('ocr-debug-text').textContent = '—'; }
+  currentResults = [];
+  highlightedIndex = -1;
+  $('search-name').focus();
+
+  renderQueueOverview();
+  processQueueAnalysis();
+  if(pendingQueue.length) runAutoIdentify(myToken);
+}
+
+$('btn-review-skipped').addEventListener('click', ()=>{
+  if(!skippedQueue.length){ toast('Aucune carte passée.'); return; }
+  pendingQueue = skippedQueue.concat(pendingQueue);
+  skippedQueue = [];
+  renderIdentify();
+  toast('↩️ Cartes passées remises dans la file.');
+});
+
+$('btn-skip-card').addEventListener('click', ()=>{
+  if(!pendingQueue.length){ toast('File vide.'); return; }
+  skippedQueue.push(pendingQueue.shift());
+  renderIdentify();
+});
+
+$('btn-toggle-ocr-debug').addEventListener('click', ()=>{
+  const panel = $('ocr-debug-panel');
+  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
+});
+
+$('ocr-enabled-toggle').addEventListener('change', ()=>{
+  ocrEnabled = $('ocr-enabled-toggle').value === 'on';
+});
+
+$('btn-rebuild-set-map').addEventListener('click', async ()=>{
+  const status = $('set-map-status');
+  status.textContent = '🔎 Reconstruction de la table des sets...';
+  try{
+    localStorage.removeItem(SET_MAP_CACHE_KEY);
+    const loaded = await loadSetAbbreviationMap((done,total)=>{
+      status.textContent = `🔎 Reconstruction... (${done}/${total})`;
+    });
+    setAbbrMap = loaded.map;
+    setDenominatorMap = loaded.byDenominator;
+    status.textContent = `✅ Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+  } catch(err){
+    status.textContent = '⚠️ Échec du chargement : '+err.message;
+  }
+});
+
+// ---------------- FETCH WITH RETRY (backoff) ----------------
+function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+
+async function fetchWithRetry(url, options={}, {maxRetries=3, baseDelay=600, onRetry=null}={}){
+  for(let attempt=0; ; attempt++){
+    try{
+      const res = await fetch(url, options);
+      if(res.ok || res.status < 500 || attempt >= maxRetries) return res;
+      if(onRetry) onRetry(attempt+1, maxRetries, new Error('HTTP '+res.status));
+    } catch(err){
+      if(attempt >= maxRetries) throw err;
+      if(onRetry) onRetry(attempt+1, maxRetries, err);
+    }
+    await sleep(baseDelay * Math.pow(2, attempt));
+  }
+}
+
+// ---------------- CARD SEARCH ----------------
+let searchToken = 0;
+$('search-name').addEventListener('input', ()=>{
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(doSearch, 400);
+});
+$('search-set').addEventListener('input', ()=>{
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(doSearch, 400);
+});
+$('search-name').addEventListener('keydown', (e)=>{
+  if(e.key === 'ArrowDown'){ e.preventDefault(); moveHighlight(1); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); moveHighlight(-1); }
+  else if(e.key === 'Enter'){
+    e.preventDefault();
+    const idx = highlightedIndex >= 0 ? highlightedIndex : 0;
+    if(currentResults[idx]) quickAdd(currentResults[idx]);
+  }
+});
+
+function moveHighlight(delta){
+  if(!currentResults.length) return;
+  highlightedIndex = (highlightedIndex + delta + currentResults.length) % currentResults.length;
+  renderResultHighlight();
+}
+
+function renderResultHighlight(){
+  document.querySelectorAll('.result-item').forEach((el,i)=>{
+    el.classList.toggle('highlighted', i===highlightedIndex);
+  });
+}
+
+async function doSearch(){
+  const myToken = ++searchToken;
+  const name = $('search-name').value.trim();
+  const setName = $('search-set').value.trim().toLowerCase();
+  const resultsBox = $('search-results');
+  const status = $('search-status');
+  currentResults = [];
+  highlightedIndex = -1;
+  if(!name){ resultsBox.innerHTML=''; status.textContent=''; return; }
+
+  status.textContent = 'Recherche...';
+  resultsBox.innerHTML = '';
+
+  const briefUrl = `https://api.tcgdex.net/v2/fr/cards?name=${encodeURIComponent(name)}`;
+
+  try{
+    const briefRes = await fetchWithRetry(briefUrl, {}, {
+      maxRetries: 3, baseDelay: 600, onRetry: (attempt, max, err)=>{
+        if(myToken !== searchToken) return;
+        status.textContent = `⏳ L'API a répondu par une erreur (${err.message}), nouvelle tentative ${attempt}/${max}...`;
+      }
+    });
+    if(myToken !== searchToken) return;
+    if(!briefRes.ok) throw new Error('HTTP '+briefRes.status);
+    const briefs = await briefRes.json();
+    if(myToken !== searchToken) return;
+
+    const candidates = briefs.slice(0, 8);
+    status.textContent = candidates.length ? `Chargement de ${candidates.length} résultat(s)...` : 'Aucun résultat — vérifie l\'orthographe ou élargis la recherche.';
+
+    const details = await Promise.all(candidates.map(async b=>{
+      try{
+        const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${b.id}`, {}, {maxRetries:2, baseDelay:500});
+        return r.ok ? await r.json() : null;
+      } catch(e){ return null; }
+    }));
+    if(myToken !== searchToken) return;
+
+    let cards = details.filter(Boolean).map(normalizeCard);
+    if(setName) cards = cards.filter(c => (c.set?.name||'').toLowerCase().includes(setName));
+
+    currentResults = cards;
+    status.textContent = cards.length ? `${cards.length} résultat(s) — Entrée pour ajouter le 1er` : 'Aucun résultat — vérifie l\'orthographe, le set, ou élargis la recherche.';
+    resultsBox.innerHTML = '';
+    cards.forEach((card,i)=>{
+      const div = document.createElement('div');
+      div.className = 'result-item';
+      const price = getBestPrice(card);
+      div.innerHTML = `
+        <img src="${card.images?.small || ''}" loading="lazy">
+        <div class="result-info">
+          <b>${card.name}</b><br>
+          ${card.set?.name || ''} · #${card.number} · ${card.rarity || '?'}
+        </div>
+        <div class="result-price">${price.market ? formatPrice(price) : '—'}</div>
+      `;
+      div.addEventListener('click', ()=> quickAdd(card));
+      div.addEventListener('mouseenter', ()=>{ highlightedIndex = i; renderResultHighlight(); });
+      resultsBox.appendChild(div);
+    });
+  } catch(err){
+    if(myToken !== searchToken) return;
+    status.textContent = '⚠️ Erreur de recherche (après plusieurs tentatives) : '+err.message+'. Vérifie ta connexion internet, ou réessaie dans un instant si l\'API est temporairement instable.';
+  }
+}
+
+function normalizeCard(detail){
+  return {
+    name: detail.name,
+    number: detail.localId,
+    rarity: detail.rarity,
+    set: { id: detail.set?.id, name: detail.set?.name },
+    images: { small: detail.image ? detail.image + '/low.webp' : '' },
+    variantsDetailed: detail.variants_detailed || []
+  };
+}
+
+function pickTcgplayerMarket(tp){
+  if(!tp) return null;
+  for(const k of ['normal','holofoil','reverseHolofoil','1stEditionHolofoil','1stEditionNormal','unlimitedHolofoil']){
+    if(tp[k]?.marketPrice) return tp[k].marketPrice;
+  }
+  const first = Object.values(tp).find(v=> v && typeof v==='object' && v.marketPrice);
+  return first ? first.marketPrice : null;
+}
+
+function getBestPrice(card){
+  const variants = card.variantsDetailed || [];
+  for(const v of variants){
+    const cm = v.pricing?.cardmarket;
+    const val = cm && (cm.trend ?? cm.avg30 ?? cm.avg7 ?? cm.avg1 ?? cm.avg);
+    if(val) return {market: val, currency: 'EUR'};
+  }
+  for(const v of variants){
+    const val = pickTcgplayerMarket(v.pricing?.tcgplayer);
+    if(val) return {market: val, currency: 'USD'};
+  }
+  return {market:null, currency:null};
+}
+
+function formatPrice(price){
+  return price.currency==='EUR' ? price.market.toFixed(2)+' €' : '$'+price.market.toFixed(2);
+}
+
+function conditionLabel(code){
+  return {NM:'Near Mint', LP:'Lightly Played', MP:'Moderately Played', HP:'Heavily Played', DMG:'Damaged'}[code] || code;
+}
+
+// ---------------- QUICK ADD (with confirmation animation) ----------------
+function quickAdd(card){
+  const price = getBestPrice(card);
+  const pct = parseFloat($('price-pct-input').value)||80;
+  const suggestedPrice = price.market ? (price.market*pct/100).toFixed(2) : '';
+
+  const tmpl = $('title-template-input').value;
+  const descTmpl = $('desc-template-input').value;
+  const vars = {
+    name: card.name,
+    set: card.set?.name || '',
+    number: card.number,
+    rarity: card.rarity || '',
+    condition: conditionLabel(stickyCondition)
+  };
+  const fill = (str)=> str.replace(/\{(\w+)\}/g, (m,k)=> vars[k] ?? '');
+
+  const hadPhoto = pendingQueue.length > 0;
+  const photo = hadPhoto ? pendingQueue[0].photo : null;
+
+  const entry = {
+    id: 'c'+Date.now()+Math.random().toString(36).slice(2,7),
+    photo: photo,
+    cardName: card.name,
+    setName: card.set?.name || '',
+    number: card.number || '',
+    rarity: card.rarity || '',
+    condition: stickyCondition,
+    price: suggestedPrice,
+    priceCurrency: price.currency || $('currency-select').value,
+    qty: stickyQty,
+    title: fill(tmpl).slice(0,80),
+    description: fill(descTmpl),
+    sku: `PKMN-${(card.set?.id||'set')}-${card.number}-${Date.now().toString().slice(-5)}`,
+    imageUrl: '',
+    categoryId: $('category-id-input').value
+  };
+  batch.push(entry);
+  if(hadPhoto) pendingQueue.shift();
+
+  lastAdd = { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
+  showUndoBar(`✅ ${entry.cardName} ajouté(e)`);
+  playConfirmAnimation();
+
+  updateQueueBadges();
+  renderQueueStrip();
+
+  setTimeout(()=>{ renderIdentify(); }, 480);
+}
+
+function playConfirmAnimation(){
+  const overlay = $('confirm-overlay');
+  overlay.classList.add('show');
+  setTimeout(()=> overlay.classList.remove('show'), 460);
+}
+
+function showUndoBar(msg){
+  clearTimeout(undoTimeout);
+  $('undo-msg').textContent = msg;
+  $('undo-bar').classList.add('show');
+  undoTimeout = setTimeout(()=> $('undo-bar').classList.remove('show'), 5000);
+}
+
+$('btn-undo').addEventListener('click', ()=>{
+  if(!lastAdd) return;
+  if(batch[lastAdd.batchIndex]){
+    batch.splice(lastAdd.batchIndex,1);
+  }
+  if(lastAdd.requeuedPhoto){
+    pendingQueue.unshift({id:'q'+Date.now(), photo: lastAdd.requeuedPhoto});
+  }
+  lastAdd = null;
+  $('undo-bar').classList.remove('show');
+  toast('↩️ Ajout annulé.');
+  updateQueueBadges();
+  renderQueueStrip();
+  renderIdentify();
+});
+
+// ---------------- BATCH TABLE ----------------
+function renderBatch(){
+  $('tab-count').textContent = batch.length;
+  $('stat-count').textContent = batch.length;
+  const totalValue = batch.reduce((sum,e)=> sum + (parseFloat(e.price)||0) * (parseInt(e.qty)||1), 0);
+  $('stat-value').textContent = totalValue.toFixed(2) + ' €';
+  $('stat-noimg').textContent = batch.filter(e=>!e.imageUrl).length;
+
+  const tbody = $('batch-tbody');
+  tbody.innerHTML = '';
+  $('batch-empty').style.display = batch.length ? 'none' : 'block';
+
+  batch.forEach((entry, idx)=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="thumb-cell">${entry.photo ? `<img src="${entry.photo}">` : '—'}</td>
+      <td><input type="text" data-field="sku" value="${escapeHtml(entry.sku)}" style="width:120px;"></td>
+      <td><input type="text" data-field="title" value="${escapeHtml(entry.title)}" style="width:220px;"></td>
+      <td>
+        <select data-field="condition">
+          ${['NM','LP','MP','HP','DMG'].map(c=>`<option value="${c}" ${entry.condition===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="number" data-field="price" value="${entry.price}" style="width:70px;" step="0.01"></td>
+      <td>
+        <select data-field="priceCurrency">
+          ${['EUR','USD','GBP'].map(c=>`<option value="${c}" ${(entry.priceCurrency||'EUR')===c?'selected':''}>${c}</option>`).join('')}
+        </select>
+      </td>
+      <td><input type="number" data-field="qty" value="${entry.qty}" style="width:50px;" min="1"></td>
+      <td><input type="text" data-field="imageUrl" value="${escapeHtml(entry.imageUrl)}" placeholder="https://..." style="width:180px;"></td>
+      <td><button class="btn-danger btn-sm" data-action="delete">🗑</button></td>
+    `;
+    tr.querySelectorAll('[data-field]').forEach(input=>{
+      input.addEventListener('input', ()=>{
+        batch[idx][input.dataset.field] = input.value;
+        if(input.dataset.field==='price' || input.dataset.field==='qty' || input.dataset.field==='imageUrl'){
+          renderBatchStatsOnly();
+        }
+      });
+    });
+    tr.querySelector('[data-action="delete"]').addEventListener('click', ()=>{
+      batch.splice(idx,1);
+      renderBatch();
+    });
+    tbody.appendChild(tr);
+  });
+}
+
+function renderBatchStatsOnly(){
+  $('tab-count').textContent = batch.length;
+  $('stat-count').textContent = batch.length;
+  const totalValue = batch.reduce((sum,e)=> sum + (parseFloat(e.price)||0) * (parseInt(e.qty)||1), 0);
+  $('stat-value').textContent = totalValue.toFixed(2) + ' €';
+  $('stat-noimg').textContent = batch.filter(e=>!e.imageUrl).length;
+}
+
+function escapeHtml(str){
+  return (str||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ---------------- SAVE / LOAD PROGRESS ----------------
+$('btn-save-json').addEventListener('click', ()=>{
+  const data = {
+    savedAt: new Date().toISOString(),
+    settings: {
+      currency: $('currency-select').value,
+      pricePct: $('price-pct-input').value,
+      categoryId: $('category-id-input').value,
+      titleTemplate: $('title-template-input').value,
+      descTemplate: $('desc-template-input').value
+    },
+    // `sourceBlob` (image d'origine) n'est pas sérialisable en JSON et n'a pas à être
+    // sauvegardé : on ne conserve que la photo compressée et le résultat d'analyse.
+    pendingQueue: pendingQueue.map(({sourceBlob, ...rest}) => rest),
+    skippedQueue: skippedQueue.map(({sourceBlob, ...rest}) => rest),
+    batch
+  };
+  const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+  downloadBlob(blob, `pokemon-ebay-progress-${new Date().toISOString().slice(0,10)}.json`);
+  toast('💾 Progression sauvegardée.');
+});
+
+$('btn-load-json').addEventListener('click', ()=> $('load-json-input').click());
+$('load-json-input').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = (ev)=>{
+    try{
+      const data = JSON.parse(ev.target.result);
+      batch = data.batch || [];
+      pendingQueue = data.pendingQueue || [];
+      skippedQueue = data.skippedQueue || [];
+      if(data.settings){
+        $('currency-select').value = data.settings.currency || 'EUR';
+        $('price-pct-input').value = data.settings.pricePct || 80;
+        $('category-id-input').value = data.settings.categoryId || '183454';
+        $('title-template-input').value = data.settings.titleTemplate || $('title-template-input').value;
+        $('desc-template-input').value = data.settings.descTemplate || $('desc-template-input').value;
+      }
+      updateQueueBadges();
+      renderBatch();
+      toast(`📂 ${batch.length} carte(s), ${pendingQueue.length} en attente rechargées.`);
+      document.querySelector('[data-tab="batch"]').click();
+    } catch(err){
+      toast('⚠️ Fichier invalide.');
+    }
+  };
+  reader.readAsText(file);
+});
+
+// ---------------- EXPORT CSV ----------------
+$('btn-export-csv').addEventListener('click', ()=>{
+  if(!batch.length){ toast('Le lot est vide.'); return; }
+  const headers = ['SKU','Title','Description','CategoryID','ConditionCode','ConditionDescriptorID','Price','Currency','Quantity','ImageURL','Game','CardName','Set','CardNumber','Rarity'];
+  const condDescriptor = {NM:'400010', LP:'400015', MP:'400016', HP:'400017', DMG:'400017'};
+  const defaultCurrency = $('currency-select').value;
+  const rows = batch.map(e=>[
+    e.sku, e.title, (e.description||'').replace(/\n/g,' | '), e.categoryId || '183454',
+    e.condition, condDescriptor[e.condition]||'', e.price, e.priceCurrency || defaultCurrency, e.qty,
+    e.imageUrl, 'Pokemon TCG', e.cardName, e.setName, e.number, e.rarity
+  ]);
+  const csv = [headers, ...rows].map(r=> r.map(csvEscape).join(',')).join('\n');
+  const blob = new Blob([csv], {type:'text/csv'});
+  downloadBlob(blob, `ebay-export-${new Date().toISOString().slice(0,10)}.csv`);
+  toast('⬇️ CSV exporté.');
+});
+
+function csvEscape(val){
+  val = String(val ?? '');
+  if(/[",\n]/.test(val)) return '"'+val.replace(/"/g,'""')+'"';
+  return val;
+}
+
+// ---------------- EXPORT ZIP ----------------
+$('btn-export-zip').addEventListener('click', async ()=>{
+  if(!batch.length){ toast('Le lot est vide.'); return; }
+  if(typeof JSZip === 'undefined'){ toast('⚠️ JSZip indisponible (pas de connexion internet ?)'); return; }
+  toast('Préparation du .zip...');
+  const zip = new JSZip();
+  batch.forEach((e, idx)=>{
+    if(e.photo){
+      const base64 = e.photo.split(',')[1];
+      zip.file(`${e.sku || 'card_'+idx}.jpg`, base64, {base64:true});
+    }
+  });
+  const content = await zip.generateAsync({type:'blob'});
+  downloadBlob(content, `pokemon-photos-${new Date().toISOString().slice(0,10)}.zip`);
+  toast('⬇️ ZIP exporté.');
+});
+
+function downloadBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(()=> URL.revokeObjectURL(url), 5000);
+}
+
+updateQueueBadges();
+renderQueueStrip();
+
+// Réutilise la table des sets déjà en cache (si présente) sans reconstruire au démarrage.
+try{
+  const cached = JSON.parse(localStorage.getItem(SET_MAP_CACHE_KEY) || 'null');
+  if(cached && (Date.now() - cached.builtAt) < SET_MAP_MAX_AGE_MS && cached.byDenominator){
+    setAbbrMap = cached.map;
+    setDenominatorMap = cached.byDenominator;
+    $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+  }
+} catch(e){ /* cache absent ou corrompu, sera reconstruite au premier scan */ }
+</script>
+</body>
+</html>
