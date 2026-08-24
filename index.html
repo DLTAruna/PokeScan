@@ -84,6 +84,27 @@
     border-radius:50%; background:#fff; border:4px solid var(--accent); font-size:24px;
     display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(0,0,0,.4);
   }
+  /* ---- cadre de visée : rouge = pas de carte, jaune = à ajuster, vert = prêt ---- */
+  .aim-frame{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    /* ratio d'une carte Pokémon (63x88mm) */
+    height:78%; aspect-ratio:63/88; border:3px solid var(--bad); border-radius:12px;
+    box-shadow:0 0 0 100vmax rgba(0,0,0,.35); pointer-events:none;
+    transition:border-color .15s;
+  }
+  .aim-frame.adjust{border-color:var(--warn);}
+  .aim-frame.ready{border-color:var(--good);}
+  .aim-hint{
+    position:absolute; bottom:88px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.7); color:#fff; padding:6px 14px; border-radius:16px;
+    font-size:13px; white-space:nowrap; pointer-events:none; max-width:92%; overflow:hidden; text-overflow:ellipsis;
+  }
+  .auto-toggle{
+    position:absolute; top:10px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.65); color:#fff; border:1px solid rgba(255,255,255,.3);
+    border-radius:16px; padding:5px 12px; font-size:12px;
+  }
+  .auto-toggle.on{background:var(--good); border-color:var(--good);}
   .cam-counter{
     position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
@@ -187,18 +208,22 @@
   <section class="section active" id="section-capture">
     <div class="panel">
       <h2>📹 Caméra en direct (rafale)</h2>
-      <p class="sub">Garde la caméra ouverte et appuie sur le bouton pour chaque carte, sans jamais fermer/rouvrir l'appareil photo. Les photos s'accumulent dans une file, à identifier ensuite d'un coup dans l'onglet "Identifier".</p>
+      <p class="sub">Place la carte dans le cadre : la capture se déclenche <b>toute seule</b> dès qu'il passe au vert. Enchaîne les cartes sans rien toucher — l'analyse tourne en arrière-plan pendant que tu continues. Le bouton 📸 reste disponible pour forcer une prise.</p>
       <div class="capture-btns" id="cam-start-row">
         <button class="btn-gold" id="btn-start-cam">📹 Démarrer la caméra</button>
       </div>
       <div class="video-wrap" id="video-wrap">
         <video id="video" autoplay playsinline muted></video>
+        <div class="aim-frame" id="aim-frame"></div>
         <div class="flash" id="flash"></div>
         <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
+        <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
+        <div class="aim-hint" id="aim-hint">Démarrage…</div>
         <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
         <button class="capture-fab" id="btn-capture-frame">📸</button>
       </div>
       <div class="hint" id="cam-error"></div>
+      <div class="hint" id="capture-progress"></div>
       <div class="queue-strip" id="queue-strip"></div>
     </div>
 
@@ -648,8 +673,13 @@ function loadImageEl(dataUrl){
 // ex. entre l'illustration et le texte) pour ne pas fragmenter la carte en plusieurs
 // blocs — sans quoi seule l'illustration (plus dense) était détectée, ratant le bandeau
 // du bas où se trouve le numéro.
+// Accepte une <img> comme une <video> : les dimensions natives ne portent pas le même
+// nom selon l'élément, ce qui donnerait des NaN silencieux si on ne gérait qu'un cas.
 function detectCardBounds(img){
-  const w = 220, h = Math.round(img.naturalHeight * (w/img.naturalWidth));
+  const srcW = img.naturalWidth || img.videoWidth;
+  const srcH = img.naturalHeight || img.videoHeight;
+  if(!srcW || !srcH) return {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1};
+  const w = 220, h = Math.round(srcH * (w/srcW));
   const canvas = document.createElement('canvas');
   canvas.width = w; canvas.height = h;
   const ctx = canvas.getContext('2d');
@@ -975,6 +1005,23 @@ function dHashFromImageSource(src){
     img.onerror = reject;
     img.src = src;
   });
+}
+
+// Empreinte de la ZONE CARTE uniquement, calculée directement depuis un canvas ou une
+// vidéo — sans passer par un dataURL (l'encodage PNG d'une image 1280x960 coûte plus de
+// 100 ms, inacceptable dans une boucle temps réel). Cadrer sur la carte est aussi bien
+// plus discriminant : sur l'image entière, deux cartes différentes partagent tout le
+// fond et se retrouvent à tort considérées identiques.
+function dHashOfRegion(source, srcW, srcH, bounds){
+  const w = 9, h = 8;
+  const canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  const ctx = canvas.getContext('2d');
+  const sx = bounds.leftFrac*srcW, sy = bounds.topFrac*srcH;
+  const sw = Math.max(1, (bounds.rightFrac-bounds.leftFrac)*srcW);
+  const sh = Math.max(1, (bounds.bottomFrac-bounds.topFrac)*srcH);
+  ctx.drawImage(source, sx, sy, sw, sh, 0, 0, w, h);
+  return dHashFromCanvas(ctx, w, h);
 }
 
 function hammingDistance(a, b){
@@ -1451,21 +1498,44 @@ async function runAutoIdentify(myToken){
 let queueAnalysisRunning = false;
 const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exact (perf DOM)
 
+// Tourne en continu, quel que soit l'onglet affiché : on veut que les photos
+// s'analysent au fil de l'eau pendant que l'utilisateur continue de shooter dans
+// l'onglet Capture. (Avant, l'analyse était conditionnée à l'onglet Identifier actif,
+// donc rien ne se faisait pendant la prise de vue et tout s'empilait pour la fin.)
 async function processQueueAnalysis(){
   if(queueAnalysisRunning || !ocrEnabled) return;
   queueAnalysisRunning = true;
   try{
     while(true){
-      const identifyTab = document.getElementById('section-identify');
-      if(!identifyTab || !identifyTab.classList.contains('active')) break;
       const item = pendingQueue.find(it => !it._analysis || it._analysis.status === 'pending');
       if(!item) break;
       await analyzeQueueItem(item);
       renderQueueOverview();
+      updateCaptureProgress();
+      // Rend la main au navigateur entre deux cartes : sans ça, l'aperçu caméra
+      // saccade pendant que l'OCR enchaîne.
+      await new Promise(r => setTimeout(r, 0));
     }
   } finally {
     queueAnalysisRunning = false;
+    updateCaptureProgress();
   }
+}
+
+// Avancement visible depuis l'onglet Capture, pour suivre l'analyse sans quitter
+// la prise de vue.
+function updateCaptureProgress(){
+  const el = $('capture-progress');
+  if(!el) return;
+  if(!pendingQueue.length){ el.textContent = ''; return; }
+  let done = 0, waiting = 0;
+  for(const it of pendingQueue){
+    if(it._analysis && it._analysis.status !== 'pending') done++;
+    else waiting++;
+  }
+  el.textContent = waiting
+    ? `🔎 Analyse : ${done}/${pendingQueue.length} traitée(s), ${waiting} en attente`
+    : `✅ ${done} carte(s) analysée(s)`;
 }
 
 function renderQueueOverview(){
@@ -1537,13 +1607,21 @@ function renderQueueStrip(){
 // ---------------- LIVE CAMERA ----------------
 $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
-$('btn-capture-frame').addEventListener('click', captureFrame);
+$('btn-capture-frame').addEventListener('click', ()=> captureFrame(true));
+$('btn-auto-capture').addEventListener('click', ()=>{
+  autoCaptureEnabled = !autoCaptureEnabled;
+  $('btn-auto-capture').classList.toggle('on', autoCaptureEnabled);
+  $('btn-auto-capture').textContent = autoCaptureEnabled ? '⚡ Auto' : '✋ Manuel';
+});
 
 async function startCamera(){
   $('cam-error').textContent = '';
   try{
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:960} },
+      // Résolution la plus haute possible : c'est le nombre de pixels sur la ligne du
+      // numéro qui détermine la réussite de l'OCR. On demande du 1080p+ et on laisse
+      // le navigateur retomber sur ce que la caméra sait faire.
+      video: { facingMode:'environment', width:{ideal:1920}, height:{ideal:1440} },
       audio:false
     });
     $('video').srcObject = cameraStream;
@@ -1551,12 +1629,127 @@ async function startCamera(){
     $('cam-start-row').style.display = 'none';
     capturedThisSession = 0;
     renderQueueStrip();
+    startAimLoop();
   } catch(err){
     $('cam-error').textContent = '⚠️ Caméra indisponible ('+err.message+'). Utilise "Import en masse" ou "Photo unique" ci-dessous à la place.';
   }
 }
 
+// ---------------- VISÉE ET CAPTURE AUTOMATIQUE ----------------
+// Analyse légère du flux ~4 fois par seconde (image réduite à 200px, donc très peu
+// coûteuse) pour piloter la couleur du cadre et déclencher la capture tout seul.
+// Trois critères, tous nécessaires : la carte remplit assez le cadre, ses proportions
+// correspondent à une carte, et l'image est nette (pas de flou de bougé).
+let aimTimer = null;
+let autoCaptureEnabled = true;
+let readyStreak = 0;
+let lastCaptureAt = 0;
+let lastCaptureHash = null;
+
+const AIM_MIN_COVERAGE = 0.35;   // part de la hauteur du cadre occupée par la carte
+const AIM_RATIO_TOL = 0.22;      // écart toléré sur le ratio h/l (1.396 attendu)
+const AIM_MIN_SHARPNESS = 45;    // variance du laplacien en dessous de laquelle c'est flou
+const AIM_READY_STREAK = 2;      // ticks consécutifs "prêt" avant de déclencher
+const AIM_COOLDOWN_MS = 900;     // délai mini entre deux captures automatiques
+
+// Netteté = variance du laplacien, mesure classique de flou : une image nette a des
+// transitions franches (forte variance), une image floue les étale (faible variance).
+function sharpnessScore(ctx, w, h){
+  const d = ctx.getImageData(0,0,w,h).data;
+  const grey = new Float32Array(w*h);
+  for(let i=0,p=0;i<d.length;i+=4,p++) grey[p]=d[i]*0.3+d[i+1]*0.59+d[i+2]*0.11;
+  let sum=0, sumSq=0, n=0;
+  for(let y=1;y<h-1;y++){
+    for(let x=1;x<w-1;x++){
+      const lap = 4*grey[y*w+x] - grey[y*w+x-1] - grey[y*w+x+1] - grey[(y-1)*w+x] - grey[(y+1)*w+x];
+      sum+=lap; sumSq+=lap*lap; n++;
+    }
+  }
+  if(!n) return 0;
+  const mean = sum/n;
+  return sumSq/n - mean*mean;
+}
+
+function setAimState(state, hint){
+  const frame = $('aim-frame'), hintEl = $('aim-hint');
+  if(frame){
+    frame.classList.toggle('adjust', state==='adjust');
+    frame.classList.toggle('ready', state==='ready');
+  }
+  if(hintEl) hintEl.textContent = hint;
+}
+
+function evaluateAim(){
+  const video = $('video');
+  if(!video || !video.videoWidth) return {state:'none', hint:'Démarrage de la caméra…'};
+
+  const w = 200, h = Math.round(video.videoHeight * (w/video.videoWidth));
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(video, 0, 0, w, h);
+
+  const sharp = sharpnessScore(ctx, w, h);
+
+  const b = detectCardBounds(video);
+  const cardH = b.bottomFrac - b.topFrac;
+  const cardW = b.rightFrac - b.leftFrac;
+  if(cardH <= 0.05 || cardW <= 0.05) return {state:'none', hint:'Aucune carte détectée'};
+
+  // Quand aucune région distincte ne ressort, detectCardBounds retombe sur l'image
+  // entière : couplé à une image peu détaillée, c'est la signature d'un cadre vide
+  // (table, mur…) et non d'une carte qui remplirait tout l'écran.
+  if(cardH > 0.95 && cardW > 0.95 && sharp < AIM_MIN_SHARPNESS * 3){
+    return {state:'none', hint:'Place une carte dans le cadre'};
+  }
+
+  const coverage = cardH;
+  if(coverage < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte'};
+
+  // Ratio hauteur/largeur en pixels réels de la vidéo (les fractions sont relatives à
+  // des dimensions différentes en x et en y, il faut donc les repasser en pixels).
+  const ratio = (cardH * video.videoHeight) / (cardW * video.videoWidth);
+  if(Math.abs(ratio - 1.396) > AIM_RATIO_TOL){
+    return {state:'adjust', hint:'Redresse la carte face à l\'objectif'};
+  }
+
+  if(sharp < AIM_MIN_SHARPNESS) return {state:'adjust', hint:'Stabilise — image floue'};
+
+  return {state:'ready', hint:'Carte détectée — capture…'};
+}
+
+function startAimLoop(){
+  stopAimLoop();
+  aimTimer = setInterval(async ()=>{
+    if(!cameraStream) return;
+    let res;
+    try{ res = evaluateAim(); }
+    catch(e){ res = {state:'none', hint:'Analyse indisponible'}; }
+
+    if(res.state === 'ready') readyStreak++;
+    else readyStreak = 0;
+
+    if(!autoCaptureEnabled){
+      setAimState(res.state, res.state==='ready' ? 'Prêt — appuie sur 📸' : res.hint);
+      return;
+    }
+    setAimState(res.state, res.hint);
+
+    const now = Date.now();
+    if(readyStreak >= AIM_READY_STREAK && (now - lastCaptureAt) > AIM_COOLDOWN_MS){
+      readyStreak = 0;
+      await captureFrame(false);
+    }
+  }, 250);
+}
+
+function stopAimLoop(){
+  if(aimTimer){ clearInterval(aimTimer); aimTimer = null; }
+  readyStreak = 0;
+}
+
 function stopCamera(){
+  stopAimLoop();
   if(cameraStream){
     cameraStream.getTracks().forEach(t=>t.stop());
     cameraStream = null;
@@ -1565,15 +1758,30 @@ function stopCamera(){
   $('cam-start-row').style.display = 'flex';
 }
 
-function captureFrame(){
+async function captureFrame(manual){
   const video = $('video');
-  if(!video.videoWidth) return;
+  if(!video || !video.videoWidth) return;
 
   // Pleine résolution du flux, en PNG sans perte : c'est cette image qui part à l'OCR.
   const full = document.createElement('canvas');
   full.width = video.videoWidth;
   full.height = video.videoHeight;
   full.getContext('2d').drawImage(video, 0, 0);
+
+  // Anti-doublon : en mode auto, une carte qui reste dans le cadre serait capturée à
+  // chaque cycle. On compare l'empreinte perceptuelle de la ZONE CARTE à la dernière
+  // capture et on ignore une image quasi identique. Une capture manuelle force la prise.
+  try{
+    const bounds = detectCardBounds(video);
+    const hash = dHashOfRegion(full, full.width, full.height, bounds);
+    if(!manual && lastCaptureHash != null && hammingDistance(hash, lastCaptureHash) <= 4){
+      setAimState('adjust', 'Même carte — présente la suivante');
+      return;
+    }
+    lastCaptureHash = hash;
+  } catch(e){ /* empreinte impossible : on capture quand même */ }
+
+  lastCaptureAt = Date.now();
 
   // Version réduite + JPEG pour le stockage/affichage uniquement.
   const canvas = document.createElement('canvas');
