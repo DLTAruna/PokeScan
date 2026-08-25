@@ -94,21 +94,38 @@ La capture automatique en caméra live ne réutilise pas la chaîne ci-dessus te
 pas de cadre fixe à aligner à la main, la carte est détectée dans l'image, redressée par
 perspective, puis lue.
 
-1. **Détection** (`worker: 'detect'`) : un modèle entraîné (`scanic`, détecteur
-   `DocCornerNet`/SimCC via ONNX — [github.com/marquaye/scanic](https://github.com/marquaye/scanic),
-   licence MIT) localise les 4 coins de la carte dans l'image caméra brute et renvoie un
-   score de confiance. Tourne dans le Web Worker (mode `'detect'` uniquement — le mode
-   `'extract'` de scanic appelle `document.createElement` et plante en Worker), à chaque
-   tick (~350 ms), sans jamais lire de texte.
-2. **Redressement par perspective** (`extractDocument`, fil principal) : à partir des 4
-   coins, seulement quand le score dépasse `MIN_SCORE` — rare comparé à la détection,
-   donc acceptable hors du Worker (~20-60 ms mesurés).
-3. **Filtre de forme** : le ratio hauteur/largeur de la carte redressée est comparé à
-   `CARD_RATIO` (88/63) avec 25 % de tolérance — rejette les faux positifs (autres objets
-   rectangulaires) sans dépendre du score du détecteur seul.
-4. **Lecture** (`worker: 'read'`) : bande élargie (78 % largeur × 22 % hauteur, centrée,
-   marge de 1,5 % en bas) découpée dans la carte redressée, test de netteté (variance du
-   laplacien), puis PaddleOCR — identique à la chaîne §3 à partir de cette étape.
+Deux Workers séparés, pas un seul — et deux boucles indépendantes côté fil principal
+(`detectLoop` / `attemptRead`), pour la même raison : sans isolation multi-thread WASM
+(COOP/COEP non activés sur ce déploiement), un appel OCR (jusqu'à ~2 s) occupe le fil JS
+du worker qui le reçoit, et un appel de détection arrivé pendant ce temps resterait
+simplement en attente derrière lui — le cadre de visée se figeait pendant toute la durée
+d'une tentative de lecture. Mesuré après séparation : 4 appels de détection consécutifs
+(88-194 ms chacun) aboutissent bien pendant qu'un appel OCR (1,36 s) tourne encore dans
+l'autre worker.
+
+1. **Détection** (worker dédié, `getDetectWorker`/`detectWorkerCall`) : un modèle
+   entraîné (`scanic`, détecteur `DocCornerNet`/SimCC via ONNX —
+   [github.com/marquaye/scanic](https://github.com/marquaye/scanic), licence MIT)
+   localise les 4 coins de la carte dans l'image caméra brute et renvoie un score de
+   confiance. Mode `'detect'` uniquement — le mode `'extract'` de scanic appelle
+   `document.createElement` et plante en Worker. `detectLoop()` l'appelle en continu
+   (auto-replanifiée, pas un intervalle fixe), sans jamais lire de texte — c'est ce qui la
+   garde rapide (~90-200 ms mesurés) et permet un cadre quasi temps réel.
+2. **Redressement par perspective** (`extractDocument`, fil principal, dans
+   `attemptRead()`) : à partir des 4 coins, seulement quand le score dépasse `MIN_SCORE`
+   — et sans bloquer `detectLoop`, qui continue en parallèle (~20-60 ms mesurés).
+3. **Filtre de forme, dans les deux sens** : le ratio hauteur/largeur de la carte
+   redressée est comparé à `CARD_RATIO` (88/63) ET à son inverse (63/88), tolérance 25 %
+   — scanic étiquette les coins par position dans l'image, pas selon l'orientation
+   imprimée, donc une carte tenue légèrement tournée peut ressortir "en paysage" sans être
+   un faux positif (constaté sur diagnostic réel). Si c'est le cas, l'image est pivotée à
+   90° avant lecture (sens arbitraire, faute d'indice sur l'orientation réelle).
+4. **Lecture** (worker OCR existant, `workerCall('read', ...)`) : bande élargie (78 %
+   largeur × 30 % hauteur, centrée, marge de 1,5 % en bas) découpée dans la carte
+   redressée, test de netteté (variance du laplacien), puis PaddleOCR — identique à la
+   chaîne §3 à partir de cette étape. Déclenchée par `detectLoop` mais jamais attendue par
+   elle (fire-and-forget, garde `readInFlight` + `MIN_READ_INTERVAL_MS` pour éviter les
+   tentatives redondantes).
 
 Remplace deux approches abandonnées, documentées dans `index.html` pour ne pas les
 retenter : la détection de contour maison en JS (instable sur appareil réel — formes

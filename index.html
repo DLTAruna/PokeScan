@@ -639,21 +639,6 @@ function getVisionWorker(){
           })();
           return svcPromise;
         }
-        // Détection des coins de la carte, mode:'detect' seulement : le mode 'extract'
-        // de scanic appelle document.createElement en interne et plante dans un Worker.
-        // Le redressement par perspective se fait donc côté fil principal (voir
-        // scanTick), à partir des coins renvoyés ici.
-        let detector = null, detectorPromise = null;
-        async function ensureDetector(){
-          if(detector) return detector;
-          if(!detectorPromise) detectorPromise = (async ()=>{
-            const mod = await import(${JSON.stringify(SCANIC_MODULE)});
-            const sc = new mod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
-            await sc.initialize();
-            detector = sc; return sc;
-          })();
-          return detectorPromise;
-        }
         const CARD_RATIO = 88/63;
         const LOOKALIKES = ${JSON.stringify({
           'O':'0','o':'0','Q':'0','D':'0','I':'1','l':'1','i':'1','|':'1','!':'1',
@@ -712,7 +697,7 @@ function getVisionWorker(){
         self.onmessage = async (e)=>{
           const { id, type, bitmap, cardW } = e.data;
           try{
-            if(type === 'init'){ await Promise.all([ensure(), ensureDetector()]); postMessage({id, ok:true}); return; }
+            if(type === 'init'){ await ensure(); postMessage({id, ok:true}); return; }
 
             if(type === 'ocr'){
               const s = await ensure();
@@ -724,38 +709,9 @@ function getVisionWorker(){
               return;
             }
 
-            // 'detect' : localise la carte dans l'image caméra brute (coins + score de
-            // confiance). Rapide et appelé à chaque tick ; ne fait AUCUNE lecture de
-            // texte, juste la géométrie.
-            if(type === 'detect'){
-              const det = await ensureDetector();
-              const w = bitmap.width, h = bitmap.height;
-              const src = new OffscreenCanvas(w, h);
-              src.getContext('2d', {willReadFrequently:true}).drawImage(bitmap, 0, 0);
-              bitmap.close();
-              const imgData = src.getContext('2d').getImageData(0, 0, w, h);
-
-              let res = null;
-              try{ res = await det.scan(imgData, { mode:'detect', detector:'ml' }); }
-              catch(errDet){ /* le score/coins restent null, traité comme "rien détecté" */ }
-
-              let corners = null;
-              if(res && res.corners){
-                const c = res.corners;
-                corners = {
-                  tl:[c.topLeft.x/w,     c.topLeft.y/h],
-                  tr:[c.topRight.x/w,    c.topRight.y/h],
-                  br:[c.bottomRight.x/w, c.bottomRight.y/h],
-                  bl:[c.bottomLeft.x/w,  c.bottomLeft.y/h]
-                };
-              }
-              postMessage({id, ok:true, score:(res && res.score!=null) ? res.score : null, corners});
-              return;
-            }
-
             // 'read' : l'image reçue est DÉJÀ la carte redressée (perspective corrigée
-            // par le fil principal, voir scanTick) — il ne reste qu'à cadrer la bande du
-            // numéro, vérifier la netteté et lire le texte.
+            // par le fil principal, voir attemptRead) — il ne reste qu'à cadrer la bande
+            // du numéro, vérifier la netteté et lire le texte.
             if(type === 'read'){
               const W = cardW || 600, H = Math.round(W*CARD_RATIO);
               const card = new OffscreenCanvas(W, H);
@@ -820,6 +776,102 @@ function workerCall(type, payload, transfer){
     // Un worker muet bloquerait la boucle indéfiniment : on borne l'attente.
     setTimeout(()=>{
       if(workerPending.has(id)){ workerPending.delete(id); reject(new Error('worker : délai dépassé')); }
+    }, 30000);
+    w.postMessage(Object.assign({id, type}, payload||{}), transfer||[]);
+  }));
+}
+
+// ---------------- DÉTECTION DE CARTE DANS UN WORKER SÉPARÉ ----------------
+// Un Worker distinct de celui de l'OCR, et pas juste un second type de message sur le
+// même worker : sans isolation multi-thread WASM (COOP/COEP non activés sur ce
+// déploiement), un appel OCR (jusqu'à ~2s) occupe le fil JS du worker qui le reçoit —
+// un appel 'detect' arrivé pendant ce temps resterait simplement en attente derrière
+// lui. Deux workers séparés tournent réellement en parallèle : la détection reste
+// fluide même pendant que l'OCR travaille sur la tentative précédente en arrière-plan.
+let detectWorker = null, detectWorkerPromise = null, detectWorkerSeq = 0, detectWorkerBroken = false;
+const detectWorkerPending = new Map();
+
+function getDetectWorker(){
+  if(detectWorkerPromise) return detectWorkerPromise;
+  detectWorkerPromise = new Promise((resolve, reject)=>{
+    try{
+      const src = `
+        let detector = null, detectorPromise = null;
+        async function ensureDetector(){
+          if(detector) return detector;
+          if(!detectorPromise) detectorPromise = (async ()=>{
+            const mod = await import(${JSON.stringify(SCANIC_MODULE)});
+            const sc = new mod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+            await sc.initialize();
+            detector = sc; return sc;
+          })();
+          return detectorPromise;
+        }
+
+        self.onmessage = async (e)=>{
+          const { id, type, bitmap } = e.data;
+          try{
+            if(type === 'init'){ await ensureDetector(); postMessage({id, ok:true}); return; }
+
+            // 'detect' : localise la carte dans l'image caméra brute (coins + score de
+            // confiance). Ne fait AUCUNE lecture de texte, juste la géométrie — c'est ce
+            // qui le garde rapide et permet de l'appeler en boucle serrée.
+            if(type === 'detect'){
+              const det = await ensureDetector();
+              const w = bitmap.width, h = bitmap.height;
+              const src = new OffscreenCanvas(w, h);
+              src.getContext('2d', {willReadFrequently:true}).drawImage(bitmap, 0, 0);
+              bitmap.close();
+              const imgData = src.getContext('2d').getImageData(0, 0, w, h);
+
+              let res = null;
+              try{ res = await det.scan(imgData, { mode:'detect', detector:'ml' }); }
+              catch(errDet){ /* le score/coins restent null, traité comme "rien détecté" */ }
+
+              let corners = null;
+              if(res && res.corners){
+                const c = res.corners;
+                corners = {
+                  tl:[c.topLeft.x/w,     c.topLeft.y/h],
+                  tr:[c.topRight.x/w,    c.topRight.y/h],
+                  br:[c.bottomRight.x/w, c.bottomRight.y/h],
+                  bl:[c.bottomLeft.x/w,  c.bottomLeft.y/h]
+                };
+              }
+              postMessage({id, ok:true, score:(res && res.score!=null) ? res.score : null, corners});
+              return;
+            }
+
+            postMessage({id, ok:false, error:'type inconnu: ' + type});
+          }catch(err){
+            postMessage({id, ok:false, error: (err && err.message) || String(err)});
+          }
+        };
+      `;
+      const w = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+      w.onmessage = (e)=>{
+        const p = detectWorkerPending.get(e.data.id);
+        if(!p) return;
+        detectWorkerPending.delete(e.data.id);
+        e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+      };
+      w.onerror = (e)=>{
+        detectWorkerBroken = true;
+        reject(new Error('worker détection : ' + (e.message || 'erreur de chargement')));
+      };
+      detectWorker = w;
+      resolve(w);
+    }catch(err){ detectWorkerBroken = true; reject(err); }
+  });
+  return detectWorkerPromise;
+}
+
+function detectWorkerCall(type, payload, transfer){
+  return getDetectWorker().then(w => new Promise((resolve, reject)=>{
+    const id = ++detectWorkerSeq;
+    detectWorkerPending.set(id, {resolve, reject});
+    setTimeout(()=>{
+      if(detectWorkerPending.has(id)){ detectWorkerPending.delete(id); reject(new Error('worker détection : délai dépassé')); }
     }, 30000);
     w.postMessage(Object.assign({id, type}, payload||{}), transfer||[]);
   }));
@@ -1916,15 +1968,18 @@ async function startCamera(){
 // reflet, trop loin). La capture n'est donc déclenchée QUE si l'OCR a effectivement lu
 // le numéro ou le nom — et le résultat est réutilisé tel quel pour l'entrée de la file,
 // donc rien n'est réanalysé ensuite.
-let aimTimer = null;
+let detectRunning = false;
 let autoCaptureEnabled = true;
 let lastCaptureAt = 0;
 let lastCaptureHash = null;   // empreinte hexadécimale renvoyée par le worker
-let scanInFlight = false;
+let readInFlight = false;
+let lastReadAttemptAt = 0;
 
-const AIM_COOLDOWN_MS = 700;     // délai mini entre deux captures
-const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
-const MIN_SCORE = 0.5;           // confiance mini du détecteur pour tenter la lecture
+const AIM_COOLDOWN_MS = 700;      // délai mini entre deux captures
+const MIN_READ_INTERVAL_MS = 400; // délai mini entre deux TENTATIVES de lecture (succès ou non)
+const DETECT_MIN_DELAY_MS = 60;   // pause plancher entre deux détections (protège le CPU si le worker répond très vite)
+const CARD_RATIO = 88/63;         // hauteur/largeur d'une carte Pokémon
+const MIN_SCORE = 0.5;            // confiance mini du détecteur pour tenter la lecture
 
 // Chargé à la demande sur le FIL PRINCIPAL (pas dans le worker) : extractDocument a
 // besoin de document.createElement pour construire son canvas de sortie.
@@ -2102,47 +2157,82 @@ function hexHamming(a, b){
 }
 
 // ---------------- BOUCLE DE SCAN ----------------
-// Deux allers-retours au worker, pas un seul : la détection (fréquente, chaque tick)
-// tourne dans le worker ; le redressement par perspective (rare — seulement quand une
-// carte est probable — et ~30ms) tourne sur le fil principal, scanic en ayant besoin
-// pour construire son canvas de sortie ; la lecture OCR de la carte redressée retourne
-// dans le worker. L'aperçu reste fluide : la seule chose qui touche le fil principal à
-// chaque tick est la détection (légère) et l'affichage.
-async function scanTick(){
+// Deux boucles indépendantes, pas une seule chaîne séquentielle :
+//  - detectLoop() : tourne en continu (auto-replanifiée, pas un setInterval fixe), ne
+//    fait QUE la détection (rapide, dans son propre worker) et met à jour le cadre.
+//    Rien ici n'attend jamais l'OCR.
+//  - attemptRead() : déclenchée par detectLoop quand une carte est probable, mais SANS
+//    être attendue (fire-and-forget) — elle tourne en tâche de fond (redressement sur
+//    le fil principal, lecture OCR dans l'autre worker) pendant que detectLoop continue
+//    d'avancer et de rafraîchir le cadre à son propre rythme.
+// Avant cette séparation, le cadre restait figé pendant toute la durée d'une tentative
+// de lecture (jusqu'à ~2s) puisque tout passait par un seul aller-retour séquentiel.
+async function detectLoop(){
+  if(!detectRunning) return;
   const video = $('video');
-  if(!cameraStream || !video || !video.videoWidth) return;
-  if(!ocrReadyForCamera || scanInFlight) return;
-  if(Date.now() - lastCaptureAt < AIM_COOLDOWN_MS) return;
 
-  scanInFlight = true;
+  if(!cameraStream || !video || !video.videoWidth || !ocrReadyForCamera){
+    setTimeout(detectLoop, 150);
+    return;
+  }
+  if(!autoCaptureEnabled){
+    drawGuideOverlay(video, 'attente', null);
+    setAimHint('Mode manuel — appuie sur 📸');
+    setTimeout(detectLoop, 200);
+    return;
+  }
+
   const t0 = performance.now();
   try{
     const bmp = await createImageBitmap(video);
-    const d = await workerCall('detect', {bitmap:bmp}, [bmp]);
+    const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       drawGuideOverlay(video, 'attente', d.corners);
       setAimHint('Vise la carte');
-      diagPush('try', {ok:false, hint:'aucune carte', score:d.score, ocrMs:Math.round(performance.now()-t0)});
-      return;
+    } else {
+      drawGuideOverlay(video, 'lecture', d.corners);
+      const now = Date.now();
+      if(!readInFlight
+         && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
+         && now - lastCaptureAt >= AIM_COOLDOWN_MS){
+        lastReadAttemptAt = now;
+        attemptRead(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
+      }
     }
-    drawGuideOverlay(video, 'lecture', d.corners);
+  }catch(e){
+    diagPush('err', {msg:'détection : ' + e.message});
+  }
+
+  const elapsed = performance.now() - t0;
+  setTimeout(detectLoop, Math.max(0, DETECT_MIN_DELAY_MS - elapsed));
+}
+
+// Redressement (fil principal) + lecture OCR (worker OCR) d'une détection prometteuse.
+// Appelée sans await par detectLoop : toute erreur doit donc être interceptée ICI, une
+// exception qui s'en échapperait deviendrait un rejet de promesse non attrapé.
+async function attemptRead(corners, score){
+  if(readInFlight) return;
+  readInFlight = true;
+  const t0 = performance.now();
+  try{
+    const video = $('video');
+    if(!video || !video.videoWidth) return;
 
     const scanic = await getScanic();
     const vw = video.videoWidth, vh = video.videoHeight;
     const frame = document.createElement('canvas');
     frame.width = vw; frame.height = vh;
     frame.getContext('2d').drawImage(video, 0, 0, vw, vh);
-    const corners = {
-      topLeft:     {x: d.corners.tl[0]*vw, y: d.corners.tl[1]*vh},
-      topRight:    {x: d.corners.tr[0]*vw, y: d.corners.tr[1]*vh},
-      bottomRight: {x: d.corners.br[0]*vw, y: d.corners.br[1]*vh},
-      bottomLeft:  {x: d.corners.bl[0]*vw, y: d.corners.bl[1]*vh}
+    const cornersPx = {
+      topLeft:     {x: corners.tl[0]*vw, y: corners.tl[1]*vh},
+      topRight:    {x: corners.tr[0]*vw, y: corners.tr[1]*vh},
+      bottomRight: {x: corners.br[0]*vw, y: corners.br[1]*vh},
+      bottomLeft:  {x: corners.bl[0]*vw, y: corners.bl[1]*vh}
     };
-    const extracted = await scanic.extractDocument(frame, corners, {output:'canvas'});
+    const extracted = await scanic.extractDocument(frame, cornersPx, {output:'canvas'});
     if(!extracted.success || !extracted.output){
-      setAimHint('Redressement échoué — réessaie');
-      diagPush('try', {ok:false, hint:'redressement échoué', score:d.score, ocrMs:Math.round(performance.now()-t0)});
+      diagPush('try', {ok:false, hint:'redressement échoué', score, ocrMs:Math.round(performance.now()-t0)});
       return;
     }
 
@@ -2158,8 +2248,7 @@ async function scanTick(){
     const isPortrait  = Math.abs(outRatio - CARD_RATIO)     / CARD_RATIO     <= 0.25;
     const isLandscape = Math.abs(outRatio - INV_CARD_RATIO) / INV_CARD_RATIO <= 0.25;
     if(!isPortrait && !isLandscape){
-      setAimHint('Forme non reconnue — recentre la carte');
-      diagPush('try', {ok:false, hint:'forme incompatible', score:d.score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
+      diagPush('try', {ok:false, hint:'forme incompatible', score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
       return;
     }
 
@@ -2185,19 +2274,16 @@ async function scanTick(){
     const ms = Math.round(performance.now()-t0);
 
     if(r.reason === 'flou'){
-      drawGuideOverlay(video, 'lecture', d.corners);
       setAimHint('Stabilise — image floue');
-      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score:d.score, ocrMs:ms});
+      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms});
       return;
     }
     if(r.reason === 'illisible' || !r.number){
-      drawGuideOverlay(video, 'lecture', d.corners);
       setAimHint('Numéro non lu — rapproche-toi');
-      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score:d.score, ocrMs:ms, raw:r.text});
+      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text});
       return;
     }
     if(lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4){
-      drawGuideOverlay(video, 'lecture', d.corners);
       setAimHint('Même carte — présente la suivante');
       if(r.carte && r.carte.close) r.carte.close();
       return;
@@ -2217,15 +2303,15 @@ async function scanTick(){
     capturedThisSession++;
     flashScreen();
     if(navigator.vibrate) navigator.vibrate(40);
-    drawGuideOverlay(video, 'ok', d.corners);
+    const v = $('video');
+    if(v) drawGuideOverlay(v, 'ok', corners);
     setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
-    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score:d.score, ocrMs:ms,
+    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms,
                      num:r.number+'/'+r.denominator, raw:r.text});
   }catch(e){
-    diagPush('err', {msg:'scan : ' + e.message});
-    setAimHint('Lecture indisponible — utilise 📸');
+    diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
-    scanInFlight = false;
+    readInFlight = false;
   }
 }
 
@@ -2239,10 +2325,10 @@ function startAimLoop(){
   const video = $('video');
   if(video) drawGuideOverlay(video, 'attente', null);
 
-  // Les deux moteurs (~6 Mo OCR + ~3,5 Mo détecteur, au premier lancement) sont
-  // initialisés dans le worker, donc sans figer l'aperçu — et AVANT la boucle, sinon la
-  // première tentative resterait bloquée dessus sans aucun retour visible.
-  workerCall('init')
+  // Les deux moteurs (~6 Mo OCR + ~3,5 Mo détecteur, au premier lancement), chacun dans
+  // son propre worker, sont initialisés en parallèle sans figer l'aperçu — et AVANT la
+  // boucle, sinon la première tentative resterait bloquée dessus sans aucun retour visible.
+  Promise.all([workerCall('init'), detectWorkerCall('init')])
     .then(()=>{
       ocrReadyForCamera = true;
       setAimHint('Vise la carte');
@@ -2257,21 +2343,13 @@ function startAimLoop(){
         '). La capture automatique est désactivée ; le bouton 📸 reste utilisable.';
     });
 
-  aimTimer = setInterval(()=>{
-    const v = $('video');
-    if(!v) return;
-    if(!autoCaptureEnabled){
-      drawGuideOverlay(v, 'attente', null);
-      setAimHint('Mode manuel — appuie sur 📸');
-      return;
-    }
-    scanTick();
-  }, 350);
+  detectRunning = true;
+  detectLoop();
 }
 
 function stopAimLoop(){
-  if(aimTimer){ clearInterval(aimTimer); aimTimer = null; }
-  scanInFlight = false;
+  detectRunning = false;
+  readInFlight = false;
   overlayState = null;
   overlayCornersKey = null;
   const cvs = $('aim-overlay');
