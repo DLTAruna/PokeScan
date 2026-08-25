@@ -616,6 +616,10 @@ async function getOcrService(){
 // Le worker charge une version *pré-résolue* du moteur (suffixe `/+esm`) : les workers
 // ne lisent pas l'`importmap` de la page, donc les imports par nom court échoueraient.
 const OCR_WORKER_MODULE = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web/+esm';
+// Détecteur de carte (coins + confiance), modèle entraîné (DocCornerNet/SimCC via
+// LiteRT/ONNX), remplace la détection de contour maison abandonnée (voir plus bas).
+// Le worker et le fil principal doivent charger la MÊME version.
+const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
 let visionWorker = null, visionWorkerPromise = null, workerSeq = 0, workerBroken = false;
 const workerPending = new Map();
 
@@ -634,6 +638,21 @@ function getVisionWorker(){
             svc = s; return s;
           })();
           return svcPromise;
+        }
+        // Détection des coins de la carte, mode:'detect' seulement : le mode 'extract'
+        // de scanic appelle document.createElement en interne et plante dans un Worker.
+        // Le redressement par perspective se fait donc côté fil principal (voir
+        // scanTick), à partir des coins renvoyés ici.
+        let detector = null, detectorPromise = null;
+        async function ensureDetector(){
+          if(detector) return detector;
+          if(!detectorPromise) detectorPromise = (async ()=>{
+            const mod = await import(${JSON.stringify(SCANIC_MODULE)});
+            const sc = new mod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+            await sc.initialize();
+            detector = sc; return sc;
+          })();
+          return detectorPromise;
         }
         const CARD_RATIO = 88/63;
         const LOOKALIKES = ${JSON.stringify({
@@ -691,9 +710,9 @@ function getVisionWorker(){
         }
 
         self.onmessage = async (e)=>{
-          const { id, type, bitmap, guide, cardW } = e.data;
+          const { id, type, bitmap, cardW } = e.data;
           try{
-            if(type === 'init'){ await ensure(); postMessage({id, ok:true}); return; }
+            if(type === 'init'){ await Promise.all([ensure(), ensureDetector()]); postMessage({id, ok:true}); return; }
 
             if(type === 'ocr'){
               const s = await ensure();
@@ -705,19 +724,51 @@ function getVisionWorker(){
               return;
             }
 
-            // 'scan' : tout le traitement d'une image caméra, du recadrage à la lecture.
-            // Le fil principal n'a plus qu'à envoyer l'image et afficher le résultat.
-            if(type === 'scan'){
+            // 'detect' : localise la carte dans l'image caméra brute (coins + score de
+            // confiance). Rapide et appelé à chaque tick ; ne fait AUCUNE lecture de
+            // texte, juste la géométrie.
+            if(type === 'detect'){
+              const det = await ensureDetector();
+              const w = bitmap.width, h = bitmap.height;
+              const src = new OffscreenCanvas(w, h);
+              src.getContext('2d', {willReadFrequently:true}).drawImage(bitmap, 0, 0);
+              bitmap.close();
+              const imgData = src.getContext('2d').getImageData(0, 0, w, h);
+
+              let res = null;
+              try{ res = await det.scan(imgData, { mode:'detect', detector:'ml' }); }
+              catch(errDet){ /* le score/coins restent null, traité comme "rien détecté" */ }
+
+              let corners = null;
+              if(res && res.corners){
+                const c = res.corners;
+                corners = {
+                  tl:[c.topLeft.x/w,     c.topLeft.y/h],
+                  tr:[c.topRight.x/w,    c.topRight.y/h],
+                  br:[c.bottomRight.x/w, c.bottomRight.y/h],
+                  bl:[c.bottomLeft.x/w,  c.bottomLeft.y/h]
+                };
+              }
+              postMessage({id, ok:true, score:(res && res.score!=null) ? res.score : null, corners});
+              return;
+            }
+
+            // 'read' : l'image reçue est DÉJÀ la carte redressée (perspective corrigée
+            // par le fil principal, voir scanTick) — il ne reste qu'à cadrer la bande du
+            // numéro, vérifier la netteté et lire le texte.
+            if(type === 'read'){
               const W = cardW || 600, H = Math.round(W*CARD_RATIO);
-              const sx = guide.x*bitmap.width,  sy = guide.y*bitmap.height;
-              const sw = guide.w*bitmap.width,  sh = guide.h*bitmap.height;
               const card = new OffscreenCanvas(W, H);
-              card.getContext('2d').drawImage(bitmap, sx, sy, sw, sh, 0, 0, W, H);
+              card.getContext('2d').drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, W, H);
               bitmap.close();
 
-              const bandH = Math.round(H*0.20);
-              const band = new OffscreenCanvas(Math.round(W*0.62), bandH);
-              band.getContext('2d').drawImage(card, 0, H-bandH, band.width, bandH, 0, 0, band.width, bandH);
+              // Bande élargie avec marge (redressement fiable désormais, mais on garde
+              // une tolérance pour l'imprécision résiduelle du recadrage/redressement).
+              const bandH = Math.round(H*0.22);
+              const bandW = Math.round(W*0.78);
+              const bx = Math.round((W-bandW)/2), by = H - bandH - Math.round(H*0.015);
+              const band = new OffscreenCanvas(bandW, bandH);
+              band.getContext('2d').drawImage(card, bx, by, bandW, bandH, 0, 0, bandW, bandH);
 
               const sharp = sharpness(band);
               if(sharp < 25){ postMessage({id, ok:true, sharp, reason:'flou'}); return; }
@@ -1870,6 +1921,16 @@ let scanInFlight = false;
 
 const AIM_COOLDOWN_MS = 700;     // délai mini entre deux captures
 const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
+const MIN_SCORE = 0.5;           // confiance mini du détecteur pour tenter la lecture
+
+// Chargé à la demande sur le FIL PRINCIPAL (pas dans le worker) : extractDocument a
+// besoin de document.createElement pour construire son canvas de sortie.
+let scanicMod = null, scanicModPromise = null;
+function getScanic(){
+  if(scanicMod) return Promise.resolve(scanicMod);
+  if(!scanicModPromise) scanicModPromise = import(SCANIC_MODULE).then(m => scanicMod = m);
+  return scanicModPromise;
+}
 
 // ---------------- ENREGISTREUR DE DIAGNOSTIC ----------------
 // Conserve les dernières observations pour pouvoir analyser, après coup, ce qui bloque
@@ -1899,10 +1960,11 @@ function buildDiagReport(){
     const dt = String(e.t - t0).padStart(6);
     if(e.k === 'try'){
       l.push(dt + 'ms  SCAN  ' + (e.ok ? 'CAPTURE' : 'refus  ') +
+        '  score=' + (e.score!=null ? e.score.toFixed(2) : '-') +
         '  netteté=' + (e.sharp!=null ? Math.round(e.sharp) : '-') +
         '  durée=' + e.ocrMs + 'ms' +
         '  lu=' + (e.num || '—') +
-        '  "' + e.hint + '"');
+        '  "' + e.hint + '"' + (e.ratio!=null ? ('  ratio='+e.ratio) : ''));
       if(e.raw) l.push('              texte OCR : ' + JSON.stringify(e.raw).slice(0,220));
     } else if(e.k === 'err'){
       l.push(dt + 'ms  INFO  ' + e.msg);
@@ -1932,29 +1994,18 @@ async function copyDiagReport(){
 //    soit tout l'écran pris pour la carte (couverture 0.9, ratio égal à celui de la
 //    vidéo), soit des formes improbables (ratio 2.28, remplissage 0.35). Le cadre
 //    oscillait entre cette forme fausse et un cadre de repli : affichage erratique.
-// D'où le choix actuel : un cadre FIXE, que l'utilisateur vise. Aucun calcul par image,
-// donc aucune saccade possible, et la fiabilité reste entière puisque c'est la lecture
-// du numéro — et elle seule — qui déclenche la capture.
+//  - Cadre fixe (que l'utilisateur aligne à la main) : fiable mais intolérant au moindre
+//    écart d'alignement, la bande de lecture du numéro tombant alors hors de la carte.
+// Le point commun des deux échecs : une géométrie devinée par heuristique, sans jamais
+// avoir *appris* à quoi ressemble une carte sur fond quelconque. On utilise désormais un
+// modèle entraîné pour ça (scanic/DocCornerNet, via ONNX — voir SCANIC_MODULE) : mêmes
+// symptômes visés (fond encombré, perspective) mais un modèle généralise là où une
+// heuristique codée à la main ne fait que réagir aux cas prévus à l'avance.
 
-
-
-
-
-// Dessine le contour détecté par-dessus la vidéo, dans la couleur de l'état.
-// L'overlay ne dessine que des traits : le tenir à la résolution de la vidéo
-// (jusqu'à 1920x1440) revenait à effacer et repeindre des millions de pixels 4 fois
-// par seconde, ce qui saccadait tout. Un canvas de 640px de large suffit, les
-// coordonnées sont simplement mises à l'échelle.
-// ---------------- CADRE DE VISÉE FIXE ----------------
-// La détection automatique du contour a été retirée. Sur appareil réel, elle prenait
-// tout l'écran pour la carte (couverture 0.9, ratio égal à celui de la vidéo) ou
-// renvoyait des formes improbables ; le cadre basculait sans arrêt entre cette forme
-// fausse et un cadre de repli, ce qui rendait l'affichage erratique. Un cadre fixe est
-// stable par construction, ne coûte rien à afficher, et ne retire aucune fiabilité :
-// c'est la lecture du numéro qui décide de la capture, pas la géométrie.
+// ---------------- CADRE DE VISÉE ----------------
+// Placeholder affiché tant qu'aucune carte n'est détectée (et utilisé par la capture
+// manuelle 📸, qui n'a pas besoin d'attendre une détection).
 const GUIDE_H = 0.62;   // hauteur du cadre, en fraction de la hauteur de l'image
-
-// Zone de capture, en fractions de l'image (x, y, largeur, hauteur).
 function guideRect(video){
   const vw = video.videoWidth, vh = video.videoHeight;
   let h = GUIDE_H, w = (h*vh/CARD_RATIO)/vw;
@@ -1962,46 +2013,74 @@ function guideRect(video){
   return { x:(1-w)/2, y:(1-h)/2, w, h };
 }
 
-// Dessiné une seule fois par changement d'état, et non à chaque image : il n'y a plus
-// rien à recalculer puisque le cadre ne bouge pas.
-let overlayState = null;
-function drawGuideOverlay(video, state){
+// Dessine le quadrilatère détecté par-dessus la vidéo, dans la couleur de l'état —
+// rouge (aucune carte), orange (détectée, lecture en cours), vert (capturée). Les coins
+// viennent du worker (fractions 0-1 de l'image) ; sans détection, on retombe sur le
+// cadre placeholder fixe. Un canvas de 640px de large suffit (l'overlay ne dessine que
+// des traits), les coordonnées sont mises à l'échelle depuis les fractions.
+let overlayState = null, overlayCornersKey = null;
+function cornersKey(c){ return c ? [c.tl,c.tr,c.br,c.bl].map(p=>p[0].toFixed(3)+','+p[1].toFixed(3)).join('|') : 'none'; }
+function drawGuideOverlay(video, state, corners){
   const cvs = $('aim-overlay');
   if(!cvs || !video.videoWidth) return;
   const OW = 640, OH = Math.max(1, Math.round(video.videoHeight * (OW/video.videoWidth)));
   const resize = (cvs.width !== OW || cvs.height !== OH);
-  if(!resize && state === overlayState) return;
+  const ck = cornersKey(corners);
+  if(!resize && state === overlayState && ck === overlayCornersKey) return;
   if(resize){ cvs.width = OW; cvs.height = OH; }
   overlayState = state;
+  overlayCornersKey = ck;
 
-  const g = guideRect(video);
-  const x = g.x*OW, y = g.y*OH, w = g.w*OW, h = g.h*OH;
   const ctx = cvs.getContext('2d');
   ctx.clearRect(0,0,OW,OH);
+
+  let pts;
+  if(corners){
+    pts = [corners.tl, corners.tr, corners.br, corners.bl].map(p => [p[0]*OW, p[1]*OH]);
+  } else {
+    const g = guideRect(video);
+    const x = g.x*OW, y = g.y*OH, w = g.w*OW, h = g.h*OH;
+    pts = [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
+  }
 
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,.38)';
   ctx.beginPath();
   ctx.rect(0,0,OW,OH);
-  ctx.rect(x,y,w,h);
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
   ctx.fill('evenodd');
   ctx.restore();
 
   const couleurs = {attente:'#e0553f', lecture:'#e0a12a', ok:'#3ba55d'};
-  ctx.strokeStyle = couleurs[state] || couleurs.attente;
+  const couleur = couleurs[state] || couleurs.attente;
+  ctx.strokeStyle = couleur;
   ctx.lineWidth = Math.max(3, OW*0.006);
   ctx.lineJoin = 'round';
-  ctx.strokeRect(x,y,w,h);
-
-  // Coins marqués, pour aider au cadrage.
-  const c = Math.min(w,h)*0.12;
-  ctx.lineWidth = Math.max(4, OW*0.009);
   ctx.beginPath();
-  ctx.moveTo(x, y+c); ctx.lineTo(x, y); ctx.lineTo(x+c, y);
-  ctx.moveTo(x+w-c, y); ctx.lineTo(x+w, y); ctx.lineTo(x+w, y+c);
-  ctx.moveTo(x+w, y+h-c); ctx.lineTo(x+w, y+h); ctx.lineTo(x+w-c, y+h);
-  ctx.moveTo(x+c, y+h); ctx.lineTo(x, y+h); ctx.lineTo(x, y+h-c);
+  ctx.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
+  ctx.closePath();
   ctx.stroke();
+
+  // Coins marqués, pour aider au cadrage — le long des arêtes réelles du quadrilatère
+  // (pas forcément axées XY, contrairement à l'ancien cadre fixe).
+  const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
+  const c = Math.min(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys))*0.12;
+  ctx.lineWidth = Math.max(4, OW*0.009);
+  for(let i=0;i<pts.length;i++){
+    const [x,y] = pts[i];
+    const [px,py] = pts[(i+3)%4];
+    const [nx,ny] = pts[(i+1)%4];
+    const toPrev = Math.hypot(px-x, py-y) || 1;
+    const toNext = Math.hypot(nx-x, ny-y) || 1;
+    ctx.beginPath();
+    ctx.moveTo(x + (px-x)/toPrev*c, y + (py-y)/toPrev*c);
+    ctx.lineTo(x, y);
+    ctx.lineTo(x + (nx-x)/toNext*c, y + (ny-y)/toNext*c);
+    ctx.stroke();
+  }
 }
 
 function setAimHint(hint){
@@ -2020,9 +2099,12 @@ function hexHamming(a, b){
 }
 
 // ---------------- BOUCLE DE SCAN ----------------
-// Le fil principal ne fait plus que trois choses : prendre une image, l'envoyer au
-// worker, afficher le résultat. Tout le reste (recadrage, netteté, OCR, empreinte)
-// se passe dans le worker, donc l'aperçu reste fluide quoi qu'il arrive.
+// Deux allers-retours au worker, pas un seul : la détection (fréquente, chaque tick)
+// tourne dans le worker ; le redressement par perspective (rare — seulement quand une
+// carte est probable — et ~30ms) tourne sur le fil principal, scanic en ayant besoin
+// pour construire son canvas de sortie ; la lecture OCR de la carte redressée retourne
+// dans le worker. L'aperçu reste fluide : la seule chose qui touche le fil principal à
+// chaque tick est la détection (légère) et l'affichage.
 async function scanTick(){
   const video = $('video');
   if(!cameraStream || !video || !video.videoWidth) return;
@@ -2033,30 +2115,67 @@ async function scanTick(){
   const t0 = performance.now();
   try{
     const bmp = await createImageBitmap(video);
-    const r = await workerCall('scan',
-      {bitmap:bmp, guide:guideRect(video), cardW:600}, [bmp]);
+    const d = await workerCall('detect', {bitmap:bmp}, [bmp]);
+
+    if(!d.corners || d.score == null || d.score < MIN_SCORE){
+      drawGuideOverlay(video, 'attente', d.corners);
+      setAimHint('Vise la carte');
+      diagPush('try', {ok:false, hint:'aucune carte', score:d.score, ocrMs:Math.round(performance.now()-t0)});
+      return;
+    }
+    drawGuideOverlay(video, 'lecture', d.corners);
+
+    const scanic = await getScanic();
+    const vw = video.videoWidth, vh = video.videoHeight;
+    const frame = document.createElement('canvas');
+    frame.width = vw; frame.height = vh;
+    frame.getContext('2d').drawImage(video, 0, 0, vw, vh);
+    const corners = {
+      topLeft:     {x: d.corners.tl[0]*vw, y: d.corners.tl[1]*vh},
+      topRight:    {x: d.corners.tr[0]*vw, y: d.corners.tr[1]*vh},
+      bottomRight: {x: d.corners.br[0]*vw, y: d.corners.br[1]*vh},
+      bottomLeft:  {x: d.corners.bl[0]*vw, y: d.corners.bl[1]*vh}
+    };
+    const extracted = await scanic.extractDocument(frame, corners, {output:'canvas'});
+    if(!extracted.success || !extracted.output){
+      setAimHint('Redressement échoué — réessaie');
+      diagPush('try', {ok:false, hint:'redressement échoué', score:d.score, ocrMs:Math.round(performance.now()-t0)});
+      return;
+    }
+
+    // Filtre de forme : un quadrilatère détecté dont le ratio ne ressemble pas à une
+    // carte Pokémon est un faux positif (livre, écran, table…), pas une carte floue.
+    const outRatio = extracted.output.height / extracted.output.width;
+    if(Math.abs(outRatio - CARD_RATIO) / CARD_RATIO > 0.25){
+      setAimHint('Forme non reconnue — recentre la carte');
+      diagPush('try', {ok:false, hint:'forme incompatible', score:d.score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
+      return;
+    }
+
+    const cardBmp = await createImageBitmap(extracted.output);
+    const r = await workerCall('read', {bitmap:cardBmp, cardW:600}, [cardBmp]);
     const ms = Math.round(performance.now()-t0);
 
     if(r.reason === 'flou'){
-      drawGuideOverlay(video, 'lecture');
+      drawGuideOverlay(video, 'lecture', d.corners);
       setAimHint('Stabilise — image floue');
-      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, bandMs:0, ocrMs:ms});
+      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score:d.score, ocrMs:ms});
       return;
     }
     if(r.reason === 'illisible' || !r.number){
-      drawGuideOverlay(video, 'lecture');
-      setAimHint('Numéro non lu — ajuste le cadrage');
-      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, bandMs:0, ocrMs:ms, raw:r.text});
+      drawGuideOverlay(video, 'lecture', d.corners);
+      setAimHint('Numéro non lu — rapproche-toi');
+      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score:d.score, ocrMs:ms, raw:r.text});
       return;
     }
     if(lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4){
-      drawGuideOverlay(video, 'lecture');
+      drawGuideOverlay(video, 'lecture', d.corners);
       setAimHint('Même carte — présente la suivante');
       if(r.carte && r.carte.close) r.carte.close();
       return;
     }
 
-    // Lecture réussie : on garde la carte recadrée renvoyée par le worker.
+    // Lecture réussie : on garde la carte redressée puis recadrée renvoyée par le worker.
     lastCaptureHash = r.hash;
     lastCaptureAt = Date.now();
     const cv = document.createElement('canvas');
@@ -2070,9 +2189,9 @@ async function scanTick(){
     capturedThisSession++;
     flashScreen();
     if(navigator.vibrate) navigator.vibrate(40);
-    drawGuideOverlay(video, 'ok');
+    drawGuideOverlay(video, 'ok', d.corners);
     setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
-    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, bandMs:0, ocrMs:ms,
+    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score:d.score, ocrMs:ms,
                      num:r.number+'/'+r.denominator, raw:r.text});
   }catch(e){
     diagPush('err', {msg:'scan : ' + e.message});
@@ -2086,19 +2205,20 @@ function startAimLoop(){
   stopAimLoop();
   ocrReadyForCamera = false;
   overlayState = null;
+  overlayCornersKey = null;
   setAimHint('Préparation de la lecture…');
 
   const video = $('video');
-  if(video) drawGuideOverlay(video, 'attente');
+  if(video) drawGuideOverlay(video, 'attente', null);
 
-  // Le moteur (~6 Mo au premier lancement) est initialisé dans le worker, donc sans
-  // figer l'aperçu — et AVANT la boucle, sinon la première tentative resterait bloquée
-  // dessus sans aucun retour visible.
+  // Les deux moteurs (~6 Mo OCR + ~3,5 Mo détecteur, au premier lancement) sont
+  // initialisés dans le worker, donc sans figer l'aperçu — et AVANT la boucle, sinon la
+  // première tentative resterait bloquée dessus sans aucun retour visible.
   workerCall('init')
     .then(()=>{
       ocrReadyForCamera = true;
-      setAimHint('Place la carte dans le cadre');
-      diagPush('err', {msg:'worker OCR prêt'});
+      setAimHint('Vise la carte');
+      diagPush('err', {msg:'worker OCR + détecteur prêts'});
     })
     .catch(err=>{
       workerBroken = true;
@@ -2113,7 +2233,7 @@ function startAimLoop(){
     const v = $('video');
     if(!v) return;
     if(!autoCaptureEnabled){
-      drawGuideOverlay(v, 'attente');
+      drawGuideOverlay(v, 'attente', null);
       setAimHint('Mode manuel — appuie sur 📸');
       return;
     }
@@ -2125,6 +2245,7 @@ function stopAimLoop(){
   if(aimTimer){ clearInterval(aimTimer); aimTimer = null; }
   scanInFlight = false;
   overlayState = null;
+  overlayCornersKey = null;
   const cvs = $('aim-overlay');
   if(cvs) cvs.getContext('2d').clearRect(0,0,cvs.width,cvs.height);
 }

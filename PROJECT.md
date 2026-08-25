@@ -88,6 +88,34 @@ chaque push sur `main`. **L'hébergement HTTPS est nécessaire** : `getUserMedia
 
 Le nom lu sert de garde-fou partout : c'est le texte le plus fiablement reconnu.
 
+## 3bis. Caméra en direct : détection + redressement + lecture
+
+La capture automatique en caméra live ne réutilise pas la chaîne ci-dessus telle quelle :
+pas de cadre fixe à aligner à la main, la carte est détectée dans l'image, redressée par
+perspective, puis lue.
+
+1. **Détection** (`worker: 'detect'`) : un modèle entraîné (`scanic`, détecteur
+   `DocCornerNet`/SimCC via ONNX — [github.com/marquaye/scanic](https://github.com/marquaye/scanic),
+   licence MIT) localise les 4 coins de la carte dans l'image caméra brute et renvoie un
+   score de confiance. Tourne dans le Web Worker (mode `'detect'` uniquement — le mode
+   `'extract'` de scanic appelle `document.createElement` et plante en Worker), à chaque
+   tick (~350 ms), sans jamais lire de texte.
+2. **Redressement par perspective** (`extractDocument`, fil principal) : à partir des 4
+   coins, seulement quand le score dépasse `MIN_SCORE` — rare comparé à la détection,
+   donc acceptable hors du Worker (~20-60 ms mesurés).
+3. **Filtre de forme** : le ratio hauteur/largeur de la carte redressée est comparé à
+   `CARD_RATIO` (88/63) avec 25 % de tolérance — rejette les faux positifs (autres objets
+   rectangulaires) sans dépendre du score du détecteur seul.
+4. **Lecture** (`worker: 'read'`) : bande élargie (78 % largeur × 22 % hauteur, centrée,
+   marge de 1,5 % en bas) découpée dans la carte redressée, test de netteté (variance du
+   laplacien), puis PaddleOCR — identique à la chaîne §3 à partir de cette étape.
+
+Remplace deux approches abandonnées, documentées dans `index.html` pour ne pas les
+retenter : la détection de contour maison en JS (instable sur appareil réel — formes
+aberrantes ou cadre calé sur l'écran entier) et, avant elle, OpenCV.js (trop lourd,
+chargement qui n'aboutissait pas sur mobile). Le point commun des deux échecs : une
+géométrie devinée par heuristique plutôt qu'apprise.
+
 ## 4. Décisions techniques et pièges (mesurés, pas supposés)
 
 ### 4.1 Ne jamais faire d'OCR sur l'image compressée
@@ -125,14 +153,17 @@ numéro lisible.
 
 ## 6. Pistes d'amélioration
 
-1. **Cadre de visée et capture automatique** en caméra live (comme les applis de scan du
-   commerce) : le cadrage guidé maximise les pixels sur la ligne du numéro, qui est le
-   facteur limitant réel.
-2. **Analyse en Web Worker** pour ne pas bloquer le fil principal pendant la capture.
+1. ~~Cadre de visée et capture automatique en caméra live~~ — fait, voir §3bis
+   (détection par modèle entraîné + redressement, plus fiable qu'un cadre fixe aligné à
+   la main).
+2. ~~Analyse en Web Worker~~ — fait (OCR et détection de carte tous deux hors fil
+   principal).
 3. Modèles PaddleOCR « server » (plus lourds, plus précis) en option.
 4. Vote sur plusieurs fenêtres de recadrage.
 5. Pricing : Cardmarket est déjà exploité en priorité ; affiner la conversion et les
    variantes (holo, reverse, 1re édition).
+6. Seuils du détecteur (`MIN_SCORE`, tolérance du filtre de forme) à ajuster une fois des
+   diagnostics réels disponibles — posés par prudence, pas mesurés sur appareil.
 
 ## 7. Risques
 
