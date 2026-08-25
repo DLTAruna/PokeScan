@@ -76,15 +76,25 @@
   .video-wrap{position:relative; border-radius:var(--radius); overflow:hidden; background:#000; display:none;}
   .video-wrap.active{display:block;}
   /* Plein écran (overlay CSS, pas l'API Fullscreen : peu fiable sur Safari iOS pour un
-     élément quelconque) activé au démarrage de la caméra, désactivé à l'arrêt. */
+     élément quelconque) activé au démarrage de la caméra, désactivé à l'arrêt. La
+     caméra prend toute la place disponible (flex:1) et le panneau de résultat reste
+     TOUJOURS visible juste en dessous, jamais poussé hors écran — le reste (diagnostic,
+     file d'attente) est masqué ici, pas supprimé : il redevient visible normalement dès
+     la sortie du plein écran. */
   #cam-fullscreen-area.fs{
     position:fixed; inset:0; z-index:200; background:var(--bg);
     padding:10px 10px calc(10px + env(safe-area-inset-bottom));
     padding-top:calc(10px + env(safe-area-inset-top));
-    overflow-y:auto; display:flex; flex-direction:column; gap:8px;
+    overflow:hidden; display:flex; flex-direction:column; gap:8px;
   }
-  #cam-fullscreen-area.fs .video-wrap{flex-shrink:0;}
-  #cam-fullscreen-area.fs video{max-height:60vh;}
+  #cam-fullscreen-area.fs .video-wrap{flex:1 1 auto; min-height:0;}
+  #cam-fullscreen-area.fs video{width:100%; height:100%; max-height:none;}
+  #cam-fullscreen-area.fs .live-result{flex-shrink:0;}
+  #cam-fullscreen-area.fs #cam-error,
+  #cam-fullscreen-area.fs #capture-progress,
+  #cam-fullscreen-area.fs .diag-controls,
+  #cam-fullscreen-area.fs #diag-view,
+  #cam-fullscreen-area.fs #queue-strip{display:none;}
   /* contain et non cover : on doit voir exactement ce qui sera capturé, et le cadre
      de visée superposé doit s'aligner au pixel près sur l'image vidéo. */
   video{width:100%; display:block; max-height:65vh; object-fit:contain; background:#000;}
@@ -263,7 +273,7 @@
       </div>
       <div class="hint" id="cam-error"></div>
       <div class="hint" id="capture-progress"></div>
-      <div class="hint" style="margin-top:8px;">
+      <div class="hint diag-controls" style="margin-top:8px;">
         <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
         <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
         <span id="diag-count" style="margin-left:8px;"></span>
@@ -2099,6 +2109,7 @@ async function startCamera(){
     $('cam-start-row').style.display = 'none';
     $('cam-fullscreen-area').classList.add('fs');
     document.documentElement.style.overflow = 'hidden';
+    showLiveResultWaiting();
     capturedThisSession = 0;
     renderQueueStrip();
     startAimLoop();
@@ -2286,6 +2297,32 @@ function guideRect(video){
   return { x:(1-w)/2, y:(1-h)/2, w, h };
 }
 
+// Trace un polygone à coins arrondis (rayon adapté à chaque coin, jamais plus grand que
+// la moitié d'une arête adjacente — sinon un quadrilatère fin/étiré donnerait un rendu
+// aberrant). Technique standard : arcTo() vers chaque sommet crée naturellement le
+// raccord arrondi entre deux segments, quelle que soit leur orientation — utile ici
+// puisque le quadrilatère détecté n'est presque jamais aligné XY (perspective).
+// N'appelle PAS ctx.beginPath() : ce tracé doit pouvoir devenir un sous-tracé d'un path
+// existant (le masque assombri en a besoin pour son découpage en 'evenodd' — un second
+// beginPath() effacerait le rectangle englobant déjà tracé par l'appelant).
+function roundedPolyPath(ctx, pts, radius){
+  const n = pts.length;
+  const edgeLen = (a,b) => Math.hypot(b[0]-a[0], b[1]-a[1]);
+  for(let i=0;i<=n;i++){
+    const prev = pts[(i-1+n)%n];
+    const p1 = pts[i%n];
+    const p2 = pts[(i+1)%n];
+    const r = Math.max(0, Math.min(radius, edgeLen(prev,p1)/2, edgeLen(p1,p2)/2));
+    if(i === 0){
+      const d = edgeLen(prev,p1) || 1;
+      const start = [p1[0]+(prev[0]-p1[0])/d*r, p1[1]+(prev[1]-p1[1])/d*r];
+      ctx.moveTo(start[0], start[1]);
+    }
+    ctx.arcTo(p1[0], p1[1], p2[0], p2[1], r);
+  }
+  ctx.closePath();
+}
+
 // Dessine le quadrilatère détecté par-dessus la vidéo, dans la couleur de l'état —
 // rouge (aucune carte), orange (détectée, lecture en cours), vert (capturée). Les coins
 // viennent du worker (fractions 0-1 de l'image) ; sans détection, on retombe sur le
@@ -2314,13 +2351,17 @@ function drawGuideOverlay(video, state, corners){
     pts = [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
   }
 
+  // Rayon des coins : une vraie carte Pokémon a les coins arrondis, pas droits — ce
+  // cadre doit épouser la même forme plutôt qu'un simple rectangle. ~7 % du plus petit
+  // côté de la boîte englobante, comme un vrai coin de carte à cette échelle.
+  const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
+  const radius = Math.min(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys)) * 0.07;
+
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,.38)';
   ctx.beginPath();
   ctx.rect(0,0,OW,OH);
-  ctx.moveTo(pts[0][0], pts[0][1]);
-  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  ctx.closePath();
+  roundedPolyPath(ctx, pts, radius);
   ctx.fill('evenodd');
   ctx.restore();
 
@@ -2330,28 +2371,8 @@ function drawGuideOverlay(video, state, corners){
   ctx.lineWidth = Math.max(3, OW*0.006);
   ctx.lineJoin = 'round';
   ctx.beginPath();
-  ctx.moveTo(pts[0][0], pts[0][1]);
-  for(let i=1;i<pts.length;i++) ctx.lineTo(pts[i][0], pts[i][1]);
-  ctx.closePath();
+  roundedPolyPath(ctx, pts, radius);
   ctx.stroke();
-
-  // Coins marqués, pour aider au cadrage — le long des arêtes réelles du quadrilatère
-  // (pas forcément axées XY, contrairement à l'ancien cadre fixe).
-  const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
-  const c = Math.min(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys))*0.12;
-  ctx.lineWidth = Math.max(4, OW*0.009);
-  for(let i=0;i<pts.length;i++){
-    const [x,y] = pts[i];
-    const [px,py] = pts[(i+3)%4];
-    const [nx,ny] = pts[(i+1)%4];
-    const toPrev = Math.hypot(px-x, py-y) || 1;
-    const toNext = Math.hypot(nx-x, ny-y) || 1;
-    ctx.beginPath();
-    ctx.moveTo(x + (px-x)/toPrev*c, y + (py-y)/toPrev*c);
-    ctx.lineTo(x, y);
-    ctx.lineTo(x + (nx-x)/toNext*c, y + (ny-y)/toNext*c);
-    ctx.stroke();
-  }
 }
 
 // ---------------- LISSAGE DU CADRE (60 Hz, indépendant de la détection) ----------------
@@ -2360,11 +2381,17 @@ function drawGuideOverlay(video, state, corners){
 // "saute" d'une position à l'autre. On sépare donc la CIBLE (dernière géométrie connue,
 // mise à jour par detectLoop/attemptRead via setOverlayTarget) de ce qui est RÉELLEMENT
 // DESSINÉ (overlayCurrent*, glissé vers la cible à chaque frame d'écran). Le
-// rafraîchissement visuel tourne ainsi à la cadence de l'écran (60 Hz typiquement),
-// indépendamment de la cadence réelle de détection : la caméra a l'air de suivre la
-// carte en temps réel même si la géométrie sous-jacente n'est mise à jour que 5-8 fois
-// par seconde. Seule la position est lissée ; la couleur (état) change instantanément,
-// ce qui reste lisible comme un signal (rouge/orange/vert) plutôt qu'un mouvement.
+// rafraîchissement visuel tourne ainsi à la cadence de l'écran (60 Hz typiquement, plus
+// sur les appareils 90/120 Hz), indépendamment de la cadence réelle de détection : la
+// caméra a l'air de suivre la carte en temps réel même si la géométrie sous-jacente
+// n'est mise à jour que 5-8 fois par seconde. Seule la position est lissée ; la couleur
+// (état) change instantanément, ce qui reste lisible comme un signal plutôt qu'un
+// mouvement.
+// requestAnimationFrame se cale sur le taux de rafraîchissement RÉEL de l'écran — rien
+// ne le plafonne ici, mais un navigateur ne permet pas de forcer un taux fixe (100 fps
+// par ex.) au-delà de ce que l'écran affiche réellement : sur un écran 60 Hz, la boucle
+// tourne déjà à son maximum possible ; sur un 90/120 Hz elle suivra automatiquement plus
+// vite, sans rien à changer ici.
 let overlayTargetState = 'attente', overlayTargetCorners = null;
 let overlayCurrentState = 'attente', overlayCurrentCorners = null;
 let overlayRenderRunning = false;
@@ -2631,6 +2658,22 @@ async function attemptRead(corners, score){
 // garde-fous anti-faux-positif — ce panneau ne fait qu'afficher plus tôt un résultat
 // qui aurait de toute façon fini par sortir de la file d'attente.
 let liveResultSeq = 0;
+const BLANK_THUMB = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+
+// Affiché dès le démarrage de la caméra (mode plein écran), avant toute capture : le
+// panneau reste TOUJOURS visible plutôt que de n'apparaître qu'après la première carte.
+function showLiveResultWaiting(){
+  const el = $('live-result');
+  if(!el) return;
+  el.style.display = 'flex';
+  $('live-result-img').src = BLANK_THUMB;
+  $('live-result-name').textContent = 'En attente d’une carte…';
+  $('live-result-set').textContent = '—';
+  $('live-result-num').textContent = '—';
+  $('live-result-price').textContent = '—';
+  $('live-result-badge').textContent = '';
+  $('live-result-badge').title = '';
+}
 
 function showLiveResultPending(dataUrl, number, denominator){
   const el = $('live-result');
@@ -2773,6 +2816,7 @@ function stopCamera(){
   $('cam-start-row').style.display = 'flex';
   $('cam-fullscreen-area').classList.remove('fs');
   document.documentElement.style.overflow = '';
+  $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
   // La caméra libère le worker OCR : la file mise en attente pendant la prise de vue
   // peut repartir, et sans plus aucune concurrence elle ira à pleine vitesse.
   processQueueAnalysis();
@@ -3377,6 +3421,19 @@ try{
     $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
   }
 } catch(e){ /* cache absent ou corrompu, sera reconstruite au premier scan */ }
+
+// Préchauffe les deux workers (OCR + détecteur, ~9,5 Mo à eux deux au premier chargement)
+// dès l'ouverture de la page plutôt qu'au clic sur "Démarrer la caméra" : c'est le
+// téléchargement + l'initialisation ONNX qui rendaient "Préparation de la lecture..."
+// long, alors que rien n'empêche de le faire pendant que l'utilisateur lit l'écran.
+// startAimLoop() réappelle le même workerCall('init')/detectWorkerCall('init') : chacun
+// mémorise son propre chargement en interne (voir ensure() dans le worker), donc si ce
+// préchauffage a déjà fini, ce second appel se résout quasi instantanément au lieu
+// d'attendre le téléchargement complet ; sinon on n'a rien perdu, juste rien gagné.
+Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
+  /* Échec silencieux ici : startAimLoop retentera au démarrage de la caméra et
+     affichera l'erreur à ce moment-là si le worker est vraiment indisponible. */
+});
 </script>
 </body>
 </html>

@@ -359,6 +359,48 @@ inset:0`) recouvre toute la page dès `startCamera()`, retiré par `stopCamera()
 fiable cross-navigateur, et suffisant puisque rien n'a besoin de sortir du DOM du
 navigateur lui-même.
 
+**Complété ensuite** (retour utilisateur : le panneau live disparaissait sous les
+contrôles de diagnostic et la file, poussé hors écran) : en plein écran, la vidéo prend
+tout l'espace disponible (`flex:1`, plus de plafond `max-height:60vh`) et le panneau de
+résultat reste `flex-shrink:0` juste en dessous — donc TOUJOURS visible, jamais poussé
+hors champ. Les contrôles de diagnostic/file d'attente sont masqués en plein écran (pas
+supprimés, juste `display:none` le temps du scan) pour laisser toute la place aux deux
+éléments qui comptent. Le panneau live s'affiche aussi dès `startCamera()` avec un état
+« en attente d'une carte » (`showLiveResultWaiting`), plutôt que de n'apparaître qu'après
+la première capture — cohérent avec « toujours affiché ».
+
+### 4.15 Préchauffage des workers dès le chargement de la page
+« Préparation de la lecture... » (au clic sur "Démarrer la caméra") pouvait être long :
+c'est le téléchargement (~9,5 Mo à eux deux, OCR + détecteur) et l'initialisation ONNX
+des deux workers qui s'y cachaient, déclenchés à ce moment précis par
+`Promise.all([workerCall('init'), detectWorkerCall('init')])` dans `startAimLoop()`.
+Rien n'empêchait de lancer ce chargement bien plus tôt, pendant que l'utilisateur lit
+l'écran d'accueil : le même appel est maintenant aussi déclenché une fois, en tâche de
+fond, dès le chargement de la page. `startAimLoop()` réappelle exactement le même
+`workerCall('init')`/`detectWorkerCall('init')` — chacun mémorise son propre chargement
+en interne (`ensure()` dans le worker), donc ce second appel se résout quasi
+instantanément si le préchauffage a déjà fini. Vérifié : après quelques secondes sur la
+page, un appel `workerCall('init')` direct résout en **0 ms** au lieu du temps de
+téléchargement + compilation WASM complet.
+
+### 4.16 Cadre à coins arrondis
+Une vraie carte Pokémon a les coins arrondis, pas droits — le cadre de visée traçait un
+quadrilatère à angles vifs. `roundedPolyPath()` (technique `arcTo()` standard, rayon
+borné à la moitié de chaque arête adjacente pour rester correct même sur un
+quadrilatère fin) remplace le tracé droit, pour le masque assombri ET le contour coloré.
+Retire au passage les petits traits d'angle qui compensaient visuellement l'absence
+d'arrondi — devenus inutiles. Vérifié par inspection de pixels (pas seulement visuelle) :
+l'intérieur du cadre reste bien totalement transparent (alpha 0) et l'extérieur
+correctement assombri (alpha ~0,38), le découpage `evenodd` n'a pas régressé avec le
+changement de tracé.
+
+Sur la fluidité (« 100 fps ») : la boucle (`renderOverlayLoop`, `requestAnimationFrame`)
+tournait déjà sans plafond artificiel — un navigateur cale `requestAnimationFrame` sur le
+taux de rafraîchissement RÉEL de l'écran (60 Hz le plus souvent, 90/120 Hz sur certains
+téléphones) ; il n'existe aucun moyen web standard de forcer un taux fixe au-delà de ce
+que l'écran affiche. Rien à changer côté code pour ce point précis — déjà au maximum
+possible.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
