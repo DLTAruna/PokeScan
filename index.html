@@ -221,6 +221,14 @@
       </div>
       <div class="hint" id="cam-error"></div>
       <div class="hint" id="capture-progress"></div>
+      <div class="hint" style="margin-top:8px;">
+        <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
+        <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
+        <span id="diag-count" style="margin-left:8px;"></span>
+      </div>
+      <pre id="diag-view" style="display:none; background:var(--panel2); border:1px solid var(--border);
+           border-radius:8px; padding:8px; font-size:10.5px; max-height:260px; overflow:auto;
+           white-space:pre-wrap; word-break:break-word; margin-top:6px;"></pre>
       <div class="queue-strip" id="queue-strip"></div>
     </div>
 
@@ -1569,6 +1577,12 @@ function updateCaptureProgress(){
     : `✅ ${done} carte(s) analysée(s)`;
 }
 
+// Compteur discret, pour savoir que le diagnostic tourne bien.
+setInterval(()=>{
+  const el = $('diag-count');
+  if(el && diagLog.length) el.textContent = diagLog.length + ' observation(s)';
+}, 1000);
+
 function renderQueueOverview(){
   const strip = $('queue-overview-strip');
   const summary = $('queue-overview-summary');
@@ -1639,6 +1653,12 @@ function renderQueueStrip(){
 $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
 $('btn-capture-frame').addEventListener('click', ()=> captureFrame());
+$('btn-diag-copy').addEventListener('click', copyDiagReport);
+$('btn-diag-show').addEventListener('click', ()=>{
+  const v = $('diag-view');
+  if(v.style.display === 'none'){ v.textContent = buildDiagReport(); v.style.display = 'block'; }
+  else v.style.display = 'none';
+});
 $('btn-auto-capture').addEventListener('click', ()=>{
   autoCaptureEnabled = !autoCaptureEnabled;
   $('btn-auto-capture').classList.toggle('on', autoCaptureEnabled);
@@ -1989,18 +2009,84 @@ function setAimHint(hint){
 function evaluateGeometry(video){
   const det = detectCardQuadJS(video);
 
-  if(!det){ smoothQuad(null); return {state:'none', hint:'Aucune carte détectée', quad:null}; }
+  if(!det){ smoothQuad(null); return {state:'none', hint:'Aucune carte détectée', quad:null, det:null}; }
   const q = smoothQuad(det.points);
 
-  if(det.areaFrac < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte', quad:q};
-  if(det.fill != null && det.fill < 0.60) return {state:'adjust', hint:'Dégage le fond autour de la carte', quad:q};
+  if(det.areaFrac < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte', quad:q, det};
+  if(det.fill != null && det.fill < 0.60) return {state:'adjust', hint:'Dégage le fond autour de la carte', quad:q, det};
 
   // Le ratio des points renvoyés est contraint aux proportions d'une carte : c'est le
   // ratio MESURÉ avant contrainte qui dit si la forme vue en est vraiment une.
   if(det.rawRatio < CARD_RATIO*0.62 || det.rawRatio > CARD_RATIO*1.45){
-    return {state:'adjust', hint:'Cadre la carte entière', quad:q};
+    return {state:'adjust', hint:'Cadre la carte entière', quad:q, det};
   }
-  return {state:'ok', hint:'Lecture du numéro…', quad:q};
+  return {state:'ok', hint:'Lecture du numéro…', quad:q, det};
+}
+
+// ---------------- ENREGISTREUR DE DIAGNOSTIC ----------------
+// Conserve les dernières observations de la boucle pour pouvoir analyser, après coup,
+// ce qui bloque sur un appareil donné : seuils géométriques réellement mesurés, durées,
+// et texte OCR brut. Rien n'est envoyé nulle part : l'export est manuel.
+const diagLog = [];
+const DIAG_MAX = 60;
+let diagEnabled = true;
+function diagPush(kind, data){
+  if(!diagEnabled) return;
+  diagLog.push(Object.assign({k:kind, t:Date.now()}, data));
+  if(diagLog.length > DIAG_MAX) diagLog.shift();
+}
+
+function buildDiagReport(){
+  const v = $('video');
+  const l = [];
+  l.push('=== Diagnostic PokéScan ===');
+  l.push('date       : ' + new Date().toISOString());
+  l.push('navigateur : ' + navigator.userAgent);
+  l.push('écran      : ' + screen.width + 'x' + screen.height + ' dpr=' + (window.devicePixelRatio||1));
+  l.push('vidéo      : ' + (v && v.videoWidth ? v.videoWidth+'x'+v.videoHeight : 'non démarrée'));
+  l.push('OCR prêt   : ' + ocrReadyForCamera);
+  l.push('capture auto: ' + autoCaptureEnabled);
+  l.push('file        : ' + pendingQueue.length + ' en attente, ' + capturedThisSession + ' capturée(s)');
+  l.push('seuils      : couverture≥' + AIM_MIN_COVERAGE + '  netteté≥' + AIM_MIN_SHARPNESS +
+         '  ratio ' + (CARD_RATIO*0.62).toFixed(2) + '-' + (CARD_RATIO*1.45).toFixed(2) +
+         '  remplissage≥0.60');
+  l.push('');
+  l.push('--- ' + diagLog.length + ' dernières observations (la plus récente en bas) ---');
+  const t0 = diagLog.length ? diagLog[0].t : 0;
+  for(const e of diagLog){
+    const dt = String(e.t - t0).padStart(6);
+    if(e.k === 'geo'){
+      l.push(dt + 'ms  GEO   état=' + e.state +
+        '  aire=' + (e.area!=null? e.area.toFixed(3):'-') +
+        '  ratio=' + (e.ratio!=null? e.ratio.toFixed(2):'-') +
+        '  rempl=' + (e.fill!=null? e.fill.toFixed(2):'-') +
+        '  bougé=' + (e.motion!=null? e.motion.toFixed(3):'-') +
+        '  (' + e.ms + 'ms)  "' + e.hint + '"');
+    } else if(e.k === 'try'){
+      l.push(dt + 'ms  LECT  ' + (e.ok?'CAPTURE':'refus') +
+        '  netteté=' + (e.sharp!=null? Math.round(e.sharp):'-') +
+        '  bande=' + e.bandMs + 'ms  ocr=' + e.ocrMs + 'ms' +
+        '  lu=' + (e.num || '—') +
+        '  "' + e.hint + '"');
+      if(e.raw) l.push('              texte OCR : ' + JSON.stringify(e.raw).slice(0,220));
+    } else if(e.k === 'err'){
+      l.push(dt + 'ms  ERREUR ' + e.msg);
+    }
+  }
+  return l.join('\n');
+}
+
+async function copyDiagReport(){
+  const txt = buildDiagReport();
+  try{
+    await navigator.clipboard.writeText(txt);
+    toast('📋 Diagnostic copié — colle-le dans la conversation');
+  }catch(e){
+    // Le presse-papiers est refusé dans certains contextes mobiles : on retombe sur
+    // un téléchargement, toujours exploitable.
+    downloadBlob(new Blob([txt], {type:'text/plain'}), 'pokescan-diagnostic.txt');
+    toast('⬇️ Diagnostic téléchargé');
+  }
 }
 
 // Tente une lecture réelle sur la carte redressée. Ne capture QUE si le numéro ou le nom
@@ -2009,22 +2095,37 @@ async function verifyAndCapture(video, quad){
   // Étape 1 (bon marché) : on ne reconstruit QUE la bande basse pour tester la lecture.
   // Reconstruire la carte entière à chaque tentative saturait le fil principal et
   // figeait l'aperçu plusieurs secondes.
+  const tBand = performance.now();
   const band = rectifyCard(video, quad, 560, 0.78, 1);
-  if(!band) return {ok:false, hint:'Cadrage impossible'};
+  const bandMs = Math.round(performance.now()-tBand);
+  if(!band){
+    diagPush('try', {ok:false, hint:'Cadrage impossible', bandMs, ocrMs:0});
+    return {ok:false, hint:'Cadrage impossible'};
+  }
 
-  if(sharpnessOfCanvas(band) < AIM_MIN_SHARPNESS) return {ok:false, hint:'Stabilise — image floue'};
+  const sharp = sharpnessOfCanvas(band);
+  if(sharp < AIM_MIN_SHARPNESS){
+    diagPush('try', {ok:false, hint:'flou', sharp, bandMs, ocrMs:0});
+    return {ok:false, hint:'Stabilise — image floue'};
+  }
 
   const bandBounds = {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1};
   const hash = dHashOfRegion(band, band.width, band.height, bandBounds);
   if(lastCaptureHash != null && hammingDistance(hash, lastCaptureHash) <= 4){
+    diagPush('try', {ok:false, hint:'doublon', sharp, bandMs, ocrMs:0});
     return {ok:false, hint:'Même carte — présente la suivante'};
   }
 
   // Verrou : on ne capture que si le numéro est effectivement lisible.
+  const tOcr = performance.now();
   const quick = await quickReadNumberFromBand(band);
+  const ocrMs = Math.round(performance.now()-tOcr);
   if(!quick.number || !quick.denominator){
+    diagPush('try', {ok:false, hint:'numéro illisible', sharp, bandMs, ocrMs, raw:quick.text});
     return {ok:false, hint:'Numéro illisible — rapproche ou éclaire'};
   }
+  diagPush('try', {ok:true, hint:'capture', sharp, bandMs, ocrMs,
+                   num:quick.number+'/'+quick.denominator, raw:quick.text});
 
   // Étape 2 (une seule fois, à la capture réussie) : la carte entière, pour la file.
   const rect = rectifyCard(video, quad, 600, 0, 1) || band;
@@ -2069,8 +2170,17 @@ function startAimLoop(){
     if(!cameraStream || !video || !video.videoWidth) return;
 
     let geo;
+    const tGeo = performance.now();
     try{ geo = evaluateGeometry(video); }
-    catch(e){ geo = {state:'none', hint:'Analyse indisponible', quad:null}; }
+    catch(e){
+      geo = {state:'none', hint:'Analyse indisponible', quad:null};
+      diagPush('err', {msg:'evaluateGeometry: '+e.message});
+    }
+    diagPush('geo', {state:geo.state, hint:geo.hint, motion:quadMotion,
+                     ms:Math.round(performance.now()-tGeo),
+                     area:geo.det?geo.det.areaFrac:null,
+                     ratio:geo.det?geo.det.rawRatio:null,
+                     fill:geo.det?geo.det.fill:null});
     lastQuad = geo.quad;
 
     if(!autoCaptureEnabled){
