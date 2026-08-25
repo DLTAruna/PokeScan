@@ -2076,18 +2076,16 @@ function guideRect(video){
 // viennent du worker (fractions 0-1 de l'image) ; sans détection, on retombe sur le
 // cadre placeholder fixe. Un canvas de 640px de large suffit (l'overlay ne dessine que
 // des traits), les coordonnées sont mises à l'échelle depuis les fractions.
-let overlayState = null, overlayCornersKey = null;
-function cornersKey(c){ return c ? [c.tl,c.tr,c.br,c.bl].map(p=>p[0].toFixed(3)+','+p[1].toFixed(3)).join('|') : 'none'; }
+//
+// Dessin PUR : ne décide de rien, trace exactement la géométrie reçue. Appelée en
+// continu par renderOverlayLoop (voir plus bas), jamais directement par detectLoop —
+// c'est ce qui permet d'interpoler en douceur entre deux détections (~5-8/s) plutôt que
+// de faire sauter le cadre à chaque nouvelle position brute.
 function drawGuideOverlay(video, state, corners){
   const cvs = $('aim-overlay');
   if(!cvs || !video.videoWidth) return;
   const OW = 640, OH = Math.max(1, Math.round(video.videoHeight * (OW/video.videoWidth)));
-  const resize = (cvs.width !== OW || cvs.height !== OH);
-  const ck = cornersKey(corners);
-  if(!resize && state === overlayState && ck === overlayCornersKey) return;
-  if(resize){ cvs.width = OW; cvs.height = OH; }
-  overlayState = state;
-  overlayCornersKey = ck;
+  if(cvs.width !== OW || cvs.height !== OH){ cvs.width = OW; cvs.height = OH; }
 
   const ctx = cvs.getContext('2d');
   ctx.clearRect(0,0,OW,OH);
@@ -2141,6 +2139,51 @@ function drawGuideOverlay(video, state, corners){
   }
 }
 
+// ---------------- LISSAGE DU CADRE (60 Hz, indépendant de la détection) ----------------
+// La détection (~5-8/s, limitée par le coût de l'inférence ONNX) est trop lente pour
+// qu'afficher sa position brute à chaque résultat paraisse fluide à l'œil — le cadre
+// "saute" d'une position à l'autre. On sépare donc la CIBLE (dernière géométrie connue,
+// mise à jour par detectLoop/attemptRead via setOverlayTarget) de ce qui est RÉELLEMENT
+// DESSINÉ (overlayCurrent*, glissé vers la cible à chaque frame d'écran). Le
+// rafraîchissement visuel tourne ainsi à la cadence de l'écran (60 Hz typiquement),
+// indépendamment de la cadence réelle de détection : la caméra a l'air de suivre la
+// carte en temps réel même si la géométrie sous-jacente n'est mise à jour que 5-8 fois
+// par seconde. Seule la position est lissée ; la couleur (état) change instantanément,
+// ce qui reste lisible comme un signal (rouge/orange/vert) plutôt qu'un mouvement.
+let overlayTargetState = 'attente', overlayTargetCorners = null;
+let overlayCurrentState = 'attente', overlayCurrentCorners = null;
+let overlayRenderRunning = false;
+const OVERLAY_LERP = 0.3; // vitesse de rattrapage par frame : ~95% rattrapé en ~140ms à 60Hz
+
+function setOverlayTarget(state, corners){
+  overlayTargetState = state;
+  overlayTargetCorners = corners;
+}
+
+function lerpCorners(a, b, k){
+  const l = (p1, p2) => [p1[0]+(p2[0]-p1[0])*k, p1[1]+(p2[1]-p1[1])*k];
+  return { tl:l(a.tl,b.tl), tr:l(a.tr,b.tr), br:l(a.br,b.br), bl:l(a.bl,b.bl) };
+}
+
+function renderOverlayLoop(){
+  if(!overlayRenderRunning) return;
+  const video = $('video');
+  if(video && video.videoWidth){
+    overlayCurrentState = overlayTargetState;
+    if(!overlayTargetCorners){
+      // Rien détecté : pas de position à lisser, retour immédiat au placeholder.
+      overlayCurrentCorners = null;
+    } else if(!overlayCurrentCorners){
+      // Première apparition : rien à interpoler depuis, on affiche direct.
+      overlayCurrentCorners = overlayTargetCorners;
+    } else {
+      overlayCurrentCorners = lerpCorners(overlayCurrentCorners, overlayTargetCorners, OVERLAY_LERP);
+    }
+    drawGuideOverlay(video, overlayCurrentState, overlayCurrentCorners);
+  }
+  requestAnimationFrame(renderOverlayLoop);
+}
+
 function setAimHint(hint){
   const el = $('aim-hint');
   if(el && el.textContent !== hint) el.textContent = hint;
@@ -2176,7 +2219,7 @@ async function detectLoop(){
     return;
   }
   if(!autoCaptureEnabled){
-    drawGuideOverlay(video, 'attente', null);
+    setOverlayTarget('attente', null);
     setAimHint('Mode manuel — appuie sur 📸');
     setTimeout(detectLoop, 200);
     return;
@@ -2188,10 +2231,10 @@ async function detectLoop(){
     const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
-      drawGuideOverlay(video, 'attente', d.corners);
+      setOverlayTarget('attente', d.corners);
       setAimHint('Vise la carte');
     } else {
-      drawGuideOverlay(video, 'lecture', d.corners);
+      setOverlayTarget('lecture', d.corners);
       const now = Date.now();
       if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
@@ -2303,8 +2346,7 @@ async function attemptRead(corners, score){
     capturedThisSession++;
     flashScreen();
     if(navigator.vibrate) navigator.vibrate(40);
-    const v = $('video');
-    if(v) drawGuideOverlay(v, 'ok', corners);
+    setOverlayTarget('ok', corners);
     setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms,
                      num:r.number+'/'+r.denominator, raw:r.text});
@@ -2318,12 +2360,14 @@ async function attemptRead(corners, score){
 function startAimLoop(){
   stopAimLoop();
   ocrReadyForCamera = false;
-  overlayState = null;
-  overlayCornersKey = null;
+  overlayCurrentState = overlayTargetState = 'attente';
+  overlayCurrentCorners = overlayTargetCorners = null;
   setAimHint('Préparation de la lecture…');
 
   const video = $('video');
   if(video) drawGuideOverlay(video, 'attente', null);
+  overlayRenderRunning = true;
+  requestAnimationFrame(renderOverlayLoop);
 
   // Les deux moteurs (~6 Mo OCR + ~3,5 Mo détecteur, au premier lancement), chacun dans
   // son propre worker, sont initialisés en parallèle sans figer l'aperçu — et AVANT la
@@ -2350,8 +2394,9 @@ function startAimLoop(){
 function stopAimLoop(){
   detectRunning = false;
   readInFlight = false;
-  overlayState = null;
-  overlayCornersKey = null;
+  overlayRenderRunning = false;
+  overlayCurrentState = overlayTargetState = 'attente';
+  overlayCurrentCorners = overlayTargetCorners = null;
   const cvs = $('aim-overlay');
   if(cvs) cvs.getContext('2d').clearRect(0,0,cvs.width,cvs.height);
 }
