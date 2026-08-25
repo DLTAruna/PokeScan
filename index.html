@@ -1701,6 +1701,7 @@ let verifyInFlight = false;
 let lastQuad = null;
 
 const AIM_MIN_COVERAGE = 0.12;   // part de l'image (en aire) occupée par la carte
+const AIM_MAX_COVERAGE = 0.72;   // au-delà, la carte déborde et son bas sort du champ
 const AIM_MIN_SHARPNESS = 25;    // variance du laplacien en dessous de laquelle c'est flou
 const AIM_COOLDOWN_MS = 700;     // délai mini entre deux captures
 const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
@@ -1775,8 +1776,18 @@ function detectCardQuadJS(video){
   // donne l'inclinaison de la carte. Bien plus stable que les 4 points extrêmes, qui
   // sautaient d'une image à l'autre au moindre pixel de bruit.
   let mx=0,my=0;
-  for(let p=0;p<W*H;p++){ if(label[p]!==best) continue; const x=p%W; mx+=x; my+=(p-x)/W; }
+  let minX=W, maxX=-1, minY=H, maxY=-1;
+  for(let p=0;p<W*H;p++){
+    if(label[p]!==best) continue;
+    const x=p%W, y=(p-x)/W;
+    mx+=x; my+=y;
+    if(x<minX)minX=x; if(x>maxX)maxX=x;
+    if(y<minY)minY=y; if(y>maxY)maxY=y;
+  }
   mx/=bestCount; my/=bestCount;
+  // La région touche-t-elle le bord de l'image ? Si oui, la carte déborde du champ et
+  // sa ligne de numéro est probablement hors cadre — la lecture ne peut pas aboutir.
+  const touchesEdge = (minX<=1 || minY<=1 || maxX>=W-2 || maxY>=H-2);
   let vxx=0,vxy=0,vyy=0;
   for(let p=0;p<W*H;p++){
     if(label[p]!==best) continue;
@@ -1828,7 +1839,7 @@ function detectCardQuadJS(video){
   // Taux de remplissage : une carte remplit bien son rectangle, une main ou un reflet
   // non — ça évite de verrouiller sur n'importe quelle forme.
   const rectArea = (2*eH)*(2*eW);
-  return { points: pts, areaFrac: bestCount/(W*H), rawRatio,
+  return { points: pts, areaFrac: bestCount/(W*H), rawRatio, touchesEdge,
            fill: rectArea>0 ? Math.min(1, bestCount/rectArea) : 0 };
 }
 
@@ -2023,6 +2034,16 @@ function setAimHint(hint){
 function evaluateGeometry(video){
   const det = detectCardQuadJS(video);
 
+  // Carte trop près : elle déborde du champ, donc la ligne du numéro en bas de carte
+  // est hors image et la lecture ne peut PAS aboutir. Mesuré sur téléphone : couverture
+  // 0.85-0.92 et ratio égal à celui de la vidéo — le détecteur prenait tout l'écran
+  // pour la carte, ma segmentation estimant le fond sur un pourtour qui était déjà la
+  // carte. Il manquait simplement une borne haute, et c'est une consigne actionnable.
+  if(det && (det.areaFrac > AIM_MAX_COVERAGE || det.touchesEdge)){
+    return {state:'adjust', quad:smoothQuad(det.points), det, guide:false,
+            hint:'Éloigne un peu — la carte déborde du cadre'};
+  }
+
   // Est-ce que la forme détectée ressemble vraiment à une carte ?
   const plausible = det &&
     det.areaFrac >= AIM_MIN_COVERAGE &&
@@ -2096,6 +2117,7 @@ function buildDiagReport(){
         '  aire=' + (e.area!=null? e.area.toFixed(3):'-') +
         '  ratio=' + (e.ratio!=null? e.ratio.toFixed(2):'-') +
         '  rempl=' + (e.fill!=null? e.fill.toFixed(2):'-') +
+        (e.edge ? '  DEBORDE' : '') +
         '  sig=' + e.sig +
         '  t=' + (e.vt!=null? e.vt.toFixed(2):'-') +
         ' rs=' + e.rs + (e.paused?' PAUSE':'') +
@@ -2219,6 +2241,7 @@ function startAimLoop(){
                      area:geo.det?geo.det.areaFrac:null,
                      ratio:geo.det?geo.det.rawRatio:null,
                      fill:geo.det?geo.det.fill:null,
+                     edge:geo.det?!!geo.det.touchesEdge:null,
                      guide:!!geo.guide, why:geo.why||null,
                      sig:lastFrameSignature,
                      vt:video.currentTime, rs:video.readyState, paused:video.paused});
