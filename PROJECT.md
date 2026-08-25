@@ -110,7 +110,10 @@ l'autre worker.
    confiance. Mode `'detect'` uniquement — le mode `'extract'` de scanic appelle
    `document.createElement` et plante en Worker. `detectLoop()` l'appelle en continu
    (auto-replanifiée, pas un intervalle fixe), sans jamais lire de texte — c'est ce qui la
-   garde rapide (~90-200 ms mesurés) et permet un cadre quasi temps réel.
+   garde rapide et permet un cadre quasi temps réel.
+   L'image lui est envoyée **réduite à `DETECT_LONG_EDGE` (512 px de grand côté)**, jamais
+   en pleine résolution caméra : le modèle redimensionne son entrée en interne de toute
+   façon, donc envoyer du 960×1280 faisait payer deux fois (voir §4.6).
 2. **Redressement par perspective** (`extractDocument`, fil principal, dans
    `attemptRead()`) : à partir des 4 coins, seulement quand le score dépasse `MIN_SCORE`
    — et sans bloquer `detectLoop`, qui continue en parallèle (~20-60 ms mesurés).
@@ -160,6 +163,38 @@ numéro** (`165`) identifie le set bien plus sûrement, via `cardCount.official`
 `set.abbreviation.official` = code imprimé (`MEW` pour le set « 151 »).
 `card.localId` = numéro de collection. Carte unique :
 `/v2/fr/cards/{setId}-{localId}` (ex. `sv03.5-183`).
+
+### 4.6 Ne pas envoyer la pleine résolution au détecteur
+Le modèle redimensionne son entrée en interne : lui passer l'image caméra brute fait
+payer deux fois — une conversion `bitmap`→`ImageData` bien plus lourde côté worker, puis
+un redimensionnement interne plus long. Décomposition mesurée sur la même scène :
+
+| Étape (par détection)        | 960×1280 | 384×512 |
+|------------------------------|---------:|--------:|
+| Conversion `bitmap`→`ImageData` | 44,8 ms | 14,9 ms |
+| Préparation du modèle           | 25,4 ms |  8,3 ms |
+| Inférence                       | 34,1 ms | 28,5 ms |
+| **Total**                       | **~104 ms** | **~52 ms** |
+
+Les coins renvoyés sont **identiques à la 3ᵉ décimale** de 1280 px à 320 px de grand côté
+(écart max mesuré : 0,001, soit moins d'1 px sur 960). D'où `DETECT_LONG_EDGE = 512`, qui
+garde une marge confortable au-dessus du seuil où la précision bougerait. Le
+redimensionnement est fait par `createImageBitmap({resizeWidth, resizeHeight})` (chemin
+optimisé du navigateur) et non dans le worker, pour que le bitmap transféré soit déjà
+petit. Les coins revenant en fractions 0-1, tout l'aval y est indifférent — et le
+redressement comme l'OCR continuent de travailler sur l'image **pleine résolution**.
+
+### 4.7 Pourquoi l'app native concurrente est plus rapide (et ce que ça n'apporte pas)
+Analyse du paquet `com.sarafan.pokemon` (noms de classes et bibliothèques natives
+uniquement) : leur fluidité vient de `libLiteRt.so` + **`libLiteRtClGlAccelerator.so`** —
+l'inférence tourne sur le **GPU** via OpenCL/OpenGL, en natif, avec CameraX en amont. Côté
+web on est sur ONNX/**WASM CPU** : c'est là qu'est le facteur d'échelle, et aucune
+transposition de leur code applicatif ne le comblerait. Leur chaîne d'identification
+diffère aussi (embedding visuel + recherche vectorielle côté serveur, `EmbeddingHelper` /
+`CosineSimilarity` / `VectorSearchRequest`) plutôt qu'une lecture du numéro.
+Piste web qui, elle, attaquerait le bon problème : un runtime ONNX avec **exécution
+WebGPU**. `scanic` n'expose pas `executionProviders` (il embarque son propre build WASM
+minimal), donc cela demanderait de piloter `onnxruntime-web` directement avec le modèle.
 
 ## 5. Résultats mesurés
 
