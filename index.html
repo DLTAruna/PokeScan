@@ -1670,25 +1670,53 @@ const AIM_COOLDOWN_MS = 700;     // délai mini entre deux captures
 const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
 
 // ---- OpenCV, chargé à la demande (au démarrage de la caméra seulement) ----
+// OpenCV est une AMÉLIORATION, jamais un prérequis : il apporte le contour exact et le
+// redressement. Sans lui, le scanner fonctionne en mode simple (cadre guide fixe), car
+// le verrou réel — lire le numéro — ne dépend pas de lui. Sur mobile ce chargement est
+// lourd (~3,4 Mo compressés, ~10 Mo à analyser) et peut échouer : il ne doit donc
+// jamais bloquer la prise de vue.
 let cvPromise = null;
+let cvStatus = 'idle'; // idle | loading | ready | failed
 function loadOpenCv(){
   if(cvPromise) return cvPromise;
+  cvStatus = 'loading';
   cvPromise = new Promise((resolve, reject)=>{
-    if(window.cv && window.cv.Mat) return resolve(window.cv);
+    if(window.cv && window.cv.Mat){ cvStatus='ready'; return resolve(window.cv); }
     const s = document.createElement('script');
     s.src = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js';
     s.async = true;
-    s.onerror = ()=> reject(new Error('OpenCV indisponible'));
-    s.onload = ()=>{
+    const fail = (msg)=>{ cvStatus='failed'; reject(new Error(msg)); };
+    s.onerror = ()=> fail('téléchargement impossible');
+    s.onload = async ()=>{
+      // Selon les versions, `cv` est soit l'objet, soit une promesse qui le résout.
+      // Ne gérer que le premier cas laissait l'attente tourner indéfiniment.
+      try{
+        if(window.cv && typeof window.cv.then === 'function') window.cv = await window.cv;
+      } catch(e){ /* on retombe sur l'attente ci-dessous */ }
       const started = Date.now();
       const iv = setInterval(()=>{
-        if(window.cv && window.cv.Mat){ clearInterval(iv); resolve(window.cv); }
-        else if(Date.now()-started > 40000){ clearInterval(iv); reject(new Error('OpenCV : initialisation trop longue')); }
+        if(window.cv && window.cv.Mat){ clearInterval(iv); cvStatus='ready'; resolve(window.cv); }
+        else if(Date.now()-started > 25000){ clearInterval(iv); fail('initialisation trop longue'); }
       }, 100);
     };
     document.head.appendChild(s);
   });
   return cvPromise;
+}
+
+function cvReady(){ return !!(window.cv && window.cv.Mat); }
+
+// Cadre guide fixe, au ratio d'une carte : sert de zone de capture quand la détection
+// de contour n'est pas disponible. L'utilisateur aligne sa carte dessus.
+function guideQuad(video){
+  const W = video.videoWidth, H = video.videoHeight;
+  let h = H*0.80, w = h*(63/88);
+  if(w > W*0.92){ w = W*0.92; h = w*(88/63); }
+  const cx = W/2, cy = H/2;
+  return [
+    {x:cx-w/2, y:cy-h/2}, {x:cx+w/2, y:cy-h/2},
+    {x:cx+w/2, y:cy+h/2}, {x:cx-w/2, y:cy+h/2}
+  ];
 }
 
 // Ordonne 4 points en haut-gauche, haut-droit, bas-droit, bas-gauche.
@@ -1785,6 +1813,19 @@ function rectifyCard(source, quad, outW=700){
   full.height = source.videoHeight || source.height;
   full.getContext('2d').drawImage(source, 0, 0);
 
+  // Sans OpenCV : simple découpe du rectangle englobant, sans correction de
+  // perspective. Suffisant tant que la carte est présentée à peu près à plat.
+  if(!cvReady()){
+    const xs = quad.map(p=>p.x), ys = quad.map(p=>p.y);
+    const x0 = Math.max(0, Math.min(...xs)), x1 = Math.min(full.width, Math.max(...xs));
+    const y0 = Math.max(0, Math.min(...ys)), y1 = Math.min(full.height, Math.max(...ys));
+    if(x1-x0 < 8 || y1-y0 < 8) return null;
+    const out = document.createElement('canvas');
+    out.width = outW; out.height = outH;
+    out.getContext('2d').drawImage(full, x0, y0, x1-x0, y1-y0, 0, 0, outW, outH);
+    return out;
+  }
+
   let src=null, dst=null, from=null, to=null, M=null;
   try{
     src = cv.imread(full);
@@ -1863,6 +1904,14 @@ function setAimHint(hint){
 // Évaluation géométrique rapide (~4 fois/s). Ne décide pas de capturer : elle indique
 // seulement si ça vaut la peine de tenter une lecture OCR.
 function evaluateGeometry(video){
+  // Mode simple (OpenCV absent ou en cours de chargement) : cadre guide fixe. On laisse
+  // le verrou de lecture décider — c'est lui qui garantit une photo exploitable.
+  if(!cvReady()){
+    return {state:'ok', quad:guideQuad(video), guide:true,
+            hint: cvStatus==='loading' ? 'Aligne la carte sur le cadre (détection fine en cours de chargement)'
+                                       : 'Aligne la carte sur le cadre'};
+  }
+
   const det = detectCardQuad(video, video.videoWidth, video.videoHeight);
   if(!det) return {state:'none', hint:'Place la carte dans le champ', quad:null};
   const q = det.points;
@@ -1923,14 +1972,21 @@ async function verifyAndCapture(video, quad){
 
 function startAimLoop(){
   stopAimLoop();
-  setAimHint('Chargement de la détection…');
-  loadOpenCv().then(()=> setAimHint('Place la carte dans le champ'))
-              .catch(()=> setAimHint('⚠️ Détection auto indisponible — utilise 📸'));
+  setAimHint('Aligne la carte sur le cadre');
+
+  // Chargé en tâche de fond : la boucle tourne déjà en mode simple pendant ce temps,
+  // et bascule automatiquement sur la détection fine dès qu'OpenCV est prêt.
+  loadOpenCv()
+    .then(()=> setAimHint('Détection fine active — présente une carte'))
+    .catch(err=>{
+      setAimHint('Mode simple (détection fine indisponible : '+err.message+')');
+      if($('cam-error')) $('cam-error').textContent =
+        'ℹ️ La détection de contour n\'a pas pu être chargée ('+err.message+'). Le scan fonctionne quand même : aligne la carte sur le cadre, la photo part dès que le numéro est lu.';
+    });
 
   aimTimer = setInterval(async ()=>{
     const video = $('video');
     if(!cameraStream || !video || !video.videoWidth) return;
-    if(!window.cv || !window.cv.Mat) return;
 
     let geo;
     try{ geo = evaluateGeometry(video); }
