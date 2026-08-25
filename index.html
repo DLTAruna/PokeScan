@@ -115,6 +115,18 @@
     overflow:hidden; text-overflow:ellipsis; opacity:.85;
   }
   .cam-stop{position:absolute; top:10px; left:10px; background:rgba(0,0,0,.6); color:#fff; border:none; border-radius:14px; padding:5px 12px; font-size:12px;}
+  /* Panneau de résultat live : montre le numéro dès qu'il est lu, puis se complète
+     (nom/set/prix) quand la résolution TCGdex répond — voir resolveLiveResult(). */
+  .live-result{
+    display:flex; gap:10px; align-items:center; background:var(--panel2); border:1px solid var(--border);
+    border-radius:10px; padding:8px 10px; margin-top:8px; position:relative;
+  }
+  .live-result img{width:46px; height:64px; object-fit:contain; border-radius:6px; background:#0a0a0a; flex-shrink:0;}
+  .live-result-info{flex:1; min-width:0; font-size:12.5px; display:flex; flex-direction:column; gap:1px; padding-right:22px;}
+  .live-result-info .lr-row{display:flex; justify-content:space-between; gap:8px; min-width:0;}
+  .live-result-info .lr-row b{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; text-align:right;}
+  .live-result-info .lr-lbl{color:var(--muted); font-size:11px; flex-shrink:0;}
+  .live-result .lr-badge{position:absolute; top:8px; right:10px; font-size:15px;}
   .queue-strip{display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:4px;}
   .queue-strip img{width:44px; height:60px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid var(--border);}
 
@@ -227,6 +239,16 @@
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
         <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
         <button class="capture-fab" id="btn-capture-frame">📸</button>
+      </div>
+      <div class="live-result" id="live-result" style="display:none;">
+        <img id="live-result-img" src="" alt="">
+        <div class="live-result-info">
+          <div class="lr-row"><span class="lr-lbl">Nom</span><b id="live-result-name">—</b></div>
+          <div class="lr-row"><span class="lr-lbl">Ensemble</span><span id="live-result-set">—</span></div>
+          <div class="lr-row"><span class="lr-lbl">Numéro</span><span id="live-result-num">—</span></div>
+          <div class="lr-row"><span class="lr-lbl">Évaluation</span><span id="live-result-price">—</span></div>
+        </div>
+        <span class="lr-badge" id="live-result-badge"></span>
       </div>
       <div class="hint" id="cam-error"></div>
       <div class="hint" id="capture-progress"></div>
@@ -2006,12 +2028,14 @@ function renderQueueOverview(){
 // l'analyse OCR puis libérée (voir analyzeQueueItem). Un Blob ne pèse pas sur le tas JS
 // comme le ferait une dataURL base64, et il n'est pas sérialisé dans la sauvegarde .json.
 function pushToQueue(dataUrl, sourceBlob){
-  pendingQueue.push({id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl, sourceBlob:sourceBlob||null});
+  const item = {id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl, sourceBlob:sourceBlob||null};
+  pendingQueue.push(item);
   updateQueueBadges();
   renderQueueStrip();
   renderQueueOverview();
   updateCaptureProgress();  // l'analyse pouvant être suspendue, c'est ici que le compteur avance
   processQueueAnalysis();
+  return item; // exploité par attemptRead pour le panneau de résultat live (voir resolveLiveResult)
 }
 
 function renderQueueStrip(){
@@ -2546,7 +2570,12 @@ async function attemptRead(corners, score){
     r.carte.close();
 
     const dataUrl = cv.toDataURL('image/jpeg', 0.8);
-    cv.toBlob(b => pushToQueue(dataUrl, b), 'image/png');
+    const mySeq = ++liveResultSeq;
+    showLiveResultPending(dataUrl, r.number, r.denominator);
+    cv.toBlob(b => {
+      const item = pushToQueue(dataUrl, b);
+      resolveLiveResult(mySeq, item, dataUrl, r.number, r.denominator, r.text);
+    }, 'image/png');
 
     capturedThisSession++;
     flashScreen();
@@ -2559,6 +2588,71 @@ async function attemptRead(corners, score){
     diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
     readInFlight = false;
+  }
+}
+
+// ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
+// Affiche le résultat d'identification directement sous la caméra, dès que la lecture
+// du numéro réussit, sans attendre l'analyse de file (suspendue pendant la capture,
+// voir processQueueAnalysis). Réutilise exactement la même chaîne de résolution que
+// l'onglet Identifier (resolveCardBestEffort) : même niveau de confiance, mêmes
+// garde-fous anti-faux-positif — ce panneau ne fait qu'afficher plus tôt un résultat
+// qui aurait de toute façon fini par sortir de la file d'attente.
+let liveResultSeq = 0;
+
+function showLiveResultPending(dataUrl, number, denominator){
+  const el = $('live-result');
+  if(!el) return;
+  el.style.display = 'flex';
+  $('live-result-img').src = dataUrl;
+  $('live-result-name').textContent = '🔎 recherche…';
+  $('live-result-set').textContent = '—';
+  $('live-result-num').textContent = number + '/' + denominator;
+  $('live-result-price').textContent = '—';
+  $('live-result-badge').textContent = '';
+  $('live-result-badge').title = '';
+}
+
+function showLiveResultDone(card, confidence){
+  const price = getBestPrice(card);
+  $('live-result-name').textContent = card.name;
+  $('live-result-set').textContent = card.set?.name || '—';
+  $('live-result-num').textContent = '#' + card.number;
+  $('live-result-price').textContent = price.market ? formatPrice(price) : '—';
+  $('live-result-badge').textContent = confidence === 'high' ? '✅' : '🤔';
+}
+
+function showLiveResultNotFound(){
+  $('live-result-name').textContent = 'Carte non identifiée';
+  $('live-result-set').textContent = '—';
+  $('live-result-price').textContent = '—';
+  $('live-result-badge').textContent = '❌';
+}
+
+// `item` est l'entrée déjà poussée dans la file (pendingQueue) : on y attache le
+// résultat sous la même forme que `analyzeQueueItem` (`_analysis`), pour que l'analyse
+// de fond ne refasse jamais ce travail une fois la caméra arrêtée (voir la condition
+// `!it._analysis || it._analysis.status === 'pending'` dans processQueueAnalysis).
+async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText){
+  try{
+    if(!setAbbrMap){
+      const loaded = await loadSetAbbreviationMap(()=>{});
+      setAbbrMap = loaded.map;
+      setDenominatorMap = loaded.byDenominator;
+    }
+    const codeCandidates = [...(ocrText||'').toUpperCase().matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
+    const result = await resolveCardBestEffort(codeCandidates, number, denominator, dataUrl, ocrText);
+
+    item._analysis = {
+      status: result.card ? (result.confidence === 'high' ? 'ok' : 'uncertain') : 'uncertain',
+      card: result.card, note: result.note, rawText: ocrText, number, denominator
+    };
+
+    if(mySeq !== liveResultSeq) return; // une carte plus récente affiche déjà autre chose
+    if(result.card) showLiveResultDone(result.card, result.confidence);
+    else showLiveResultNotFound();
+  }catch(e){
+    if(mySeq === liveResultSeq) showLiveResultNotFound();
   }
 }
 

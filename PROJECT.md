@@ -137,6 +137,20 @@ aberrantes ou cadre calé sur l'écran entier) et, avant elle, OpenCV.js (trop l
 chargement qui n'aboutissait pas sur mobile). Le point commun des deux échecs : une
 géométrie devinée par heuristique plutôt qu'apprise.
 
+5. **Panneau de résultat live** (`resolveLiveResult`, sous la caméra) : dès qu'un
+   numéro est lu (étape 4), affiche immédiatement la miniature + « 🔎 recherche… »
+   (`showLiveResultPending`), puis lance la MÊME chaîne de résolution que l'onglet
+   Identifier (`resolveCardBestEffort` — set par dénominateur/code, confirmation par
+   nom, repli visuel) et complète nom/set/prix dès qu'elle répond
+   (`showLiveResultDone`), avec un badge ✅ (confiance haute, nom confirmé) ou 🤔
+   (proposition non confirmée) — jamais un résultat présenté comme sûr par défaut,
+   cohérent avec le risque de lecture erronée déjà documenté (§4.9, §4.11).
+   Un jeton (`liveResultSeq`) écarte les réponses tardives si l'utilisateur change de
+   carte avant que la résolution précédente ait fini de répondre. Le résultat est en
+   plus attaché à l'item de la file (`item._analysis`, même forme que
+   `analyzeQueueItem`) : `processQueueAnalysis` ne referrera donc jamais cette carte
+   une fois la caméra arrêtée — le travail déjà fait en direct n'est pas jeté.
+
 ## 4. Décisions techniques et pièges (mesurés, pas supposés)
 
 ### 4.1 Ne jamais faire d'OCR sur l'image compressée
@@ -315,6 +329,7 @@ numéro lisible.
    la main).
 2. ~~Analyse en Web Worker~~ — fait (OCR et détection de carte tous deux hors fil
    principal).
+2bis. ~~Panneau de résultat live sous la caméra~~ — fait, voir §3bis point 5.
 3. Modèles PaddleOCR « server » (plus lourds, plus précis) en option.
 4. Vote sur plusieurs fenêtres de recadrage.
 5. Pricing : Cardmarket est déjà exploité en priorité ; affiner la conversion et les
