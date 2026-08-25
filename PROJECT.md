@@ -238,6 +238,39 @@ celle de §4.1. Tous les appels à `recognize()` passent donc `{noCache:true}` �
 n'apporte de toute façon rien ici, deux images caméra n'étant jamais identiques au bit
 près.
 
+### 4.10 Redimensionnement précoce du redressement et du transfert vers l'OCR
+Deux points chauds symétriques à §4.6 (qui ne concernait que le détecteur) : `attemptRead`
+construisait la frame passée à `extractDocument` en pleine résolution capteur (souvent
+3000-4000px de large), alors qu'`extractDocument` tourne sur le **fil principal**
+(dépendance DOM de scanic, non déplaçable en Worker — voir §3bis) et paie donc son coût
+en latence perçue directement. Pire, la sortie redressée pleine résolution était ensuite
+transférée telle quelle vers le Worker OCR, qui la redessinait de toute façon sur un canvas
+`cardW=600` — le surplus de pixels ne servait qu'à alourdir le `postMessage` et refaire un
+redimensionnement déjà inutile.
+
+Corrigé aux deux endroits avec le même levier que §4.6 : `createImageBitmap(source,
+{resizeWidth, resizeHeight, resizeQuality:'medium'})` en amont, avant toute copie sur
+canvas — `EXTRACT_LONG_EDGE = 1200` pour la frame envoyée à `extractDocument`, et une
+marge de 700px (600 + 100) pour le bitmap transféré au Worker OCR. Les coordonnées des
+coins (`cornersPx`) sont calculées à partir de la frame déjà redimensionnée, pas de la
+résolution native — cohérent avec le fait que les coins renvoyés par le détecteur sont
+en fractions 0-1, indifférents à la résolution.
+
+### 4.11 Occlusion par les doigts : un problème d'INTERFACE, pas d'algorithme
+Tenir une carte en main recouvre inévitablement une partie des bords. Deux cas distincts :
+- **Un coin masqué** (typiquement le bas-gauche, tenu du pouce) est le plus embêtant : il
+  coïncide avec la zone de lecture du numéro (§4.8) — double peine potentielle.
+- **Un bord partiellement masqué en son milieu** (doigts posés sur le côté) est moins
+  risqué qu'il n'y paraît : `Scanic` (`detector:'ml'`) régresse les 4 coins de façon
+  holistique à partir de l'image entière (pas un suivi de contour classique type Hough),
+  un type de modèle généralement entraîné sur des documents tenus à la main — donc pas
+  forcément fragile à ce cas. Pas de certitude sans diagnostic réel : à valider avant
+  d'investir dans une reconstruction géométrique du coin manquant.
+
+Correctif appliqué, le plus rentable et sans risque : un rappel visuel permanent dans le
+cadre caméra (« ✋ Tiens la carte par le haut, laisse les bords libres ») plutôt qu'une
+tentative de compenser algorithmiquement une occlusion qu'on peut éviter à la source.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
@@ -258,6 +291,14 @@ numéro lisible.
    variantes (holo, reverse, 1re édition).
 6. Seuils du détecteur (`MIN_SCORE`, tolérance du filtre de forme) à ajuster une fois des
    diagnostics réels disponibles — posés par prudence, pas mesurés sur appareil.
+7. Fusionner les deux tentatives OCR (bande serrée + repli large, §4.8) en un seul appel
+   `recognize()` sur une image composite, si le prochain diagnostic confirme un coût fixe
+   important par appel — non fait faute de données pour trancher.
+8. En-têtes COOP/COEP (`vercel.json`) pour activer `SharedArrayBuffer` → WASM multi-thread
+   côté OCR (pas seulement détection) — le plus gros levier restant vu que l'OCR est
+   maintenant le vrai goulot, pas encore posé.
+9. Whitelist de caractères (chiffres + `/`) côté `ppu-paddle-ocr` si l'API l'expose — à
+   vérifier, pourrait réduire l'espace de recherche du décodeur.
 
 ## 7. Risques
 

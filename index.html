@@ -106,6 +106,14 @@
     position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
   }
+  /* Rappel de prise en main : les doigts posés sur les bords gênent la détection du
+     quadrilatère de la carte, même si le numéro (bas-gauche) reste visible. */
+  .grip-hint{
+    position:absolute; top:46px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.55); color:#fff; padding:4px 10px; border-radius:12px;
+    font-size:11px; white-space:nowrap; pointer-events:none; max-width:92%;
+    overflow:hidden; text-overflow:ellipsis; opacity:.85;
+  }
   .cam-stop{position:absolute; top:10px; left:10px; background:rgba(0,0,0,.6); color:#fff; border:none; border-radius:14px; padding:5px 12px; font-size:12px;}
   .queue-strip{display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:4px;}
   .queue-strip img{width:44px; height:60px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid var(--border);}
@@ -215,6 +223,7 @@
         <div class="flash" id="flash"></div>
         <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
+        <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
         <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
         <button class="capture-fab" id="btn-capture-frame">📸</button>
@@ -2078,6 +2087,14 @@ const MIN_SCORE = 0.5;            // confiance mini du détecteur pour tenter la
 // redressement et l'OCR travaillent toujours sur l'image caméra pleine résolution.
 const DETECT_LONG_EDGE = 512;
 
+// Même principe que DETECT_LONG_EDGE, mais pour le redressement (extractDocument, fil
+// principal) : la caméra peut sortir des frames bien plus grandes (souvent 3000-4000px de
+// large) que ce dont on a besoin pour lire un numéro. 1200px de grand côté laisse largement
+// de quoi produire ensuite une carte redressée de 600px de large, pour une fraction du coût
+// de perspective-warp — extractDocument tourne sur le fil principal (dépendance DOM), donc
+// son coût s'ajoute directement à la latence perçue, contrairement à la détection.
+const EXTRACT_LONG_EDGE = 1200;
+
 // Déplacement maximal d'un coin entre deux détections consécutives (en fraction de
 // l'image) au-delà duquel on considère que la carte bouge encore. Un tremblement de main
 // déplace les coins de bien moins que ça d'une détection à l'autre (~100 ms) ; un
@@ -2401,10 +2418,18 @@ async function attemptRead(corners, score){
     if(!video || !video.videoWidth) return;
 
     const scanic = await getScanic();
-    const vw = video.videoWidth, vh = video.videoHeight;
+    // Redimensionnement natif AVANT toute copie sur canvas : extractDocument tourne sur le
+    // fil principal, donc son coût est proportionnel à ce qu'on lui donne — inutile de lui
+    // faire mâcher la pleine résolution capteur pour au final ne garder qu'une carte réduite
+    // à 600px de large côté worker (voir EXTRACT_LONG_EDGE plus haut).
+    const extractScale = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
+    const vw = Math.max(1, Math.round(video.videoWidth * extractScale));
+    const vh = Math.max(1, Math.round(video.videoHeight * extractScale));
+    const frameBmp = await createImageBitmap(video, {resizeWidth: vw, resizeHeight: vh, resizeQuality:'medium'});
     const frame = document.createElement('canvas');
     frame.width = vw; frame.height = vh;
-    frame.getContext('2d').drawImage(video, 0, 0, vw, vh);
+    frame.getContext('2d').drawImage(frameBmp, 0, 0);
+    frameBmp.close();
     const cornersPx = {
       topLeft:     {x: corners.tl[0]*vw, y: corners.tl[1]*vh},
       topRight:    {x: corners.tr[0]*vw, y: corners.tr[1]*vh},
@@ -2450,7 +2475,13 @@ async function attemptRead(corners, score){
       sourceForRead = rot;
     }
 
-    const cardBmp = await createImageBitmap(sourceForRead);
+    // Même logique de redimensionnement précoce : le worker redessine de toute façon la
+    // carte reçue sur un canvas de cardW=600 de large (voir plus bas), donc transférer la
+    // sortie d'extractDocument en pleine résolution ne servait qu'à alourdir le postMessage
+    // et à refaire un travail de mise à l'échelle déjà inutile.
+    const readTargetW = Math.min(sourceForRead.width, 700); // 600 + marge pour la qualité du resize
+    const readTargetH = Math.round(sourceForRead.height * (readTargetW / sourceForRead.width));
+    const cardBmp = await createImageBitmap(sourceForRead, {resizeWidth: readTargetW, resizeHeight: readTargetH, resizeQuality:'medium'});
     const r = await workerCall('read', {bitmap:cardBmp, cardW:600}, [cardBmp]);
     const ms = Math.round(performance.now()-t0);
 
