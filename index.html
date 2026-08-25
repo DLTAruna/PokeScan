@@ -830,16 +830,25 @@ function getVisionWorker(){
               let text = (res && res.text) || '';
               let cands = extractNumbers(text);
 
-              // Repli sur l'ancienne bande large. Elle lit 4 lignes au lieu d'une (texte
-              // d'attaque, barre Faiblesse/Résistance, texte d'ambiance) et coûte donc
-              // plusieurs secondes — mais elle garantit qu'on ne perd aucune carte que
-              // l'on savait lire avant, notamment les mises en page inhabituelles où le
-              // numéro sortirait de la zone serrée. Le champ « via » du diagnostic dira
-              // si ce repli sert réellement ; s'il ne se déclenche jamais, on le retire.
+              // Repli, restreint et borné dans le temps — sur diagnostic réel (41
+              // observations), l'ancienne version (largeur 0.78, toute la largeur de la
+              // carte) n'a JAMAIS trouvé un seul numéro, mais a coûté de 815 ms à 8,7 s à
+              // chaque déclenchement, attrapant du texte d'attaque au passage (« Coud'Krâne »,
+              // « Morsure »...). Le numéro est TOUJOURS ancré à gauche (voir bande serrée
+              // ci-dessus) : resserré sur la même largeur, seule la hauteur reste plus
+              // tolérante (0.62-0.99 contre 0.84-0.99) pour rattraper les mises en page où
+              // il siège un peu plus haut.
               if(!cands.length){
                 via = 'large';
-                const large = crop(0.11, 0.685, 0.78, 0.30, 1);
-                const res2 = await s.recognize(large, {noCache:true});
+                const large = crop(0, 0.62, 0.48, 0.37, 1);
+                // Le moteur ne peut pas être interrompu en cours de route (pas d'annulation
+                // exposée par ppu-paddle-ocr) : la course contre un délai ne libère donc que
+                // l'ATTENTE de l'appelant, pas le worker lui-même, qui finira le calcul
+                // abandonné en tâche de fond. Utile quand même — l'appelant peut redonner la
+                // main à la boucle de visée au lieu de rester bloqué plusieurs secondes sur
+                // un repli qui, empiriquement, ne trouve jamais rien.
+                const timeout = new Promise(resolve => setTimeout(()=>resolve(null), 1200));
+                const res2 = await Promise.race([s.recognize(large, {noCache:true}), timeout]);
                 const text2 = (res2 && res2.text) || '';
                 text = text + ' ⟨large⟩ ' + text2;
                 cands = extractNumbers(text2);

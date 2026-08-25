@@ -226,9 +226,24 @@ l'échelle native de la carte. Mesuré sur la même mise en page réaliste : 335
 810 ms pour l'ancienne bande (-59 %), 2 lignes détectées contre 5, et le numéro complet
 correctement lu là où l'ancienne bande le tronquait.
 
-Repli sur l'ancienne bande large (0.11×0.685, 78 %×30 %) si la bande serrée échoue :
-coûte cher mais couvre les mises en page où le numéro sortirait de la zone serrée.
-Le champ `via` du diagnostic (`serree` / `large`) dit lequel a servi.
+Repli sur une bande large si la bande serrée échoue : couvre les mises en page où le
+numéro sortirait de la zone serrée. Le champ `via` du diagnostic (`serree` / `large`)
+dit lequel a servi.
+
+**Mise à jour, sur relevé réel (41 observations, deux appareils)** : la première version
+du repli (0.11×0.685, 78 % de largeur — quasiment toute la carte) n'a **trouvé un numéro
+zéro fois**, mais a coûté de 815 ms à **8,7 s** à chaque déclenchement, attrapant du texte
+d'attaque au passage (« Coud'Krâne », « Morsure »). Resserré à `crop(0, 0.62, 0.48, 0.37,
+1)` — même ancrage à gauche que la bande serrée (le numéro n'est jamais ailleurs), seule
+la hauteur reste plus tolérante (0.62-0.99 contre 0.84-0.99). Testé isolément : un numéro
+placé hors de la bande serrée mais dans la moitié gauche est toujours rattrapé (810 ms),
+et un échec total résout en <500 ms au lieu de plusieurs secondes.
+
+Le moteur PaddleOCR n'exposant pas d'annulation, un `Promise.race` avec un délai de
+1200 ms borne l'ATTENTE de l'appelant (qui peut redonner la main à la boucle de visée),
+pas le calcul lui-même — un appel abandonné continue de tourner en tâche de fond dans le
+worker. Utile quand même : mieux vaut ne plus bloquer l'appelant sur un repli qui,
+empiriquement, ne trouve jamais rien.
 
 Piège associé : la netteté doit être mesurée sur la **carte entière**, pas sur la bande
 serrée. Une bande sans contenu (mise en page atypique, zone sombre et lisse d'une
