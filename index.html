@@ -620,6 +620,19 @@ const OCR_WORKER_MODULE = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web
 // LiteRT/ONNX), remplace la détection de contour maison abandonnée (voir plus bas).
 // Le worker et le fil principal doivent charger la MÊME version.
 const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+
+// Netteté minimale (variance du laplacien sur la bande) pour tenter l'OCR. Le seuil
+// était à 25, ce qui laissait passer des images sans aucune chance d'être lues — et un
+// OCR raté coûte 2 à 6 s, contre 20 ms pour ce test. Calibré sur un diagnostic réel où
+// la séparation est nette et sans chevauchement :
+//   captures RÉUSSIES : 162, 219, 361, 389, 427, 499, 528, 534
+//   échecs « illisible » :  26,  35,  77,  84
+// 100 reste largement au-dessus de tous les échecs observés (84) tout en gardant de la
+// marge sous la plus basse réussite (162) : la mesure dépend en partie du contenu de la
+// bande (une zone sombre et lisse de full-art donne moins de variance qu'un bloc de
+// texte à netteté égale), donc on ne serre pas au plus près de la séparation.
+// À recalibrer si la géométrie de la bande change.
+const MIN_SHARPNESS = 100;
 let visionWorker = null, visionWorkerPromise = null, workerSeq = 0, workerBroken = false;
 const workerPending = new Map();
 
@@ -730,7 +743,7 @@ function getVisionWorker(){
               band.getContext('2d').drawImage(card, bx, by, bandW, bandH, 0, 0, bandW, bandH);
 
               const sharp = sharpness(band);
-              if(sharp < 25){ postMessage({id, ok:true, sharp, reason:'flou'}); return; }
+              if(sharp < ${MIN_SHARPNESS}){ postMessage({id, ok:true, sharp, reason:'flou'}); return; }
 
               const s = await ensure();
               const res = await s.recognize(band);
@@ -1825,6 +1838,14 @@ const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exac
 // donc rien ne se faisait pendant la prise de vue et tout s'empilait pour la fin.)
 async function processQueueAnalysis(){
   if(queueAnalysisRunning || !ocrEnabled) return;
+  // Suspendue tant que la caméra tourne : cette analyse et la lecture en direct
+  // partagent le MÊME worker OCR, et un navigateur sans isolation multi-thread les
+  // sérialise. Constaté sur diagnostic réel : la même carte passait de 2,9 s à 15,1 s
+  // au fil de la session, à mesure que la file grossissait et que les lectures live
+  // faisaient la queue derrière les analyses de fond. Rien n'est perdu — la file
+  // repart dès l'arrêt de la caméra (voir stopCamera), et le panneau de résultat live
+  // n'a pas besoin de cette analyse : il exploite le numéro déjà lu par la caméra.
+  if(detectRunning) return;
   queueAnalysisRunning = true;
   try{
     while(true){
@@ -1854,9 +1875,12 @@ function updateCaptureProgress(){
     if(it._analysis && it._analysis.status !== 'pending') done++;
     else waiting++;
   }
-  el.textContent = waiting
-    ? `🔎 Analyse : ${done}/${pendingQueue.length} traitée(s), ${waiting} en attente`
-    : `✅ ${done} carte(s) analysée(s)`;
+  if(!waiting){ el.textContent = `✅ ${done} carte(s) analysée(s)`; return; }
+  // Pendant la prise de vue l'analyse est volontairement suspendue (voir
+  // processQueueAnalysis) : sans ce message, la file semblerait bloquée.
+  el.textContent = detectRunning
+    ? `⏸️ ${waiting} carte(s) en attente — analyse à l'arrêt de la caméra`
+    : `🔎 Analyse : ${done}/${pendingQueue.length} traitée(s), ${waiting} en attente`;
 }
 
 // Compteur discret, pour savoir que le diagnostic tourne bien.
@@ -1921,6 +1945,7 @@ function pushToQueue(dataUrl, sourceBlob){
   updateQueueBadges();
   renderQueueStrip();
   renderQueueOverview();
+  updateCaptureProgress();  // l'analyse pouvant être suspendue, c'est ici que le compteur avance
   processQueueAnalysis();
 }
 
@@ -2000,6 +2025,21 @@ const MIN_SCORE = 0.5;            // confiance mini du détecteur pour tenter la
 // redressement et l'OCR travaillent toujours sur l'image caméra pleine résolution.
 const DETECT_LONG_EDGE = 512;
 
+// Déplacement maximal d'un coin entre deux détections consécutives (en fraction de
+// l'image) au-delà duquel on considère que la carte bouge encore. Un tremblement de main
+// déplace les coins de bien moins que ça d'une détection à l'autre (~100 ms) ; un
+// changement de carte les déplace beaucoup plus.
+const MAX_CORNER_SHIFT = 0.02;
+let prevCorners = null;
+
+function maxCornerShift(a, b){
+  let m = 0;
+  for(const k of ['tl','tr','br','bl']){
+    m = Math.max(m, Math.hypot(a[k][0]-b[k][0], a[k][1]-b[k][1]));
+  }
+  return m;
+}
+
 // Chargé à la demande sur le FIL PRINCIPAL (pas dans le worker) : extractDocument a
 // besoin de document.createElement pour construire son canvas de sortie.
 let scanicMod = null, scanicModPromise = null;
@@ -2030,6 +2070,9 @@ function buildDiagReport(){
   l.push('OCR prêt    : ' + ocrReadyForCamera + (workerBroken ? '  (worker HS, repli fil principal)' : '  (worker)'));
   l.push('capture auto: ' + autoCaptureEnabled);
   l.push('file        : ' + pendingQueue.length + ' en attente, ' + capturedThisSession + ' capturée(s)');
+  l.push('réglages    : netteté min=' + MIN_SHARPNESS + '  détection ' + DETECT_LONG_EDGE + 'px' +
+         '  stabilité<=' + MAX_CORNER_SHIFT + '  score min=' + MIN_SCORE);
+  l.push('analyse fond: ' + (detectRunning ? 'suspendue (caméra active)' : (queueAnalysisRunning ? 'en cours' : 'au repos')));
   l.push('');
   l.push('--- ' + diagLog.length + ' dernières observations (la plus récente en bas) ---');
   const t0 = diagLog.length ? diagLog[0].t : 0;
@@ -2261,10 +2304,23 @@ async function detectLoop(){
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
       setAimHint('Vise la carte');
+      prevCorners = null;   // la carte est sortie du champ : la prochaine devra se re-confirmer
     } else {
       setOverlayTarget('lecture', d.corners);
+
+      // Verrou de stabilité : une carte qui bouge donne une image filée, donc un OCR
+      // condamné d'avance — et un OCR raté coûte des secondes. On dispose déjà des coins
+      // à chaque image, donc mesurer le déplacement ne coûte rien. Exiger deux détections
+      // consécutives concordantes sert aussi de confirmation : une détection isolée et
+      // fugace ne déclenche plus de lecture.
+      const moved = prevCorners ? maxCornerShift(prevCorners, d.corners) : Infinity;
+      prevCorners = d.corners;
+      const stable = moved <= MAX_CORNER_SHIFT;
+
       const now = Date.now();
-      if(!readInFlight
+      if(!stable){
+        setAimHint('Stabilise la carte');
+      } else if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
         lastReadAttemptAt = now;
@@ -2423,6 +2479,7 @@ function stopAimLoop(){
   detectRunning = false;
   readInFlight = false;
   overlayRenderRunning = false;
+  prevCorners = null;
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
   const cvs = $('aim-overlay');
@@ -2438,6 +2495,9 @@ function stopCamera(){
   }
   $('video-wrap').classList.remove('active');
   $('cam-start-row').style.display = 'flex';
+  // La caméra libère le worker OCR : la file mise en attente pendant la prise de vue
+  // peut repartir, et sans plus aucune concurrence elle ira à pleine vitesse.
+  processQueueAnalysis();
 }
 
 // Capture MANUELLE (bouton 📸) : force la prise même si la lecture automatique échoue,
