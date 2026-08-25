@@ -1669,180 +1669,164 @@ const AIM_MIN_SHARPNESS = 25;    // variance du laplacien en dessous de laquelle
 const AIM_COOLDOWN_MS = 700;     // délai mini entre deux captures
 const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
 
-// ---- OpenCV, chargé à la demande (au démarrage de la caméra seulement) ----
-// OpenCV est une AMÉLIORATION, jamais un prérequis : il apporte le contour exact et le
-// redressement. Sans lui, le scanner fonctionne en mode simple (cadre guide fixe), car
-// le verrou réel — lire le numéro — ne dépend pas de lui. Sur mobile ce chargement est
-// lourd (~3,4 Mo compressés, ~10 Mo à analyser) et peut échouer : il ne doit donc
-// jamais bloquer la prise de vue.
-let cvPromise = null;
-let cvStatus = 'idle'; // idle | loading | ready | failed
-function loadOpenCv(){
-  if(cvPromise) return cvPromise;
-  cvStatus = 'loading';
-  cvPromise = new Promise((resolve, reject)=>{
-    if(window.cv && window.cv.Mat){ cvStatus='ready'; return resolve(window.cv); }
-    const s = document.createElement('script');
-    s.src = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js';
-    s.async = true;
-    const fail = (msg)=>{ cvStatus='failed'; reject(new Error(msg)); };
-    s.onerror = ()=> fail('téléchargement impossible');
-    s.onload = async ()=>{
-      // Selon les versions, `cv` est soit l'objet, soit une promesse qui le résout.
-      // Ne gérer que le premier cas laissait l'attente tourner indéfiniment.
-      try{
-        if(window.cv && typeof window.cv.then === 'function') window.cv = await window.cv;
-      } catch(e){ /* on retombe sur l'attente ci-dessous */ }
-      const started = Date.now();
-      const iv = setInterval(()=>{
-        if(window.cv && window.cv.Mat){ clearInterval(iv); cvStatus='ready'; resolve(window.cv); }
-        else if(Date.now()-started > 25000){ clearInterval(iv); fail('initialisation trop longue'); }
-      }, 100);
-    };
-    document.head.appendChild(s);
-  });
-  return cvPromise;
-}
+// ---------------- DÉTECTION DE CARTE EN JS PUR (sans dépendance) ----------------
+// OpenCV a été retiré : ~10 Mo à analyser, chargement qui n'aboutissait pas sur mobile,
+// et la boucle de visée restait alors inerte. Tout tient désormais dans le code
+// ci-dessous, sans téléchargement supplémentaire.
+// OpenCV s'est révélé inutilisable sur mobile (trop lourd, chargement qui n'aboutit
+// pas). Cette détection tient en quelques dizaines de lignes et tourne sur une image
+// réduite à 160px : segmentation par différence avec la couleur du fond, plus grande
+// région connexe, puis 4 coins extrêmes — ce qui gère nativement la rotation.
+function detectCardQuadJS(video){
+  const W = 160;
+  const H = Math.max(1, Math.round((video.videoHeight||video.height) * (W/(video.videoWidth||video.width))));
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.getContext('2d').drawImage(video, 0, 0, W, H);
+  const d = c.getContext('2d').getImageData(0,0,W,H).data;
 
-function cvReady(){ return !!(window.cv && window.cv.Mat); }
+  // Couleur du fond estimée sur le pourtour de l'image (la carte est au centre).
+  const bs=[];
+  for(let x=0;x<W;x++){ bs.push((x)*4); bs.push(((H-1)*W+x)*4); }
+  for(let y=0;y<H;y++){ bs.push((y*W)*4); bs.push((y*W+W-1)*4); }
+  let br=0,bg=0,bb=0;
+  for(const i of bs){ br+=d[i]; bg+=d[i+1]; bb+=d[i+2]; }
+  br/=bs.length; bg/=bs.length; bb/=bs.length;
 
-// Cadre guide fixe, au ratio d'une carte : sert de zone de capture quand la détection
-// de contour n'est pas disponible. L'utilisateur aligne sa carte dessus.
-function guideQuad(video){
-  const W = video.videoWidth, H = video.videoHeight;
-  let h = H*0.80, w = h*(63/88);
-  if(w > W*0.92){ w = W*0.92; h = w*(88/63); }
-  const cx = W/2, cy = H/2;
-  return [
-    {x:cx-w/2, y:cy-h/2}, {x:cx+w/2, y:cy-h/2},
-    {x:cx+w/2, y:cy+h/2}, {x:cx-w/2, y:cy+h/2}
-  ];
-}
+  // Masque : pixels nettement différents du fond.
+  const SEUIL = 60;
+  const mask = new Uint8Array(W*H);
+  for(let p=0,i=0;p<W*H;p++,i+=4){
+    const dist = Math.abs(d[i]-br)+Math.abs(d[i+1]-bg)+Math.abs(d[i+2]-bb);
+    mask[p] = dist > SEUIL ? 1 : 0;
+  }
 
-// Ordonne 4 points en haut-gauche, haut-droit, bas-droit, bas-gauche.
-function orderQuad(pts){
-  const bySum = [...pts].sort((a,b)=>(a.x+a.y)-(b.x+b.y));
-  const byDiff = [...pts].sort((a,b)=>(a.x-a.y)-(b.x-b.y));
-  return [bySum[0], byDiff[3], bySum[3], byDiff[0]];
+  // Plus grande région connexe (parcours en largeur, 4-voisinage).
+  const label = new Int32Array(W*H).fill(-1);
+  let best=-1, bestCount=0;
+  const queue = new Int32Array(W*H);
+  for(let start=0; start<W*H; start++){
+    if(mask[start]!==1 || label[start]!==-1) continue;
+    let head=0, tail=0, count=0;
+    queue[tail++]=start; label[start]=start;
+    while(head<tail){
+      const p=queue[head++]; count++;
+      const x=p%W, y=(p-x)/W;
+      if(x>0   && mask[p-1]===1 && label[p-1]===-1){ label[p-1]=start; queue[tail++]=p-1; }
+      if(x<W-1 && mask[p+1]===1 && label[p+1]===-1){ label[p+1]=start; queue[tail++]=p+1; }
+      if(y>0   && mask[p-W]===1 && label[p-W]===-1){ label[p-W]=start; queue[tail++]=p-W; }
+      if(y<H-1 && mask[p+W]===1 && label[p+W]===-1){ label[p+W]=start; queue[tail++]=p+W; }
+    }
+    if(count>bestCount){ bestCount=count; best=start; }
+  }
+  if(best<0 || bestCount < W*H*0.04) return null;
+
+  // 4 coins = extrêmes selon les diagonales : robuste à la rotation.
+  let tl=null,tr=null,brr=null,bl=null;
+  let minSum=Infinity,maxSum=-Infinity,minDiff=Infinity,maxDiff=-Infinity;
+  for(let p=0;p<W*H;p++){
+    if(label[p]!==best) continue;
+    const x=p%W, y=(p-x)/W;
+    const s=x+y, df=x-y;
+    if(s<minSum){ minSum=s; tl={x,y}; }
+    if(s>maxSum){ maxSum=s; brr={x,y}; }
+    if(df>maxDiff){ maxDiff=df; tr={x,y}; }
+    if(df<minDiff){ minDiff=df; bl={x,y}; }
+  }
+  if(!tl||!tr||!brr||!bl) return null;
+
+  const sx=(video.videoWidth||video.width)/W, sy=(video.videoHeight||video.height)/H;
+  const pts=[tl,tr,brr,bl].map(p=>({x:p.x*sx, y:p.y*sy}));
+
+  // Taux de remplissage : une carte remplit bien son quadrilatère, une main ou un
+  // reflet non — ça évite de verrouiller sur n'importe quelle forme.
+  const quadArea = Math.abs(
+    (pts[0].x*(pts[1].y-pts[3].y) + pts[1].x*(pts[2].y-pts[0].y) +
+     pts[2].x*(pts[3].y-pts[1].y) + pts[3].x*(pts[0].y-pts[2].y))/2 );
+  const compArea = bestCount*sx*sy;
+  return { points: pts, areaFrac: bestCount/(W*H),
+           fill: quadArea>0 ? Math.min(1, compArea/quadArea) : 0 };
 }
 
 function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
 
-// Détecte le contour RÉEL de la carte : détection de bords, contours fermés, approximés
-// en polygones ; on retient le plus grand quadrilatère convexe. Remplace l'ancienne
-// heuristique de "zones actives" qui ne trouvait pas le bord d'une carte tenue en main.
-function detectCardQuad(source, srcW, srcH){
-  const cv = window.cv;
-  if(!cv || !cv.Mat) return null;
-  const W = 320, H = Math.max(1, Math.round(srcH*(W/srcW)));
-  const work = document.createElement('canvas');
-  work.width = W; work.height = H;
-  work.getContext('2d').drawImage(source, 0, 0, W, H);
-
-  let src=null, gray=null, blur=null, edges=null, contours=null, hier=null, kernel=null;
-  let best=null, bestArea=0;
-  try{
-    src = cv.imread(work);
-    gray = new cv.Mat(); blur = new cv.Mat(); edges = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
-    cv.Canny(blur, edges, 40, 120);
-    // Dilatation : referme les contours interrompus par un reflet ou un fond peu contrasté.
-    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3,3));
-    cv.dilate(edges, edges, kernel);
-
-    contours = new cv.MatVector(); hier = new cv.Mat();
-    cv.findContours(edges, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
-    const frameArea = W*H;
-    for(let i=0; i<contours.size(); i++){
-      const cnt = contours.get(i);
-      const area = cv.contourArea(cnt);
-      if(area < frameArea*0.05 || area <= bestArea){ cnt.delete(); continue; }
-
-      // 1) Approximation polygonale : c'est la seule qui capture la perspective (les
-      //    4 côtés peuvent être non parallèles). Plusieurs tolérances sont essayées,
-      //    car une seule valeur rate certains angles (mesuré : échec net à 8°).
-      let pts = null;
-      const peri = cv.arcLength(cnt, true);
-      for(const eps of [0.02, 0.03, 0.015, 0.04, 0.01]){
-        const approx = new cv.Mat();
-        cv.approxPolyDP(cnt, approx, eps*peri, true);
-        if(approx.rows === 4 && cv.isContourConvex(approx)){
-          pts = [];
-          for(let j=0;j<4;j++) pts.push({x:approx.data32S[j*2], y:approx.data32S[j*2+1]});
-        }
-        approx.delete();
-        if(pts) break;
-      }
-
-      // 2) Repli : rectangle orienté minimal. Toujours 4 coins, robuste à la rotation ;
-      //    on vérifie que le contour remplit bien ce rectangle pour ne pas confondre
-      //    une carte avec une forme quelconque de même encombrement.
-      if(!pts){
-        const rr = cv.minAreaRect(cnt);
-        const rectArea = rr.size.width * rr.size.height;
-        if(rectArea > 0 && area/rectArea > 0.75){
-          const v = cv.RotatedRect.points(rr);
-          pts = v.map(p=>({x:p.x, y:p.y}));
-        }
-      }
-
-      if(pts){ best = pts; bestArea = area; }
-      cnt.delete();
-    }
-  } catch(e){ return null; }
-  finally{
-    [src,gray,blur,edges,contours,hier,kernel].forEach(m=>{ try{ m && m.delete(); }catch(_){} });
-  }
-  if(!best) return null;
-
-  const sx = srcW/W, sy = srcH/H;
-  return {
-    points: orderQuad(best).map(p=>({x:p.x*sx, y:p.y*sy})),
-    areaFrac: bestArea/(W*H)
-  };
-}
 
 // Redresse la carte : transformation perspective des 4 coins vers un rectangle droit au
 // ratio exact d'une carte. C'est ce qui rend l'OCR fiable même carte inclinée.
-function rectifyCard(source, quad, outW=700){
-  const cv = window.cv;
+// Résout la transformation projective envoyant `dst` sur `src` (mapping inverse : on
+// parcourt l'image de sortie et on va chercher le pixel d'origine correspondant).
+// Élimination de Gauss sur le système 8x8 classique — pas de dépendance externe.
+function solveHomography(dst, src){
+  const A=[], b=[];
+  for(let i=0;i<4;i++){
+    const x=dst[i].x, y=dst[i].y, X=src[i].x, Y=src[i].y;
+    A.push([x,y,1,0,0,0,-x*X,-y*X]); b.push(X);
+    A.push([0,0,0,x,y,1,-x*Y,-y*Y]); b.push(Y);
+  }
+  const n=8;
+  for(let i=0;i<n;i++){
+    let piv=i;
+    for(let r=i+1;r<n;r++) if(Math.abs(A[r][i])>Math.abs(A[piv][i])) piv=r;
+    [A[i],A[piv]]=[A[piv],A[i]]; [b[i],b[piv]]=[b[piv],b[i]];
+    const dv=A[i][i];
+    if(Math.abs(dv)<1e-9) return null;
+    for(let k=i;k<n;k++) A[i][k]/=dv;
+    b[i]/=dv;
+    for(let r=0;r<n;r++){
+      if(r===i) continue;
+      const f=A[r][i];
+      if(!f) continue;
+      for(let k=i;k<n;k++) A[r][k]-=f*A[i][k];
+      b[r]-=f*b[i];
+    }
+  }
+  return b;
+}
+
+// Redresse la carte vers un rectangle au ratio exact d'une carte, avec correction de
+// perspective et échantillonnage bilinéaire. Une carte inclinée ressort droite, ce qui
+// est indispensable pour que l'OCR lise la ligne du numéro.
+function rectifyCard(source, quad, outW=600){
   const outH = Math.round(outW * CARD_RATIO);
+  const sw = source.videoWidth || source.width;
+  const sh = source.videoHeight || source.height;
+  if(!sw || !sh) return null;
+
   const full = document.createElement('canvas');
-  full.width = source.videoWidth || source.width;
-  full.height = source.videoHeight || source.height;
+  full.width = sw; full.height = sh;
   full.getContext('2d').drawImage(source, 0, 0);
+  const sdata = full.getContext('2d').getImageData(0,0,sw,sh).data;
 
-  // Sans OpenCV : simple découpe du rectangle englobant, sans correction de
-  // perspective. Suffisant tant que la carte est présentée à peu près à plat.
-  if(!cvReady()){
-    const xs = quad.map(p=>p.x), ys = quad.map(p=>p.y);
-    const x0 = Math.max(0, Math.min(...xs)), x1 = Math.min(full.width, Math.max(...xs));
-    const y0 = Math.max(0, Math.min(...ys)), y1 = Math.min(full.height, Math.max(...ys));
-    if(x1-x0 < 8 || y1-y0 < 8) return null;
-    const out = document.createElement('canvas');
-    out.width = outW; out.height = outH;
-    out.getContext('2d').drawImage(full, x0, y0, x1-x0, y1-y0, 0, 0, outW, outH);
-    return out;
-  }
+  const h = solveHomography(
+    [{x:0,y:0},{x:outW,y:0},{x:outW,y:outH},{x:0,y:outH}], quad);
+  if(!h) return null;
+  const [a,b2,c,d2,e,f,g,hh] = h;
 
-  let src=null, dst=null, from=null, to=null, M=null;
-  try{
-    src = cv.imread(full);
-    dst = new cv.Mat();
-    const p = quad;
-    from = cv.matFromArray(4,1,cv.CV_32FC2,[p[0].x,p[0].y, p[1].x,p[1].y, p[2].x,p[2].y, p[3].x,p[3].y]);
-    to   = cv.matFromArray(4,1,cv.CV_32FC2,[0,0, outW,0, outW,outH, 0,outH]);
-    M = cv.getPerspectiveTransform(from, to);
-    cv.warpPerspective(src, dst, M, new cv.Size(outW,outH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
-    const out = document.createElement('canvas');
-    out.width = outW; out.height = outH;
-    cv.imshow(out, dst);
-    return out;
-  } catch(e){ return null; }
-  finally{
-    [src,dst,from,to,M].forEach(m=>{ try{ m && m.delete(); }catch(_){} });
+  const out = document.createElement('canvas');
+  out.width = outW; out.height = outH;
+  const octx = out.getContext('2d');
+  const odata = octx.createImageData(outW, outH);
+  const o = odata.data;
+
+  for(let y=0; y<outH; y++){
+    for(let x=0; x<outW; x++){
+      const w = g*x + hh*y + 1;
+      const u = (a*x + b2*y + c)/w;
+      const v = (d2*x + e*y + f)/w;
+      const oi = (y*outW+x)*4;
+      if(u<0 || v<0 || u>=sw-1 || v>=sh-1){ o[oi]=o[oi+1]=o[oi+2]=0; o[oi+3]=255; continue; }
+      const x0=u|0, y0=v|0, fx=u-x0, fy=v-y0;
+      const i00=(y0*sw+x0)*4, i10=i00+4, i01=i00+sw*4, i11=i01+4;
+      for(let k=0;k<3;k++){
+        const top = sdata[i00+k]*(1-fx) + sdata[i10+k]*fx;
+        const bot = sdata[i01+k]*(1-fx) + sdata[i11+k]*fx;
+        o[oi+k] = top*(1-fy) + bot*fy;
+      }
+      o[oi+3]=255;
+    }
   }
+  octx.putImageData(odata,0,0);
+  return out;
 }
 
 // Netteté = variance du laplacien : une image nette a des transitions franches.
@@ -1903,20 +1887,18 @@ function setAimHint(hint){
 
 // Évaluation géométrique rapide (~4 fois/s). Ne décide pas de capturer : elle indique
 // seulement si ça vaut la peine de tenter une lecture OCR.
+// Trois états, qui pilotent la couleur du cadre :
+//   'none'   -> rouge  : aucune carte identifiable
+//   'adjust' -> orange : carte vue mais pas encore exploitable (trop loin, de travers…)
+//   'ok'     -> vert   : on tente la lecture, et la photo part si le numéro sort
 function evaluateGeometry(video){
-  // Mode simple (OpenCV absent ou en cours de chargement) : cadre guide fixe. On laisse
-  // le verrou de lecture décider — c'est lui qui garantit une photo exploitable.
-  if(!cvReady()){
-    return {state:'ok', quad:guideQuad(video), guide:true,
-            hint: cvStatus==='loading' ? 'Aligne la carte sur le cadre (détection fine en cours de chargement)'
-                                       : 'Aligne la carte sur le cadre'};
-  }
+  const det = detectCardQuadJS(video);
 
-  const det = detectCardQuad(video, video.videoWidth, video.videoHeight);
-  if(!det) return {state:'none', hint:'Place la carte dans le champ', quad:null};
+  if(!det) return {state:'none', hint:'Aucune carte détectée', quad:null};
   const q = det.points;
 
   if(det.areaFrac < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte', quad:q};
+  if(det.fill != null && det.fill < 0.65) return {state:'adjust', hint:'Dégage le fond autour de la carte', quad:q};
 
   // Côtés opposés cohérents (sinon la carte est très inclinée) et ratio plausible.
   const top = dist(q[0],q[1]), bottom = dist(q[3],q[2]);
@@ -1926,10 +1908,10 @@ function evaluateGeometry(video){
   if(skew > 0.35) return {state:'adjust', hint:'Mets la carte bien à plat', quad:q};
 
   const ratio = ((left+right)/2) / ((top+bottom)/2);
-  if(ratio < CARD_RATIO*0.72 || ratio > CARD_RATIO*1.28){
+  if(ratio < CARD_RATIO*0.70 || ratio > CARD_RATIO*1.30){
     return {state:'adjust', hint:'Cadre la carte entière', quad:q};
   }
-  return {state:'ok', hint:'Lecture…', quad:q};
+  return {state:'ok', hint:'Lecture du numéro…', quad:q};
 }
 
 // Tente une lecture réelle sur la carte redressée. Ne capture QUE si le numéro ou le nom
@@ -1970,18 +1952,22 @@ async function verifyAndCapture(video, quad){
   return {ok:true, hint:`✅ #${quick.number}/${quick.denominator} — identification en cours`};
 }
 
+let ocrReadyForCamera = false;
+
 function startAimLoop(){
   stopAimLoop();
-  setAimHint('Aligne la carte sur le cadre');
+  ocrReadyForCamera = false;
+  setAimHint('Préparation de la lecture…');
 
-  // Chargé en tâche de fond : la boucle tourne déjà en mode simple pendant ce temps,
-  // et bascule automatiquement sur la détection fine dès qu'OpenCV est prêt.
-  loadOpenCv()
-    .then(()=> setAimHint('Détection fine active — présente une carte'))
+  // Le moteur OCR (~6 Mo au premier lancement) est initialisé ICI, pas à l'intérieur
+  // de la boucle : sinon la première tentative de capture restait bloquée dessus sans
+  // aucun retour visible, et l'utilisateur voyait un cadre inerte.
+  getOcrService()
+    .then(()=>{ ocrReadyForCamera = true; setAimHint('Présente une carte'); })
     .catch(err=>{
-      setAimHint('Mode simple (détection fine indisponible : '+err.message+')');
+      setAimHint('⚠️ Lecture indisponible : '+err.message+' — utilise 📸');
       if($('cam-error')) $('cam-error').textContent =
-        'ℹ️ La détection de contour n\'a pas pu être chargée ('+err.message+'). Le scan fonctionne quand même : aligne la carte sur le cadre, la photo part dès que le numéro est lu.';
+        '⚠️ Le moteur de lecture n\'a pas pu démarrer ('+err.message+'). La capture automatique est désactivée ; le bouton 📸 reste utilisable.';
     });
 
   aimTimer = setInterval(async ()=>{
@@ -2005,7 +1991,9 @@ function startAimLoop(){
       return;
     }
 
-    drawAimOverlay(video, geo.quad, 'adjust');
+    // Géométrie bonne : cadre vert, on tente la lecture.
+    drawAimOverlay(video, geo.quad, 'ready');
+    if(!ocrReadyForCamera){ setAimHint('Préparation de la lecture…'); return; }
     if(verifyInFlight || (Date.now()-lastCaptureAt) < AIM_COOLDOWN_MS) return;
 
     verifyInFlight = true;
@@ -2043,9 +2031,7 @@ async function captureFrame(){
   if(!video || !video.videoWidth) return;
 
   let source = null;
-  if(lastQuad && window.cv && window.cv.Mat){
-    source = rectifyCard(video, lastQuad);
-  }
+  if(lastQuad) source = rectifyCard(video, lastQuad);
   if(!source){
     source = document.createElement('canvas');
     source.width = video.videoWidth;
