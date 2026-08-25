@@ -621,18 +621,21 @@ const OCR_WORKER_MODULE = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web
 // Le worker et le fil principal doivent charger la MÊME version.
 const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
 
-// Netteté minimale (variance du laplacien sur la bande) pour tenter l'OCR. Le seuil
-// était à 25, ce qui laissait passer des images sans aucune chance d'être lues — et un
-// OCR raté coûte 2 à 6 s, contre 20 ms pour ce test. Calibré sur un diagnostic réel où
-// la séparation est nette et sans chevauchement :
-//   captures RÉUSSIES : 162, 219, 361, 389, 427, 499, 528, 534
-//   échecs « illisible » :  26,  35,  77,  84
-// 100 reste largement au-dessus de tous les échecs observés (84) tout en gardant de la
-// marge sous la plus basse réussite (162) : la mesure dépend en partie du contenu de la
-// bande (une zone sombre et lisse de full-art donne moins de variance qu'un bloc de
-// texte à netteté égale), donc on ne serre pas au plus près de la séparation.
-// À recalibrer si la géométrie de la bande change.
-const MIN_SHARPNESS = 100;
+// Netteté minimale (variance du laplacien sur la bande de lecture) pour tenter l'OCR.
+// Un OCR raté coûte plusieurs secondes, ce test 20 ms : mieux vaut écarter tôt.
+//
+// ATTENTION, la valeur dépend de la GÉOMÉTRIE de la bande, pas seulement de la mise au
+// point : la variance du laplacien mesure la quantité de contraste local, donc une bande
+// contenant 4 lignes de texte en produit bien plus qu'une bande contenant le seul numéro.
+// Le seuil de 100 avait été calibré sur l'ancienne bande large (78 % × 30 %), à partir
+// d'un diagnostic réel où la séparation était nette : réussites 162-534, échecs 26-84.
+// La bande serrée actuelle (45 % × 15 %) contient bien moins de contenu, donc ce seuil y
+// rejetterait des images parfaitement nettes. Repassé volontairement bas en attendant de
+// connaître la distribution réelle sur la nouvelle géométrie : une image inutilement
+// analysée coûte quelques secondes, un seuil trop haut empêche toute lecture.
+// À recalibrer dès le prochain diagnostic (le champ « netteté » de chaque ligne donne la
+// distribution), et à chaque changement de géométrie de la bande.
+const MIN_SHARPNESS = 40;
 let visionWorker = null, visionWorkerPromise = null, workerSeq = 0, workerBroken = false;
 const workerPending = new Map();
 
@@ -717,7 +720,7 @@ function getVisionWorker(){
               const cv = new OffscreenCanvas(bitmap.width, bitmap.height);
               cv.getContext('2d').drawImage(bitmap, 0, 0);
               bitmap.close();
-              const res = await s.recognize(cv);
+              const res = await s.recognize(cv, {noCache:true});
               postMessage({id, ok:true, text: (res && res.text) || ''});
               return;
             }
@@ -731,28 +734,78 @@ function getVisionWorker(){
               card.getContext('2d').drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, W, H);
               bitmap.close();
 
-              // Bande élargie avec marge (redressement fiable désormais, mais on garde
-              // une tolérance pour l'imprécision résiduelle du recadrage/redressement).
-              // 0.30 et non 0.22 : diagnostic réel montrant la ligne juste au-dessus du
-              // numéro (Faiblesse/Résistance/Retraite) lue à la place du numéro sur
-              // plusieurs essais — la bande n'allait pas assez haut.
-              const bandH = Math.round(H*0.30);
-              const bandW = Math.round(W*0.78);
-              const bx = Math.round((W-bandW)/2), by = H - bandH - Math.round(H*0.015);
-              const band = new OffscreenCanvas(bandW, bandH);
-              band.getContext('2d').drawImage(card, bx, by, bandW, bandH, 0, 0, bandW, bandH);
+              // Découpe une zone de la carte, exprimée en fractions de la CARTE, avec
+              // agrandissement optionnel : PaddleOCR normalise les lignes de texte autour
+              // de 32-48 px de haut, or le numéro ne fait qu'une vingtaine de pixels à
+              // l'échelle native de la carte. L'agrandissement n'ajoute pas de détail
+              // mais amène les chiffres dans la plage où le modèle travaille le mieux.
+              const crop = (fx, fy, fw, fh, zoom)=>{
+                const sx = Math.round(W*fx), sy = Math.round(H*fy);
+                const sw = Math.round(W*fw), sh = Math.round(H*fh);
+                const z = zoom || 1;
+                const c = new OffscreenCanvas(Math.round(sw*z), Math.round(sh*z));
+                const cx = c.getContext('2d', {willReadFrequently:true});
+                cx.imageSmoothingQuality = 'high';
+                cx.drawImage(card, sx, sy, sw, sh, 0, 0, c.width, c.height);
+                return c;
+              };
 
-              const sharp = sharpness(band);
+              // Bande SERRÉE : le coin bas-gauche, seul endroit où le numéro est imprimé.
+              // Ancrée à GAUCHE (fx=0) et non centrée : l'ancienne bande centrée démarrait
+              // à 11 % de la largeur alors que le numéro commence vers 5 %, ce qui rognait
+              // le premier chiffre (diagnostic réel : « 007/165 » lu « 07/16s »).
+              // Le numéro occupe environ 5-32 % de la largeur et 93-98 % de la hauteur :
+              // 0-45 % × 84-99 % laisse donc à peu près le double de marge dans chaque
+              // direction, de quoi absorber les défauts de coupe et de centrage.
+              const serree = crop(0, 0.84, 0.45, 0.15, 2);
+
+              // Netteté mesurée sur la CARTE ENTIÈRE et non sur la bande de lecture.
+              // La variance du laplacien mesure la quantité de contraste local : sur une
+              // bande sans contenu (mise en page atypique, zone sombre et lisse d'une
+              // full-art) elle tombe à zéro même sur une image parfaitement nette, et
+              // l'image était alors rejetée comme « floue » — le repli large n'ayant même
+              // jamais sa chance. La netteté est une propriété de la PRISE DE VUE, pas du
+              // cadrage : la mesurer sur la carte entière, qui contient toujours de la
+              // matière (illustration, texte), la rend indépendante de la mise en page.
+              const sharp = sharpness(card);
               if(sharp < ${MIN_SHARPNESS}){ postMessage({id, ok:true, sharp, reason:'flou'}); return; }
 
               const s = await ensure();
-              const res = await s.recognize(band);
-              const text = (res && res.text) || '';
-              const cands = extractNumbers(text);
+              // {noCache:true} est OBLIGATOIRE, pas une précaution : le cache interne de
+              // ppu-paddle-ocr hache seulement les 1024 premiers octets du tampon de
+              // pixels (~256 pixels de la première ligne), quasi toujours du fond uni sur
+              // cette bande. Deux cartes différentes produisent donc la même clé, et le
+              // service renvoie le numéro de la précédente EN 3 MS au lieu de lire la
+              // nouvelle — constaté : trois numéros distincts ('111/111','222/222',
+              // '333/333') ont tous renvoyé le premier lu. Sans intérêt de toute façon,
+              // deux images caméra n'étant jamais identiques au bit près.
+              let via = 'serree';
+              let res = await s.recognize(serree, {noCache:true});
+              let text = (res && res.text) || '';
+              let cands = extractNumbers(text);
+
+              // Repli sur l'ancienne bande large. Elle lit 4 lignes au lieu d'une (texte
+              // d'attaque, barre Faiblesse/Résistance, texte d'ambiance) et coûte donc
+              // plusieurs secondes — mais elle garantit qu'on ne perd aucune carte que
+              // l'on savait lire avant, notamment les mises en page inhabituelles où le
+              // numéro sortirait de la zone serrée. Le champ « via » du diagnostic dira
+              // si ce repli sert réellement ; s'il ne se déclenche jamais, on le retire.
+              if(!cands.length){
+                via = 'large';
+                const large = crop(0.11, 0.685, 0.78, 0.30, 1);
+                const res2 = await s.recognize(large, {noCache:true});
+                const text2 = (res2 && res2.text) || '';
+                text = text + ' ⟨large⟩ ' + text2;
+                cands = extractNumbers(text2);
+              }
+
               if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible'}); return; }
 
               const carte = await createImageBitmap(card);
-              postMessage({id, ok:true, sharp, text, hash:dHash(band),
+              // Empreinte anti-doublon prise sur la CARTE entière et non sur la bande :
+              // deux cartes différentes peuvent avoir des bas de carte proches, alors que
+              // l'illustration les sépare nettement.
+              postMessage({id, ok:true, sharp, text, via, hash:dHash(card),
                            number:cands[0].number, denominator:cands[0].denominator,
                            carte}, [carte]);
               return;
@@ -912,7 +965,7 @@ async function recognizeText(canvas){
     }
   }
   const svc = await getOcrService();
-  const res = await svc.recognize(canvas);
+  const res = await svc.recognize(canvas, {noCache:true});
   return (res && res.text) || '';
 }
 
@@ -2084,7 +2137,8 @@ function buildDiagReport(){
         '  netteté=' + (e.sharp!=null ? Math.round(e.sharp) : '-') +
         '  durée=' + e.ocrMs + 'ms' +
         '  lu=' + (e.num || '—') +
-        '  "' + e.hint + '"' + (e.ratio!=null ? ('  ratio='+e.ratio) : ''));
+        '  "' + e.hint + '"' + (e.ratio!=null ? ('  ratio='+e.ratio) : '') +
+        (e.via ? ('  bande=' + e.via) : ''));
       if(e.raw) l.push('              texte OCR : ' + JSON.stringify(e.raw).slice(0,220));
     } else if(e.k === 'err'){
       l.push(dt + 'ms  INFO  ' + e.msg);
@@ -2432,7 +2486,7 @@ async function attemptRead(corners, score){
     if(navigator.vibrate) navigator.vibrate(40);
     setOverlayTarget('ok', corners);
     setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
-    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms,
+    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
                      num:r.number+'/'+r.denominator, raw:r.text});
   }catch(e){
     diagPush('err', {msg:'lecture : ' + e.message});

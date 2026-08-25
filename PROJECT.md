@@ -123,12 +123,13 @@ l'autre worker.
    imprimée, donc une carte tenue légèrement tournée peut ressortir "en paysage" sans être
    un faux positif (constaté sur diagnostic réel). Si c'est le cas, l'image est pivotée à
    90° avant lecture (sens arbitraire, faute d'indice sur l'orientation réelle).
-4. **Lecture** (worker OCR existant, `workerCall('read', ...)`) : bande élargie (78 %
-   largeur × 30 % hauteur, centrée, marge de 1,5 % en bas) découpée dans la carte
-   redressée, test de netteté (variance du laplacien), puis PaddleOCR — identique à la
-   chaîne §3 à partir de cette étape. Déclenchée par `detectLoop` mais jamais attendue par
-   elle (fire-and-forget, garde `readInFlight` + `MIN_READ_INTERVAL_MS` pour éviter les
-   tentatives redondantes).
+4. **Lecture** (worker OCR existant, `workerCall('read', ...)`) : test de netteté sur la
+   carte entière (voir §4.8, pourquoi pas sur la bande) puis bande **serrée** en bas à
+   gauche (0-45 % × 84-99 %, ×2), avec repli sur une bande large (0.11×0.685, 78 %×30 %)
+   si aucun numéro n'y est trouvé — voir §4.8 pour la géométrie et les mesures, §4.9 pour
+   `{noCache:true}` (obligatoire, pas une option). Déclenchée par `detectLoop` mais jamais
+   attendue par elle (fire-and-forget, garde `readInFlight` + `MIN_READ_INTERVAL_MS` pour
+   éviter les tentatives redondantes).
 
 Remplace deux approches abandonnées, documentées dans `index.html` pour ne pas les
 retenter : la détection de contour maison en JS (instable sur appareil réel — formes
@@ -195,6 +196,47 @@ diffère aussi (embedding visuel + recherche vectorielle côté serveur, `Embedd
 Piste web qui, elle, attaquerait le bon problème : un runtime ONNX avec **exécution
 WebGPU**. `scanic` n'expose pas `executionProviders` (il embarque son propre build WASM
 minimal), donc cela demanderait de piloter `onnxruntime-web` directement avec le modèle.
+
+### 4.8 La bande de lecture doit être ancrée à gauche, pas centrée
+Une carte Pokémon place le numéro en bas à GAUCHE ; une bande centrée démarre trop loin du
+bord et rogne le premier chiffre. Diagnostic réel : `007/165` lu `07/16s`, `001/165` lu
+`o1/16s`. Confirmé isolément : la même bande centrée (78 %×30 %) sur une mise en page
+réaliste (attaque + barre Faiblesse/Résistance/Retraite + texte d'ambiance + numéro) lit
+`165` — le `037/` n'atteint même pas `extractNumberCandidates`, faute de `/` détecté avec
+assez de chiffres des deux côtés dans le texte OCR retourné.
+
+Bande resserrée : ancrée à gauche (`fx=0`), zone 0-45 % de largeur × 84-99 % de hauteur
+(le numéro occupe ~5-32 % × ~93-98 %, marge ~2×), agrandie ×2 avant OCR — PaddleOCR
+normalise ses lignes autour de 32-48 px de haut, or le numéro n'en fait qu'une vingtaine à
+l'échelle native de la carte. Mesuré sur la même mise en page réaliste : 335 ms contre
+810 ms pour l'ancienne bande (-59 %), 2 lignes détectées contre 5, et le numéro complet
+correctement lu là où l'ancienne bande le tronquait.
+
+Repli sur l'ancienne bande large (0.11×0.685, 78 %×30 %) si la bande serrée échoue :
+coûte cher mais couvre les mises en page où le numéro sortirait de la zone serrée.
+Le champ `via` du diagnostic (`serree` / `large`) dit lequel a servi.
+
+Piège associé : la netteté doit être mesurée sur la **carte entière**, pas sur la bande
+serrée. Une bande sans contenu (mise en page atypique, zone sombre et lisse d'une
+full-art) donne une variance nulle même sur une image parfaitement nette — l'image était
+alors rejetée comme floue et le repli n'avait jamais sa chance. La netteté est une
+propriété de la prise de vue, pas du cadrage.
+
+### 4.9 Le cache interne de ppu-paddle-ocr confond des cartes différentes
+`ppu-paddle-ocr` met en cache ses résultats par une clé qui ne hache que les **1024
+premiers octets** du tampon de pixels (`ImageCache.generateKey`, `core/image-cache.js`)
+— environ 256 pixels de la première ligne de l'image. Sur une bande de lecture, cette
+ligne est presque toujours du fond uni : deux cartes différentes produisent la même clé,
+et le service renvoie le numéro de la précédente **en quelques millisecondes** au lieu de
+lire la nouvelle. Reproduit isolément : trois numéros distincts (`111/111`, `222/222`,
+`333/333`) envoyés à la suite ont tous renvoyé le premier lu.
+
+C'est le type de bug qui passe totalement inaperçu en test (une seule image à la fois)
+et se déclenche uniquement en usage réel (cartes différentes à la chaîne) — sans lui, on
+aurait pu réintroduire silencieusement une fausse identification bien après avoir corrigé
+celle de §4.1. Tous les appels à `recognize()` passent donc `{noCache:true}` — le cache
+n'apporte de toute façon rien ici, deux images caméra n'étant jamais identiques au bit
+près.
 
 ## 5. Résultats mesurés
 
