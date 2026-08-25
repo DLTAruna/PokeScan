@@ -607,6 +607,102 @@ async function getOcrService(){
   return ocrServicePromise;
 }
 
+// ---------------- OCR DÉPORTÉ DANS UN WEB WORKER ----------------
+// L'OCR est le traitement le plus long (61-144 ms pour la bande, bien davantage pour
+// une carte entière). Exécuté sur le fil principal, il gelait l'aperçu caméra d'autant,
+// et l'analyse de fond des photos en file le figeait en continu. Le worker le sort de
+// ce fil : l'aperçu et le cadre restent fluides quoi qu'il arrive.
+//
+// Le worker charge une version *pré-résolue* du moteur (suffixe `/+esm`) : les workers
+// ne lisent pas l'`importmap` de la page, donc les imports par nom court échoueraient.
+const OCR_WORKER_MODULE = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web/+esm';
+let visionWorker = null, visionWorkerPromise = null, workerSeq = 0, workerBroken = false;
+const workerPending = new Map();
+
+function getVisionWorker(){
+  if(visionWorkerPromise) return visionWorkerPromise;
+  visionWorkerPromise = new Promise((resolve, reject)=>{
+    try{
+      const src = `
+        let svc = null, svcPromise = null;
+        async function ensure(){
+          if(svc) return svc;
+          if(!svcPromise) svcPromise = (async ()=>{
+            const mod = await import(${JSON.stringify(OCR_WORKER_MODULE)});
+            const s = new mod.PaddleOcrService();
+            await s.initialize();
+            svc = s; return s;
+          })();
+          return svcPromise;
+        }
+        self.onmessage = async (e)=>{
+          const { id, type, bitmap } = e.data;
+          try{
+            if(type === 'init'){ await ensure(); postMessage({id, ok:true}); return; }
+            if(type === 'ocr'){
+              const s = await ensure();
+              const cv = new OffscreenCanvas(bitmap.width, bitmap.height);
+              cv.getContext('2d').drawImage(bitmap, 0, 0);
+              bitmap.close();
+              const res = await s.recognize(cv);
+              postMessage({id, ok:true, text: (res && res.text) || ''});
+              return;
+            }
+            postMessage({id, ok:false, error:'type inconnu: ' + type});
+          }catch(err){
+            postMessage({id, ok:false, error: (err && err.message) || String(err)});
+          }
+        };
+      `;
+      const w = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+      w.onmessage = (e)=>{
+        const p = workerPending.get(e.data.id);
+        if(!p) return;
+        workerPending.delete(e.data.id);
+        e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+      };
+      w.onerror = (e)=>{
+        workerBroken = true;
+        reject(new Error('worker : ' + (e.message || 'erreur de chargement')));
+      };
+      visionWorker = w;
+      resolve(w);
+    }catch(err){ workerBroken = true; reject(err); }
+  });
+  return visionWorkerPromise;
+}
+
+function workerCall(type, payload, transfer){
+  return getVisionWorker().then(w => new Promise((resolve, reject)=>{
+    const id = ++workerSeq;
+    workerPending.set(id, {resolve, reject});
+    // Un worker muet bloquerait la boucle indéfiniment : on borne l'attente.
+    setTimeout(()=>{
+      if(workerPending.has(id)){ workerPending.delete(id); reject(new Error('worker : délai dépassé')); }
+    }, 30000);
+    w.postMessage(Object.assign({id, type}, payload||{}), transfer||[]);
+  }));
+}
+
+// Reconnaît le texte d'un canvas. Passe par le worker ; si celui-ci est indisponible
+// (navigateur restrictif, échec de chargement), retombe sur le moteur du fil principal
+// pour que l'application continue de fonctionner, en moins fluide.
+async function recognizeText(canvas){
+  if(!workerBroken){
+    try{
+      const bmp = await createImageBitmap(canvas);
+      const r = await workerCall('ocr', {bitmap:bmp}, [bmp]);
+      return r.text || '';
+    }catch(e){
+      workerBroken = true;
+      diagPush('err', {msg:'worker OCR indisponible, repli fil principal : ' + e.message});
+    }
+  }
+  const svc = await getOcrService();
+  const res = await svc.recognize(canvas);
+  return (res && res.text) || '';
+}
+
 // Confusions de caractères classiques quand on sait qu'on attend un chiffre.
 // PaddleOCR lit souvent "183/I65" ou "o04/064" — normaliser ces sosies récupère
 // le numéro sans rien deviner (validé sur les sorties OCR réelles).
@@ -1368,11 +1464,10 @@ async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
   const croppedRaw = await cropBottomBandForOcr(analysisSrc, cropPct, 'raw', 55, cardBounds);
   if(showDebug && $('ocr-debug-preview')) $('ocr-debug-preview').src = croppedRaw;
 
-  const svc = await getOcrService();
   const texts = [];
-  try{ texts.push((await svc.recognize(await dataUrlToCanvas(croppedRaw))).text || ''); }
+  try{ texts.push(await recognizeText(await dataUrlToCanvas(croppedRaw))); }
   catch(e){ /* passe crop en échec, la pleine image peut encore réussir */ }
-  try{ texts.push((await svc.recognize(await dataUrlToCanvas(analysisSrc))).text || ''); }
+  try{ texts.push(await recognizeText(await dataUrlToCanvas(analysisSrc))); }
   catch(e){ /* passe pleine image en échec */ }
 
   const rawText = texts.join('\n').trim();
@@ -1457,13 +1552,16 @@ async function quickReadNumberFromBand(bandCanvas, alreadyCropped){
     band = c;
   }
   try{
-    const svc = await getOcrService();
-    const res = await svc.recognize(band);
-    const text = res.text || '';
+    const text = await recognizeText(band);
     const cands = extractNumberCandidates(text);
     return { text, number: cands.length ? cands[0].number : null,
              denominator: cands.length ? cands[0].denominator : null };
-  } catch(e){ return { text:'', number:null, denominator:null }; }
+  } catch(e){
+    // On remonte la cause : une lecture systématiquement vide sans explication est
+    // exactement ce qui avait rendu un précédent diagnostic illisible.
+    diagPush('err', {msg:'lecture du numéro : ' + e.message});
+    return { text:'', number:null, denominator:null };
+  }
 }
 
 async function analyzeQueueItem(item){
@@ -2217,12 +2315,21 @@ function startAimLoop(){
   // Le moteur OCR (~6 Mo au premier lancement) est initialisé ICI, pas à l'intérieur
   // de la boucle : sinon la première tentative de capture restait bloquée dessus sans
   // aucun retour visible, et l'utilisateur voyait un cadre inerte.
-  getOcrService()
-    .then(()=>{ ocrReadyForCamera = true; setAimHint('Présente une carte'); })
+  // L'initialisation se fait dans le worker, donc sans figer l'aperçu.
+  workerCall('init')
+    .then(()=>{ ocrReadyForCamera = true; setAimHint('Présente une carte'); diagPush('err',{msg:'worker OCR prêt'}); })
     .catch(err=>{
-      setAimHint('⚠️ Lecture indisponible : '+err.message+' — utilise 📸');
-      if($('cam-error')) $('cam-error').textContent =
-        '⚠️ Le moteur de lecture n\'a pas pu démarrer ('+err.message+'). La capture automatique est désactivée ; le bouton 📸 reste utilisable.';
+      // Repli : moteur sur le fil principal. L'application reste utilisable, en moins fluide.
+      workerBroken = true;
+      diagPush('err', {msg:'worker indisponible ('+err.message+'), repli fil principal'});
+      setAimHint('Préparation de la lecture (mode dégradé)…');
+      getOcrService()
+        .then(()=>{ ocrReadyForCamera = true; setAimHint('Présente une carte'); })
+        .catch(e2=>{
+          setAimHint('⚠️ Lecture indisponible : '+e2.message+' — utilise 📸');
+          if($('cam-error')) $('cam-error').textContent =
+            '⚠️ Le moteur de lecture n\'a pas pu démarrer ('+e2.message+'). La capture automatique est désactivée ; le bouton 📸 reste utilisable.';
+        });
     });
 
   aimTimer = setInterval(async ()=>{
