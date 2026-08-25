@@ -75,6 +75,16 @@
   .capture-btns{display:flex; gap:10px; flex-wrap:wrap; justify-content:center;}
   .video-wrap{position:relative; border-radius:var(--radius); overflow:hidden; background:#000; display:none;}
   .video-wrap.active{display:block;}
+  /* Plein écran (overlay CSS, pas l'API Fullscreen : peu fiable sur Safari iOS pour un
+     élément quelconque) activé au démarrage de la caméra, désactivé à l'arrêt. */
+  #cam-fullscreen-area.fs{
+    position:fixed; inset:0; z-index:200; background:var(--bg);
+    padding:10px 10px calc(10px + env(safe-area-inset-bottom));
+    padding-top:calc(10px + env(safe-area-inset-top));
+    overflow-y:auto; display:flex; flex-direction:column; gap:8px;
+  }
+  #cam-fullscreen-area.fs .video-wrap{flex-shrink:0;}
+  #cam-fullscreen-area.fs video{max-height:60vh;}
   /* contain et non cover : on doit voir exactement ce qui sera capturé, et le cadre
      de visée superposé doit s'aligner au pixel près sur l'image vidéo. */
   video{width:100%; display:block; max-height:65vh; object-fit:contain; background:#000;}
@@ -229,6 +239,7 @@
       <div class="capture-btns" id="cam-start-row">
         <button class="btn-gold" id="btn-start-cam">📹 Démarrer la caméra</button>
       </div>
+      <div id="cam-fullscreen-area">
       <div class="video-wrap" id="video-wrap">
         <video id="video" autoplay playsinline muted></video>
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
@@ -264,6 +275,7 @@
            border-radius:8px; padding:8px; font-size:10.5px; max-height:260px; overflow:auto;
            white-space:pre-wrap; word-break:break-word; margin-top:6px;"></pre>
       <div class="queue-strip" id="queue-strip"></div>
+      </div>
     </div>
 
     <div class="panel">
@@ -2076,6 +2088,8 @@ async function startCamera(){
     $('video').srcObject = cameraStream;
     $('video-wrap').classList.add('active');
     $('cam-start-row').style.display = 'none';
+    $('cam-fullscreen-area').classList.add('fs');
+    document.documentElement.style.overflow = 'hidden';
     capturedThisSession = 0;
     renderQueueStrip();
     startAimLoop();
@@ -2572,9 +2586,18 @@ async function attemptRead(corners, score){
     const dataUrl = cv.toDataURL('image/jpeg', 0.8);
     const mySeq = ++liveResultSeq;
     showLiveResultPending(dataUrl, r.number, r.denominator);
+
+    // Bande du nom (haut de carte), pour une confirmation de confiance APRÈS coup —
+    // jamais lue par la lecture rapide du numéro (bande du bas, voir §4.8), donc sans
+    // elle le panneau live ne peut jamais atteindre ✅ même quand tout est juste (voir
+    // confirmLiveResultByName). Simple crop-resize natif, pas d'OCR ici : coût négligeable.
+    const nameCropH = Math.round(sourceForRead.height * 0.22);
+    const nameBmp = await createImageBitmap(sourceForRead, 0, 0, sourceForRead.width, nameCropH,
+      {resizeWidth: 500, resizeHeight: Math.round(500 * nameCropH / sourceForRead.width), resizeQuality:'medium'});
+
     cv.toBlob(b => {
       const item = pushToQueue(dataUrl, b);
-      resolveLiveResult(mySeq, item, dataUrl, r.number, r.denominator, r.text);
+      resolveLiveResult(mySeq, item, dataUrl, r.number, r.denominator, r.text, nameBmp);
     }, 'image/png');
 
     capturedThisSession++;
@@ -2633,7 +2656,7 @@ function showLiveResultNotFound(){
 // résultat sous la même forme que `analyzeQueueItem` (`_analysis`), pour que l'analyse
 // de fond ne refasse jamais ce travail une fois la caméra arrêtée (voir la condition
 // `!it._analysis || it._analysis.status === 'pending'` dans processQueueAnalysis).
-async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText){
+async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText, nameBmp){
   try{
     if(!setAbbrMap){
       const loaded = await loadSetAbbreviationMap(()=>{});
@@ -2648,12 +2671,41 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
       card: result.card, note: result.note, rawText: ocrText, number, denominator
     };
 
-    if(mySeq !== liveResultSeq) return; // une carte plus récente affiche déjà autre chose
-    if(result.card) showLiveResultDone(result.card, result.confidence);
-    else showLiveResultNotFound();
+    if(mySeq !== liveResultSeq){ if(nameBmp?.close) nameBmp.close(); return; } // une carte plus récente affiche déjà autre chose
+    if(result.card){
+      showLiveResultDone(result.card, result.confidence);
+      // La confirmation par le nom n'a pas pu être tentée ici : le texte OCR utilisé
+      // vient de la bande du bas (numéro), qui ne contient jamais le nom (haut de
+      // carte). On la tente maintenant, en arrière-plan, sans bloquer l'affichage déjà
+      // fait — sinon un capture pourtant juste reste 🤔 pour toujours (voir §4.13).
+      if(result.confidence !== 'high' && nameBmp){
+        confirmLiveResultByName(mySeq, item, result.card, nameBmp);
+      } else if(nameBmp?.close) nameBmp.close();
+    } else {
+      showLiveResultNotFound();
+      if(nameBmp?.close) nameBmp.close();
+    }
   }catch(e){
+    if(nameBmp?.close) nameBmp.close();
     if(mySeq === liveResultSeq) showLiveResultNotFound();
   }
+}
+
+// Confirmation asynchrone, a posteriori : lit le nom en haut de carte et, s'il
+// correspond à la carte déjà proposée, fait passer le badge de 🤔 à ✅ — sans jamais
+// relancer de recherche TCGdex, juste une lecture OCR de plus sur une bande déjà prête.
+async function confirmLiveResultByName(mySeq, item, card, nameBmp){
+  try{
+    const r = await workerCall('ocr', {bitmap:nameBmp}, [nameBmp]);
+    const text = (r && r.text) || '';
+    if(cardNameAppearsInText(card, text)){
+      if(item._analysis){
+        item._analysis.status = 'ok';
+        item._analysis.note = (item._analysis.note || '') + ' + nom confirmé';
+      }
+      if(mySeq === liveResultSeq) showLiveResultDone(card, 'high');
+    }
+  }catch(e){ /* tant pis, le résultat reste 🤔 — jamais bloquant */ }
 }
 
 function startAimLoop(){
@@ -2710,6 +2762,8 @@ function stopCamera(){
   }
   $('video-wrap').classList.remove('active');
   $('cam-start-row').style.display = 'flex';
+  $('cam-fullscreen-area').classList.remove('fs');
+  document.documentElement.style.overflow = '';
   // La caméra libère le worker OCR : la file mise en attente pendant la prise de vue
   // peut repartir, et sans plus aucune concurrence elle ira à pleine vitesse.
   processQueueAnalysis();

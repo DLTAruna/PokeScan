@@ -315,6 +315,35 @@ résultats directement, sans repasser par un copier/coller :
   regroupant le câblage de la case avec le reste du bloc diagnostic, après sa
   déclaration.
 
+### 4.13 Le panneau live ne peut jamais atteindre ✅ : la confirmation par le nom exige un texte qu'il n'a pas
+Constaté sur un relevé réel après la mise en place du panneau (§3bis point 5) : toutes
+les identifications étaient correctes mais aucune n'affichait jamais ✅, uniquement 🤔.
+
+Cause, trouvée dans le code plutôt que devinée : `cardNameAppearsInText` (utilisée par
+`resolveCardBestEffort` pour n'accorder une confiance haute que si le nom du Pokémon
+confirme le numéro — garde-fou contre un chiffre mal lu qui désignerait quand même une
+vraie carte, mais la mauvaise) reçoit le texte OCR **du direct**, qui ne provient que de
+la bande du bas (§4.8, lecture du numéro). Le nom est toujours en haut de la carte : ce
+texte ne peut structurellement jamais le contenir, donc la confirmation échoue à chaque
+fois, même quand l'identification est déjà exacte.
+
+Corrigé sans ralentir l'affichage déjà rapide : `attemptRead` découpe en plus une bande
+du haut de la carte redressée (22 % de hauteur, simple crop-resize natif, pas d'OCR à ce
+stade) et la transmet à `resolveLiveResult`. Le résultat 🤔 s'affiche immédiatement comme
+avant ; SI la confiance n'est pas déjà haute, `confirmLiveResultByName` lance ensuite,
+en arrière-plan, une lecture OCR de cette seule bande (`workerCall('ocr', ...)`, sans
+relancer de recherche TCGdex) et fait passer le badge à ✅ si le nom confirme — sinon le
+résultat reste 🤔, jamais présenté comme plus sûr qu'il ne l'est.
+
+### 4.14 Caméra en plein écran
+Demande directe : la caméra et le panneau live prenaient trop peu de place au milieu du
+reste de la page. Plutôt que l'API Fullscreen (peu fiable sur Safari iOS pour un élément
+quelconque — seule la balise `<video>` y a un vrai support natif, pas un conteneur
+arbitraire), un simple overlay CSS (`#cam-fullscreen-area.fs` : `position:fixed;
+inset:0`) recouvre toute la page dès `startCamera()`, retiré par `stopCamera()` — plus
+fiable cross-navigateur, et suffisant puisque rien n'a besoin de sortir du DOM du
+navigateur lui-même.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
