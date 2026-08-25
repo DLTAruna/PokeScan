@@ -1721,31 +1721,82 @@ function detectCardQuadJS(video){
   }
   if(best<0 || bestCount < W*H*0.04) return null;
 
-  // 4 coins = extrêmes selon les diagonales : robuste à la rotation.
-  let tl=null,tr=null,brr=null,bl=null;
-  let minSum=Infinity,maxSum=-Infinity,minDiff=Infinity,maxDiff=-Infinity;
+  // Orientation par analyse en composantes principales : l'axe principal de la région
+  // donne l'inclinaison de la carte. Bien plus stable que les 4 points extrêmes, qui
+  // sautaient d'une image à l'autre au moindre pixel de bruit.
+  let mx=0,my=0;
+  for(let p=0;p<W*H;p++){ if(label[p]!==best) continue; const x=p%W; mx+=x; my+=(p-x)/W; }
+  mx/=bestCount; my/=bestCount;
+  let vxx=0,vxy=0,vyy=0;
   for(let p=0;p<W*H;p++){
     if(label[p]!==best) continue;
-    const x=p%W, y=(p-x)/W;
-    const s=x+y, df=x-y;
-    if(s<minSum){ minSum=s; tl={x,y}; }
-    if(s>maxSum){ maxSum=s; brr={x,y}; }
-    if(df>maxDiff){ maxDiff=df; tr={x,y}; }
-    if(df<minDiff){ minDiff=df; bl={x,y}; }
+    const x=p%W, y=(p-x)/W, dx=x-mx, dy=y-my;
+    vxx+=dx*dx; vxy+=dx*dy; vyy+=dy*dy;
   }
-  if(!tl||!tr||!brr||!bl) return null;
+  vxx/=bestCount; vxy/=bestCount; vyy/=bestCount;
+  const theta = 0.5*Math.atan2(2*vxy, vxx-vyy);
+  let ax={x:Math.cos(theta), y:Math.sin(theta)};
+  let ay={x:-Math.sin(theta), y:Math.cos(theta)};
+
+  // Étendue de la région le long des deux axes.
+  let minA=Infinity,maxA=-Infinity,minB=Infinity,maxB=-Infinity;
+  for(let p=0;p<W*H;p++){
+    if(label[p]!==best) continue;
+    const x=p%W, y=(p-x)/W, dx=x-mx, dy=y-my;
+    const a=dx*ax.x+dy*ax.y, b=dx*ay.x+dy*ay.y;
+    if(a<minA)minA=a; if(a>maxA)maxA=a;
+    if(b<minB)minB=b; if(b>maxB)maxB=b;
+  }
+  let ea=(maxA-minA)/2, eb=(maxB-minB)/2;
+  const cxr = mx + ((maxA+minA)/2)*ax.x + ((maxB+minB)/2)*ay.x;
+  const cyr = my + ((maxA+minA)/2)*ax.y + ((maxB+minB)/2)*ay.y;
+
+  // Le grand côté est la hauteur de la carte (une carte est plus haute que large).
+  let axH, axW, eH, eW;
+  if(ea >= eb){ axH=ax; axW=ay; eH=ea; eW=eb; }
+  else        { axH=ay; axW=ax; eH=eb; eW=ea; }
+  const rawRatio = eW>0 ? eH/eW : 0;   // ratio MESURÉ, avant contrainte
+
+  // Contrainte aux proportions réelles d'une carte : on garde la hauteur mesurée
+  // (la plus fiable) et on en déduit la largeur. Le cadre garde ainsi toujours la
+  // forme d'une carte au lieu de se déformer au gré du bruit de détection.
+  eW = eH / CARD_RATIO;
+
+  // Orientation cohérente : hauteur vers le bas, largeur vers la droite, pour que
+  // les 4 coins sortent toujours dans l'ordre attendu par le redressement.
+  if(axH.y < 0){ axH={x:-axH.x, y:-axH.y}; }
+  if(axW.x < 0){ axW={x:-axW.x, y:-axW.y}; }
 
   const sx=(video.videoWidth||video.width)/W, sy=(video.videoHeight||video.height)/H;
-  const pts=[tl,tr,brr,bl].map(p=>({x:p.x*sx, y:p.y*sy}));
+  const corner=(hs,ws)=>({
+    x: (cxr + axH.x*eH*hs + axW.x*eW*ws)*sx,
+    y: (cyr + axH.y*eH*hs + axW.y*eW*ws)*sy
+  });
+  // haut-gauche, haut-droit, bas-droit, bas-gauche
+  const pts=[corner(-1,-1), corner(-1,1), corner(1,1), corner(1,-1)];
 
-  // Taux de remplissage : une carte remplit bien son quadrilatère, une main ou un
-  // reflet non — ça évite de verrouiller sur n'importe quelle forme.
-  const quadArea = Math.abs(
-    (pts[0].x*(pts[1].y-pts[3].y) + pts[1].x*(pts[2].y-pts[0].y) +
-     pts[2].x*(pts[3].y-pts[1].y) + pts[3].x*(pts[0].y-pts[2].y))/2 );
-  const compArea = bestCount*sx*sy;
-  return { points: pts, areaFrac: bestCount/(W*H),
-           fill: quadArea>0 ? Math.min(1, compArea/quadArea) : 0 };
+  // Taux de remplissage : une carte remplit bien son rectangle, une main ou un reflet
+  // non — ça évite de verrouiller sur n'importe quelle forme.
+  const rectArea = (2*eH)*(2*eW);
+  return { points: pts, areaFrac: bestCount/(W*H), rawRatio,
+           fill: rectArea>0 ? Math.min(1, bestCount/rectArea) : 0 };
+}
+
+// Lissage temporel des coins : sans lui, le cadre tremble en permanence. Un saut
+// important (changement de carte) resynchronise au lieu de glisser lentement.
+let smoothedQuad = null;
+function smoothQuad(q){
+  if(!q){ smoothedQuad = null; return null; }
+  if(!smoothedQuad || smoothedQuad.length !== 4){ smoothedQuad = q; return q; }
+  const ref = dist(q[0], q[2]) || 1;
+  let jump = 0;
+  for(let i=0;i<4;i++) jump = Math.max(jump, dist(q[i], smoothedQuad[i]));
+  const alpha = jump > ref*0.25 ? 0.7 : 0.25;
+  smoothedQuad = q.map((p,i)=>({
+    x: smoothedQuad[i].x + (p.x - smoothedQuad[i].x)*alpha,
+    y: smoothedQuad[i].y + (p.y - smoothedQuad[i].y)*alpha
+  }));
+  return smoothedQuad;
 }
 
 function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
@@ -1894,21 +1945,15 @@ function setAimHint(hint){
 function evaluateGeometry(video){
   const det = detectCardQuadJS(video);
 
-  if(!det) return {state:'none', hint:'Aucune carte détectée', quad:null};
-  const q = det.points;
+  if(!det){ smoothQuad(null); return {state:'none', hint:'Aucune carte détectée', quad:null}; }
+  const q = smoothQuad(det.points);
 
   if(det.areaFrac < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte', quad:q};
-  if(det.fill != null && det.fill < 0.65) return {state:'adjust', hint:'Dégage le fond autour de la carte', quad:q};
+  if(det.fill != null && det.fill < 0.60) return {state:'adjust', hint:'Dégage le fond autour de la carte', quad:q};
 
-  // Côtés opposés cohérents (sinon la carte est très inclinée) et ratio plausible.
-  const top = dist(q[0],q[1]), bottom = dist(q[3],q[2]);
-  const left = dist(q[0],q[3]), right = dist(q[1],q[2]);
-  if(!top || !bottom || !left || !right) return {state:'adjust', hint:'Cadre la carte entière', quad:q};
-  const skew = Math.abs(top-bottom)/Math.max(top,bottom) + Math.abs(left-right)/Math.max(left,right);
-  if(skew > 0.35) return {state:'adjust', hint:'Mets la carte bien à plat', quad:q};
-
-  const ratio = ((left+right)/2) / ((top+bottom)/2);
-  if(ratio < CARD_RATIO*0.70 || ratio > CARD_RATIO*1.30){
+  // Le ratio des points renvoyés est contraint aux proportions d'une carte : c'est le
+  // ratio MESURÉ avant contrainte qui dit si la forme vue en est vraiment une.
+  if(det.rawRatio < CARD_RATIO*0.62 || det.rawRatio > CARD_RATIO*1.45){
     return {state:'adjust', hint:'Cadre la carte entière', quad:q};
   }
   return {state:'ok', hint:'Lecture du numéro…', quad:q};
@@ -2009,6 +2054,7 @@ function startAimLoop(){
 function stopAimLoop(){
   if(aimTimer){ clearInterval(aimTimer); aimTimer = null; }
   verifyInFlight = false;
+  smoothQuad(null);
   const cvs = $('aim-overlay');
   if(cvs) cvs.getContext('2d').clearRect(0,0,cvs.width,cvs.height);
 }
