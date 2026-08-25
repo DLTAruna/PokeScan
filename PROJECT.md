@@ -271,6 +271,36 @@ Correctif appliqué, le plus rentable et sans risque : un rappel visuel permanen
 cadre caméra (« ✋ Tiens la carte par le haut, laisse les bords libres ») plutôt qu'une
 tentative de compenser algorithmiquement une occlusion qu'on peut éviter à la source.
 
+### 4.12 Relais de diagnostic à distance (`api/log.js`)
+Jusqu'ici, un diagnostic réel exigeait que l'utilisateur copie/colle le rapport
+(`buildDiagReport`) dans le chat. Ajout d'un canal réseau optionnel pour observer les
+résultats directement, sans repasser par un copier/coller :
+
+- Nouvelle fonction serverless Vercel `api/log.js` (zero-config, aucune dépendance npm) :
+  POST ajoute une observation à un **Gist GitHub privé** (seul stockage persistant
+  disponible sans base de données à provisionner) ; GET affiche les observations en
+  HTML lisible (`?format=json` pour un accès programmatique, `?format=clear` pour vider
+  entre deux sessions de test). Nécessite deux variables d'environnement Vercel côté
+  serveur, jamais exposées au client : `GIST_TOKEN` (PAT GitHub scope `gist`) et
+  `GIST_ID` (id d'un gist privé déjà créé).
+- Côté client : `diagPush` reste inchangé dans son usage (stockage local + export manuel
+  toujours disponibles), mais relaie maintenant chaque observation vers `/api/log` **si**
+  la case à cocher « 📡 envoyer en direct (debug) » est cochée — décochée par défaut,
+  choix mémorisé dans `localStorage`. C'est un renversement assumé du principe initial
+  « rien n'est envoyé nulle part » (§ ENREGISTREUR DE DIAGNOSTIC dans `index.html`) :
+  seuls des champs texte (scores, netteté, durées, texte OCR brut) transitent, jamais de
+  photo, et seulement quand l'utilisateur l'active explicitement.
+- Envoi en best-effort (`fetch(...).catch(()=>{})`), jamais attendu : une panne réseau ne
+  doit ni ralentir ni casser le scan en cours.
+- **Bug attrapé en testant avant de livrer** : le code de câblage de la case à cocher
+  avait été placé, par erreur, avant la déclaration `let diagRemoteEnabled` plus bas dans
+  le fichier — une référence anticipée (TDZ) qui levait une `ReferenceError` dès le
+  chargement de la page et arrêtait net l'exécution de TOUT le script à partir de ce
+  point (donc aussi `diagLog`/`diagPush`, jamais initialisés). Détecté via les logs
+  console du navigateur pendant le test local, pas par simple relecture ; corrigé en
+  regroupant le câblage de la case avec le reste du bloc diagnostic, après sa
+  déclaration.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

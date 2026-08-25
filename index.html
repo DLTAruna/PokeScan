@@ -234,6 +234,9 @@
         <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
         <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
         <span id="diag-count" style="margin-left:8px;"></span>
+        <label style="margin-left:10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
+          <input type="checkbox" id="chk-diag-remote">📡 envoyer en direct (debug)
+        </label>
       </div>
       <pre id="diag-view" style="display:none; background:var(--panel2); border:1px solid var(--border);
            border-radius:8px; padding:8px; font-size:10.5px; max-height:260px; overflow:auto;
@@ -2121,12 +2124,43 @@ function getScanic(){
 
 // ---------------- ENREGISTREUR DE DIAGNOSTIC ----------------
 // Conserve les dernières observations pour pouvoir analyser, après coup, ce qui bloque
-// sur un appareil donné. Rien n'est envoyé nulle part : l'export est manuel.
+// sur un appareil donné. Par défaut rien n'est envoyé nulle part (export manuel, voir
+// btn-diag-copy) ; le relais réseau ci-dessous n'est activé que si la case "envoyer en
+// direct" est cochée, choix explicite conservé dans localStorage.
 const diagLog = [];
 const DIAG_MAX = 60;
+let diagRemoteEnabled = localStorage.getItem('diagRemoteEnabled') === '1';
+
+function getDiagDeviceId(){
+  let id = localStorage.getItem('diagDeviceId');
+  if(!id){ id = Math.random().toString(36).slice(2, 8); localStorage.setItem('diagDeviceId', id); }
+  return id;
+}
+
+// Best-effort, jamais attendu : une panne réseau ne doit ni ralentir ni casser le scan.
+function sendDiagRemote(entry){
+  if(!diagRemoteEnabled) return;
+  fetch('/api/log', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({device: getDiagDeviceId(), ...entry})
+  }).catch(()=>{});
+}
+
 function diagPush(kind, data){
-  diagLog.push(Object.assign({k:kind, t:Date.now()}, data));
+  const entry = Object.assign({k:kind, t:Date.now()}, data);
+  diagLog.push(entry);
   if(diagLog.length > DIAG_MAX) diagLog.shift();
+  sendDiagRemote(entry);
+}
+
+{
+  const chkDiagRemote = $('chk-diag-remote');
+  chkDiagRemote.checked = diagRemoteEnabled;
+  chkDiagRemote.addEventListener('change', ()=>{
+    diagRemoteEnabled = chkDiagRemote.checked;
+    localStorage.setItem('diagRemoteEnabled', diagRemoteEnabled ? '1' : '0');
+  });
 }
 
 function buildDiagReport(){
