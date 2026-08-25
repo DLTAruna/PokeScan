@@ -764,7 +764,10 @@ function getVisionWorker(){
 
               // Bande élargie avec marge (redressement fiable désormais, mais on garde
               // une tolérance pour l'imprécision résiduelle du recadrage/redressement).
-              const bandH = Math.round(H*0.22);
+              // 0.30 et non 0.22 : diagnostic réel montrant la ligne juste au-dessus du
+              // numéro (Faiblesse/Résistance/Retraite) lue à la place du numéro sur
+              // plusieurs essais — la bande n'allait pas assez haut.
+              const bandH = Math.round(H*0.30);
               const bandW = Math.round(W*0.78);
               const bx = Math.round((W-bandW)/2), by = H - bandH - Math.round(H*0.015);
               const band = new OffscreenCanvas(bandW, bandH);
@@ -2143,16 +2146,41 @@ async function scanTick(){
       return;
     }
 
-    // Filtre de forme : un quadrilatère détecté dont le ratio ne ressemble pas à une
-    // carte Pokémon est un faux positif (livre, écran, table…), pas une carte floue.
+    // Filtre de forme : un quadrilatère détecté dont le ratio ne ressemble à une carte
+    // Pokémon NI à l'endroit NI de côté est un faux positif (livre, écran, table…), pas
+    // une carte floue. scanic étiquette les coins par position dans l'image (le plus
+    // proche du coin haut-gauche de la PHOTO), pas selon l'orientation imprimée de la
+    // carte : si la carte est tenue légèrement tournée, la sortie redressée peut être en
+    // "paysage" (ratio proche de l'inverse) sans que ce soit une fausse détection —
+    // constaté sur diagnostic réel (ratios 0.61/0.68/0.73, tous ≈ 63/88).
     const outRatio = extracted.output.height / extracted.output.width;
-    if(Math.abs(outRatio - CARD_RATIO) / CARD_RATIO > 0.25){
+    const INV_CARD_RATIO = 1/CARD_RATIO;
+    const isPortrait  = Math.abs(outRatio - CARD_RATIO)     / CARD_RATIO     <= 0.25;
+    const isLandscape = Math.abs(outRatio - INV_CARD_RATIO) / INV_CARD_RATIO <= 0.25;
+    if(!isPortrait && !isLandscape){
       setAimHint('Forme non reconnue — recentre la carte');
       diagPush('try', {ok:false, hint:'forme incompatible', score:d.score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
       return;
     }
 
-    const cardBmp = await createImageBitmap(extracted.output);
+    // Redressée "de côté" : on ne peut pas savoir dans quel sens (le détecteur ne connaît
+    // pas l'orientation imprimée), donc on tranche arbitrairement. Une carte réellement
+    // à l'envers restera "illisible" ensuite — ni pire ni mieux qu'aujourd'hui — mais
+    // celles tombées dans le bon sens deviennent lisibles, ce qui ne l'étaient pas avant
+    // (rejetées en bloc comme "forme incompatible").
+    let sourceForRead = extracted.output;
+    if(isLandscape && !isPortrait){
+      const src = extracted.output;
+      const rot = document.createElement('canvas');
+      rot.width = src.height; rot.height = src.width;
+      const rctx = rot.getContext('2d');
+      rctx.translate(rot.width/2, rot.height/2);
+      rctx.rotate(-Math.PI/2);
+      rctx.drawImage(src, -src.width/2, -src.height/2);
+      sourceForRead = rot;
+    }
+
+    const cardBmp = await createImageBitmap(sourceForRead);
     const r = await workerCall('read', {bitmap:cardBmp, cardW:600}, [cardBmp]);
     const ms = Math.round(performance.now()-t0);
 
