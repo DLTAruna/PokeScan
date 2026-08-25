@@ -1434,6 +1434,20 @@ async function quickReadNumber(rectCanvas){
   band.getContext('2d').drawImage(rectCanvas,
     0, rectCanvas.height - bandH, band.width, bandH,
     0, 0, band.width, bandH);
+  return quickReadNumberFromBand(band, true);
+}
+
+// Lit le numéro sur une bande déjà extraite. `cropLeft` restreint à la moitié gauche
+// (là où figure le numéro) quand la bande couvre toute la largeur de la carte.
+async function quickReadNumberFromBand(bandCanvas, alreadyCropped){
+  let band = bandCanvas;
+  if(!alreadyCropped){
+    const c = document.createElement('canvas');
+    c.width = Math.round(bandCanvas.width*0.62);
+    c.height = bandCanvas.height;
+    c.getContext('2d').drawImage(bandCanvas, 0,0, c.width, c.height, 0,0, c.width, c.height);
+    band = c;
+  }
   try{
     const svc = await getOcrService();
     const res = await svc.recognize(band);
@@ -1638,7 +1652,9 @@ async function startCamera(){
       // Résolution la plus haute possible : c'est le nombre de pixels sur la ligne du
       // numéro qui détermine la réussite de l'OCR. On demande du 1080p+ et on laisse
       // le navigateur retomber sur ce que la caméra sait faire.
-      video: { facingMode:'environment', width:{ideal:1920}, height:{ideal:1440} },
+      // 1280 et non 1920 : au-delà, chaque image coûte beaucoup plus cher à analyser
+      // sur mobile pour un gain nul — la carte redressée ne fait que 600px de large.
+      video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:960} },
       audio:false
     });
     $('video').srcObject = cameraStream;
@@ -1785,12 +1801,14 @@ function detectCardQuadJS(video){
 // Lissage temporel des coins : sans lui, le cadre tremble en permanence. Un saut
 // important (changement de carte) resynchronise au lieu de glisser lentement.
 let smoothedQuad = null;
+let quadMotion = 1;   // déplacement relatif des coins depuis l'image précédente
 function smoothQuad(q){
-  if(!q){ smoothedQuad = null; return null; }
-  if(!smoothedQuad || smoothedQuad.length !== 4){ smoothedQuad = q; return q; }
+  if(!q){ smoothedQuad = null; quadMotion = 1; return null; }
+  if(!smoothedQuad || smoothedQuad.length !== 4){ smoothedQuad = q; quadMotion = 1; return q; }
   const ref = dist(q[0], q[2]) || 1;
   let jump = 0;
   for(let i=0;i<4;i++) jump = Math.max(jump, dist(q[i], smoothedQuad[i]));
+  quadMotion = jump / ref;
   const alpha = jump > ref*0.25 ? 0.7 : 0.25;
   smoothedQuad = q.map((p,i)=>({
     x: smoothedQuad[i].x + (p.x - smoothedQuad[i].x)*alpha,
@@ -1837,37 +1855,57 @@ function solveHomography(dst, src){
 // Redresse la carte vers un rectangle au ratio exact d'une carte, avec correction de
 // perspective et échantillonnage bilinéaire. Une carte inclinée ressort droite, ce qui
 // est indispensable pour que l'OCR lise la ligne du numéro.
-function rectifyCard(source, quad, outW=600){
+// `yFrom`/`yTo` (fractions de la hauteur de carte) permettent de ne reconstruire
+// qu'une bande : le verrou de capture n'a besoin que du bas de la carte, soit ~5 fois
+// moins de pixels que la carte entière. C'était le principal coût de la boucle.
+function rectifyCard(source, quad, outW=600, yFrom=0, yTo=1){
   const outH = Math.round(outW * CARD_RATIO);
   const sw = source.videoWidth || source.width;
   const sh = source.videoHeight || source.height;
   if(!sw || !sh) return null;
 
-  const full = document.createElement('canvas');
-  full.width = sw; full.height = sh;
-  full.getContext('2d').drawImage(source, 0, 0);
-  const sdata = full.getContext('2d').getImageData(0,0,sw,sh).data;
+  // On ne lit que le rectangle englobant du quadrilatère, pas toute l'image : sur une
+  // vidéo 1280x960 dont la carte n'occupe qu'une partie, ça divise d'autant le coût.
+  const xs = quad.map(p=>p.x), ys = quad.map(p=>p.y);
+  const bx0 = Math.max(0, Math.floor(Math.min(...xs))-1);
+  const by0 = Math.max(0, Math.floor(Math.min(...ys))-1);
+  const bx1 = Math.min(sw, Math.ceil(Math.max(...xs))+1);
+  const by1 = Math.min(sh, Math.ceil(Math.max(...ys))+1);
+  const bw = bx1-bx0, bh = by1-by0;
+  if(bw < 8 || bh < 8) return null;
+
+  const crop = document.createElement('canvas');
+  crop.width = bw; crop.height = bh;
+  const cctx = crop.getContext('2d', {willReadFrequently:true});
+  cctx.drawImage(source, bx0, by0, bw, bh, 0, 0, bw, bh);
+  const sdata = cctx.getImageData(0,0,bw,bh).data;
 
   const h = solveHomography(
     [{x:0,y:0},{x:outW,y:0},{x:outW,y:outH},{x:0,y:outH}], quad);
   if(!h) return null;
   const [a,b2,c,d2,e,f,g,hh] = h;
 
+  const y0i = Math.max(0, Math.round(outH*yFrom));
+  const y1i = Math.min(outH, Math.round(outH*yTo));
+  const rows = y1i - y0i;
+  if(rows < 4) return null;
+
   const out = document.createElement('canvas');
-  out.width = outW; out.height = outH;
+  out.width = outW; out.height = rows;
   const octx = out.getContext('2d');
-  const odata = octx.createImageData(outW, outH);
+  const odata = octx.createImageData(outW, rows);
   const o = odata.data;
 
-  for(let y=0; y<outH; y++){
+  for(let y=y0i; y<y1i; y++){
+    const oy = y - y0i;
     for(let x=0; x<outW; x++){
       const w = g*x + hh*y + 1;
-      const u = (a*x + b2*y + c)/w;
-      const v = (d2*x + e*y + f)/w;
-      const oi = (y*outW+x)*4;
-      if(u<0 || v<0 || u>=sw-1 || v>=sh-1){ o[oi]=o[oi+1]=o[oi+2]=0; o[oi+3]=255; continue; }
+      const u = (a*x + b2*y + c)/w - bx0;
+      const v = (d2*x + e*y + f)/w - by0;
+      const oi = (oy*outW+x)*4;
+      if(u<0 || v<0 || u>=bw-1 || v>=bh-1){ o[oi]=o[oi+1]=o[oi+2]=0; o[oi+3]=255; continue; }
       const x0=u|0, y0=v|0, fx=u-x0, fy=v-y0;
-      const i00=(y0*sw+x0)*4, i10=i00+4, i01=i00+sw*4, i11=i01+4;
+      const i00=(y0*bw+x0)*4, i10=i00+4, i01=i00+bw*4, i11=i01+4;
       for(let k=0;k<3;k++){
         const top = sdata[i00+k]*(1-fx) + sdata[i10+k]*fx;
         const bot = sdata[i01+k]*(1-fx) + sdata[i11+k]*fx;
@@ -1902,15 +1940,21 @@ function sharpnessOfCanvas(canvas){
 }
 
 // Dessine le contour détecté par-dessus la vidéo, dans la couleur de l'état.
+// L'overlay ne dessine que des traits : le tenir à la résolution de la vidéo
+// (jusqu'à 1920x1440) revenait à effacer et repeindre des millions de pixels 4 fois
+// par seconde, ce qui saccadait tout. Un canvas de 640px de large suffit, les
+// coordonnées sont simplement mises à l'échelle.
 function drawAimOverlay(video, quad, state){
   const cvs = $('aim-overlay');
-  if(!cvs) return;
-  if(cvs.width !== video.videoWidth || cvs.height !== video.videoHeight){
-    cvs.width = video.videoWidth; cvs.height = video.videoHeight;
-  }
+  if(!cvs || !video.videoWidth) return;
+  const OW = 640;
+  const OH = Math.max(1, Math.round(video.videoHeight * (OW/video.videoWidth)));
+  if(cvs.width !== OW || cvs.height !== OH){ cvs.width = OW; cvs.height = OH; }
+  const k = OW / video.videoWidth;
   const ctx = cvs.getContext('2d');
   ctx.clearRect(0,0,cvs.width,cvs.height);
   if(!quad) return;
+  quad = quad.map(p=>({x:p.x*k, y:p.y*k}));
   const colors = {none:'#e0553f', adjust:'#e0a12a', ready:'#3ba55d'};
   // Assombrit l'extérieur du quadrilatère pour matérialiser la zone retenue.
   ctx.save();
@@ -1962,23 +2006,28 @@ function evaluateGeometry(video){
 // Tente une lecture réelle sur la carte redressée. Ne capture QUE si le numéro ou le nom
 // en ressort : c'est la garantie que la photo est exploitable.
 async function verifyAndCapture(video, quad){
-  const rect = rectifyCard(video, quad);
-  if(!rect) return {ok:false, hint:'Redressement impossible'};
+  // Étape 1 (bon marché) : on ne reconstruit QUE la bande basse pour tester la lecture.
+  // Reconstruire la carte entière à chaque tentative saturait le fil principal et
+  // figeait l'aperçu plusieurs secondes.
+  const band = rectifyCard(video, quad, 560, 0.78, 1);
+  if(!band) return {ok:false, hint:'Cadrage impossible'};
 
-  if(sharpnessOfCanvas(rect) < AIM_MIN_SHARPNESS) return {ok:false, hint:'Stabilise — image floue'};
+  if(sharpnessOfCanvas(band) < AIM_MIN_SHARPNESS) return {ok:false, hint:'Stabilise — image floue'};
 
-  // Anti-doublon sur la carte redressée : insensible au fond et au cadrage.
-  const fullBounds = {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1};
-  const hash = dHashOfRegion(rect, rect.width, rect.height, fullBounds);
+  const bandBounds = {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1};
+  const hash = dHashOfRegion(band, band.width, band.height, bandBounds);
   if(lastCaptureHash != null && hammingDistance(hash, lastCaptureHash) <= 4){
     return {ok:false, hint:'Même carte — présente la suivante'};
   }
 
-  // Verrou : on ne capture que si le numéro est effectivement lisible sur cette image.
-  const quick = await quickReadNumber(rect);
+  // Verrou : on ne capture que si le numéro est effectivement lisible.
+  const quick = await quickReadNumberFromBand(band);
   if(!quick.number || !quick.denominator){
     return {ok:false, hint:'Numéro illisible — rapproche ou éclaire'};
   }
+
+  // Étape 2 (une seule fois, à la capture réussie) : la carte entière, pour la file.
+  const rect = rectifyCard(video, quad, 600, 0, 1) || band;
 
   lastCaptureHash = hash;
   lastCaptureAt = Date.now();
@@ -2039,6 +2088,12 @@ function startAimLoop(){
     // Géométrie bonne : cadre vert, on tente la lecture.
     drawAimOverlay(video, geo.quad, 'ready');
     if(!ocrReadyForCamera){ setAimHint('Préparation de la lecture…'); return; }
+
+    // La lecture coûte ~400 ms : inutile de la lancer sur une image qui bouge encore,
+    // elle serait floue et échouerait. On attend que le cadre se soit stabilisé, ce qui
+    // libère aussi le fil principal et garde l'aperçu fluide.
+    if(quadMotion > 0.03){ setAimHint('Stabilise la carte…'); return; }
+
     if(verifyInFlight || (Date.now()-lastCaptureAt) < AIM_COOLDOWN_MS) return;
 
     verifyInFlight = true;
