@@ -66,11 +66,16 @@ export default async function handler(req, res) {
       }
       if (format === 'clear') {
         // Vide le gist — pratique entre deux sessions de test pour repartir propre.
-        await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+        // L'API Gist refuse un contenu de fichier vide (422) : on remet une seule ligne
+        // marqueur plutôt qu'une chaîne vide, et on VÉRIFIE le résultat — un premier essai
+        // avec content:'' a silencieusement échoué côté GitHub alors que le code renvoyait
+        // {ok:true} sans avoir contrôlé le statut de la requête.
+        const clearRes = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
           method: 'PATCH',
           headers: { ...ghHeaders, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ files: { [FILENAME]: { content: '' } } })
+          body: JSON.stringify({ files: { [FILENAME]: { content: JSON.stringify({ at: new Date().toISOString(), k: 'clear' }) } } })
         });
+        if (!clearRes.ok) { res.status(502).json({ error: 'vidage gist échoué', status: clearRes.status }); return; }
         res.status(200).json({ ok: true, cleared: true });
         return;
       }
