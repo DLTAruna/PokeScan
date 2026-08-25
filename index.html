@@ -1713,13 +1713,27 @@ const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
 // pas). Cette détection tient en quelques dizaines de lignes et tourne sur une image
 // réduite à 160px : segmentation par différence avec la couleur du fond, plus grande
 // région connexe, puis 4 coins extrêmes — ce qui gère nativement la rotation.
+// Canvas d'analyse réutilisé : en recréer un à chaque image, et surtout relire les
+// pixels sans `willReadFrequently`, coûtait 78-100 ms par image sur mobile (mesuré).
+let analysisCanvas = null, analysisCtx = null;
+let lastFrameSignature = 0;   // pour détecter une vidéo figée
+
 function detectCardQuadJS(video){
-  const W = 160;
+  const W = 128;
   const H = Math.max(1, Math.round((video.videoHeight||video.height) * (W/(video.videoWidth||video.width))));
-  const c = document.createElement('canvas');
-  c.width = W; c.height = H;
-  c.getContext('2d').drawImage(video, 0, 0, W, H);
-  const d = c.getContext('2d').getImageData(0,0,W,H).data;
+  if(!analysisCanvas || analysisCanvas.width !== W || analysisCanvas.height !== H){
+    analysisCanvas = document.createElement('canvas');
+    analysisCanvas.width = W; analysisCanvas.height = H;
+    analysisCtx = analysisCanvas.getContext('2d', {willReadFrequently:true});
+  }
+  analysisCtx.drawImage(video, 0, 0, W, H);
+  const d = analysisCtx.getImageData(0,0,W,H).data;
+
+  // Signature bon marché de l'image : si elle ne change jamais, c'est que le flux est
+  // figé et non que la détection échoue — deux causes très différentes.
+  let sig = 0;
+  for(let i=0;i<d.length;i+=997) sig = (sig + d[i]*31) % 1000003;
+  lastFrameSignature = sig;
 
   // Couleur du fond estimée sur le pourtour de l'image (la carte est au centre).
   const bs=[];
@@ -2009,18 +2023,40 @@ function setAimHint(hint){
 function evaluateGeometry(video){
   const det = detectCardQuadJS(video);
 
-  if(!det){ smoothQuad(null); return {state:'none', hint:'Aucune carte détectée', quad:null, det:null}; }
-  const q = smoothQuad(det.points);
+  // Est-ce que la forme détectée ressemble vraiment à une carte ?
+  const plausible = det &&
+    det.areaFrac >= AIM_MIN_COVERAGE &&
+    (det.fill == null || det.fill >= 0.60) &&
+    det.rawRatio >= CARD_RATIO*0.62 && det.rawRatio <= CARD_RATIO*1.45;
 
-  if(det.areaFrac < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte', quad:q, det};
-  if(det.fill != null && det.fill < 0.60) return {state:'adjust', hint:'Dégage le fond autour de la carte', quad:q, det};
-
-  // Le ratio des points renvoyés est contraint aux proportions d'une carte : c'est le
-  // ratio MESURÉ avant contrainte qui dit si la forme vue en est vraiment une.
-  if(det.rawRatio < CARD_RATIO*0.62 || det.rawRatio > CARD_RATIO*1.45){
-    return {state:'adjust', hint:'Cadre la carte entière', quad:q, det};
+  if(plausible){
+    return {state:'ok', hint:'Lecture du numéro…', quad:smoothQuad(det.points), det, guide:false};
   }
-  return {state:'ok', hint:'Lecture du numéro…', quad:q, det};
+
+  // Sinon : on NE BLOQUE PAS. La segmentation échoue sur beaucoup de scènes réelles
+  // (fond texturé, main, ombres) — mesuré sur téléphone : ratio 2.28, remplissage 0.35,
+  // donc jamais "ok" et donc jamais aucune capture. On retombe sur un cadre guide au
+  // ratio d'une carte, et c'est la lecture du numéro qui tranche, comme toujours.
+  smoothQuad(null);
+  const g = guideQuad(video);
+  const why = !det ? 'aucune forme détectée'
+            : det.areaFrac < AIM_MIN_COVERAGE ? 'forme trop petite'
+            : (det.fill != null && det.fill < 0.60) ? 'forme peu remplie'
+            : 'proportions inattendues';
+  return {state:'ok', hint:'Aligne la carte sur le cadre', quad:g, det, guide:true, why};
+}
+
+// Cadre guide au ratio d'une carte, centré : zone de capture de repli quand la
+// détection ne reconnaît pas de carte.
+function guideQuad(video){
+  const W = video.videoWidth || video.width, H = video.videoHeight || video.height;
+  let h = H*0.72, w = h/CARD_RATIO;
+  if(w > W*0.90){ w = W*0.90; h = w*CARD_RATIO; }
+  const cx = W/2, cy = H/2;
+  return [
+    {x:cx-w/2, y:cy-h/2}, {x:cx+w/2, y:cy-h/2},
+    {x:cx+w/2, y:cy+h/2}, {x:cx-w/2, y:cy+h/2}
+  ];
 }
 
 // ---------------- ENREGISTREUR DE DIAGNOSTIC ----------------
@@ -2056,12 +2092,14 @@ function buildDiagReport(){
   for(const e of diagLog){
     const dt = String(e.t - t0).padStart(6);
     if(e.k === 'geo'){
-      l.push(dt + 'ms  GEO   état=' + e.state +
+      l.push(dt + 'ms  GEO   ' + (e.guide?'GUIDE':'detect') +
         '  aire=' + (e.area!=null? e.area.toFixed(3):'-') +
         '  ratio=' + (e.ratio!=null? e.ratio.toFixed(2):'-') +
         '  rempl=' + (e.fill!=null? e.fill.toFixed(2):'-') +
-        '  bougé=' + (e.motion!=null? e.motion.toFixed(3):'-') +
-        '  (' + e.ms + 'ms)  "' + e.hint + '"');
+        '  sig=' + e.sig +
+        '  t=' + (e.vt!=null? e.vt.toFixed(2):'-') +
+        ' rs=' + e.rs + (e.paused?' PAUSE':'') +
+        '  (' + e.ms + 'ms)' + (e.why? '  ['+e.why+']' : ''));
     } else if(e.k === 'try'){
       l.push(dt + 'ms  LECT  ' + (e.ok?'CAPTURE':'refus') +
         '  netteté=' + (e.sharp!=null? Math.round(e.sharp):'-') +
@@ -2180,7 +2218,10 @@ function startAimLoop(){
                      ms:Math.round(performance.now()-tGeo),
                      area:geo.det?geo.det.areaFrac:null,
                      ratio:geo.det?geo.det.rawRatio:null,
-                     fill:geo.det?geo.det.fill:null});
+                     fill:geo.det?geo.det.fill:null,
+                     guide:!!geo.guide, why:geo.why||null,
+                     sig:lastFrameSignature,
+                     vt:video.currentTime, rs:video.readyState, paused:video.paused});
     lastQuad = geo.quad;
 
     if(!autoCaptureEnabled){
@@ -2199,10 +2240,10 @@ function startAimLoop(){
     drawAimOverlay(video, geo.quad, 'ready');
     if(!ocrReadyForCamera){ setAimHint('Préparation de la lecture…'); return; }
 
-    // La lecture coûte ~400 ms : inutile de la lancer sur une image qui bouge encore,
-    // elle serait floue et échouerait. On attend que le cadre se soit stabilisé, ce qui
-    // libère aussi le fil principal et garde l'aperçu fluide.
-    if(quadMotion > 0.03){ setAimHint('Stabilise la carte…'); return; }
+    // La lecture coûte ~400 ms : inutile de la lancer sur une image qui bouge encore.
+    // En mode guide, le cadre est fixe par construction : ce test n'a pas de sens et
+    // bloquerait toute capture — c'est la netteté qui écarte les images floues.
+    if(!geo.guide && quadMotion > 0.03){ setAimHint('Stabilise la carte…'); return; }
 
     if(verifyInFlight || (Date.now()-lastCaptureAt) < AIM_COOLDOWN_MS) return;
 
