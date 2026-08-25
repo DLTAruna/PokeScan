@@ -75,7 +75,9 @@
   .capture-btns{display:flex; gap:10px; flex-wrap:wrap; justify-content:center;}
   .video-wrap{position:relative; border-radius:var(--radius); overflow:hidden; background:#000; display:none;}
   .video-wrap.active{display:block;}
-  video{width:100%; display:block; max-height:65vh; object-fit:cover; background:#000;}
+  /* contain et non cover : on doit voir exactement ce qui sera capturé, et le cadre
+     de visée superposé doit s'aligner au pixel près sur l'image vidéo. */
+  video{width:100%; display:block; max-height:65vh; object-fit:contain; background:#000;}
   .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none;}
   .flash.show{opacity:.85; transition:opacity 0s;}
   .flash:not(.show){transition:opacity .25s;}
@@ -85,15 +87,10 @@
     display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(0,0,0,.4);
   }
   /* ---- cadre de visée : rouge = pas de carte, jaune = à ajuster, vert = prêt ---- */
-  .aim-frame{
-    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
-    /* ratio d'une carte Pokémon (63x88mm) */
-    height:78%; aspect-ratio:63/88; border:3px solid var(--bad); border-radius:12px;
-    box-shadow:0 0 0 100vmax rgba(0,0,0,.35); pointer-events:none;
-    transition:border-color .15s;
+  .aim-overlay{
+    position:absolute; inset:0; width:100%; height:100%;
+    object-fit:contain; pointer-events:none;
   }
-  .aim-frame.adjust{border-color:var(--warn);}
-  .aim-frame.ready{border-color:var(--good);}
   .aim-hint{
     position:absolute; bottom:88px; left:50%; transform:translateX(-50%);
     background:rgba(0,0,0,.7); color:#fff; padding:6px 14px; border-radius:16px;
@@ -214,7 +211,7 @@
       </div>
       <div class="video-wrap" id="video-wrap">
         <video id="video" autoplay playsinline muted></video>
-        <div class="aim-frame" id="aim-frame"></div>
+        <canvas class="aim-overlay" id="aim-overlay"></canvas>
         <div class="flash" id="flash"></div>
         <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
@@ -1349,14 +1346,110 @@ function renderAutoResult(card, uncertain){
 // Statuts : 'ok' (✅ résolu avec certitude), 'uncertain' (🤔 lecture partielle —
 // une proposition est quand même fournie si la chaîne de résolution en trouve une),
 // 'fail' (❌ vraiment rien lu, réservé au cas où l'OCR ne trouve NI numéro NI code).
+// Cœur de l'analyse, partagé par la file (photos importées) et la caméra (carte déjà
+// redressée) : même chaîne OCR + résolution, seule la source diffère.
+async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
+  const analysis = { status:'pending', card:null };
+  const cropPct = parseFloat($('ocr-crop-pct')?.value) || 10;
+
+  // PaddleOCR travaille mieux sur l'image couleur d'origine que sur une binarisation
+  // maison (son propre pipeline de détection s'en charge) : on lui donne le crop brut.
+  // Deux passes complémentaires, validées sur photos réelles :
+  //  - le crop bas de carte donne la meilleure résolution effective sur le numéro ;
+  //  - la pleine image rattrape les cas où le crop tombe à côté.
+  const croppedRaw = await cropBottomBandForOcr(analysisSrc, cropPct, 'raw', 55, cardBounds);
+  if(showDebug && $('ocr-debug-preview')) $('ocr-debug-preview').src = croppedRaw;
+
+  const svc = await getOcrService();
+  const texts = [];
+  try{ texts.push((await svc.recognize(await dataUrlToCanvas(croppedRaw))).text || ''); }
+  catch(e){ /* passe crop en échec, la pleine image peut encore réussir */ }
+  try{ texts.push((await svc.recognize(await dataUrlToCanvas(analysisSrc))).text || ''); }
+  catch(e){ /* passe pleine image en échec */ }
+
+  const rawText = texts.join('\n').trim();
+  analysis.rawText = rawText;
+  if(showDebug && $('ocr-debug-text')) $('ocr-debug-text').textContent = rawText || '(vide)';
+
+  // Candidats de numéro avec normalisation des sosies de chiffres ("183/I65" -> "183/165").
+  const candidates = extractNumberCandidates(rawText);
+  const number = candidates.length ? candidates[0].number : null;
+  const denominator = candidates.length ? candidates[0].denominator : null;
+  const codeCandidates = [...rawText.toUpperCase().matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
+  const nameCandidates = extractNameCandidates(rawText);
+  analysis.numberCandidates = candidates;
+  analysis.nameCandidates = nameCandidates;
+  analysis.number = number;
+  analysis.denominator = denominator;
+  analysis.code = codeCandidates[0] || null;
+
+  // On ne déclare "illisible" que si l'OCR n'a rendu ni numéro, ni code, ni nom.
+  if(!number && !codeCandidates.length && !nameCandidates.length && !currentSetHintId){
+    analysis.status = 'fail';
+    return analysis;
+  }
+
+  if(!setAbbrMap){
+    const loaded = await loadSetAbbreviationMap((done,total)=>{
+      if($('set-map-status')) $('set-map-status').textContent = `🔎 Chargement de la table des sets... (${done}/${total})`;
+    });
+    setAbbrMap = loaded.map;
+    setDenominatorMap = loaded.byDenominator;
+    if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+  }
+
+  const result = await resolveCardBestEffort(codeCandidates, number, denominator, analysisSrc, rawText);
+  if(result.card){
+    analysis.card = result.card;
+    analysis.note = result.note;
+    // 'high' = numéro confirmé par le nom -> certain. Sinon : à vérifier.
+    analysis.status = result.confidence === 'high' ? 'ok' : 'uncertain';
+  } else {
+    analysis.status = 'uncertain';
+  }
+  return analysis;
+}
+
+// Analyse une carte DÉJÀ REDRESSÉE (caméra) : ses propres bords sont ceux de l'image,
+// il n'y a donc plus de détection de contour à faire.
+async function analyzeCanvasCard(canvas){
+  return await runCardAnalysis(canvas.toDataURL('image/png'),
+    {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1}, false);
+}
+
+// Lecture RAPIDE du seul numéro, pour le verrou de capture en temps réel.
+// L'analyse complète (deux passes OCR sur toute la carte + résolution) est bien trop
+// lourde pour être appelée dans la boucle de visée : elle bloquait le fil principal
+// plusieurs secondes à chaque tentative. Ici on n'OCRise qu'une bande étroite du bas
+// de la carte redressée — petite image, lecture courte — juste pour savoir si le
+// numéro est lisible. La résolution complète se fait ensuite en arrière-plan.
+async function quickReadNumber(rectCanvas){
+  // 20 % et non 12 % : le contour détecté inclut parfois la bordure extérieure de la
+  // carte (ou sa pochette), ce qui décale la ligne du numéro vers le haut. Une bande
+  // trop fine tombait alors sur le bord et ne lisait rien (constaté en test).
+  const bandH = Math.round(rectCanvas.height * 0.20);
+  const band = document.createElement('canvas');
+  band.width = Math.round(rectCanvas.width * 0.6);
+  band.height = bandH;
+  band.getContext('2d').drawImage(rectCanvas,
+    0, rectCanvas.height - bandH, band.width, bandH,
+    0, 0, band.width, bandH);
+  try{
+    const svc = await getOcrService();
+    const res = await svc.recognize(band);
+    const text = res.text || '';
+    const cands = extractNumberCandidates(text);
+    return { text, number: cands.length ? cands[0].number : null,
+             denominator: cands.length ? cands[0].denominator : null };
+  } catch(e){ return { text:'', number:null, denominator:null }; }
+}
+
 async function analyzeQueueItem(item){
   if(item._analysis && item._analysis.status !== 'pending') return item._analysis;
   const isCurrent = pendingQueue[0] === item;
   item._analysis = { status: 'pending', card: null };
   let objectUrl = null;
   try{
-    const cropPct = parseFloat($('ocr-crop-pct')?.value) || 10;
-
     // Source d'analyse = image d'ORIGINE quand on l'a encore, jamais la version
     // compressée : le JPEG 0.75 efface les petits chiffres (mesuré : "198/165" lu
     // "98/63" après compression -> carte identifiée totalement fausse).
@@ -1369,87 +1462,13 @@ async function analyzeQueueItem(item){
       analysisSrc = objectUrl;
     }
 
-    // Détecte la boîte englobante de la CARTE une seule fois par photo (pas de
-    // l'image) — le crop est ensuite dimensionné en % de la carte, invariant au
-    // zoom/cadrage de la photo (voir le commentaire de detectCardBounds).
+    // Détecte la boîte englobante de la CARTE (pas de l'image) : le crop est ensuite
+    // dimensionné en % de la carte, invariant au zoom/cadrage de la photo.
     let cardBounds = null;
-    try{
-      const imgEl = await loadImageEl(analysisSrc);
-      cardBounds = detectCardBounds(imgEl);
-    } catch(e){ /* détection impossible, on retombe sur le bord de l'image */ }
+    try{ cardBounds = detectCardBounds(await loadImageEl(analysisSrc)); }
+    catch(e){ /* détection impossible, on retombe sur le bord de l'image */ }
 
-    // PaddleOCR travaille mieux sur l'image couleur d'origine que sur une binarisation
-    // maison (son propre pipeline de détection s'en charge) : on lui donne le crop brut.
-    // Deux passes complémentaires, validées sur photos réelles :
-    //  - le crop bas de carte donne la meilleure résolution effective sur le numéro
-    //    (c'est lui qui a lu 183/165, 199/165 et 170/165 exactement) ;
-    //  - la pleine image rattrape les cas où la détection de bords se trompe et où le
-    //    crop tombe à côté (c'est elle qui avait lu 004/064).
-    const croppedRaw = await cropBottomBandForOcr(analysisSrc, cropPct, 'raw', 55, cardBounds);
-    if(isCurrent && $('ocr-debug-preview')) $('ocr-debug-preview').src = croppedRaw;
-
-    const svc = await getOcrService();
-    const texts = [];
-    try{
-      const resCrop = await svc.recognize(await dataUrlToCanvas(croppedRaw));
-      texts.push(resCrop.text || '');
-    } catch(e){ /* passe crop en échec, la pleine image peut encore réussir */ }
-    try{
-      const resFull = await svc.recognize(await dataUrlToCanvas(analysisSrc));
-      texts.push(resFull.text || '');
-    } catch(e){ /* passe pleine image en échec */ }
-
-    const rawText = texts.join('\n').trim();
-    item._analysis.rawText = rawText;
-    if(isCurrent && $('ocr-debug-text')){
-      $('ocr-debug-text').textContent = rawText || '(vide)';
-    }
-
-    // Candidats de numéro issus des deux passes, avec normalisation des sosies de
-    // chiffres ("183/I65" -> "183/165"). Le code lettré du set reste extrait en
-    // complément mais n'est plus le signal principal.
-    const candidates = extractNumberCandidates(rawText);
-    let number = candidates.length ? candidates[0].number : null;
-    let denominator = candidates.length ? candidates[0].denominator : null;
-    const codeCandidates = [...rawText.toUpperCase().matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
-    item._analysis.numberCandidates = candidates;
-
-    // Le nom lu est désormais un signal exploitable à part entière (repli par nom),
-    // donc on ne déclare "illisible" que si l'OCR n'a rendu ni numéro, ni code, ni
-    // nom plausible — et qu'aucun set n'a été indiqué manuellement.
-    const nameCandidates = extractNameCandidates(rawText);
-    item._analysis.nameCandidates = nameCandidates;
-    if(!number && !codeCandidates.length && !nameCandidates.length && !currentSetHintId){
-      item._analysis.status = 'fail';
-      return item._analysis;
-    }
-    item._analysis.number = number;
-    item._analysis.denominator = denominator;
-    item._analysis.code = codeCandidates[0] || null;
-
-    if(!setAbbrMap){
-      const loaded = await loadSetAbbreviationMap((done,total)=>{
-        if($('set-map-status')) $('set-map-status').textContent = `🔎 Chargement de la table des sets... (${done}/${total})`;
-      });
-      setAbbrMap = loaded.map;
-      setDenominatorMap = loaded.byDenominator;
-      if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
-    }
-
-    if(number || codeCandidates.length || nameCandidates.length || currentSetHintId){
-      const result = await resolveCardBestEffort(codeCandidates, number, denominator, analysisSrc, rawText);
-      if(result.card){
-        item._analysis.card = result.card;
-        item._analysis.note = result.note;
-        // 'high' = code+numéro tels quels -> certain. 'low' = correction/approximation
-        // appliquée -> encore un doute, la carte proposée doit être vérifiée visuellement.
-        item._analysis.status = result.confidence === 'high' ? 'ok' : 'uncertain';
-        return item._analysis;
-      }
-    }
-    // Lecture partielle (numéro seul, ou code seul, ou rien n'a résolu) : doute,
-    // pas d'échec — on n'a simplement rien de fiable à proposer.
-    item._analysis.status = 'uncertain';
+    item._analysis = await runCardAnalysis(analysisSrc, cardBounds, isCurrent);
     return item._analysis;
   } catch(err){
     item._analysis.status = 'uncertain';
@@ -1457,9 +1476,7 @@ async function analyzeQueueItem(item){
     return item._analysis;
   } finally {
     // Libère l'image d'origine dès l'analyse terminée : sur 1000+ cartes, garder tous
-    // les originaux en mémoire ferait exploser la consommation. Le résultat d'analyse
-    // est mis en cache sur l'entrée, une réanalyse ultérieure retombera sur la version
-    // compressée — acceptable puisqu'elle n'a normalement plus lieu d'être.
+    // les originaux en mémoire ferait exploser la consommation.
     if(objectUrl) URL.revokeObjectURL(objectUrl);
     if(item._analysis && item._analysis.status !== 'pending') item.sourceBlob = null;
   }
@@ -1607,7 +1624,7 @@ function renderQueueStrip(){
 // ---------------- LIVE CAMERA ----------------
 $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
-$('btn-capture-frame').addEventListener('click', ()=> captureFrame(true));
+$('btn-capture-frame').addEventListener('click', ()=> captureFrame());
 $('btn-auto-capture').addEventListener('click', ()=>{
   autoCaptureEnabled = !autoCaptureEnabled;
   $('btn-auto-capture').classList.toggle('on', autoCaptureEnabled);
@@ -1636,116 +1653,320 @@ async function startCamera(){
 }
 
 // ---------------- VISÉE ET CAPTURE AUTOMATIQUE ----------------
-// Analyse légère du flux ~4 fois par seconde (image réduite à 200px, donc très peu
-// coûteuse) pour piloter la couleur du cadre et déclencher la capture tout seul.
-// Trois critères, tous nécessaires : la carte remplit assez le cadre, ses proportions
-// correspondent à une carte, et l'image est nette (pas de flou de bougé).
+// La géométrie seule ne suffit pas : une carte bien cadrée peut rester illisible (flou,
+// reflet, trop loin). La capture n'est donc déclenchée QUE si l'OCR a effectivement lu
+// le numéro ou le nom — et le résultat est réutilisé tel quel pour l'entrée de la file,
+// donc rien n'est réanalysé ensuite.
 let aimTimer = null;
 let autoCaptureEnabled = true;
-let readyStreak = 0;
 let lastCaptureAt = 0;
 let lastCaptureHash = null;
+let verifyInFlight = false;
+let lastQuad = null;
 
-const AIM_MIN_COVERAGE = 0.35;   // part de la hauteur du cadre occupée par la carte
-const AIM_RATIO_TOL = 0.22;      // écart toléré sur le ratio h/l (1.396 attendu)
-const AIM_MIN_SHARPNESS = 45;    // variance du laplacien en dessous de laquelle c'est flou
-const AIM_READY_STREAK = 2;      // ticks consécutifs "prêt" avant de déclencher
-const AIM_COOLDOWN_MS = 900;     // délai mini entre deux captures automatiques
+const AIM_MIN_COVERAGE = 0.12;   // part de l'image (en aire) occupée par la carte
+const AIM_MIN_SHARPNESS = 25;    // variance du laplacien en dessous de laquelle c'est flou
+const AIM_COOLDOWN_MS = 700;     // délai mini entre deux captures
+const CARD_RATIO = 88/63;        // hauteur/largeur d'une carte Pokémon
 
-// Netteté = variance du laplacien, mesure classique de flou : une image nette a des
-// transitions franches (forte variance), une image floue les étale (faible variance).
-function sharpnessScore(ctx, w, h){
+// ---- OpenCV, chargé à la demande (au démarrage de la caméra seulement) ----
+let cvPromise = null;
+function loadOpenCv(){
+  if(cvPromise) return cvPromise;
+  cvPromise = new Promise((resolve, reject)=>{
+    if(window.cv && window.cv.Mat) return resolve(window.cv);
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.10.0-release.1/dist/opencv.js';
+    s.async = true;
+    s.onerror = ()=> reject(new Error('OpenCV indisponible'));
+    s.onload = ()=>{
+      const started = Date.now();
+      const iv = setInterval(()=>{
+        if(window.cv && window.cv.Mat){ clearInterval(iv); resolve(window.cv); }
+        else if(Date.now()-started > 40000){ clearInterval(iv); reject(new Error('OpenCV : initialisation trop longue')); }
+      }, 100);
+    };
+    document.head.appendChild(s);
+  });
+  return cvPromise;
+}
+
+// Ordonne 4 points en haut-gauche, haut-droit, bas-droit, bas-gauche.
+function orderQuad(pts){
+  const bySum = [...pts].sort((a,b)=>(a.x+a.y)-(b.x+b.y));
+  const byDiff = [...pts].sort((a,b)=>(a.x-a.y)-(b.x-b.y));
+  return [bySum[0], byDiff[3], bySum[3], byDiff[0]];
+}
+
+function dist(a,b){ return Math.hypot(a.x-b.x, a.y-b.y); }
+
+// Détecte le contour RÉEL de la carte : détection de bords, contours fermés, approximés
+// en polygones ; on retient le plus grand quadrilatère convexe. Remplace l'ancienne
+// heuristique de "zones actives" qui ne trouvait pas le bord d'une carte tenue en main.
+function detectCardQuad(source, srcW, srcH){
+  const cv = window.cv;
+  if(!cv || !cv.Mat) return null;
+  const W = 320, H = Math.max(1, Math.round(srcH*(W/srcW)));
+  const work = document.createElement('canvas');
+  work.width = W; work.height = H;
+  work.getContext('2d').drawImage(source, 0, 0, W, H);
+
+  let src=null, gray=null, blur=null, edges=null, contours=null, hier=null, kernel=null;
+  let best=null, bestArea=0;
+  try{
+    src = cv.imread(work);
+    gray = new cv.Mat(); blur = new cv.Mat(); edges = new cv.Mat();
+    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    cv.GaussianBlur(gray, blur, new cv.Size(5,5), 0);
+    cv.Canny(blur, edges, 40, 120);
+    // Dilatation : referme les contours interrompus par un reflet ou un fond peu contrasté.
+    kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3,3));
+    cv.dilate(edges, edges, kernel);
+
+    contours = new cv.MatVector(); hier = new cv.Mat();
+    cv.findContours(edges, contours, hier, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
+    const frameArea = W*H;
+    for(let i=0; i<contours.size(); i++){
+      const cnt = contours.get(i);
+      const area = cv.contourArea(cnt);
+      if(area < frameArea*0.05 || area <= bestArea){ cnt.delete(); continue; }
+
+      // 1) Approximation polygonale : c'est la seule qui capture la perspective (les
+      //    4 côtés peuvent être non parallèles). Plusieurs tolérances sont essayées,
+      //    car une seule valeur rate certains angles (mesuré : échec net à 8°).
+      let pts = null;
+      const peri = cv.arcLength(cnt, true);
+      for(const eps of [0.02, 0.03, 0.015, 0.04, 0.01]){
+        const approx = new cv.Mat();
+        cv.approxPolyDP(cnt, approx, eps*peri, true);
+        if(approx.rows === 4 && cv.isContourConvex(approx)){
+          pts = [];
+          for(let j=0;j<4;j++) pts.push({x:approx.data32S[j*2], y:approx.data32S[j*2+1]});
+        }
+        approx.delete();
+        if(pts) break;
+      }
+
+      // 2) Repli : rectangle orienté minimal. Toujours 4 coins, robuste à la rotation ;
+      //    on vérifie que le contour remplit bien ce rectangle pour ne pas confondre
+      //    une carte avec une forme quelconque de même encombrement.
+      if(!pts){
+        const rr = cv.minAreaRect(cnt);
+        const rectArea = rr.size.width * rr.size.height;
+        if(rectArea > 0 && area/rectArea > 0.75){
+          const v = cv.RotatedRect.points(rr);
+          pts = v.map(p=>({x:p.x, y:p.y}));
+        }
+      }
+
+      if(pts){ best = pts; bestArea = area; }
+      cnt.delete();
+    }
+  } catch(e){ return null; }
+  finally{
+    [src,gray,blur,edges,contours,hier,kernel].forEach(m=>{ try{ m && m.delete(); }catch(_){} });
+  }
+  if(!best) return null;
+
+  const sx = srcW/W, sy = srcH/H;
+  return {
+    points: orderQuad(best).map(p=>({x:p.x*sx, y:p.y*sy})),
+    areaFrac: bestArea/(W*H)
+  };
+}
+
+// Redresse la carte : transformation perspective des 4 coins vers un rectangle droit au
+// ratio exact d'une carte. C'est ce qui rend l'OCR fiable même carte inclinée.
+function rectifyCard(source, quad, outW=700){
+  const cv = window.cv;
+  const outH = Math.round(outW * CARD_RATIO);
+  const full = document.createElement('canvas');
+  full.width = source.videoWidth || source.width;
+  full.height = source.videoHeight || source.height;
+  full.getContext('2d').drawImage(source, 0, 0);
+
+  let src=null, dst=null, from=null, to=null, M=null;
+  try{
+    src = cv.imread(full);
+    dst = new cv.Mat();
+    const p = quad;
+    from = cv.matFromArray(4,1,cv.CV_32FC2,[p[0].x,p[0].y, p[1].x,p[1].y, p[2].x,p[2].y, p[3].x,p[3].y]);
+    to   = cv.matFromArray(4,1,cv.CV_32FC2,[0,0, outW,0, outW,outH, 0,outH]);
+    M = cv.getPerspectiveTransform(from, to);
+    cv.warpPerspective(src, dst, M, new cv.Size(outW,outH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+    const out = document.createElement('canvas');
+    out.width = outW; out.height = outH;
+    cv.imshow(out, dst);
+    return out;
+  } catch(e){ return null; }
+  finally{
+    [src,dst,from,to,M].forEach(m=>{ try{ m && m.delete(); }catch(_){} });
+  }
+}
+
+// Netteté = variance du laplacien : une image nette a des transitions franches.
+function sharpnessOfCanvas(canvas){
+  const w = Math.min(canvas.width, 240);
+  const h = Math.max(1, Math.round(canvas.height * (w/canvas.width)));
+  const c = document.createElement('canvas');
+  c.width=w; c.height=h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(canvas, 0, 0, w, h);
   const d = ctx.getImageData(0,0,w,h).data;
   const grey = new Float32Array(w*h);
   for(let i=0,p=0;i<d.length;i+=4,p++) grey[p]=d[i]*0.3+d[i+1]*0.59+d[i+2]*0.11;
-  let sum=0, sumSq=0, n=0;
-  for(let y=1;y<h-1;y++){
-    for(let x=1;x<w-1;x++){
-      const lap = 4*grey[y*w+x] - grey[y*w+x-1] - grey[y*w+x+1] - grey[(y-1)*w+x] - grey[(y+1)*w+x];
-      sum+=lap; sumSq+=lap*lap; n++;
-    }
+  let sum=0,sumSq=0,n=0;
+  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+    const lap = 4*grey[y*w+x]-grey[y*w+x-1]-grey[y*w+x+1]-grey[(y-1)*w+x]-grey[(y+1)*w+x];
+    sum+=lap; sumSq+=lap*lap; n++;
   }
   if(!n) return 0;
-  const mean = sum/n;
+  const mean=sum/n;
   return sumSq/n - mean*mean;
 }
 
-function setAimState(state, hint){
-  const frame = $('aim-frame'), hintEl = $('aim-hint');
-  if(frame){
-    frame.classList.toggle('adjust', state==='adjust');
-    frame.classList.toggle('ready', state==='ready');
+// Dessine le contour détecté par-dessus la vidéo, dans la couleur de l'état.
+function drawAimOverlay(video, quad, state){
+  const cvs = $('aim-overlay');
+  if(!cvs) return;
+  if(cvs.width !== video.videoWidth || cvs.height !== video.videoHeight){
+    cvs.width = video.videoWidth; cvs.height = video.videoHeight;
   }
-  if(hintEl) hintEl.textContent = hint;
+  const ctx = cvs.getContext('2d');
+  ctx.clearRect(0,0,cvs.width,cvs.height);
+  if(!quad) return;
+  const colors = {none:'#e0553f', adjust:'#e0a12a', ready:'#3ba55d'};
+  // Assombrit l'extérieur du quadrilatère pour matérialiser la zone retenue.
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.beginPath();
+  ctx.rect(0,0,cvs.width,cvs.height);
+  quad.forEach((p,i)=> i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+  ctx.closePath();
+  ctx.fill('evenodd');
+  ctx.restore();
+
+  ctx.strokeStyle = colors[state] || colors.none;
+  ctx.lineWidth = Math.max(3, cvs.width*0.006);
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  quad.forEach((p,i)=> i ? ctx.lineTo(p.x,p.y) : ctx.moveTo(p.x,p.y));
+  ctx.closePath();
+  ctx.stroke();
 }
 
-function evaluateAim(){
-  const video = $('video');
-  if(!video || !video.videoWidth) return {state:'none', hint:'Démarrage de la caméra…'};
+function setAimHint(hint){
+  const el = $('aim-hint');
+  if(el) el.textContent = hint;
+}
 
-  const w = 200, h = Math.round(video.videoHeight * (w/video.videoWidth));
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(video, 0, 0, w, h);
+// Évaluation géométrique rapide (~4 fois/s). Ne décide pas de capturer : elle indique
+// seulement si ça vaut la peine de tenter une lecture OCR.
+function evaluateGeometry(video){
+  const det = detectCardQuad(video, video.videoWidth, video.videoHeight);
+  if(!det) return {state:'none', hint:'Place la carte dans le champ', quad:null};
+  const q = det.points;
 
-  const sharp = sharpnessScore(ctx, w, h);
+  if(det.areaFrac < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte', quad:q};
 
-  const b = detectCardBounds(video);
-  const cardH = b.bottomFrac - b.topFrac;
-  const cardW = b.rightFrac - b.leftFrac;
-  if(cardH <= 0.05 || cardW <= 0.05) return {state:'none', hint:'Aucune carte détectée'};
+  // Côtés opposés cohérents (sinon la carte est très inclinée) et ratio plausible.
+  const top = dist(q[0],q[1]), bottom = dist(q[3],q[2]);
+  const left = dist(q[0],q[3]), right = dist(q[1],q[2]);
+  if(!top || !bottom || !left || !right) return {state:'adjust', hint:'Cadre la carte entière', quad:q};
+  const skew = Math.abs(top-bottom)/Math.max(top,bottom) + Math.abs(left-right)/Math.max(left,right);
+  if(skew > 0.35) return {state:'adjust', hint:'Mets la carte bien à plat', quad:q};
 
-  // Quand aucune région distincte ne ressort, detectCardBounds retombe sur l'image
-  // entière : couplé à une image peu détaillée, c'est la signature d'un cadre vide
-  // (table, mur…) et non d'une carte qui remplirait tout l'écran.
-  if(cardH > 0.95 && cardW > 0.95 && sharp < AIM_MIN_SHARPNESS * 3){
-    return {state:'none', hint:'Place une carte dans le cadre'};
+  const ratio = ((left+right)/2) / ((top+bottom)/2);
+  if(ratio < CARD_RATIO*0.72 || ratio > CARD_RATIO*1.28){
+    return {state:'adjust', hint:'Cadre la carte entière', quad:q};
+  }
+  return {state:'ok', hint:'Lecture…', quad:q};
+}
+
+// Tente une lecture réelle sur la carte redressée. Ne capture QUE si le numéro ou le nom
+// en ressort : c'est la garantie que la photo est exploitable.
+async function verifyAndCapture(video, quad){
+  const rect = rectifyCard(video, quad);
+  if(!rect) return {ok:false, hint:'Redressement impossible'};
+
+  if(sharpnessOfCanvas(rect) < AIM_MIN_SHARPNESS) return {ok:false, hint:'Stabilise — image floue'};
+
+  // Anti-doublon sur la carte redressée : insensible au fond et au cadrage.
+  const fullBounds = {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1};
+  const hash = dHashOfRegion(rect, rect.width, rect.height, fullBounds);
+  if(lastCaptureHash != null && hammingDistance(hash, lastCaptureHash) <= 4){
+    return {ok:false, hint:'Même carte — présente la suivante'};
   }
 
-  const coverage = cardH;
-  if(coverage < AIM_MIN_COVERAGE) return {state:'adjust', hint:'Rapproche la carte'};
-
-  // Ratio hauteur/largeur en pixels réels de la vidéo (les fractions sont relatives à
-  // des dimensions différentes en x et en y, il faut donc les repasser en pixels).
-  const ratio = (cardH * video.videoHeight) / (cardW * video.videoWidth);
-  if(Math.abs(ratio - 1.396) > AIM_RATIO_TOL){
-    return {state:'adjust', hint:'Redresse la carte face à l\'objectif'};
+  // Verrou : on ne capture que si le numéro est effectivement lisible sur cette image.
+  const quick = await quickReadNumber(rect);
+  if(!quick.number || !quick.denominator){
+    return {ok:false, hint:'Numéro illisible — rapproche ou éclaire'};
   }
 
-  if(sharp < AIM_MIN_SHARPNESS) return {state:'adjust', hint:'Stabilise — image floue'};
+  lastCaptureHash = hash;
+  lastCaptureAt = Date.now();
 
-  return {state:'ready', hint:'Carte détectée — capture…'};
+  // On stocke la carte REDRESSÉE : c'est elle qu'on veut revoir et exporter, et c'est
+  // aussi la meilleure source pour l'analyse de fond (carte droite, cadrée au bord).
+  const dataUrl = rect.toDataURL('image/jpeg', 0.8);
+  await new Promise(res => rect.toBlob(b=>{
+    pushToQueue(dataUrl, b);
+    res();
+  }, 'image/png'));
+
+  capturedThisSession++;
+  flashScreen();
+  if(navigator.vibrate) navigator.vibrate(40);
+  return {ok:true, hint:`✅ #${quick.number}/${quick.denominator} — identification en cours`};
 }
 
 function startAimLoop(){
   stopAimLoop();
-  aimTimer = setInterval(async ()=>{
-    if(!cameraStream) return;
-    let res;
-    try{ res = evaluateAim(); }
-    catch(e){ res = {state:'none', hint:'Analyse indisponible'}; }
+  setAimHint('Chargement de la détection…');
+  loadOpenCv().then(()=> setAimHint('Place la carte dans le champ'))
+              .catch(()=> setAimHint('⚠️ Détection auto indisponible — utilise 📸'));
 
-    if(res.state === 'ready') readyStreak++;
-    else readyStreak = 0;
+  aimTimer = setInterval(async ()=>{
+    const video = $('video');
+    if(!cameraStream || !video || !video.videoWidth) return;
+    if(!window.cv || !window.cv.Mat) return;
+
+    let geo;
+    try{ geo = evaluateGeometry(video); }
+    catch(e){ geo = {state:'none', hint:'Analyse indisponible', quad:null}; }
+    lastQuad = geo.quad;
 
     if(!autoCaptureEnabled){
-      setAimState(res.state, res.state==='ready' ? 'Prêt — appuie sur 📸' : res.hint);
+      drawAimOverlay(video, geo.quad, geo.state==='ok' ? 'ready' : geo.state);
+      setAimHint(geo.state==='ok' ? 'Prêt — appuie sur 📸' : geo.hint);
       return;
     }
-    setAimState(res.state, res.hint);
 
-    const now = Date.now();
-    if(readyStreak >= AIM_READY_STREAK && (now - lastCaptureAt) > AIM_COOLDOWN_MS){
-      readyStreak = 0;
-      await captureFrame(false);
+    if(geo.state !== 'ok'){
+      drawAimOverlay(video, geo.quad, geo.state);
+      setAimHint(geo.hint);
+      return;
     }
+
+    drawAimOverlay(video, geo.quad, 'adjust');
+    if(verifyInFlight || (Date.now()-lastCaptureAt) < AIM_COOLDOWN_MS) return;
+
+    verifyInFlight = true;
+    try{
+      const res = await verifyAndCapture(video, geo.quad);
+      drawAimOverlay(video, geo.quad, res.ok ? 'ready' : 'adjust');
+      setAimHint(res.hint);
+    } catch(e){ setAimHint('Lecture impossible'); }
+    finally{ verifyInFlight = false; }
   }, 250);
 }
 
 function stopAimLoop(){
   if(aimTimer){ clearInterval(aimTimer); aimTimer = null; }
-  readyStreak = 0;
+  verifyInFlight = false;
+  const cvs = $('aim-overlay');
+  if(cvs) cvs.getContext('2d').clearRect(0,0,cvs.width,cvs.height);
 }
 
 function stopCamera(){
@@ -1758,46 +1979,37 @@ function stopCamera(){
   $('cam-start-row').style.display = 'flex';
 }
 
-async function captureFrame(manual){
+// Capture MANUELLE (bouton 📸) : force la prise même si la lecture automatique échoue,
+// pour ne jamais bloquer l'utilisateur sur une carte récalcitrante. Si un contour a été
+// détecté, on stocke la version redressée ; sinon l'image entière.
+async function captureFrame(){
   const video = $('video');
   if(!video || !video.videoWidth) return;
 
-  // Pleine résolution du flux, en PNG sans perte : c'est cette image qui part à l'OCR.
-  const full = document.createElement('canvas');
-  full.width = video.videoWidth;
-  full.height = video.videoHeight;
-  full.getContext('2d').drawImage(video, 0, 0);
+  let source = null;
+  if(lastQuad && window.cv && window.cv.Mat){
+    source = rectifyCard(video, lastQuad);
+  }
+  if(!source){
+    source = document.createElement('canvas');
+    source.width = video.videoWidth;
+    source.height = video.videoHeight;
+    source.getContext('2d').drawImage(video, 0, 0);
+  }
 
-  // Anti-doublon : en mode auto, une carte qui reste dans le cadre serait capturée à
-  // chaque cycle. On compare l'empreinte perceptuelle de la ZONE CARTE à la dernière
-  // capture et on ignore une image quasi identique. Une capture manuelle force la prise.
   try{
-    const bounds = detectCardBounds(video);
-    const hash = dHashOfRegion(full, full.width, full.height, bounds);
-    if(!manual && lastCaptureHash != null && hammingDistance(hash, lastCaptureHash) <= 4){
-      setAimState('adjust', 'Même carte — présente la suivante');
-      return;
-    }
-    lastCaptureHash = hash;
-  } catch(e){ /* empreinte impossible : on capture quand même */ }
-
+    lastCaptureHash = dHashOfRegion(source, source.width, source.height,
+      {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1});
+  } catch(e){ /* empreinte impossible : sans conséquence ici */ }
   lastCaptureAt = Date.now();
 
-  // Version réduite + JPEG pour le stockage/affichage uniquement.
-  const canvas = document.createElement('canvas');
-  const maxW = 900;
-  const scale = Math.min(1, maxW/video.videoWidth);
-  canvas.width = video.videoWidth*scale;
-  canvas.height = video.videoHeight*scale;
-  canvas.getContext('2d').drawImage(video,0,0,canvas.width,canvas.height);
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.75);
-
-  full.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
+  const dataUrl = source.toDataURL('image/jpeg', 0.8);
+  source.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
 
   capturedThisSession++;
-  renderQueueStrip();
   flashScreen();
   if(navigator.vibrate) navigator.vibrate(40);
+  setAimHint('📸 Ajoutée — analyse en arrière-plan');
 }
 
 function flashScreen(){
