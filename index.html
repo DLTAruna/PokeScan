@@ -2189,7 +2189,8 @@ function buildDiagReport(){
         '  durée=' + e.ocrMs + 'ms' +
         '  lu=' + (e.num || '—') +
         '  "' + e.hint + '"' + (e.ratio!=null ? ('  ratio='+e.ratio) : '') +
-        (e.via ? ('  bande=' + e.via) : ''));
+        (e.via ? ('  bande=' + e.via) : '') +
+        (e.rotated ? '  tourné' : ''));
       if(e.raw) l.push('              texte OCR : ' + JSON.stringify(e.raw).slice(0,220));
     } else if(e.k === 'err'){
       l.push(dt + 'ms  INFO  ' + e.msg);
@@ -2498,7 +2499,8 @@ async function attemptRead(corners, score){
     // celles tombées dans le bon sens deviennent lisibles, ce qui ne l'étaient pas avant
     // (rejetées en bloc comme "forme incompatible").
     let sourceForRead = extracted.output;
-    if(isLandscape && !isPortrait){
+    const rotated = isLandscape && !isPortrait; // pour diagnostic : sens de rotation deviné, pas garanti correct
+    if(rotated){
       const src = extracted.output;
       const rot = document.createElement('canvas');
       rot.width = src.height; rot.height = src.width;
@@ -2521,12 +2523,12 @@ async function attemptRead(corners, score){
 
     if(r.reason === 'flou'){
       setAimHint('Stabilise — image floue');
-      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms});
+      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms, rotated});
       return;
     }
     if(r.reason === 'illisible' || !r.number){
       setAimHint('Numéro non lu — rapproche-toi');
-      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text});
+      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text, rotated});
       return;
     }
     if(lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4){
@@ -2552,7 +2554,7 @@ async function attemptRead(corners, score){
     setOverlayTarget('ok', corners);
     setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
-                     num:r.number+'/'+r.denominator, raw:r.text});
+                     num:r.number+'/'+r.denominator, raw:r.text, rotated});
   }catch(e){
     diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
