@@ -517,6 +517,20 @@ réel ne correspond à ce dénominateur, cas le plus fréquent). Effet de bord �
 sur le prochain diagnostic : une capture de plus peut atterrir dans la file avec un
 numéro erroné là où l'ancien comportement se contentait de réessayer silencieusement.
 
+**Correctif suivant, sur ce même repli** : exactement le risque assumé ci-dessus s'est
+matérialisé, mais de façon bien plus systématique que prévu. Diagnostic réel :
+`num:"1/515"` sur un texte qui ne contient AUCUN numéro (`"Faiblese 2 × 2
+Risistance\nHvLanhre\naMwe"`). Cause reproduite exactement : le mot « Résistance »
+(présent sur CHAQUE carte Pokémon) contient « isis », que la table de sosies transforme
+en « 1515 » — le repli le découpait alors en un faux « 1/515 » plausible. Pas un cas
+limite : un mot ordinaire du verso de n'importe quelle carte suffisait à déclencher ça.
+
+Corrigé en exigeant que le bloc retenu contienne au moins **3 vrais chiffres** (pas des
+sosies substitués) : un mot n'en contient jamais aucun, un numéro imprimé même mal lu en
+contient très majoritairement. Vérifié de bout en bout via le vrai worker : texte
+« Résistance » seul → `illisible` (plus de faux positif) ; `"041165"` (sans slash) →
+`41/165` toujours récupéré ; `"007/165"` (cas normal) inchangé.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

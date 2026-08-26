@@ -734,12 +734,26 @@ function getVisionWorker(){
           // parfois ce trait fin (le premier détail à disparaître sous un léger flou),
           // rendant un bloc de chiffres collés ("007763" au lieu de "007/163") — constaté
           // sur diagnostic réel, alors que les chiffres eux-mêmes restent lisibles.
-          // Découpage borné à des longueurs plausibles (dénominateur 2-3 chiffres,
-          // numérateur <= dénominateur) pour ne pas transformer n'importe quelle suite de
-          // chiffres (dégâts d'attaque...) en faux numéro — un candidat de trop reste de
-          // toute façon dégradé en "à vérifier" par la résolution TCGdex en aval, jamais
-          // accepté comme certain sans confirmation par le nom (voir resolveCardBestEffort).
-          const runs = normDigits(t).replace(/\\D/g,' ').split(' ').filter(r => r.length>=4 && r.length<=7);
+          //
+          // BUG constaté en usage réel avec une première version de ce repli : elle
+          // normalisait les SOSIES (lettres qui ressemblent à des chiffres) sur tout le
+          // texte avant de chercher des blocs de chiffres — et « Résistance », présent
+          // sur CHAQUE carte, contient « isis » que la table de sosies transforme en
+          // « 1515 », produisant un faux numéro à chaque capture. Un vrai numéro imprimé,
+          // même mal lu, reste composé en MAJORITÉ de vrais chiffres — un mot ordinaire
+          // ne l'est jamais. On exige donc au moins 3 vrais chiffres (pas des sosies)
+          // dans le bloc retenu, ce qui écarte "isis"→"1515" (0 vrai chiffre) tout en
+          // gardant "007763" ou "04I165" (très majoritairement de vrais chiffres).
+          let cur = '', real = 0;
+          const runs = [];
+          const flush = () => { if(cur.length>=4 && cur.length<=7 && real>=3) runs.push(cur); cur=''; real=0; };
+          for(const ch of t){
+            const isDigit = ch >= '0' && ch <= '9';
+            const look = LOOKALIKES[ch];
+            if(isDigit || look != null){ cur += isDigit ? ch : look; if(isDigit) real++; }
+            else flush();
+          }
+          flush();
           for(const run of runs){
             for(const denomLen of [3,2]){
               const numLen = run.length - denomLen;
@@ -1100,7 +1114,23 @@ function extractNumberCandidates(rawText){
   // extractNumbers() côté worker (voir ce commentaire pour le détail) : PaddleOCR perd
   // parfois ce trait fin, rendant un bloc de chiffres collés ("007163" au lieu de
   // "007/163") alors que les chiffres eux-mêmes restent lisibles.
-  const runs = normalizeDigits(text).replace(/\D/g,' ').split(' ').filter(r => r.length>=4 && r.length<=7);
+  //
+  // BUG constaté en usage réel avec une première version de ce repli : normaliser les
+  // sosies (lettres qui ressemblent à des chiffres) sur tout le texte avant de chercher
+  // des blocs de chiffres faisait de « Résistance » (présent sur CHAQUE carte, « isis »
+  // → « 1515 » via la table de sosies) un faux numéro à chaque capture. On exige donc
+  // au moins 3 VRAIS chiffres (pas des sosies) dans le bloc retenu — un mot ordinaire
+  // n'en contient jamais, un numéro imprimé même mal lu en contient très majoritairement.
+  let cur = '', real = 0;
+  const runs = [];
+  const flush = () => { if(cur.length>=4 && cur.length<=7 && real>=3) runs.push(cur); cur=''; real=0; };
+  for(const ch of text){
+    const isDigit = ch >= '0' && ch <= '9';
+    const look = DIGIT_LOOKALIKES[ch];
+    if(isDigit || look != null){ cur += isDigit ? ch : look; if(isDigit) real++; }
+    else flush();
+  }
+  flush();
   for(const run of runs){
     for(const denomLen of [3,2]){
       const numLen = run.length - denomLen;
