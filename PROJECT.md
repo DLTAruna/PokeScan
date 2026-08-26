@@ -425,24 +425,30 @@ poussés au diagnostic (`caméra: focusMode capacités=... réglage=... résolut
 le prochain relevé dira si le Samsung expose ce réglage ou si c'est une vraie limite
 plateforme, sans quoi il n'existe aucune solution côté web.
 
-### 4.18 En-têtes COOP/COEP pour le WASM multi-thread
-`vercel.json` ajoute `Cross-Origin-Opener-Policy: same-origin` et
+### 4.18 En-têtes COOP/COEP pour le WASM multi-thread — posés puis RETIRÉS (régression constatée)
+`vercel.json` ajoutait `Cross-Origin-Opener-Policy: same-origin` et
 `Cross-Origin-Embedder-Policy: credentialless` sur toutes les routes — active
 `SharedArrayBuffer`/`crossOriginIsolated`, condition nécessaire au WASM multi-thread
-d'onnxruntime-web (utilisé en interne par Scanic et ppu-paddle-ocr).
+d'onnxruntime-web (utilisé en interne par Scanic et ppu-paddle-ocr). `credentialless`
+plutôt que `require-corp` pour ne pas casser le chargement des images TCGdex
+(serveur externe, aucun contrôle sur ses en-têtes) — vérifié que ça fonctionnait bien
+sur le déploiement réel avant de considérer le sujet clos.
 
-`credentialless` plutôt que `require-corp` : ce dernier bloque tout sous-ressource
-cross-origin qui ne déclare pas explicitement un en-tête CORP — ça aurait cassé les
-images de cartes TCGdex (serveur externe, aucun contrôle sur ses en-têtes). En mode
-`credentialless`, les sous-ressources cross-origin publiques (images TCGdex, scripts
-jsdelivr) continuent de charger normalement, simplement sans être envoyées avec des
-identifiants (cookies) — sans incidence ici, aucune de ces ressources n'en a besoin.
+Posé avec une réserve explicite : « crée la précondition, ne garantit pas qu'onnxruntime-
+web l'exploite réellement — à mesurer, pas à supposer ». Sur le relevé suivant, les
+captures réussies (bande serrée, rien d'exotique) sont passées de 577-1625 ms à
+**2100-3050 ms** — quasiment le double, sans qu'aucun autre changement du code
+n'explique un tel écart sur la durée de l'appel OCR lui-même. Hypothèse la plus
+plausible : sur cet appareil, forcer plusieurs threads WASM coûte plus en overhead de
+synchronisation qu'il ne fait gagner en parallélisation — un risque réel et connu du
+multi-thread sur des appareils à peu de cœurs performants, exactement le genre de
+résultat que la mesure devait détecter.
 
-Limite honnête : activer ces en-têtes crée la PRÉCONDITION du multi-thread, mais ne
-garantit pas qu'onnxruntime-web l'exploite réellement — ça dépend de son propre choix
-interne (`ort.env.wasm.numThreads`), sur lequel Scanic/ppu-paddle-ocr n'exposent aucun
-réglage direct depuis ce code. À mesurer sur le prochain diagnostic (durée OCR avant/
-après) plutôt qu'à supposer.
+Honnêteté sur la limite de cette conclusion : un seul relevé ne prouve pas la causalité
+avec certitude (un échauffement du téléphone après plusieurs tests d'affilée aurait pu
+aussi ralentir le CPU, indépendamment de tout code). Mais c'était la variable la plus
+plausible, la moins chère à isoler et totalement réversible sans risque — retirée pour
+confirmer par un nouveau test avant/après propre. `vercel.json` supprimé du dépôt.
 
 ### 4.19 Préchauffage de la table des sets TCGdex
 Même logique que le préchauffage des workers (§4.15) appliquée à la table des sets
@@ -535,9 +541,10 @@ numéro lisible.
 7. Fusionner les deux tentatives OCR (bande serrée + repli large, §4.8) en un seul appel
    `recognize()` sur une image composite, si le prochain diagnostic confirme un coût fixe
    important par appel — non fait faute de données pour trancher.
-8. ~~En-têtes COOP/COEP (`vercel.json`)~~ — posés (§4.18), effet réel sur la vitesse OCR
-   à confirmer par diagnostic (dépend d'onnxruntime-web, pas garanti par les seuls
-   en-têtes).
+8. En-têtes COOP/COEP (`vercel.json`) — testés puis retirés (§4.18) : régression de
+   vitesse OCR constatée sur diagnostic réel (577-1625ms → 2100-3050ms), probablement
+   un coût de synchronisation multi-thread supérieur au gain sur cet appareil. À ne pas
+   retenter sans un moyen de comparer plusieurs appareils/relevés, pas un seul.
 9. Whitelist de caractères (chiffres + `/`) côté `ppu-paddle-ocr` si l'API l'expose — à
    vérifier, pourrait réduire l'espace de recherche du décodeur.
 10. Modèle OCR plus léger/quantifié si `ppu-paddle-ocr` en propose une variante — réduirait
