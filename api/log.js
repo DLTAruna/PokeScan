@@ -33,7 +33,7 @@ export default async function handler(req, res) {
       const entry = { at: new Date().toISOString(), ...body };
 
       const getRes = await fetch(`https://api.github.com/gists/${GIST_ID}`, { headers: ghHeaders });
-      if (!getRes.ok) { res.status(502).json({ error: 'lecture gist échouée', status: getRes.status }); return; }
+      if (!getRes.ok) { res.status(502).json({ error: 'lecture gist échouée', status: getRes.status, github: await getRes.text() }); return; }
       const gist = await getRes.json();
       const prev = (gist.files && gist.files[FILENAME] && gist.files[FILENAME].content) || '';
       const lines = (prev ? prev.split('\n') : []).concat(JSON.stringify(entry));
@@ -44,7 +44,11 @@ export default async function handler(req, res) {
         headers: { ...ghHeaders, 'Content-Type': 'application/json' },
         body: JSON.stringify({ files: { [FILENAME]: { content: trimmed } } })
       });
-      if (!patchRes.ok) { res.status(502).json({ error: 'écriture gist échouée', status: patchRes.status }); return; }
+      // Message GitHub réel inclus (jamais le token, seulement le corps de sa réponse) :
+      // un simple "403" ne dit pas SI c'est un jeton invalide, expiré, sans le bon
+      // scope, un ID de gist erroné, ou une limite de taux — la cause exacte devient
+      // invérifiable sans ça, comme ça vient d'arriver.
+      if (!patchRes.ok) { res.status(502).json({ error: 'écriture gist échouée', status: patchRes.status, github: await patchRes.text() }); return; }
 
       res.status(200).json({ ok: true });
       return;
@@ -52,7 +56,7 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       const getRes = await fetch(`https://api.github.com/gists/${GIST_ID}`, { headers: ghHeaders });
-      if (!getRes.ok) { res.status(502).json({ error: 'lecture gist échouée', status: getRes.status }); return; }
+      if (!getRes.ok) { res.status(502).json({ error: 'lecture gist échouée', status: getRes.status, github: await getRes.text() }); return; }
       const gist = await getRes.json();
       const content = (gist.files && gist.files[FILENAME] && gist.files[FILENAME].content) || '';
       const entries = content
@@ -82,7 +86,7 @@ export default async function handler(req, res) {
           headers: { ...ghHeaders, 'Content-Type': 'application/json' },
           body: JSON.stringify({ files: { [FILENAME]: { content: JSON.stringify({ at: new Date().toISOString(), k: 'clear' }) } } })
         });
-        if (!clearRes.ok) { res.status(502).json({ error: 'vidage gist échoué', status: clearRes.status }); return; }
+        if (!clearRes.ok) { res.status(502).json({ error: 'vidage gist échoué', status: clearRes.status, github: await clearRes.text() }); return; }
         res.status(200).json({ ok: true, cleared: true });
         return;
       }
