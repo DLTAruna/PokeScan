@@ -211,19 +211,33 @@ const OCR_MODULE = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web/+esm';
 // cartes modernes et à droite sur les anciennes (Wizards) : lire les deux zones sans payer
 // deux inférences complètes. extractNumbers() ignore déjà les lignes parasites, empiler ne
 // le gêne donc pas.
+// Balayage du ZOOM à géométrie constante. Toutes ces variantes partagent exactement la
+// fenêtre de production (0-45 % × 84-99 %) et ne diffèrent QUE par le facteur
+// d'agrandissement : c'est la seule façon d'attribuer un écart au zoom lui-même. La
+// mesure précédente du « ×3 » portait en réalité sur une variante composite, donc elle
+// confondait deux changements à la fois — erreur du même genre que §4.36.
+//
+// Rappel de ce que fait ce facteur : la bande vaut 270×126 px à l'échelle native (carte
+// travaillée à 600 px de large). L'agrandir n'ajoute AUCUN détail, mais PaddleOCR
+// normalise les lignes autour de 32-48 px de haut alors que les chiffres n'en font qu'une
+// vingtaine — l'agrandissement les amène dans la plage où le modèle travaille le mieux.
+// Contrepartie : le coût suit la surface (×3 = 2,25 fois plus de pixels que ×2).
+// Étude de la LARGEUR et de la POSITION VERTICALE, à zoom fixe.
+//
+// Le zoom a été balayé (×1.5 → ×4, 120 cartes) et n'a AUCUN effet mesurable : 2,5 points
+// d'écart total pour une marge de bruit de ±7,8 points. Question close, retirée d'ici —
+// la garder ne ferait que diluer le temps de calcul. Seule conséquence conservée : ×1.5
+// coûte 18 % de moins que ×2 pour le même taux, donc c'est lui qu'on teste maintenant.
+//
+// Ce qui compte, en revanche, c'est la largeur : la pleine largeur a fait +11,6 points sur
+// le même échantillon, au-delà du bruit et confirmé sur deux runs. Cohérent avec le fait
+// que le numéro est à gauche sur les cartes modernes et à droite sur l'ère Wizards.
 const VARIANTS = [
-  {name:'production (0-45% × 84-99%)', fx:0,    fy:0.84, fw:0.45, fh:0.15, zoom:2},
-  {name:'droite (55-100% × 84-99%)',   fx:0.55, fy:0.84, fw:0.45, fh:0.15, zoom:2},
-  {name:'pleine largeur (0-100%)',     fx:0,    fy:0.84, fw:1.00, fh:0.15, zoom:2},
-  {name:'composite gauche+droite',     zoom:2, parts:[
-      {fx:0,    fy:0.84, fw:0.45, fh:0.15},
-      {fx:0.55, fy:0.84, fw:0.45, fh:0.15}]},
-  {name:'composite, bandes plus basses', zoom:2, parts:[
-      {fx:0,    fy:0.86, fw:0.45, fh:0.14},
-      {fx:0.55, fy:0.86, fw:0.45, fh:0.14}]},
-  {name:'composite zoom ×3',           zoom:3, parts:[
-      {fx:0,    fy:0.84, fw:0.45, fh:0.15},
-      {fx:0.55, fy:0.84, fw:0.45, fh:0.15}]},
+  {name:'production (gauche 0-45%, ×2)',   fx:0,    fy:0.84, fw:0.45, fh:0.15, zoom:2},
+  {name:'pleine largeur ×2',               fx:0,    fy:0.84, fw:1.00, fh:0.15, zoom:2},
+  {name:'pleine largeur ×1.5 (moins cher)',fx:0,    fy:0.84, fw:1.00, fh:0.15, zoom:1.5},
+  {name:'pleine largeur, bande basse',     fx:0,    fy:0.86, fw:1.00, fh:0.14, zoom:2},
+  {name:'droite seule (55-100%)',          fx:0.55, fy:0.84, fw:0.45, fh:0.15, zoom:2},
 ];
 
 // Nombre de cartes minimum avant d'autoriser la moindre bascule de variante. En dessous,
@@ -495,13 +509,14 @@ function pct(ok, total){ return total ? (ok/total*100) : 0; }
 
 function renderVariants(){
   $('variants-box').innerHTML = VARIANTS.map((v,i)=>{
-    const s = stats[i] || {ok:0,total:0,ms:0};
+    const s = stats[i] || {ok:0,total:0,ms:0,fp:0};
     const p = pct(s.ok, s.total);
+    const fp = pct(s.fp, s.total);
     const ms = s.total ? Math.round(s.ms/s.total) : 0;
     return `<div class="bar-row">
       <div class="name ${i===activeVariant?'variant-active':''}">${i===activeVariant?'★ ':''}${v.name}</div>
       <div class="track"><div class="bar" style="width:${p.toFixed(1)}%"></div></div>
-      <div class="val">${p.toFixed(1)} % · ${ms} ms</div>
+      <div class="val">${p.toFixed(1)} % · <span style="color:${fp>0?'var(--bad)':'var(--muted)'}">${fp.toFixed(0)} % FP</span> · ${ms} ms</div>
     </div>`;
   }).join('');
 }
@@ -549,7 +564,7 @@ async function run(){
   running = true; stopRequested = false;
   $('btn-start').disabled = true; $('btn-stop').disabled = false;
   failures = []; tested = 0; ocrMsTotal = 0; ocrCalls = 0; seriesStats = {}; activeVariant = 0;
-  stats = VARIANTS.map(()=>({ok:0,total:0,ms:0}));
+  stats = VARIANTS.map(()=>({ok:0,total:0,ms:0,fp:0}));
   renderStats();
 
   try{
@@ -601,6 +616,13 @@ async function run(){
         const hit = r.cands.some(c => c.number === card.localId && c.denominator === card.official);
         stats[vi].total++; stats[vi].ms += r.ms;
         if(hit) stats[vi].ok++;
+        // FAUX POSITIF : un numéro a été lu, il est plausible (il passe tous les filtres
+        // de extractNumbers), mais il est FAUX. C'est le cas le plus grave — bien pire
+        // qu'un échec franc : la carte part au lot sans que rien ne signale l'erreur.
+        // Historique concret : « 198/165 » lu « 98/63 » désignait un Salamèche
+        // d'Expedition, présenté comme certain. Un taux de réussite seul masque
+        // complètement ce risque, et optimiser dessus peut l'aggraver.
+        else if(r.cands.length) stats[vi].fp++;
         if(vi === activeVariant){
           const ss = seriesStats[card.serieName] = seriesStats[card.serieName] || {ok:0,total:0};
           ss.total++; if(hit) ss.ok++;
@@ -652,11 +674,14 @@ async function run(){
     log('');
     log('🏁 Terminé — ' + tested + ' cartes testées.');
     const ranked = VARIANTS.map((v,i)=>({
-      name:v.name, p:pct(stats[i].ok,stats[i].total),
+      name:v.name, p:pct(stats[i].ok,stats[i].total), fp:pct(stats[i].fp,stats[i].total),
       ms: stats[i].total ? Math.round(stats[i].ms/stats[i].total) : 0
     })).sort((a,b)=>b.p-a.p);
-    log('Classement final des fenêtres (taux · coût OCR moyen) :');
-    ranked.forEach((r,i)=> log(`  ${i+1}. ${r.name} — ${r.p.toFixed(1)} % · ${r.ms} ms`));
+    log('Classement final (taux juste · faux positifs · coût OCR moyen) :');
+    ranked.forEach((r,i)=> log(`  ${i+1}. ${r.name} — ${r.p.toFixed(1)} % · ${r.fp.toFixed(1)} % FP · ${r.ms} ms`));
+    log('');
+    log('« FP » = numéro lu, plausible, mais FAUX : plus grave qu\'un échec (la carte part');
+    log('   au lot sans alerte). À surveiller autant que le taux de réussite.');
     $('status').textContent = '✅ Terminé.';
   }catch(err){
     log('❌ ' + err.message);

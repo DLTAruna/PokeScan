@@ -1156,6 +1156,49 @@ Rappel de portée : tout ceci porte sur des illustrations officielles dégradée
 synthétiquement, pas sur de vraies photos. Le gradient par époque, lui, est une propriété
 de la mise en page imprimée : il se transpose tel quel.
 
+### 4.42 Le zoom de la bande n'a aucun effet — question close
+Balayage propre du facteur d'agrandissement, à géométrie strictement constante (même
+fenêtre 0-45 % × 84-99 %, seul le zoom change), 120 cartes :
+
+| zoom | taux juste | faux positifs | coût OCR |
+|---|---|---|---|
+| ×1.5 | 23,3 % | 13 % | **269 ms** |
+| ×2 (production) | 24,2 % | 14 % | 329 ms |
+| ×2.5 | 22,5 % | 15 % | 418 ms |
+| ×3 | 22,5 % | 9 % | 503 ms |
+| ×4 | 25,0 % | 9 % | 671 ms |
+
+2,5 points d'écart total pour une marge de bruit de **±7,8 points** à n=120 : aucun effet
+mesurable. Le « ×3 devant la production » du tout premier essai (27,3 % contre 18,2 %,
+11 cartes) était bien du bruit — et la mesure suivante confondait zoom et composite, donc
+ne valait rien non plus. Conséquence exploitable : puisque le taux est identique, **×1.5
+coûte 18 % de moins** que la production pour le même résultat.
+
+À retenir sur la méthode : ce sont trois mesures successives du même paramètre qui ont
+donné trois réponses différentes, jusqu'à ce qu'une seule soit faite proprement (un seul
+paramètre varie, échantillon suffisant, marge de bruit explicitée). Les deux premières
+n'étaient pas « moins précises », elles étaient sans valeur.
+
+**Le vrai levier est la largeur** : la pleine largeur fait +11,6 points (35,8 % contre
+24,2 %), au-delà de la marge, confirmé sur deux échantillons indépendants. Cohérent avec
+§4.41 : aucun agrandissement de la bande gauche ne fera apparaître un numéro imprimé à
+droite.
+
+### 4.43 Le banc compte désormais les faux positifs — et ils sont nombreux
+Ajout d'une métrique qui manquait, et dont l'absence rendait l'optimisation dangereuse :
+un **faux positif** est un numéro lu, plausible (il franchit tous les filtres de
+`extractNumbers`), mais FAUX. C'est le cas le plus grave — bien pire qu'un échec franc,
+puisque la carte part au lot sans qu'aucun signal n'alerte. Précédent connu : « 198/165 »
+lu « 98/63 », désignant un Salamèche d'Expedition présenté comme certain.
+
+Premier relevé : **14 % de faux positifs sur la fenêtre de production** — une carte sur
+sept. Totalement invisible jusqu'ici, un taux de réussite seul ne pouvant pas le montrer.
+
+Et cela change l'arbitrage sur la largeur : la pleine largeur monte à **18 % de faux
+positifs** (plus de texte lu = plus d'occasions de mal lire). Elle achète donc ses
++11,6 points de réussite au prix de +4 points d'erreurs silencieuses. Ce n'est plus un
+choix évident, et il était impossible à poser avant cette métrique.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
