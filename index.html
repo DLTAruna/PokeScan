@@ -1100,21 +1100,22 @@ function getVisionWorker(){
               // Ancrée à GAUCHE (fx=0) et non centrée : l'ancienne bande centrée démarrait
               // à 11 % de la largeur alors que le numéro commence vers 5 %, ce qui rognait
               // le premier chiffre (diagnostic réel : « 007/165 » lu « 07/16s »).
-              // Le numéro occupe environ 5-32 % de la largeur et 93-98 % de la hauteur.
+              // Le numéro occupe environ 5-32 % de la largeur et 93-98 % de la hauteur :
+              // 0-45 % × 84-99 % laisse donc à peu près le double de marge dans chaque
+              // direction, de quoi absorber les défauts de coupe et de centrage.
               //
-              // Bord HAUT desserré de 0.84 à 0.80 sur diagnostic réel (relevé Samsung,
-              // 32 observations) : « numéro illisible » y représentait 14 refus sur ~24
-              // tentatives, alors que score (1.00) et netteté (souvent 300-777, très
-              // au-dessus du seuil de 40) étaient bons — donc ni cadrage global, ni flou.
-              // Les textes OCR bruts des échecs le montrent directement : ils contiennent
-              // SEULEMENT la ligne « Faiblesse × 2 Résistance » (ex: "hee ×2 Resistanee",
-              // "2", "0L"), jamais le numéro — la bande tombait au-dessus de lui. Les
-              // captures réussies, elles, contiennent les trois lignes empilées
-              // (Faiblesse/Résistance, illustrateur, numéro), preuve qu'attraper des
-              // lignes parasites au-dessus ne gêne pas : extractNumbers() les ignore déjà.
-              // Le bord BAS reste à 99 % : c'est celui qui ne doit jamais bouger (le
-              // numéro est collé au bord de la carte).
-              const serree = crop(0, 0.80, 0.45, 0.19, 2);
+              // NE PAS élargir cette bande : essayé (0.80-0.99 au lieu de 0.84-0.99) sur
+              // l'hypothèse que la bande tombait au-dessus du numéro, MESURÉ sur deux
+              // relevés réels comparables, et clairement contre-productif :
+              //   - recognize() : 944 ms de moyenne (n=21) -> 1869 ms (n=28), soit x2 ;
+              //   - « numéro illisible » : 58 % (14/24) -> 56 % (18/32), donc INCHANGÉ.
+              // Mécanisme : PaddleOCR détecte les zones de texte PUIS reconnaît chacune —
+              // une bande plus haute attrape plus de lignes (texte d'attaque, Faiblesse/
+              // Résistance) et paie une passe de reconnaissance par ligne. Le coût est
+              // proportionnel au TEXTE contenu, pas seulement aux pixels. Corollaire utile :
+              // la hauteur de bande n'influe pas sur le taux d'échec, la cause est ailleurs
+              // (voir §4.36 — coins détectés à l'intérieur du bord réel de la carte).
+              const serree = crop(0, 0.84, 0.45, 0.15, 2);
               const tPrep = Math.round(performance.now() - tRead0);
 
               // Netteté mesurée sur la CARTE ENTIÈRE et non sur la bande de lecture.
@@ -1132,7 +1133,7 @@ function getVisionWorker(){
 
               // skipRecognize : le fil principal a déjà trouvé une correspondance visuelle
               // nette avec une carte confirmée plus tôt cette session (voir sessionCardHashes
-              // et STRICT_VISUAL_MATCH_DIST côté appelant) — la géométrie et la netteté
+              // et SAME_PHOTO_MATCH_DIST côté appelant) — la géométrie et la netteté
               // viennent d'être vérifiées normalement ci-dessus (sécurité inchangée), seul
               // l'appel recognize() lui-même (le vrai coût, ~1,7s mesuré) est sauté. Le
               // numéro/dénominateur n'est de toute façon pas utilisé par l'appelant dans ce
@@ -2800,22 +2801,32 @@ let lastReadAttemptAt = 0;
 
 // ---------------- RACCOURCI VISUEL "DÉJÀ VU CETTE SESSION" ----------------
 // Les doublons sont très fréquents en pratique quand on trie une collection (plusieurs
-// exemplaires de la même carte). Une fois une carte confirmée (par OCR), son image de
-// référence TCGdex est hachée (dHash, déjà en cache local — voir getCardImageHash) et
-// gardée ici. À chaque nouvelle tentative, si la carte redressée ressemble fortement à
-// l'une d'elles, le vrai coût (recognize(), ~1,7s mesuré) est sauté entièrement — seule
-// la géométrie/netteté (sécurité) reste vérifiée. Se dégrade silencieusement vers l'OCR
-// normal si rien ne correspond (première carte d'un set, carte réellement nouvelle) :
-// aucune régression possible, uniquement un raccourci en plus. Vidée à chaque démarrage
-// de caméra (voir startAimLoop) — "cette session", pas un index permanent.
-let sessionCardHashes = []; // [{id, card, hash(BigInt)}]
-// Nettement plus strict que le seuil du repli existant (32, résolution best-effort à
-// confiance "faible" quand tout le reste a échoué) : ici on décide de NE PAS lire la
-// carte du tout, donc l'erreur coûte cher si le seuil est trop laxiste. Valeur de départ
-// à valider sur diagnostic réel (le journal indique désormais l'écart mesuré à chaque
-// déclenchement, via:'hash-visuel' + dist) — pas une valeur définitive, comme tous les
-// autres seuils de ce fichier.
-const STRICT_VISUAL_MATCH_DIST = 16;
+// exemplaires de la même carte), et le relevé réel le confirme : 19/165, 7/165 et 37/165
+// ont été capturés 2 à 3 fois chacun, payant recognize() (1-3 s) à chaque fois.
+//
+// Une fois une carte identifiée, l'empreinte de LA PHOTO qui a permis de l'identifier
+// est retenue ici. À la tentative suivante, la carte redressée est comparée à ces
+// empreintes AVANT tout appel OCR : si ça correspond, recognize() est sauté entièrement.
+//
+// Photo-à-photo, et non photo-contre-illustration-officielle : première version comparée
+// au visuel TCGdex, elle ne s'est JAMAIS déclenchée sur un relevé complet (aucun
+// via:'hash-visuel', malgré les doublons ci-dessus). Normal avec le recul — une photo au
+// téléphone (reflets, angle, éclairage, teinte) et le scan officiel d'une carte sont deux
+// rendus trop éloignés pour une empreinte perceptuelle serrée. Deux photos de la MÊME
+// carte physique dans la MÊME session se ressemblent en revanche beaucoup, ce que
+// l'anti-doublon existant exploite déjà avec succès (hexHamming <= 4 sur lastCaptureHash).
+//
+// Vidé à chaque démarrage de caméra (voir startAimLoop) : "cette session", pas un index
+// permanent. Se dégrade silencieusement vers l'OCR normal si rien ne correspond.
+let sessionCardHashes = []; // [{cardId, card, hash(BigInt)}]
+// Plus permissif que l'anti-doublon immédiat (<= 4, deux images prises à quelques
+// secondes d'intervalle sur une carte à peine bougée) puisqu'il s'agit ici d'une carte
+// re-présentée plus tard, sous un autre angle — mais bien plus strict que le repli
+// best-effort (32) : on décide de NE PAS lire la carte, donc une erreur coûte cher.
+// Valeur de départ à calibrer : l'écart réellement mesuré est désormais journalisé à
+// CHAQUE tentative (hashDist), déclenchement ou non, ce qui donnera directement la
+// distribution des distances photo-à-photo sur un vrai relevé.
+const SAME_PHOTO_MATCH_DIST = 10;
 
 // Anti-doublon "carte fantôme" : retirer une carte de devant la caméra prend un peu de
 // temps (la main la retire progressivement), et le verrou de stabilité pré-tentative a
@@ -3012,6 +3023,10 @@ function buildDiagReport(){
         '  lu=' + (e.num || '—') +
         '  "' + e.hint + '"' + (e.ratio!=null ? ('  ratio='+e.ratio) : '') +
         (e.via ? ('  bande=' + e.via) : '') +
+        // Écart visuel avec la carte identifiée la plus proche de la session : journalisé
+        // même sans déclenchement du raccourci, c'est ce qui permet de calibrer son seuil
+        // (SAME_PHOTO_MATCH_DIST) sur des mesures plutôt qu'à l'estime.
+        (e.hashDist != null ? ('  écartVisuel=' + e.hashDist) : '') +
         (e.rotated ? '  tourné' : ''));
       if(e.tExtract != null) l.push('              phases   : redressement=' + e.tExtract + 'ms' +
         '  resize=' + e.tCardBmp + 'ms  worker=' + e.tWorker + 'ms' +
@@ -3384,11 +3399,29 @@ async function attemptRead(corners, score){
     frame.width = vw; frame.height = vh;
     frame.getContext('2d').drawImage(frameBmp, 0, 0);
     frameBmp.close();
+    // Marge de sécurité autour du quadrilatère détecté, AVANT redressement (voir §4.36).
+    // Diagnostic : sur les échecs « numéro illisible », le texte OCR contient la ligne
+    // Faiblesse/Résistance ET celle de l'illustrateur ("Hus,Scay" = "Illus. Sacay"),
+    // mais JAMAIS le numéro qui est juste en dessous — la carte redressée est donc
+    // rognée par le bas, là précisément où se trouve le numéro. Cohérent avec un
+    // détecteur qui cadre le visuel de la carte plutôt que son bord physique.
+    // Élargir les coins depuis le centre garantit d'inclure le bord réel, quitte à
+    // ramener un peu de fond autour (sans conséquence : la bande de lecture est
+    // exprimée en fractions, et 4 % ne déplacent le numéro que de ~2 points — il
+    // reste largement dans la bande 84-99 %). Homothétie pure : le ratio est préservé,
+    // les filtres de forme en aval sont donc inchangés.
+    const EXTRACT_MARGIN = 0.04;
+    const cx = (corners.tl[0] + corners.tr[0] + corners.br[0] + corners.bl[0]) / 4;
+    const cy = (corners.tl[1] + corners.tr[1] + corners.br[1] + corners.bl[1]) / 4;
+    const grown = (c) => ({
+      x: (cx + (c[0] - cx) * (1 + EXTRACT_MARGIN)) * vw,
+      y: (cy + (c[1] - cy) * (1 + EXTRACT_MARGIN)) * vh
+    });
     const cornersPx = {
-      topLeft:     {x: corners.tl[0]*vw, y: corners.tl[1]*vh},
-      topRight:    {x: corners.tr[0]*vw, y: corners.tr[1]*vh},
-      bottomRight: {x: corners.br[0]*vw, y: corners.br[1]*vh},
-      bottomLeft:  {x: corners.bl[0]*vw, y: corners.bl[1]*vh}
+      topLeft:     grown(corners.tl),
+      topRight:    grown(corners.tr),
+      bottomRight: grown(corners.br),
+      bottomLeft:  grown(corners.bl)
     };
     const extracted = await scanic.extractDocument(frame, cornersPx, {output:'canvas'});
     const tExtract = Math.round(performance.now() - tExtract0);
@@ -3439,20 +3472,29 @@ async function attemptRead(corners, score){
     // Même algorithme (dHash 9x8, gradient horizontal) que resolveCardByVisualMatch,
     // appliqué ici en amont plutôt qu'en repli de dernier recours. Coût : quelques ms
     // (comparaison de bits), sans commune mesure avec recognize() (~1,7s).
-    let hashShortcut = null;
-    if(sessionCardHashes.length){
-      try{
-        const small = document.createElement('canvas');
-        small.width = 9; small.height = 8;
-        small.getContext('2d').drawImage(sourceForRead, 0, 0, 9, 8);
-        const liveHash = dHashFromCanvas(small.getContext('2d'), 9, 8);
-        let best = null, bestDist = Infinity;
-        for(const c of sessionCardHashes){
-          const dist = hammingDistance(liveHash, c.hash);
-          if(dist < bestDist){ bestDist = dist; best = c; }
-        }
-        if(best && bestDist <= STRICT_VISUAL_MATCH_DIST) hashShortcut = {card: best.card, distance: bestDist};
-      }catch(e){ /* tant pis, la lecture OCR normale ci-dessous reste le filet de sécurité */ }
+    // Empreinte de la carte redressée, calculée ICI (fil principal, ~1 ms) et non reprise
+    // du worker : c'est exactement la même fonction qui servira à mémoriser la carte une
+    // fois identifiée (voir registerSessionCardHash), donc les deux côtés de la
+    // comparaison passent par le même chemin de calcul — condition nécessaire pour que
+    // les distances mesurées veuillent dire quelque chose.
+    let liveHash = null;
+    try{
+      const small = document.createElement('canvas');
+      small.width = 9; small.height = 8;
+      const sctx = small.getContext('2d', {willReadFrequently:true});
+      sctx.drawImage(sourceForRead, 0, 0, 9, 8);
+      liveHash = dHashFromCanvas(sctx, 9, 8);
+    }catch(e){ /* pas de raccourci possible cette fois, l'OCR normal prend le relais */ }
+
+    let hashShortcut = null, bestHashDist = null;
+    if(liveHash != null && sessionCardHashes.length){
+      let best = null, bestDist = Infinity;
+      for(const c of sessionCardHashes){
+        const dist = hammingDistance(liveHash, c.hash);
+        if(dist < bestDist){ bestDist = dist; best = c; }
+      }
+      bestHashDist = bestDist; // journalisé même sans déclenchement : c'est ce qui permettra de calibrer le seuil
+      if(best && bestDist <= SAME_PHOTO_MATCH_DIST) hashShortcut = {card: best.card, distance: bestDist};
     }
 
     // Même logique de redimensionnement précoce : le worker redessine de toute façon la
@@ -3491,7 +3533,8 @@ async function attemptRead(corners, score){
     // worker) : ne pas les traiter comme un échec de lecture dans ce cas précis.
     if(!hashShortcut && (r.reason === 'illisible' || !r.number)){
       setAimHint('Numéro non lu — rapproche-toi');
-      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text, rotated, ...timing});
+      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms,
+                       hashDist: bestHashDist, raw:r.text, rotated, ...timing});
       return;
     }
     // Numéro/dénominateur "finaux" utilisés pour tout le reste de la fonction : ceux lus
@@ -3562,7 +3605,7 @@ async function attemptRead(corners, score){
         };
         showLiveResultDone(hashShortcut.card, 'high');
       } else {
-        resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp);
+        resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp, liveHash);
       }
     }, 'image/png');
 
@@ -3575,7 +3618,7 @@ async function attemptRead(corners, score){
       : '✅ #' + finalNumber + '/' + finalDenominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
                      num: hashShortcut ? (finalNumber+' (visuel, écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
-                     raw:r.text, rotated, ...timing});
+                     hashDist: bestHashDist, raw:r.text, rotated, ...timing});
   }catch(e){
     diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
@@ -3641,22 +3684,18 @@ function showLiveResultNotFound(){
 // résultat sous la même forme que `analyzeQueueItem` (`_analysis`), pour que l'analyse
 // de fond ne refasse jamais ce travail une fois la caméra arrêtée (voir la condition
 // `!it._analysis || it._analysis.status === 'pending'` dans processQueueAnalysis).
-// Alimente sessionCardHashes (voir sa déclaration) une fois une carte confirmée par la
-// voie normale (OCR + résolution TCGdex) : sa PROCHAINE apparition (un doublon, très
-// courant en pratique) pourra être reconnue par simple comparaison visuelle et sauter
-// l'appel recognize(). Fire-and-forget, ne bloque jamais l'affichage du résultat déjà
-// montré — getCardImageHash est déjà mis en cache localement (IndexedDB), donc gratuit
-// après la toute première fois où cette carte précise est vue par l'application.
-async function registerSessionCardHash(card){
-  if(!card?.id || !card.imageBase) return;
-  if(sessionCardHashes.some(c => c.id === card.id)) return;
-  try{
-    const hash = await getCardImageHash(card.id, card.imageBase);
-    if(hash != null) sessionCardHashes.push({id: card.id, card, hash});
-  }catch(e){ /* tant pis, pas de raccourci pour cette carte cette fois */ }
+// Alimente sessionCardHashes (voir sa déclaration) une fois une carte identifiée par la
+// voie normale : sa PROCHAINE apparition pourra être reconnue par simple comparaison
+// d'empreintes et sauter l'appel recognize(). On mémorise l'empreinte de LA PHOTO qui
+// vient d'identifier la carte, pas celle du visuel officiel — voir le commentaire de
+// sessionCardHashes pour pourquoi la seconde ne marchait pas.
+function registerSessionCardHash(card, liveHash){
+  if(!card?.id || liveHash == null) return;
+  if(sessionCardHashes.some(c => c.cardId === card.id)) return;
+  sessionCardHashes.push({cardId: card.id, card, hash: liveHash});
 }
 
-async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText, nameBmp){
+async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText, nameBmp, liveHash){
   try{
     if(!setAbbrMap){
       const loaded = await loadSetAbbreviationMap(()=>{});
@@ -3673,7 +3712,7 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
 
     if(mySeq !== liveResultSeq){ if(nameBmp?.close) nameBmp.close(); return; } // une carte plus récente affiche déjà autre chose
     if(result.card){
-      registerSessionCardHash(result.card); // en arrière-plan, alimente le raccourci visuel pour les prochains doublons
+      registerSessionCardHash(result.card, liveHash); // alimente le raccourci visuel pour les prochains doublons
       showLiveResultDone(result.card, result.confidence);
       // La confirmation par le nom n'a pas pu être tentée ici : le texte OCR utilisé
       // vient de la bande du bas (numéro), qui ne contient jamais le nom (haut de

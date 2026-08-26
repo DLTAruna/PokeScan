@@ -955,6 +955,64 @@ BONNES correspondances sur le mécanisme de repli étaient de 15-25, donc un seu
 pourrait ne déclencher que rarement en pratique. Vérifié en isolation (image de référence
 comparée à elle-même → distance 0) ; le comportement sur photo réelle reste à mesurer.
 
+### 4.36 L'élargissement de bande était une erreur — mesuré, annulé
+Deuxième relevé (36 observations, même appareil), comparé au précédent. L'élargissement
+de la bande décidé en §4.34 (0.84-0.99 → 0.80-0.99) est **contre-productif sur les deux
+tableaux** :
+
+| | avant (0.84) | après (0.80) |
+|---|---|---|
+| `recognize()` moyenne | 944 ms (n=21) | **1869 ms** (n=28) |
+| `recognize()` médiane | 949 ms | 1938 ms |
+| « numéro illisible » | 58 % (14/24) | 56 % (18/32) |
+
+Soit **x1,98 sur le coût** pour un taux d'échec **inchangé**. Mécanisme, évident après
+coup : PaddleOCR détecte les zones de texte PUIS lance une reconnaissance par zone — une
+bande plus haute attrape plus de lignes (texte d'attaque, Faiblesse/Résistance) et paie
+une passe supplémentaire pour chacune. Le coût suit le TEXTE contenu, pas seulement les
+pixels. Annulé, retour à 0.84-0.99.
+
+Leçon utile au-delà du correctif : la hauteur de la bande **n'influe pas** sur le taux
+d'échec (58 % → 56 % pour un changement pourtant large). La cause était donc ailleurs, et
+cette mesure a l'avantage de rendre les deux réglages indépendants — modifier la bande ne
+faussera pas la mesure du correctif ci-dessous.
+
+**Vraie cause, relue dans les mêmes textes OCR** : les échecs contiennent la ligne
+Faiblesse/Résistance ET la ligne de l'illustrateur (`"Faiblesse × 2 Résistance \nHus,Scay"`
+= « Illus. Sacay »), mais jamais le numéro qui est juste EN DESSOUS. La bande descend donc
+bien assez bas — c'est la carte redressée elle-même qui est **rognée par le bas**, là
+précisément où se trouve le numéro. Cohérent avec un détecteur (Scanic, modèle ML) qui
+cadre le visuel de la carte plutôt que son bord physique.
+
+Correctif : **homothétie de 4 % des coins détectés** depuis leur centre, avant
+`extractDocument`. Vérifié par le calcul : ratio préservé à l'identique (les filtres de
+forme en aval sont donc inchangés), et le numéro — à ~95 % de la hauteur réelle — atterrit
+à 93,3 % de l'image élargie, toujours largement dans la bande 84-99 %. Donc sans effet
+négatif si les coins étaient déjà justes, et récupère le bord bas s'ils mordaient dedans.
+
+### 4.37 Raccourci visuel : photo-à-photo, pas photo-contre-illustration
+Le raccourci de §4.35 ne s'est **jamais déclenché** sur un relevé complet (aucun
+`via:'hash-visuel'`), alors même que le relevé contient exactement les doublons visés :
+`19/165` ×2, `7/165` ×2, `37/165` ×3, chacun payant `recognize()` intégralement.
+
+Cause : il comparait la photo prise au téléphone à **l'illustration officielle TCGdex** —
+deux rendus bien trop éloignés (reflets, angle, éclairage, teinte, dorures) pour une
+empreinte perceptuelle serrée. La réserve notée en §4.35 (« les bonnes correspondances
+étaient à 15-25, un seuil à 16 pourrait ne déclencher que rarement ») s'est vérifiée en
+pire : jamais.
+
+Refait en **photo-à-photo** : on mémorise l'empreinte de LA PHOTO qui a identifié la
+carte, et on y compare les tentatives suivantes. C'est la comparaison que l'anti-doublon
+existant réussit déjà (`hexHamming <= 4` sur `lastCaptureHash`). Seuil porté à 10 —
+plus permissif que 4 (carte re-présentée plus tard, sous un autre angle) mais loin des 32
+du repli best-effort. Vérifié en isolation : même image → distance 0, deux cartes
+différentes → 38, le seuil de 10 est donc confortablement entre les deux.
+
+Surtout : l'écart visuel mesuré est désormais journalisé à **chaque tentative**
+(`écartVisuel=`), déclenchement ou non. Le prochain relevé donnera la distribution réelle
+des distances photo-à-photo, de quoi caler ce seuil sur des mesures plutôt qu'à l'estime —
+ce qui manquait précisément pour ne pas répéter l'erreur de §4.35.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
