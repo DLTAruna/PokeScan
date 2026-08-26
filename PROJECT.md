@@ -758,6 +758,24 @@ carrée-ish est parfois encore acceptée par ce filtre large (tolérance volonta
 généreuse) mais reste alors rattrapée par le filtre précis existant — aucune régression
 possible, seulement une économie partielle à affiner sur le prochain relevé réel.
 
+### 4.29 Cause probable des rejets de forme : cartes empilées qui se chevauchent
+Hypothèse utilisateur, plausible et cohérente avec §4.28 : les cartes déjà scannées
+s'empilent pendant l'usage réel, et le bord de la carte du dessous peut déborder dans
+le cadre — le détecteur trouve alors un quadrilatère confiant (score élevé, cohérent
+avec les logs) mais dont la forme mélange deux cartes plutôt qu'une seule.
+
+Limite assumée, pas contournée : on ne peut pas apprendre au modèle de détection
+(Scanic, pas le nôtre) à démêler deux cartes qui se chevauchent — un problème de
+vision par ordinateur nettement plus dur que ce qui est corrigible à ce niveau. Le
+filtre de forme (§4.28) fait déjà ce qu'il faut dans ce cas précis : rejeter plutôt que
+risquer une lecture mélangeant les deux cartes. Ce n'est donc pas un bug à corriger,
+mais un comportement de sécurité qui fonctionne comme prévu.
+
+Ce qui restait réellement corrigible : le silence. Aucun des deux filtres de forme
+n'affichait de message — corrigé en ajoutant `setAimHint('Écarte les autres cartes du
+cadre')` aux deux endroits (pré-filtre et filtre précis), pour donner un indice
+actionnable plutôt que de laisser l'utilisateur deviner pourquoi ça ne capture pas.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

@@ -2862,6 +2862,15 @@ async function attemptRead(corners, score){
       const roughlyPortrait  = Math.abs(estRatio - CARD_RATIO) / CARD_RATIO <= 0.35;
       const roughlyLandscape = Math.abs(estRatio - roughInv) / roughInv <= 0.35;
       if(!roughlyPortrait && !roughlyLandscape){
+        // Cause fréquente, signalée par un retour utilisateur : en empilant les cartes
+        // déjà scannées, le bord de la carte du dessous peut dépasser et se glisser
+        // dans le quadrilatère détecté — le modèle de détection ne peut pas distinguer
+        // ça d'une vraie carte biscornue. On ne peut pas apprendre à ce modèle (pas le
+        // nôtre) à démêler deux cartes qui se chevauchent ; le filtre de forme fait
+        // déjà ce qu'il faut en rejetant plutôt que de risquer une lecture mélangeant
+        // les deux — la seule chose à corriger ici est le silence : dire à
+        // l'utilisateur ce qui se passe probablement plutôt que de ne rien afficher.
+        setAimHint('Écarte les autres cartes du cadre');
         diagPush('try', {ok:false, hint:'forme incompatible (pré-filtre)', score, ratio:+estRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
         return;
       }
@@ -2910,6 +2919,9 @@ async function attemptRead(corners, score){
     const isPortrait  = Math.abs(outRatio - CARD_RATIO)     / CARD_RATIO     <= 0.25;
     const isLandscape = Math.abs(outRatio - INV_CARD_RATIO) / INV_CARD_RATIO <= 0.25;
     if(!isPortrait && !isLandscape){
+      // Même cause probable qu'au pré-filtre ci-dessus (cartes empilées, bord de la
+      // précédente qui dépasse) — voir ce commentaire pour le détail.
+      setAimHint('Écarte les autres cartes du cadre');
       diagPush('try', {ok:false, hint:'forme incompatible', score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
       return;
     }
