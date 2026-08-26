@@ -64,6 +64,13 @@ export default async function handler(req, res) {
         res.status(200).json({ count: entries.length, entries });
         return;
       }
+      if (format === 'stats') {
+        // Résumé agrégé plutôt que la liste brute : évite de recompter des moyennes à
+        // la main sur chaque relevé pour savoir OÙ passe le temps (préparation,
+        // netteté, l'appel recognize() lui-même...) et avec quel moteur (GPU/CPU).
+        res.status(200).json(buildStats(entries));
+        return;
+      }
       if (format === 'clear') {
         // Vide le gist — pratique entre deux sessions de test pour repartir propre.
         // L'API Gist refuse un contenu de fichier vide (422) : on remet une seule ligne
@@ -98,7 +105,8 @@ export default async function handler(req, res) {
   pre{white-space:pre-wrap;word-break:break-word;margin:0;font-size:11.5px}
   a{color:#7fb2ef}
 </style>
-<h2>PokéScan — ${entries.length} observation(s) <a href="?format=json">json</a> · <a href="?format=clear" onclick="return confirm('Vider les logs ?')">vider</a></h2>
+<h2>PokéScan — ${entries.length} observation(s) <a href="?format=json">json</a> ·
+<a href="?format=stats">stats</a> · <a href="?format=clear" onclick="return confirm('Vider les logs ?')">vider</a></h2>
 <table>${rows}</table>`);
       return;
     }
@@ -111,4 +119,66 @@ export default async function handler(req, res) {
 
 function esc(s) {
   return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+}
+
+const TIMING_FIELDS = ['ocrMs', 'tExtract', 'tCardBmp', 'tWorker', 'tPrep', 'tSharp', 'tRecognize', 'tEnsure', 'sharp', 'score'];
+
+function numStats(values) {
+  const vals = values.filter(v => typeof v === 'number' && !Number.isNaN(v)).sort((a, b) => a - b);
+  if (!vals.length) return null;
+  const sum = vals.reduce((a, b) => a + b, 0);
+  return {
+    n: vals.length,
+    min: vals[0],
+    max: vals[vals.length - 1],
+    avg: Math.round((sum / vals.length) * 100) / 100,
+    median: vals[Math.floor(vals.length / 2)]
+  };
+}
+
+// Résumé agrégé des observations : combien de tentatives par issue (capture / illisible
+// / flou / ...), et pour chaque phase chronométrée (voir index.html §4.23) le
+// min/moyenne/médiane/max — overall et par issue, pour voir directement OÙ le temps
+// passe plutôt que de le déduire à la main d'une liste brute. Les lignes d'info
+// (environnement, focus caméra) sont remontées telles quelles : peu nombreuses, plus
+// utiles lues intégralement qu'agrégées.
+function buildStats(entries) {
+  const tries = entries.filter(e => e.k === 'try');
+  const infos = entries.filter(e => e.k === 'err');
+
+  const byHint = {};
+  for (const e of tries) {
+    const h = e.hint || (e.ok ? 'capture' : '?');
+    if (!byHint[h]) byHint[h] = { count: 0, via: {} };
+    byHint[h].count++;
+    if (e.via) byHint[h].via[e.via] = (byHint[h].via[e.via] || 0) + 1;
+  }
+  for (const h of Object.keys(byHint)) {
+    const subset = tries.filter(e => (e.hint || (e.ok ? 'capture' : '?')) === h);
+    const stats = {};
+    for (const f of TIMING_FIELDS) {
+      const s = numStats(subset.map(e => e[f]));
+      if (s) stats[f] = s;
+    }
+    byHint[h].stats = stats;
+  }
+
+  const overall = {};
+  for (const f of TIMING_FIELDS) {
+    const s = numStats(tries.map(e => e[f]));
+    if (s) overall[f] = s;
+  }
+
+  const rotatedCount = tries.filter(e => e.rotated).length;
+
+  return {
+    totalEntries: entries.length,
+    totalTries: tries.length,
+    parCause: byHint,
+    ensemble: overall,
+    tourné: rotatedCount,
+    environnement: infos.filter(e => e.msg && e.msg.startsWith('environnement')).map(e => ({ at: e.at, device: e.device, msg: e.msg })),
+    caméra: infos.filter(e => e.msg && e.msg.startsWith('caméra')).map(e => ({ at: e.at, device: e.device, msg: e.msg })),
+    autresInfos: infos.filter(e => e.msg && !e.msg.startsWith('environnement') && !e.msg.startsWith('caméra')).map(e => ({ at: e.at, device: e.device, msg: e.msg }))
+  };
 }

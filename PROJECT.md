@@ -562,6 +562,45 @@ en vue d'être retiré une fois la capture automatique jugée fiable sans lui.
 Vérifié via le vrai worker : lecture normale toujours ~330 ms, un échec (bande serrée
 sans numéro) résout maintenant en ~220 ms au lieu de plusieurs secondes.
 
+### 4.23 Diagnostic détaillé par phase + moteur d'exécution (GPU/CPU)
+Après plusieurs allers-retours à analyser des durées agrégées à la main (un seul
+`ocrMs` par tentative, sans savoir s'il fallait chercher du côté du redressement, de la
+netteté ou de l'appel OCR lui-même), le diagnostic devient beaucoup plus précis :
+
+- **Chronométrage par phase**, remonté sur chaque tentative : `tExtract` (redressement
+  par perspective, fil principal — seule partie hors Worker), `tCardBmp`
+  (redimensionnement avant transfert), `tWorker` (aller-retour Worker complet),
+  et côté Worker `tPrep`/`tSharp`/`tEnsure`/`tRecognize` (l'appel `recognize()`
+  lui-même — le vrai plancher du moteur OCR). Objectif : voir directement où le temps
+  passe plutôt que le deviner.
+- **Moteur d'exécution réellement utilisé (GPU/WebGPU vs CPU/WASM)**, jusqu'ici
+  invisible : `ppu-paddle-ocr` tente WebGPU par défaut avec repli automatique sur WASM
+  (`getDefaultWebExecutionProviders()`, découvert en inspectant le paquet). Capturé via
+  `svc.options.session.executionProviders` après `initialize()` — `protected` n'existe
+  qu'au sens TypeScript (effacé à la compilation), donc lisible tel quel à l'exécution.
+  Nuance honnête : ce champ reflète la liste demandée sauf si le rappel de repli de la
+  librairie l'a réécrite suite à une exception JS explicite — un échec interne
+  silencieux d'ONNX Runtime (webgpu→wasm sans lever d'exception à ce niveau) ne serait
+  pas forcément visible de cette façon précise. Reste un signal directionnel utile :
+  test sur cette machine, valeur renvoyée `["cpu"]` malgré une requête
+  `["webgpu","wasm"]` et un GPU détecté disponible (`isWebGpuAvailable()` → `true`) —
+  confirme au moins que ce n'est PAS `webgpu` qui tourne ici.
+- **Diagnostic d'environnement**, une fois par démarrage caméra : cœurs CPU
+  (`hardwareConcurrency`), mémoire estimée (`deviceMemory`, absent sur certains
+  navigateurs), isolation cross-origin, type de réseau, durée d'initialisation OCR.
+- **`api/log.js?format=stats`** : résumé agrégé côté serveur (compte par issue,
+  min/moyenne/médiane/max par phase, overall et par issue) — évite de recalculer ça à la
+  main sur chaque relevé.
+
+**Bug trouvé en testant, préexistant (commit `cb494cb`, pas introduit aujourd'hui)** :
+`ocrReadyForCamera` n'était jamais déclaré (`let`), seulement assigné dans
+`startAimLoop()` — une assignation à une variable non déclarée crée une globale
+implicite en mode non strict, mais SEULEMENT une fois cette ligne exécutée au moins
+une fois. Résultat : ouvrir « voir » (le diagnostic) AVANT le tout premier démarrage de
+la caméra levait une `ReferenceError` et cassait `buildDiagReport()` en entier,
+silencieusement — repéré en testant la case précisément avant d'avoir démarré la
+caméra dans ce test. Corrigé par une déclaration `let` explicite.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

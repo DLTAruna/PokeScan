@@ -701,12 +701,25 @@ function getVisionWorker(){
     try{
       const src = `
         let svc = null, svcPromise = null;
+        // Diagnostic uniquement : la librairie tente le GPU (WebGPU) avant de retomber
+        // sur le CPU (WASM), avec un repli automatique si la session GPU échoue à se
+        // créer — invisible jusqu'ici. \`options.session\` n'est protégé qu'au sens
+        // TypeScript (effacé à la compilation, aucune protection réelle à l'exécution),
+        // donc lisible tel quel après initialize() ; le rappel de repli de la librairie
+        // (onFallback) le met déjà à jour avec le moteur RÉELLEMENT utilisé, pas
+        // seulement celui demandé au départ.
+        let ocrDiag = { requested: null, actual: null, initMs: null };
         async function ensure(){
           if(svc) return svc;
           if(!svcPromise) svcPromise = (async ()=>{
+            const t0 = performance.now();
             const mod = await import(${JSON.stringify(OCR_WORKER_MODULE)});
+            const gpu = await mod.isWebGpuAvailable();
+            ocrDiag.requested = gpu ? ['webgpu','wasm'] : ['wasm'];
             const s = new mod.PaddleOcrService();
             await s.initialize();
+            ocrDiag.actual = (s.options && s.options.session && s.options.session.executionProviders) || null;
+            ocrDiag.initMs = Math.round(performance.now() - t0);
             svc = s; return s;
           })();
           return svcPromise;
@@ -806,7 +819,7 @@ function getVisionWorker(){
         self.onmessage = async (e)=>{
           const { id, type, bitmap, cardW } = e.data;
           try{
-            if(type === 'init'){ await ensure(); postMessage({id, ok:true}); return; }
+            if(type === 'init'){ await ensure(); postMessage({id, ok:true, ocrDiag}); return; }
 
             if(type === 'ocr'){
               const s = await ensure();
@@ -822,6 +835,12 @@ function getVisionWorker(){
             // par le fil principal, voir attemptRead) — il ne reste qu'à cadrer la bande
             // du numéro, vérifier la netteté et lire le texte.
             if(type === 'read'){
+              // Chronométrage détaillé par phase, remonté au diagnostic (voir
+              // buildDiagReport et §4.23) : un seul total agrégé ne disait pas SI le
+              // temps passait dans la préparation (dessin/découpe), le calcul de
+              // netteté ou l'appel recognize() lui-même — indispensable pour savoir où
+              // continuer à optimiser plutôt que de deviner.
+              const tRead0 = performance.now();
               const W = cardW || 600, H = Math.round(W*CARD_RATIO);
               const card = new OffscreenCanvas(W, H);
               card.getContext('2d').drawImage(bitmap, 0, 0, bitmap.width, bitmap.height, 0, 0, W, H);
@@ -851,6 +870,7 @@ function getVisionWorker(){
               // 0-45 % × 84-99 % laisse donc à peu près le double de marge dans chaque
               // direction, de quoi absorber les défauts de coupe et de centrage.
               const serree = crop(0, 0.84, 0.45, 0.15, 2);
+              const tPrep = Math.round(performance.now() - tRead0);
 
               // Netteté mesurée sur la CARTE ENTIÈRE et non sur la bande de lecture.
               // La variance du laplacien mesure la quantité de contraste local : sur une
@@ -860,10 +880,15 @@ function getVisionWorker(){
               // jamais sa chance. La netteté est une propriété de la PRISE DE VUE, pas du
               // cadrage : la mesurer sur la carte entière, qui contient toujours de la
               // matière (illustration, texte), la rend indépendante de la mise en page.
+              const tSharp0 = performance.now();
               const sharp = sharpness(card);
-              if(sharp < ${MIN_SHARPNESS}){ postMessage({id, ok:true, sharp, reason:'flou'}); return; }
+              const tSharp = Math.round(performance.now() - tSharp0);
+              if(sharp < ${MIN_SHARPNESS}){ postMessage({id, ok:true, sharp, reason:'flou', tPrep, tSharp}); return; }
 
+              const tEnsure0 = performance.now();
               const s = await ensure();
+              const tEnsure = Math.round(performance.now() - tEnsure0); // 0 sauf tout premier appel
+
               // {noCache:true} est OBLIGATOIRE, pas une précaution : le cache interne de
               // ppu-paddle-ocr hache seulement les 1024 premiers octets du tampon de
               // pixels (~256 pixels de la première ligne), quasi toujours du fond uni sur
@@ -872,9 +897,12 @@ function getVisionWorker(){
               // nouvelle — constaté : trois numéros distincts ('111/111','222/222',
               // '333/333') ont tous renvoyé le premier lu. Sans intérêt de toute façon,
               // deux images caméra n'étant jamais identiques au bit près.
+              const tRecognize0 = performance.now();
               const res = await s.recognize(serree, {noCache:true});
+              const tRecognize = Math.round(performance.now() - tRecognize0);
               const text = (res && res.text) || '';
               const cands = extractNumbers(text);
+              const timing = {tPrep, tSharp, tEnsure, tRecognize};
 
               // Le repli sur une bande large a été RETIRÉ : sur tous les relevés réels
               // collectés (plusieurs dizaines d'observations, plusieurs sessions), il n'a
@@ -885,7 +913,7 @@ function getVisionWorker(){
               // parfaitement cadrée — coûtait plusieurs secondes au lieu de quelques
               // centaines de ms. Objectif : capturer vite sans exiger un cadrage parfait,
               // donc un échec doit rester bon marché pour qu'on puisse en tenter beaucoup.
-              if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible'}); return; }
+              if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible', ...timing}); return; }
 
               const carte = await createImageBitmap(card);
               // Empreinte anti-doublon prise sur la CARTE entière et non sur la bande :
@@ -893,7 +921,7 @@ function getVisionWorker(){
               // l'illustration les sépare nettement.
               postMessage({id, ok:true, sharp, text, via:'serree', hash:dHash(card),
                            number:cands[0].number, denominator:cands[0].denominator,
-                           carte}, [carte]);
+                           carte, ...timing}, [carte]);
               return;
             }
 
@@ -2210,6 +2238,13 @@ async function startCamera(){
 // donc rien n'est réanalysé ensuite.
 let detectRunning = false;
 let autoCaptureEnabled = true;
+// Bug préexistant trouvé en testant le diagnostic (pas introduit aujourd'hui, voir
+// commit cb494cb) : cette variable n'était jamais déclarée, seulement assignée dans
+// startAimLoop() — en mode non strict ça crée une globale implicite, mais SEULEMENT
+// une fois startAimLoop() exécutée au moins une fois. Lire le diagnostic ("voir")
+// AVANT le tout premier démarrage de la caméra levait donc une ReferenceError et
+// cassait tout buildDiagReport(), silencieusement.
+let ocrReadyForCamera = false;
 let lastCaptureAt = 0;
 let lastCaptureHash = null;   // empreinte hexadécimale renvoyée par le worker
 let readInFlight = false;
@@ -2354,6 +2389,11 @@ function buildDiagReport(){
         '  "' + e.hint + '"' + (e.ratio!=null ? ('  ratio='+e.ratio) : '') +
         (e.via ? ('  bande=' + e.via) : '') +
         (e.rotated ? '  tourné' : ''));
+      if(e.tExtract != null) l.push('              phases   : redressement=' + e.tExtract + 'ms' +
+        '  resize=' + e.tCardBmp + 'ms  worker=' + e.tWorker + 'ms' +
+        ' (préparation=' + e.tPrep + 'ms netteté=' + e.tSharp + 'ms' +
+        (e.tEnsure ? ' init=' + e.tEnsure + 'ms' : '') +
+        ' recognize=' + e.tRecognize + 'ms)');
       if(e.raw) l.push('              texte OCR : ' + JSON.stringify(e.raw).slice(0,220));
     } else if(e.k === 'err'){
       l.push(dt + 'ms  INFO  ' + e.msg);
@@ -2646,6 +2686,11 @@ async function attemptRead(corners, score){
     if(!video || !video.videoWidth) return;
 
     const scanic = await getScanic();
+    // Chronométrage détaillé (voir §4.23) : tExtract couvre le redimensionnement natif +
+    // le redressement par perspective (fil principal, coût proportionnel à ce qu'on lui
+    // donne) — la seule partie de tout le pipeline qui ne tourne PAS dans un Worker,
+    // donc celle qui peut concrètement geler l'interface si elle traîne.
+    const tExtract0 = performance.now();
     // Redimensionnement natif AVANT toute copie sur canvas : extractDocument tourne sur le
     // fil principal, donc son coût est proportionnel à ce qu'on lui donne — inutile de lui
     // faire mâcher la pleine résolution capteur pour au final ne garder qu'une carte réduite
@@ -2665,8 +2710,9 @@ async function attemptRead(corners, score){
       bottomLeft:  {x: corners.bl[0]*vw, y: corners.bl[1]*vh}
     };
     const extracted = await scanic.extractDocument(frame, cornersPx, {output:'canvas'});
+    const tExtract = Math.round(performance.now() - tExtract0);
     if(!extracted.success || !extracted.output){
-      diagPush('try', {ok:false, hint:'redressement échoué', score, ocrMs:Math.round(performance.now()-t0)});
+      diagPush('try', {ok:false, hint:'redressement échoué', score, ocrMs:Math.round(performance.now()-t0), tExtract});
       return;
     }
 
@@ -2708,20 +2754,34 @@ async function attemptRead(corners, score){
     // carte reçue sur un canvas de cardW=600 de large (voir plus bas), donc transférer la
     // sortie d'extractDocument en pleine résolution ne servait qu'à alourdir le postMessage
     // et à refaire un travail de mise à l'échelle déjà inutile.
+    const tCardBmp0 = performance.now();
     const readTargetW = Math.min(sourceForRead.width, 700); // 600 + marge pour la qualité du resize
     const readTargetH = Math.round(sourceForRead.height * (readTargetW / sourceForRead.width));
     const cardBmp = await createImageBitmap(sourceForRead, {resizeWidth: readTargetW, resizeHeight: readTargetH, resizeQuality:'medium'});
+    const tCardBmp = Math.round(performance.now() - tCardBmp0);
+    const tWorker0 = performance.now();
     const r = await workerCall('read', {bitmap:cardBmp, cardW:600}, [cardBmp]);
+    const tWorker = Math.round(performance.now() - tWorker0); // aller-retour worker complet (transfert inclus)
     const ms = Math.round(performance.now()-t0);
+    // Détail des phases, pour comprendre OÙ passe réellement le temps plutôt que de
+    // deviner à partir d'un seul total (voir §4.23) :
+    //  - tExtract    : redressement par perspective (fil principal, hors Worker)
+    //  - tCardBmp    : redimensionnement natif avant transfert au Worker
+    //  - tWorker     : aller-retour Worker complet (transfert + tout ce qui suit)
+    //  - r.tPrep     : dessin/découpe de la bande dans le Worker
+    //  - r.tSharp    : calcul de netteté dans le Worker
+    //  - r.tEnsure   : ré-initialisation du service OCR (0 sauf 1er appel jamais réussi)
+    //  - r.tRecognize: l'appel recognize() lui-même — le vrai plancher du moteur OCR
+    const timing = {tExtract, tCardBmp, tWorker, tPrep:r.tPrep, tSharp:r.tSharp, tEnsure:r.tEnsure, tRecognize:r.tRecognize};
 
     if(r.reason === 'flou'){
       setAimHint('Stabilise — image floue');
-      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms, rotated});
+      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms, rotated, ...timing});
       return;
     }
     if(r.reason === 'illisible' || !r.number){
       setAimHint('Numéro non lu — rapproche-toi');
-      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text, rotated});
+      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text, rotated, ...timing});
       return;
     }
     if(lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4){
@@ -2761,7 +2821,7 @@ async function attemptRead(corners, score){
     setOverlayTarget('ok', corners);
     setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
-                     num:r.number+'/'+r.denominator, raw:r.text, rotated});
+                     num:r.number+'/'+r.denominator, raw:r.text, rotated, ...timing});
   }catch(e){
     diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
@@ -2895,10 +2955,25 @@ function startAimLoop(){
   // son propre worker, sont initialisés en parallèle sans figer l'aperçu — et AVANT la
   // boucle, sinon la première tentative resterait bloquée dessus sans aucun retour visible.
   Promise.all([workerCall('init'), detectWorkerCall('init')])
-    .then(()=>{
+    .then(([ocrInit])=>{
       ocrReadyForCamera = true;
       setAimHint('Vise la carte');
       diagPush('err', {msg:'worker OCR + détecteur prêts'});
+
+      // Diagnostic d'environnement, une fois par démarrage caméra (voir §4.23) : sans
+      // ça, une durée OCR élevée pouvait venir du CPU, du réseau, ou du moteur
+      // d'inférence choisi (GPU/WebGPU vs CPU/WASM — la librairie tente le GPU en
+      // premier avec repli automatique, mais jusqu'ici invisible) sans aucun moyen de
+      // les distinguer entre deux appareils, ou même entre deux sessions sur le même.
+      const nav = navigator;
+      const diag = (ocrInit && ocrInit.ocrDiag) || {};
+      diagPush('err', {msg:'environnement : cœurs=' + (nav.hardwareConcurrency ?? '?') +
+        ' mémoire=' + (nav.deviceMemory != null ? nav.deviceMemory+'Go' : '?') +
+        ' isolationCrossOrigin=' + self.crossOriginIsolated +
+        ' réseau=' + (nav.connection?.effectiveType ?? '?') +
+        ' initOCR=' + (diag.initMs != null ? diag.initMs+'ms' : '?') +
+        ' moteurDemandé=' + JSON.stringify(diag.requested ?? null) +
+        ' moteurRéel=' + JSON.stringify(diag.actual ?? null)});
     })
     .catch(err=>{
       workerBroken = true;
