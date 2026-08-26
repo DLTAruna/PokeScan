@@ -382,6 +382,59 @@
     font-size:10.5px; padding:2px 4px; text-align:center; color:var(--muted);
   }
 
+  /* ---- visualiseur de carte : zoom + parallaxe à l'accéléromètre ---- */
+  .card-viewer{
+    position:fixed; inset:0; z-index:300; background:rgba(6,8,14,.94);
+    display:none; flex-direction:column; align-items:center; justify-content:center;
+    padding:calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
+    /* La scène 3D : sans perspective, rotateX/rotateY resteraient un simple cisaillement. */
+    perspective:1100px; touch-action:none; overscroll-behavior:contain;
+  }
+  .card-viewer.open{display:flex;}
+  .cv-stage{
+    position:relative; transform-style:preserve-3d; will-change:transform;
+    /* Pas de transition pendant le suivi du capteur (elle ajouterait un retard visible) :
+       elle n'est réactivée que pour le retour au repos, via .settling. */
+    max-width:100%; max-height:100%;
+  }
+  .cv-stage.settling{transition:transform .35s cubic-bezier(.2,.8,.3,1);}
+  .cv-stage img{
+    display:block; max-width:min(88vw, 460px); max-height:74vh; width:auto; height:auto;
+    border-radius:14px; box-shadow:0 24px 60px rgba(0,0,0,.75); background:#0a0a0a;
+  }
+  /* Reflet holographique : une bande lumineuse qui balaie la carte selon l'inclinaison,
+     comme sur une vraie carte brillante inclinée sous une lampe. */
+  .cv-shine{
+    position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    mix-blend-mode:overlay; opacity:.75;
+    background:linear-gradient(105deg, transparent 30%, rgba(255,255,255,.55) 48%, transparent 62%);
+    background-size:260% 260%;
+  }
+  .cv-glare{
+    position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    mix-blend-mode:color-dodge; opacity:.35;
+    background:radial-gradient(circle at 50% 50%, rgba(120,190,255,.55), transparent 55%);
+  }
+  .cv-bar{
+    display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;
+    margin-top:14px; flex-shrink:0;
+  }
+  .cv-bar button{
+    background:rgba(255,255,255,.1); color:#fff; border:1px solid rgba(255,255,255,.25);
+    border-radius:18px; padding:7px 14px; font-size:13px;
+  }
+  .cv-bar button.on{background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a; border-color:transparent;}
+  .cv-close{
+    position:absolute; top:calc(10px + env(safe-area-inset-top)); right:12px;
+    background:rgba(0,0,0,.6); color:#fff; border:1px solid var(--border);
+    border-radius:50%; width:38px; height:38px; font-size:17px; padding:0;
+  }
+  .cv-title{
+    position:absolute; top:calc(14px + env(safe-area-inset-top)); left:16px; right:60px;
+    font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .cv-hint{font-size:11px; color:var(--muted); margin-top:6px; text-align:center; flex-shrink:0;}
+
   .pkb-footer{
     max-width:900px; margin:8px auto 0; padding:18px 16px 30px; text-align:center;
     color:var(--muted); font-size:11.5px; display:flex; align-items:center; justify-content:center; gap:8px;
@@ -779,6 +832,24 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
   </section>
 
 </main>
+
+<!-- Visualiseur plein écran d'une carte : zoom + inclinaison suivie à l'accéléromètre -->
+<div class="card-viewer" id="card-viewer">
+  <div class="cv-title" id="cv-title">—</div>
+  <button class="cv-close" id="cv-close" aria-label="Fermer">✕</button>
+  <div class="cv-stage" id="cv-stage">
+    <img id="cv-img" src="" alt="">
+    <div class="cv-shine" id="cv-shine"></div>
+    <div class="cv-glare" id="cv-glare"></div>
+  </div>
+  <div class="cv-bar">
+    <button id="cv-zoom-out">−</button>
+    <button id="cv-zoom-level">100 %</button>
+    <button id="cv-zoom-in">+</button>
+    <button id="cv-tilt" class="on">📱 Parallaxe</button>
+  </div>
+  <div class="cv-hint" id="cv-hint">Incline le téléphone pour faire jouer la lumière · pince pour zoomer</div>
+</div>
 
 <footer class="pkb-footer">
   <span class="pokeball" style="width:15px; height:15px;"></span>
@@ -4221,12 +4292,16 @@ async function openSetDetail(setId){
       return String(a.localId).localeCompare(String(b.localId));
     });
     grid.innerHTML = sorted.map(c => `
-      <div class="card-thumb">
+      <div class="card-thumb" data-image="${esc(c.image)}" data-label="${esc((meta?.name || setId) + ' · #' + c.localId)}">
         <img src="${esc(c.image)}/low.webp" alt="" loading="lazy">
         <div class="card-num">#${esc(c.localId)}</div>
       </div>`).join('');
+    grid.querySelectorAll('.card-thumb').forEach(el=>{
+      el.addEventListener('click', ()=> openCardViewer(el.dataset.image, el.dataset.label));
+    });
     $('set-detail-status').textContent = `${sorted.length} carte(s)` +
-      (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.');
+      (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.') +
+      ' Touche une carte pour la voir en grand (zoom + inclinaison).';
   } catch(err){
     $('set-detail-status').textContent = '⚠️ Impossible de charger les cartes : ' + err.message;
   }
@@ -4239,6 +4314,199 @@ $('btn-sets-back').addEventListener('click', ()=>{
 });
 
 $('sets-filter').addEventListener('input', ()=>{ if(seriesIndex) renderSeriesList(); });
+
+// ---------------- VISUALISEUR DE CARTE (zoom + parallaxe accéléromètre) ----------------
+// Affiche une carte en grand et la fait pivoter légèrement en 3D selon l'inclinaison du
+// téléphone, avec un reflet qui balaie la surface — l'idée étant de retrouver la
+// sensation d'incliner une vraie carte brillante sous une lampe. Sur un appareil sans
+// capteur (ordinateur), le même effet suit la souris : le code de rendu est commun, seule
+// la source de l'angle change.
+const CV_MAX_TILT = 18;      // degrés de rotation à l'inclinaison maximale prise en compte
+const CV_SENSOR_RANGE = 26;  // amplitude d'inclinaison réelle (deg) correspondant au max
+let cvZoom = 1, cvPanX = 0, cvPanY = 0;
+let cvTiltEnabled = true;
+let cvOrientationHandler = null;
+let cvNeutral = null;        // {beta, gamma} de référence, pris à l'ouverture
+let cvRaf = null, cvTargetRX = 0, cvTargetRY = 0, cvCurRX = 0, cvCurRY = 0;
+
+function cvApplyTransform(){
+  const stage = $('cv-stage');
+  if(!stage) return;
+  stage.style.transform =
+    `translate(${cvPanX}px, ${cvPanY}px) rotateX(${cvCurRX.toFixed(2)}deg) rotateY(${cvCurRY.toFixed(2)}deg) scale(${cvZoom})`;
+  // Le reflet se déplace à l'inverse de l'inclinaison : la lumière semble fixe dans la
+  // pièce pendant que la carte bouge, ce qui est la sensation recherchée.
+  const shine = $('cv-shine');
+  if(shine){
+    const px = 50 - (cvCurRY / CV_MAX_TILT) * 50;
+    const py = 50 + (cvCurRX / CV_MAX_TILT) * 50;
+    shine.style.backgroundPosition = `${px}% ${py}%`;
+  }
+  const glare = $('cv-glare');
+  if(glare){
+    const gx = 50 + (cvCurRY / CV_MAX_TILT) * 35;
+    const gy = 50 - (cvCurRX / CV_MAX_TILT) * 35;
+    glare.style.background = `radial-gradient(circle at ${gx}% ${gy}%, rgba(120,190,255,.55), transparent 55%)`;
+  }
+}
+
+// Lissage : les valeurs brutes du capteur sont bruitées (tremblement de main), un suivi
+// direct donnerait une image qui vibre. Interpolation vers la cible à chaque frame.
+function cvTick(){
+  cvCurRX += (cvTargetRX - cvCurRX) * 0.18;
+  cvCurRY += (cvTargetRY - cvCurRY) * 0.18;
+  cvApplyTransform();
+  cvRaf = requestAnimationFrame(cvTick);
+}
+
+function cvClampTilt(v){ return Math.max(-CV_MAX_TILT, Math.min(CV_MAX_TILT, v)); }
+
+function cvHandleOrientation(e){
+  if(!cvTiltEnabled || e.beta == null || e.gamma == null) return;
+  // Première mesure = position neutre : on ne suppose pas que le téléphone est tenu à
+  // plat. Sans ça, une tenue naturelle (~45°) saturerait l'effet dès l'ouverture.
+  if(!cvNeutral) cvNeutral = {beta: e.beta, gamma: e.gamma};
+  const dBeta  = e.beta  - cvNeutral.beta;
+  const dGamma = e.gamma - cvNeutral.gamma;
+  cvTargetRX = cvClampTilt(-(dBeta  / CV_SENSOR_RANGE) * CV_MAX_TILT);
+  cvTargetRY = cvClampTilt( (dGamma / CV_SENSOR_RANGE) * CV_MAX_TILT);
+}
+
+// Repli ordinateur : même rendu, angle dérivé de la position du curseur.
+function cvHandlePointer(e){
+  if(!cvTiltEnabled) return;
+  const nx = (e.clientX / window.innerWidth  - 0.5) * 2;
+  const ny = (e.clientY / window.innerHeight - 0.5) * 2;
+  cvTargetRY = cvClampTilt(nx * CV_MAX_TILT);
+  cvTargetRX = cvClampTilt(-ny * CV_MAX_TILT);
+}
+
+async function cvStartSensor(){
+  const hint = $('cv-hint');
+  // iOS 13+ exige une autorisation explicite, demandée depuis un geste utilisateur —
+  // c'est le cas ici (ouverture déclenchée par un tap sur la carte). Android/Chrome
+  // n'expose pas requestPermission et fonctionne directement (en HTTPS).
+  try{
+    if(typeof DeviceOrientationEvent !== 'undefined' &&
+       typeof DeviceOrientationEvent.requestPermission === 'function'){
+      const res = await DeviceOrientationEvent.requestPermission();
+      if(res !== 'granted'){
+        hint.textContent = 'Accès au capteur refusé — le zoom reste disponible.';
+        return;
+      }
+    }
+  }catch(e){ /* refus ou API absente : on tombera sur le repli souris */ }
+
+  if(typeof DeviceOrientationEvent !== 'undefined'){
+    cvOrientationHandler = cvHandleOrientation;
+    window.addEventListener('deviceorientation', cvOrientationHandler);
+    // Aucun événement au bout d'un instant = pas de capteur exploitable (ordinateur,
+    // navigateur qui le bloque) : on bascule sur la souris plutôt que de laisser un
+    // effet mort sans explication.
+    setTimeout(()=>{
+      if(!cvNeutral && $('card-viewer').classList.contains('open')){
+        window.addEventListener('pointermove', cvHandlePointer);
+        hint.textContent = 'Bouge la souris pour incliner la carte · molette pour zoomer';
+      }
+    }, 700);
+  } else {
+    window.addEventListener('pointermove', cvHandlePointer);
+    hint.textContent = 'Bouge la souris pour incliner la carte · molette pour zoomer';
+  }
+}
+
+function cvStopSensor(){
+  if(cvOrientationHandler){ window.removeEventListener('deviceorientation', cvOrientationHandler); cvOrientationHandler = null; }
+  window.removeEventListener('pointermove', cvHandlePointer);
+  cvNeutral = null;
+}
+
+function cvSetZoom(z){
+  cvZoom = Math.max(1, Math.min(4, z));
+  if(cvZoom === 1){ cvPanX = 0; cvPanY = 0; } // dézoomer complètement recentre : sinon on reste bloqué hors cadre
+  $('cv-zoom-level').textContent = Math.round(cvZoom*100) + ' %';
+  cvApplyTransform();
+}
+
+function openCardViewer(imageBase, label){
+  if(!imageBase) return;
+  const v = $('card-viewer');
+  $('cv-img').src = imageBase + '/high.webp';
+  $('cv-title').textContent = label || '';
+  cvZoom = 1; cvPanX = 0; cvPanY = 0;
+  cvTargetRX = cvTargetRY = cvCurRX = cvCurRY = 0;
+  $('cv-zoom-level').textContent = '100 %';
+  $('cv-hint').textContent = 'Incline le téléphone pour faire jouer la lumière · pince pour zoomer';
+  v.classList.add('open');
+  cvApplyTransform();
+  if(!cvRaf) cvRaf = requestAnimationFrame(cvTick);
+  if(cvTiltEnabled) cvStartSensor();
+}
+
+function closeCardViewer(){
+  $('card-viewer').classList.remove('open');
+  cvStopSensor();
+  if(cvRaf){ cancelAnimationFrame(cvRaf); cvRaf = null; }
+  $('cv-img').src = ''; // libère l'image plein format, inutile une fois fermé
+}
+
+$('cv-close').addEventListener('click', closeCardViewer);
+$('card-viewer').addEventListener('click', (e)=>{ if(e.target.id === 'card-viewer') closeCardViewer(); });
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && $('card-viewer').classList.contains('open')) closeCardViewer(); });
+
+$('cv-zoom-in').addEventListener('click', ()=> cvSetZoom(cvZoom + 0.5));
+$('cv-zoom-out').addEventListener('click', ()=> cvSetZoom(cvZoom - 0.5));
+$('cv-zoom-level').addEventListener('click', ()=> cvSetZoom(1));
+
+$('cv-tilt').addEventListener('click', ()=>{
+  cvTiltEnabled = !cvTiltEnabled;
+  $('cv-tilt').classList.toggle('on', cvTiltEnabled);
+  if(cvTiltEnabled){ cvStartSensor(); }
+  else {
+    cvStopSensor();
+    // Retour au repos animé (la transition n'est active que pour ce cas, voir .settling).
+    const stage = $('cv-stage');
+    stage.classList.add('settling');
+    cvTargetRX = cvTargetRY = 0;
+    setTimeout(()=> stage.classList.remove('settling'), 400);
+  }
+});
+
+// Zoom : molette (ordinateur), pincement à deux doigts et glissé pour déplacer (mobile).
+$('card-viewer').addEventListener('wheel', (e)=>{
+  e.preventDefault();
+  cvSetZoom(cvZoom + (e.deltaY < 0 ? 0.25 : -0.25));
+}, {passive:false});
+
+let cvPinchStart = null, cvDragStart = null;
+$('card-viewer').addEventListener('touchstart', (e)=>{
+  if(e.touches.length === 2){
+    const [a,b] = e.touches;
+    cvPinchStart = {dist: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY), zoom: cvZoom};
+    cvDragStart = null;
+  } else if(e.touches.length === 1 && cvZoom > 1){
+    cvDragStart = {x: e.touches[0].clientX - cvPanX, y: e.touches[0].clientY - cvPanY};
+  }
+}, {passive:true});
+
+$('card-viewer').addEventListener('touchmove', (e)=>{
+  if(e.touches.length === 2 && cvPinchStart){
+    e.preventDefault();
+    const [a,b] = e.touches;
+    const d = Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY);
+    cvSetZoom(cvPinchStart.zoom * (d / cvPinchStart.dist));
+  } else if(e.touches.length === 1 && cvDragStart && cvZoom > 1){
+    e.preventDefault();
+    cvPanX = e.touches[0].clientX - cvDragStart.x;
+    cvPanY = e.touches[0].clientY - cvDragStart.y;
+    cvApplyTransform();
+  }
+}, {passive:false});
+
+$('card-viewer').addEventListener('touchend', (e)=>{
+  if(e.touches.length < 2) cvPinchStart = null;
+  if(e.touches.length === 0) cvDragStart = null;
+}, {passive:true});
 
 // ---------------- CARD SEARCH ----------------
 let searchToken = 0;

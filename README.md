@@ -42,6 +42,12 @@ d'un coup d'œil ce qui est prêt pour une identification sans réseau. Ouvrir u
 toutes ses cartes **et** met sa liste en cache au passage : naviguer ici accélère
 réellement les scans suivants.
 
+Toucher une carte l'ouvre en grand : zoom jusqu'à 400 % (pincement, molette ou boutons)
+et **inclinaison suivie à l'accéléromètre** — bouger le téléphone fait pivoter la carte
+en 3D et balayer un reflet holographique sur sa surface, comme en inclinant une vraie
+carte brillante. Sur ordinateur, l'effet suit la souris. Le bouton « 📱 Parallaxe »
+désactive le suivi si besoin.
+
 ## Notes techniques
 
 - L'OCR travaille sur le **fichier d'origine**, jamais sur la version compressée : le

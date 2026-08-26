@@ -1013,6 +1013,67 @@ Surtout : l'écart visuel mesuré est désormais journalisé à **chaque tentati
 des distances photo-à-photo, de quoi caler ce seuil sur des mesures plutôt qu'à l'estime —
 ce qui manquait précisément pour ne pas répéter l'erreur de §4.35.
 
+### 4.38 Correction de §4.36 : la comparaison entre relevés était faussée
+Troisième relevé (22 observations), et il **invalide la méthode d'analyse de §4.36**.
+Le facteur dominant n'est pas la largeur de bande mais la **dégradation au fil de la
+session** :
+
+| relevé 21:59 (bande 0.80) | `recognize()` moyen |
+|---|---|
+| 8 premières tentatives (0-14 s) | **754 ms** |
+| 8 dernières (15-41 s) | **2529 ms** |
+
+**x3,35 à l'intérieur d'une seule session de 41 secondes.** Comparé aux 5 premières
+tentatives de chaque relevé — seule comparaison à état thermique équivalent :
+
+| relevé | bande | 5 premières | moyenne globale | durée session |
+|---|---|---|---|---|
+| 21:29 | 0.84 | 1143 ms | 944 ms | 34 s |
+| 21:49 | 0.80 | 1922 ms | 1869 ms | 98 s |
+| 21:59 | 0.80 | **787 ms** | 1602 ms | 41 s |
+
+La bande large donne ici le DÉMARRAGE LE PLUS RAPIDE des trois (787 ms contre 1143 ms
+pour la bande étroite). Le « x1,98 » de §4.36 comparait en réalité une session de 34 s à
+une session de 98 s : c'est la durée, pas la bande, qui portait l'essentiel de l'écart.
+Erreur de méthode à retenir — **comparer des moyennes globales entre sessions de durées
+différentes n'a pas de sens sur un appareil qui ralentit progressivement.**
+
+Le retour à 0.84 reste défendable sur le mécanisme (moins de lignes détectées = moins de
+passes de reconnaissance), mais son gain réel n'est **pas mesuré** : ce qui l'était ne
+l'était pas proprement. À reprendre à durée de session comparable si la question se
+repose.
+
+Cause probable de la dégradation intra-session : limitation thermique du CPU (inférence
+WASM soutenue sur téléphone), éventuellement aggravée par la pression mémoire (chaque
+capture retient une photo + son blob d'origine dans `pendingQueue`). Non instrumenté à ce
+stade : ce serait le prochain axe à creuser, et c'est probablement LUI qui explique le
+ressenti « ça met 1 à 2 secondes » bien mieux que le coût d'un appel isolé.
+
+Note : ce relevé ne contient aucun `écartVisuel=`, donc il tourne encore sur le
+déploiement précédent — l'homothétie des coins (§4.36) et le raccourci photo-à-photo
+(§4.37) n'y sont **pas** testés.
+
+### 4.39 Visualiseur de carte : zoom + parallaxe à l'accéléromètre
+Demande utilisateur. Toucher une carte dans l'onglet Sets l'ouvre en plein écran (visuel
+`/high.webp`), avec :
+- **inclinaison 3D suivie au capteur** (`deviceorientation`), un reflet holographique et
+  un halo qui balaient la surface à l'inverse du mouvement — la lumière paraît fixe dans
+  la pièce pendant que la carte bouge ;
+- **calibration à l'ouverture** : la première mesure définit le neutre, sinon une tenue
+  naturelle (~45°) saturerait l'effet d'entrée ;
+- **lissage** par interpolation à chaque frame (le signal brut du capteur tremble) ;
+- **zoom** 100-400 % (pincement, molette, boutons), déplacement au doigt une fois zoomé,
+  recentrage automatique au retour à 100 % ;
+- **repli souris** si aucun événement capteur n'arrive en 700 ms (ordinateur) : même
+  rendu, angle dérivé du curseur ;
+- `DeviceOrientationEvent.requestPermission()` pour iOS 13+, appelé depuis le geste
+  d'ouverture (seul contexte où il est accepté).
+
+Vérifié par simulation d'événements capteur : neutre correctement calibré (beta=45 →
+rotation 0), inclinaison de 20°/15° → −13,85°/10,38°, saturation bornée à ±18°, zoom
+borné 1-4 avec recentrage, boucle d'animation arrêtée et image plein format libérée à la
+fermeture. Rendu vérifié en 375 px et en desktop.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
