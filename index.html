@@ -225,6 +225,18 @@
     overflow:hidden; text-overflow:ellipsis; opacity:.85;
   }
   .cam-stop{position:absolute; top:10px; left:10px; background:rgba(0,0,0,.6); color:#fff; border:none; border-radius:14px; padding:5px 12px; font-size:12px;}
+  /* Score de détection en direct — jusqu'ici calculé à chaque frame mais seulement
+     visible après coup dans le diagnostic exporté. L'afficher pendant la visée permet
+     de voir en direct si un cadrage qui "semble net" est juste sous MIN_SCORE (proche
+     de la couleur seuil) ou franchement hors sujet (vert/rouge tranché), sans attendre
+     un relevé pour le comprendre. */
+  .score-readout{
+    position:absolute; top:44px; left:10px; background:rgba(0,0,0,.6); color:#fff;
+    border:1px solid var(--border); border-radius:14px; padding:4px 10px; font-size:11px;
+    font-variant-numeric:tabular-nums; pointer-events:none;
+  }
+  .score-readout.low{color:#ff8a80;}
+  .score-readout.high{color:#69f0ae;}
   /* Sélecteur de zoom manuel : rempli dynamiquement selon les niveaux réellement
      supportés par l'appareil (track.getCapabilities().zoom) — vide et masqué si
      l'appareil n'expose pas cette capacité, jamais une liste figée devinée. */
@@ -329,6 +341,47 @@
   .divider{height:1px; background:var(--border); margin:14px 0;}
   .link-btn{background:none; border:none; color:#7fb2ef; text-decoration:underline; padding:0; font-size:12.5px; font-weight:400;}
 
+  /* ---- onglet Sets : séries, sets, cartes ---- */
+  .series-block{margin-top:20px;}
+  .series-head{
+    display:flex; align-items:baseline; gap:10px; margin-bottom:10px;
+    border-bottom:1px solid var(--border); padding-bottom:6px;
+  }
+  .series-head h3{margin:0; font-size:15px; font-family:'Baloo 2',sans-serif; color:var(--accent);}
+  .series-head .series-count{font-size:11.5px; color:var(--muted);}
+  /* 130px : permet deux colonnes sur un écran de 375px (le plus étroit visé) une fois
+     les marges du panneau retirées — 150px n'en laissait qu'une seule. */
+  .sets-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(130px, 1fr)); gap:10px;}
+  .set-card{
+    background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:12px 10px;
+    cursor:pointer; text-align:center; position:relative; transition:transform .12s ease, border-color .12s ease;
+    display:flex; flex-direction:column; align-items:center; gap:8px;
+  }
+  .set-card:hover{transform:translateY(-3px); border-color:var(--accent2);}
+  .set-card .set-logo{
+    height:52px; width:100%; object-fit:contain;
+    /* Beaucoup de logos officiels sont en couleurs sombres, illisibles sur fond foncé. */
+    filter:drop-shadow(0 0 2px rgba(255,255,255,.55));
+  }
+  .set-card .set-name{font-size:12.5px; font-weight:700; line-height:1.25;}
+  .set-card .set-meta{font-size:11px; color:var(--muted);}
+  .cache-dot{
+    display:inline-block; width:8px; height:8px; border-radius:50%;
+    background:var(--border); vertical-align:middle;
+  }
+  .cache-dot.cached{background:var(--good); box-shadow:0 0 6px rgba(59,165,93,.7);}
+  .set-card .cache-dot{position:absolute; top:8px; right:8px;}
+  .set-detail-head{display:flex; align-items:center; gap:14px; margin:12px 0 4px;}
+  .set-detail-head img{height:64px; max-width:150px; object-fit:contain; filter:drop-shadow(0 0 2px rgba(255,255,255,.55));}
+  .set-detail-head h2{margin:0;}
+  .cards-grid{display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:10px; margin-top:12px;}
+  .card-thumb{position:relative; border-radius:8px; overflow:hidden; background:#0a0a0a; border:1px solid var(--border);}
+  .card-thumb img{width:100%; aspect-ratio:63/88; object-fit:contain; display:block;}
+  .card-thumb .card-num{
+    position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,.75);
+    font-size:10.5px; padding:2px 4px; text-align:center; color:var(--muted);
+  }
+
   .pkb-footer{
     max-width:900px; margin:8px auto 0; padding:18px 16px 30px; text-align:center;
     color:var(--muted); font-size:11.5px; display:flex; align-items:center; justify-content:center; gap:8px;
@@ -351,6 +404,7 @@
     <button class="tab-btn active" data-tab="capture">📸 Capture (<span class="queue-badge">0</span>)</button>
     <button class="tab-btn" data-tab="identify">⚡ Identifier (<span class="queue-badge">0</span>)</button>
     <button class="tab-btn" data-tab="batch">📋 Lot (<span id="tab-count">0</span>)</button>
+    <button class="tab-btn" data-tab="sets">🗂️ Sets</button>
     <button class="tab-btn" data-tab="export">⬇️ Export</button>
     <button class="tab-btn" data-tab="settings">⚙️ Réglages</button>
     <button class="tab-btn" data-tab="guide">📖 Guide</button>
@@ -373,6 +427,7 @@
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
         <div class="flash" id="flash"></div>
         <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
+        <div class="score-readout" id="score-readout">score —</div>
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Objectif</button>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
         <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
@@ -534,6 +589,32 @@
         <img class="empty-icon" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/132.png" alt="" aria-hidden="true">
         Aucune carte ajoutée pour le moment. Va dans l'onglet "Capture" puis "Identifier" pour commencer.
       </div>
+    </div>
+  </section>
+
+  <!-- SETS TAB -->
+  <section class="section" id="section-sets">
+    <!-- Vue liste : toutes les séries et leurs sets -->
+    <div class="panel" id="sets-browse">
+      <h2>🗂️ Toutes les séries</h2>
+      <p class="sub">Parcours le catalogue complet, série par série. Un set marqué <span class="cache-dot cached"></span> a sa liste de cartes en cache local : son identification ne fait plus aucun appel réseau. Ouvrir un set le met en cache au passage.</p>
+      <input type="text" id="sets-filter" placeholder="🔎 Filtrer par nom de set ou de série (ex: 151, Écarlate, Néo…)" autocomplete="off">
+      <p class="hint" id="sets-status">Chargement du catalogue…</p>
+      <div id="series-list"></div>
+    </div>
+
+    <!-- Vue détail : les cartes d'un set -->
+    <div class="panel" id="set-detail" style="display:none;">
+      <button class="btn-ghost btn-sm" id="btn-sets-back">← Toutes les séries</button>
+      <div class="set-detail-head">
+        <img id="set-detail-logo" alt="">
+        <div>
+          <h2 id="set-detail-name">—</h2>
+          <p class="sub" id="set-detail-meta">—</p>
+        </div>
+      </div>
+      <p class="hint" id="set-detail-status"></p>
+      <div class="cards-grid" id="set-cards-grid"></div>
     </div>
   </section>
 
@@ -738,6 +819,7 @@ document.querySelectorAll('.tab-btn').forEach(btn=>{
     $('section-'+btn.dataset.tab).classList.add('active');
     if(btn.dataset.tab==='batch') renderBatch();
     if(btn.dataset.tab==='identify') renderIdentify();
+    if(btn.dataset.tab==='sets') renderSetsTab();
   });
 });
 
@@ -969,7 +1051,7 @@ function getVisionWorker(){
         }
 
         self.onmessage = async (e)=>{
-          const { id, type, bitmap, cardW } = e.data;
+          const { id, type, bitmap, cardW, skipRecognize } = e.data;
           try{
             if(type === 'init'){ await ensure(); postMessage({id, ok:true, ocrDiag}); return; }
 
@@ -1018,10 +1100,21 @@ function getVisionWorker(){
               // Ancrée à GAUCHE (fx=0) et non centrée : l'ancienne bande centrée démarrait
               // à 11 % de la largeur alors que le numéro commence vers 5 %, ce qui rognait
               // le premier chiffre (diagnostic réel : « 007/165 » lu « 07/16s »).
-              // Le numéro occupe environ 5-32 % de la largeur et 93-98 % de la hauteur :
-              // 0-45 % × 84-99 % laisse donc à peu près le double de marge dans chaque
-              // direction, de quoi absorber les défauts de coupe et de centrage.
-              const serree = crop(0, 0.84, 0.45, 0.15, 2);
+              // Le numéro occupe environ 5-32 % de la largeur et 93-98 % de la hauteur.
+              //
+              // Bord HAUT desserré de 0.84 à 0.80 sur diagnostic réel (relevé Samsung,
+              // 32 observations) : « numéro illisible » y représentait 14 refus sur ~24
+              // tentatives, alors que score (1.00) et netteté (souvent 300-777, très
+              // au-dessus du seuil de 40) étaient bons — donc ni cadrage global, ni flou.
+              // Les textes OCR bruts des échecs le montrent directement : ils contiennent
+              // SEULEMENT la ligne « Faiblesse × 2 Résistance » (ex: "hee ×2 Resistanee",
+              // "2", "0L"), jamais le numéro — la bande tombait au-dessus de lui. Les
+              // captures réussies, elles, contiennent les trois lignes empilées
+              // (Faiblesse/Résistance, illustrateur, numéro), preuve qu'attraper des
+              // lignes parasites au-dessus ne gêne pas : extractNumbers() les ignore déjà.
+              // Le bord BAS reste à 99 % : c'est celui qui ne doit jamais bouger (le
+              // numéro est collé au bord de la carte).
+              const serree = crop(0, 0.80, 0.45, 0.19, 2);
               const tPrep = Math.round(performance.now() - tRead0);
 
               // Netteté mesurée sur la CARTE ENTIÈRE et non sur la bande de lecture.
@@ -1037,43 +1130,55 @@ function getVisionWorker(){
               const tSharp = Math.round(performance.now() - tSharp0);
               if(sharp < ${MIN_SHARPNESS}){ postMessage({id, ok:true, sharp, reason:'flou', tPrep, tSharp}); return; }
 
-              const tEnsure0 = performance.now();
-              const s = await ensure();
-              const tEnsure = Math.round(performance.now() - tEnsure0); // 0 sauf tout premier appel
+              // skipRecognize : le fil principal a déjà trouvé une correspondance visuelle
+              // nette avec une carte confirmée plus tôt cette session (voir sessionCardHashes
+              // et STRICT_VISUAL_MATCH_DIST côté appelant) — la géométrie et la netteté
+              // viennent d'être vérifiées normalement ci-dessus (sécurité inchangée), seul
+              // l'appel recognize() lui-même (le vrai coût, ~1,7s mesuré) est sauté. Le
+              // numéro/dénominateur n'est de toute façon pas utilisé par l'appelant dans ce
+              // cas (il connaît déjà la carte complète) : seules des valeurs vides suffisent
+              // ici pour garder la forme de la réponse identique au chemin normal.
+              let text = '', cands, tEnsure = 0, tRecognize = 0;
+              if(skipRecognize){
+                cands = [{number:'', denominator:''}];
+              } else {
+                const tEnsure0 = performance.now();
+                const s = await ensure();
+                tEnsure = Math.round(performance.now() - tEnsure0); // 0 sauf tout premier appel
 
-              // {noCache:true} est OBLIGATOIRE, pas une précaution : le cache interne de
-              // ppu-paddle-ocr hache seulement les 1024 premiers octets du tampon de
-              // pixels (~256 pixels de la première ligne), quasi toujours du fond uni sur
-              // cette bande. Deux cartes différentes produisent donc la même clé, et le
-              // service renvoie le numéro de la précédente EN 3 MS au lieu de lire la
-              // nouvelle — constaté : trois numéros distincts ('111/111','222/222',
-              // '333/333') ont tous renvoyé le premier lu. Sans intérêt de toute façon,
-              // deux images caméra n'étant jamais identiques au bit près.
-              const tRecognize0 = performance.now();
-              const res = await s.recognize(serree, {noCache:true});
-              const tRecognize = Math.round(performance.now() - tRecognize0);
-              const text = (res && res.text) || '';
-              const cands = extractNumbers(text);
-              const timing = {tPrep, tSharp, tEnsure, tRecognize};
+                // {noCache:true} est OBLIGATOIRE, pas une précaution : le cache interne de
+                // ppu-paddle-ocr hache seulement les 1024 premiers octets du tampon de
+                // pixels (~256 pixels de la première ligne), quasi toujours du fond uni sur
+                // cette bande. Deux cartes différentes produisent donc la même clé, et le
+                // service renvoie le numéro de la précédente EN 3 MS au lieu de lire la
+                // nouvelle — constaté : trois numéros distincts ('111/111','222/222',
+                // '333/333') ont tous renvoyé le premier lu. Sans intérêt de toute façon,
+                // deux images caméra n'étant jamais identiques au bit près.
+                const tRecognize0 = performance.now();
+                const res = await s.recognize(serree, {noCache:true});
+                tRecognize = Math.round(performance.now() - tRecognize0);
+                text = (res && res.text) || '';
+                cands = extractNumbers(text);
 
-              // Le repli sur une bande large a été RETIRÉ : sur tous les relevés réels
-              // collectés (plusieurs dizaines d'observations, plusieurs sessions), il n'a
-              // trouvé un numéro dans AUCUN cas, mais coûtait de 815 ms à 8,7 s à chaque
-              // déclenchement (attrapant souvent du texte d'attaque au passage). Comme il
-              // se déclenchait précisément sur chaque tentative ratée, c'était lui qui
-              // faisait qu'un échec — le cas le plus fréquent avant qu'une carte soit
-              // parfaitement cadrée — coûtait plusieurs secondes au lieu de quelques
-              // centaines de ms. Objectif : capturer vite sans exiger un cadrage parfait,
-              // donc un échec doit rester bon marché pour qu'on puisse en tenter beaucoup.
-              if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible', ...timing}); return; }
+                // Le repli sur une bande large a été RETIRÉ : sur tous les relevés réels
+                // collectés (plusieurs dizaines d'observations, plusieurs sessions), il n'a
+                // trouvé un numéro dans AUCUN cas, mais coûtait de 815 ms à 8,7 s à chaque
+                // déclenchement (attrapant souvent du texte d'attaque au passage). Comme il
+                // se déclenchait précisément sur chaque tentative ratée, c'était lui qui
+                // faisait qu'un échec — le cas le plus fréquent avant qu'une carte soit
+                // parfaitement cadrée — coûtait plusieurs secondes au lieu de quelques
+                // centaines de ms. Objectif : capturer vite sans exiger un cadrage parfait,
+                // donc un échec doit rester bon marché pour qu'on puisse en tenter beaucoup.
+                if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible', tPrep, tSharp, tEnsure, tRecognize}); return; }
+              }
 
               const carte = await createImageBitmap(card);
               // Empreinte anti-doublon prise sur la CARTE entière et non sur la bande :
               // deux cartes différentes peuvent avoir des bas de carte proches, alors que
               // l'illustration les sépare nettement.
-              postMessage({id, ok:true, sharp, text, via:'serree', hash:dHash(card),
+              postMessage({id, ok:true, sharp, text, via: skipRecognize ? 'hash-visuel' : 'serree', hash:dHash(card),
                            number:cands[0].number, denominator:cands[0].denominator,
-                           carte, ...timing}, [carte]);
+                           carte, tPrep, tSharp, tEnsure, tRecognize}, [carte]);
               return;
             }
 
@@ -1604,6 +1709,21 @@ async function idbCount(store){
       req.onerror = ()=> reject(req.error);
     });
   } catch(e){ return 0; }
+}
+
+// Toutes les clés d'un store en une seule transaction — bien moins coûteux que N
+// lectures individuelles quand il s'agit juste de savoir CE QUI est en cache (ex :
+// pastille "en cache" sur ~200 sets dans l'onglet Sets).
+async function idbAllKeys(store){
+  try{
+    const db = await openIdb();
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readonly');
+      const req = tx.objectStore(store).getAllKeys();
+      req.onsuccess = ()=> resolve(req.result || []);
+      req.onerror = ()=> reject(req.error);
+    });
+  } catch(e){ return []; }
 }
 
 async function idbClearAll(){
@@ -2678,6 +2798,25 @@ let lastCaptureNumber = null; // {number, denominator} de la dernière capture �
 let readInFlight = false;
 let lastReadAttemptAt = 0;
 
+// ---------------- RACCOURCI VISUEL "DÉJÀ VU CETTE SESSION" ----------------
+// Les doublons sont très fréquents en pratique quand on trie une collection (plusieurs
+// exemplaires de la même carte). Une fois une carte confirmée (par OCR), son image de
+// référence TCGdex est hachée (dHash, déjà en cache local — voir getCardImageHash) et
+// gardée ici. À chaque nouvelle tentative, si la carte redressée ressemble fortement à
+// l'une d'elles, le vrai coût (recognize(), ~1,7s mesuré) est sauté entièrement — seule
+// la géométrie/netteté (sécurité) reste vérifiée. Se dégrade silencieusement vers l'OCR
+// normal si rien ne correspond (première carte d'un set, carte réellement nouvelle) :
+// aucune régression possible, uniquement un raccourci en plus. Vidée à chaque démarrage
+// de caméra (voir startAimLoop) — "cette session", pas un index permanent.
+let sessionCardHashes = []; // [{id, card, hash(BigInt)}]
+// Nettement plus strict que le seuil du repli existant (32, résolution best-effort à
+// confiance "faible" quand tout le reste a échoué) : ici on décide de NE PAS lire la
+// carte du tout, donc l'erreur coûte cher si le seuil est trop laxiste. Valeur de départ
+// à valider sur diagnostic réel (le journal indique désormais l'écart mesuré à chaque
+// déclenchement, via:'hash-visuel' + dist) — pas une valeur définitive, comme tous les
+// autres seuils de ce fichier.
+const STRICT_VISUAL_MATCH_DIST = 16;
+
 // Anti-doublon "carte fantôme" : retirer une carte de devant la caméra prend un peu de
 // temps (la main la retire progressivement), et le verrou de stabilité pré-tentative a
 // été retiré (§4.20/§4.22) pour capturer plus vite — une lecture peut donc se déclencher
@@ -2714,15 +2853,21 @@ let cardConfirmedAbsentSinceCapture = true;
 let lastCaptureCorners = null;
 const SAME_CARD_MOVE_THRESHOLD = 0.12; // nettement au-dessus du tremblement de main normal
 
-const AIM_COOLDOWN_MS = 700;      // délai mini entre deux captures
-// Abaissé de 400 à 150 : une tentative ratée ne coûte plus que quelques centaines de ms
-// maintenant que le repli sur la bande large a été retiré (0% de succès sur tous les
-// relevés réels, mais jusqu'à plusieurs secondes de coût à chaque échec) et que le
-// verrou de stabilité ne bloque plus la tentative elle-même — autant réessayer vite.
-const MIN_READ_INTERVAL_MS = 150; // délai mini entre deux TENTATIVES de lecture (succès ou non)
+// Seuils resserrés (retour terrain : "l'image me paraît nette mais ça ne capture pas").
+// Diagnostic du pipeline réel : ce n'est PAS l'OCR qui bloque ici (son coût n'intervient
+// qu'APRÈS le déclenchement) mais MIN_SCORE, le tout premier verrou, en amont de toute
+// tentative — en dessous, rien n'est même essayé, seul "Vise la carte" s'affiche, sans
+// distinction avec un vrai mauvais cadrage. Comme un essai raté coûte maintenant
+// seulement quelques centaines de ms (repli large retiré, verrou de stabilité retiré),
+// être plus permissif ici coûte peu et laisse tenter des cadrages qui étaient rejetés
+// avant même d'essayer. Point de départ raisonnable à valider sur diagnostic réel (le
+// score est maintenant affiché en direct pendant la visée, voir score-readout) — pas une
+// valeur définitive.
+const AIM_COOLDOWN_MS = 400;      // délai mini entre deux captures (abaissé de 700)
+const MIN_READ_INTERVAL_MS = 100; // délai mini entre deux TENTATIVES de lecture (abaissé de 150)
 const DETECT_MIN_DELAY_MS = 60;   // pause plancher entre deux détections (protège le CPU si le worker répond très vite)
 const CARD_RATIO = 88/63;         // hauteur/largeur d'une carte Pokémon
-const MIN_SCORE = 0.5;            // confiance mini du détecteur pour tenter la lecture
+const MIN_SCORE = 0.35;           // confiance mini du détecteur pour tenter la lecture (abaissé de 0.5)
 
 // Résolution à laquelle l'image est envoyée AU DÉTECTEUR (grand côté, en pixels). Le
 // modèle redimensionne son entrée en interne de toute façon : lui envoyer la pleine
@@ -3055,6 +3200,17 @@ function setAimHint(hint){
   if(el && el.textContent !== hint) el.textContent = hint;
 }
 
+// Score de détection affiché en direct (voir commentaire CSS .score-readout) : permet
+// de voir tout de suite si un cadrage qui "semble net" échoue juste sous MIN_SCORE
+// (jaune, proche du seuil) plutôt que de deviner depuis le seul message "Vise la carte".
+function setScoreReadout(score){
+  const el = $('score-readout');
+  if(!el) return;
+  if(score == null){ el.textContent = 'score —'; el.className = 'score-readout'; return; }
+  el.textContent = 'score ' + score.toFixed(2);
+  el.className = 'score-readout ' + (score < MIN_SCORE ? 'low' : (score >= MIN_SCORE + 0.2 ? 'high' : ''));
+}
+
 function hexHamming(a, b){
   if(!a || !b || a.length !== b.length) return 64;
   let d = 0;
@@ -3104,6 +3260,7 @@ async function detectLoop(){
       resizeQuality: 'medium'
     });
     const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+    setScoreReadout(d.score);
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
@@ -3277,6 +3434,27 @@ async function attemptRead(corners, score){
       sourceForRead = rot;
     }
 
+    // Raccourci visuel : compare la carte redressée aux cartes déjà confirmées cette
+    // session (voir sessionCardHashes) AVANT d'envoyer quoi que ce soit au worker OCR.
+    // Même algorithme (dHash 9x8, gradient horizontal) que resolveCardByVisualMatch,
+    // appliqué ici en amont plutôt qu'en repli de dernier recours. Coût : quelques ms
+    // (comparaison de bits), sans commune mesure avec recognize() (~1,7s).
+    let hashShortcut = null;
+    if(sessionCardHashes.length){
+      try{
+        const small = document.createElement('canvas');
+        small.width = 9; small.height = 8;
+        small.getContext('2d').drawImage(sourceForRead, 0, 0, 9, 8);
+        const liveHash = dHashFromCanvas(small.getContext('2d'), 9, 8);
+        let best = null, bestDist = Infinity;
+        for(const c of sessionCardHashes){
+          const dist = hammingDistance(liveHash, c.hash);
+          if(dist < bestDist){ bestDist = dist; best = c; }
+        }
+        if(best && bestDist <= STRICT_VISUAL_MATCH_DIST) hashShortcut = {card: best.card, distance: bestDist};
+      }catch(e){ /* tant pis, la lecture OCR normale ci-dessous reste le filet de sécurité */ }
+    }
+
     // Même logique de redimensionnement précoce : le worker redessine de toute façon la
     // carte reçue sur un canvas de cardW=600 de large (voir plus bas), donc transférer la
     // sortie d'extractDocument en pleine résolution ne servait qu'à alourdir le postMessage
@@ -3287,7 +3465,10 @@ async function attemptRead(corners, score){
     const cardBmp = await createImageBitmap(sourceForRead, {resizeWidth: readTargetW, resizeHeight: readTargetH, resizeQuality:'medium'});
     const tCardBmp = Math.round(performance.now() - tCardBmp0);
     const tWorker0 = performance.now();
-    const r = await workerCall('read', {bitmap:cardBmp, cardW:600}, [cardBmp]);
+    // skipRecognize : la géométrie/netteté restent vérifiées normalement dans le worker
+    // (sécurité inchangée), seul l'appel recognize() — le vrai coût — est sauté quand le
+    // raccourci visuel ci-dessus a trouvé une correspondance nette.
+    const r = await workerCall('read', {bitmap:cardBmp, cardW:600, skipRecognize: !!hashShortcut}, [cardBmp]);
     const tWorker = Math.round(performance.now() - tWorker0); // aller-retour worker complet (transfert inclus)
     const ms = Math.round(performance.now()-t0);
     // Détail des phases, pour comprendre OÙ passe réellement le temps plutôt que de
@@ -3306,11 +3487,21 @@ async function attemptRead(corners, score){
       diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms, rotated, ...timing});
       return;
     }
-    if(r.reason === 'illisible' || !r.number){
+    // Le raccourci visuel renvoie volontairement number/denominator vides (voir le
+    // worker) : ne pas les traiter comme un échec de lecture dans ce cas précis.
+    if(!hashShortcut && (r.reason === 'illisible' || !r.number)){
       setAimHint('Numéro non lu — rapproche-toi');
       diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text, rotated, ...timing});
       return;
     }
+    // Numéro/dénominateur "finaux" utilisés pour tout le reste de la fonction : ceux lus
+    // par l'OCR normalement, ou ceux de la carte trouvée par raccourci visuel — l'id de
+    // la carte sert d'équivalent stable au dénominateur pour les comparaisons d'égalité
+    // ci-dessous (l'anti-doublon n'a besoin que d'une valeur stable par carte, pas de la
+    // vraie fraction imprimée).
+    const finalNumber = hashShortcut ? hashShortcut.card.number : r.number;
+    const finalDenominator = hashShortcut ? hashShortcut.card.id : r.denominator;
+
     // Anti-doublon "carte fantôme" (voir la déclaration de cardConfirmedAbsentSinceCapture
     // et lastCaptureCorners) : écarté par ressemblance visuelle directe (dHash), OU —
     // repli plus robuste — si le numéro lu est identique au précédent ET qu'aucun des
@@ -3326,7 +3517,7 @@ async function attemptRead(corners, score){
     const netMoveSinceCapture = lastCaptureCorners ? maxCornerShift(lastCaptureCorners, corners) : Infinity;
     const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture || netMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD;
     const sameNumberNeverConfirmedNew = lastCaptureNumber
-      && r.number === lastCaptureNumber.number && r.denominator === lastCaptureNumber.denominator
+      && finalNumber === lastCaptureNumber.number && finalDenominator === lastCaptureNumber.denominator
       && !cardConfirmedNewSinceCapture;
     if(visuallyDuplicate || sameNumberNeverConfirmedNew){
       setAimHint('Même carte — présente la suivante');
@@ -3336,7 +3527,7 @@ async function attemptRead(corners, score){
 
     // Lecture réussie : on garde la carte redressée puis recadrée renvoyée par le worker.
     lastCaptureHash = r.hash;
-    lastCaptureNumber = {number:r.number, denominator:r.denominator};
+    lastCaptureNumber = {number:finalNumber, denominator:finalDenominator};
     lastCaptureCorners = corners;
     cardConfirmedAbsentSinceCapture = false;
     lastCaptureAt = Date.now();
@@ -3347,28 +3538,44 @@ async function attemptRead(corners, score){
 
     const dataUrl = cv.toDataURL('image/jpeg', 0.8);
     const mySeq = ++liveResultSeq;
-    showLiveResultPending(dataUrl, r.number, r.denominator);
+    showLiveResultPending(dataUrl, finalNumber, hashShortcut ? '' : finalDenominator);
 
     // Bande du nom (haut de carte), pour une confirmation de confiance APRÈS coup —
     // jamais lue par la lecture rapide du numéro (bande du bas, voir §4.8), donc sans
     // elle le panneau live ne peut jamais atteindre ✅ même quand tout est juste (voir
     // confirmLiveResultByName). Simple crop-resize natif, pas d'OCR ici : coût négligeable.
-    const nameCropH = Math.round(sourceForRead.height * 0.22);
-    const nameBmp = await createImageBitmap(sourceForRead, 0, 0, sourceForRead.width, nameCropH,
-      {resizeWidth: 500, resizeHeight: Math.round(500 * nameCropH / sourceForRead.width), resizeQuality:'medium'});
+    // Inutile pour un raccourci visuel : la carte est déjà connue avec certitude.
+    const nameBmp = hashShortcut ? null : await createImageBitmap(sourceForRead, 0, 0, sourceForRead.width,
+      Math.round(sourceForRead.height * 0.22),
+      {resizeWidth: 500, resizeHeight: Math.round(500 * Math.round(sourceForRead.height * 0.22) / sourceForRead.width), resizeQuality:'medium'});
 
     cv.toBlob(b => {
       const item = pushToQueue(dataUrl, b);
-      resolveLiveResult(mySeq, item, dataUrl, r.number, r.denominator, r.text, nameBmp);
+      if(hashShortcut){
+        // Carte déjà identifiée avec certitude par correspondance visuelle : on saute la
+        // résolution TCGdex (resolveLiveResult) entièrement, plus besoin de redeviner
+        // depuis un numéro/nom quand on a déjà l'objet carte complet en main.
+        item._analysis = {
+          status: 'ok', card: hashShortcut.card,
+          note: `correspondance visuelle (doublon confirmé, écart ${hashShortcut.distance})`,
+          rawText: '', number: finalNumber, denominator: finalDenominator
+        };
+        showLiveResultDone(hashShortcut.card, 'high');
+      } else {
+        resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp);
+      }
     }, 'image/png');
 
     capturedThisSession++;
     flashScreen();
     if(navigator.vibrate) navigator.vibrate(40);
     setOverlayTarget('ok', corners);
-    setAimHint('✅ #' + r.number + '/' + r.denominator + ' — identification en cours');
+    setAimHint(hashShortcut
+      ? '✅ ' + hashShortcut.card.name + ' — doublon reconnu (visuel)'
+      : '✅ #' + finalNumber + '/' + finalDenominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
-                     num:r.number+'/'+r.denominator, raw:r.text, rotated, ...timing});
+                     num: hashShortcut ? (finalNumber+' (visuel, écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
+                     raw:r.text, rotated, ...timing});
   }catch(e){
     diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
@@ -3434,6 +3641,21 @@ function showLiveResultNotFound(){
 // résultat sous la même forme que `analyzeQueueItem` (`_analysis`), pour que l'analyse
 // de fond ne refasse jamais ce travail une fois la caméra arrêtée (voir la condition
 // `!it._analysis || it._analysis.status === 'pending'` dans processQueueAnalysis).
+// Alimente sessionCardHashes (voir sa déclaration) une fois une carte confirmée par la
+// voie normale (OCR + résolution TCGdex) : sa PROCHAINE apparition (un doublon, très
+// courant en pratique) pourra être reconnue par simple comparaison visuelle et sauter
+// l'appel recognize(). Fire-and-forget, ne bloque jamais l'affichage du résultat déjà
+// montré — getCardImageHash est déjà mis en cache localement (IndexedDB), donc gratuit
+// après la toute première fois où cette carte précise est vue par l'application.
+async function registerSessionCardHash(card){
+  if(!card?.id || !card.imageBase) return;
+  if(sessionCardHashes.some(c => c.id === card.id)) return;
+  try{
+    const hash = await getCardImageHash(card.id, card.imageBase);
+    if(hash != null) sessionCardHashes.push({id: card.id, card, hash});
+  }catch(e){ /* tant pis, pas de raccourci pour cette carte cette fois */ }
+}
+
 async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText, nameBmp){
   try{
     if(!setAbbrMap){
@@ -3451,6 +3673,7 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
 
     if(mySeq !== liveResultSeq){ if(nameBmp?.close) nameBmp.close(); return; } // une carte plus récente affiche déjà autre chose
     if(result.card){
+      registerSessionCardHash(result.card); // en arrière-plan, alimente le raccourci visuel pour les prochains doublons
       showLiveResultDone(result.card, result.confidence);
       // La confirmation par le nom n'a pas pu être tentée ici : le texte OCR utilisé
       // vient de la bande du bas (numéro), qui ne contient jamais le nom (haut de
@@ -3491,6 +3714,7 @@ function startAimLoop(){
   ocrReadyForCamera = false;
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
+  sessionCardHashes = []; // nouvelle session caméra -> le raccourci visuel repart de zéro
   setAimHint('Préparation de la lecture…');
 
   const video = $('video');
@@ -3821,6 +4045,162 @@ async function fetchWithRetry(url, options={}, {maxRetries=3, baseDelay=600, onR
   }
 }
 
+// ---------------- ONGLET SETS : CATALOGUE PAR SÉRIE ----------------
+// Vue de navigation du catalogue complet (façon pokecardex), qui sert aussi de
+// vérification concrète du cache local : chaque set affiche s'il a déjà sa liste de
+// cartes en cache (pastille verte), et l'ouvrir la met en cache au passage via
+// getSetCardList — même fonction que celle utilisée par l'identification, donc
+// naviguer ici accélère réellement les scans suivants, ce n'est pas qu'un affichage.
+const SERIES_INDEX_MAX_AGE_MS = 30*24*3600*1000;
+let seriesIndex = null;     // [{id, name, logo, sets:[{id, name, logo, symbol, official, total}]}]
+let cachedSetIds = new Set();
+
+async function loadSeriesIndex(onProgress){
+  const cached = await idbGet('meta', 'seriesIndex');
+  if(cached && (Date.now() - cached.builtAt) < SERIES_INDEX_MAX_AGE_MS) return cached.series;
+
+  const listRes = await fetchWithRetry('https://api.tcgdex.net/v2/fr/series', {}, {maxRetries:2});
+  if(!listRes.ok) throw new Error('HTTP '+listRes.status);
+  const list = await listRes.json();
+
+  let done = 0;
+  const series = await pLimit(list, 6, async (s)=>{
+    let sets = [];
+    try{
+      const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/series/${s.id}`, {}, {maxRetries:1, baseDelay:400});
+      if(r.ok){
+        const d = await r.json();
+        sets = (d.sets || []).map(x=>({
+          id: x.id, name: x.name, logo: x.logo || '', symbol: x.symbol || '',
+          official: x.cardCount?.official ?? null, total: x.cardCount?.total ?? null
+        }));
+      }
+    } catch(e){ /* une série en échec n'empêche pas les autres */ }
+    done++;
+    if(onProgress) onProgress(done, list.length);
+    return {id:s.id, name:s.name, logo:s.logo || '', sets};
+  });
+
+  const kept = series.filter(s => s.sets.length);
+  await idbSet('meta', {key:'seriesIndex', builtAt: Date.now(), series: kept});
+  return kept;
+}
+
+function esc(s){
+  return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+
+function renderSeriesList(){
+  const box = $('series-list');
+  if(!box || !seriesIndex) return;
+  const q = ($('sets-filter')?.value || '').trim().toLowerCase();
+
+  let shownSets = 0;
+  const html = seriesIndex.map(serie => {
+    // Un filtre qui matche le nom de la SÉRIE garde tous ses sets (on cherche
+    // "Écarlate" pour voir la série entière, pas pour n'avoir aucun résultat).
+    const serieMatches = !q || serie.name.toLowerCase().includes(q);
+    const sets = serie.sets.filter(st => serieMatches || st.name.toLowerCase().includes(q) || st.id.toLowerCase().includes(q));
+    if(!sets.length) return '';
+    shownSets += sets.length;
+    const cards = sets.map(st => `
+      <div class="set-card" data-set-id="${esc(st.id)}">
+        <span class="cache-dot ${cachedSetIds.has(st.id) ? 'cached' : ''}" title="${cachedSetIds.has(st.id) ? 'Liste de cartes en cache local' : 'Pas encore en cache'}"></span>
+        ${st.logo
+          ? `<img class="set-logo" src="${esc(st.logo)}.webp" alt="" loading="lazy">`
+          : `<div class="set-logo" style="display:flex;align-items:center;justify-content:center;font-size:22px;">🃏</div>`}
+        <div class="set-name">${esc(st.name)}</div>
+        <div class="set-meta">${st.official != null ? st.official + ' cartes' : ''}${st.total && st.total !== st.official ? ` (${st.total} au total)` : ''}</div>
+      </div>`).join('');
+    return `<div class="series-block">
+      <div class="series-head">
+        <h3>${esc(serie.name)}</h3>
+        <span class="series-count">${sets.length} set(s)</span>
+      </div>
+      <div class="sets-grid">${cards}</div>
+    </div>`;
+  }).join('');
+
+  box.innerHTML = html || '<p class="empty-state">Aucun set ne correspond à ce filtre.</p>';
+  const totalSets = seriesIndex.reduce((n,s)=> n + s.sets.length, 0);
+  $('sets-status').innerHTML = `${seriesIndex.length} série(s), ${totalSets} set(s) — ` +
+    `<b>${cachedSetIds.size}</b> avec leur liste de cartes en cache local` + (q ? ` · ${shownSets} affiché(s)` : '');
+
+  box.querySelectorAll('.set-card').forEach(el=>{
+    el.addEventListener('click', ()=> openSetDetail(el.dataset.setId));
+  });
+}
+
+async function renderSetsTab(){
+  if($('set-detail')?.style.display === 'block') return; // on revient sur une fiche de set déjà ouverte
+  try{
+    cachedSetIds = new Set(await idbAllKeys('cardLists'));
+    if(!seriesIndex){
+      $('sets-status').textContent = '🔎 Chargement du catalogue…';
+      seriesIndex = await loadSeriesIndex((done,total)=>{
+        $('sets-status').textContent = `🔎 Chargement du catalogue… (${done}/${total} séries)`;
+      });
+    }
+    renderSeriesList();
+  } catch(err){
+    $('sets-status').textContent = '⚠️ Chargement impossible : ' + err.message;
+  }
+}
+
+function findSetMeta(setId){
+  for(const serie of (seriesIndex || [])){
+    const st = serie.sets.find(x => x.id === setId);
+    if(st) return {...st, serieName: serie.name};
+  }
+  return null;
+}
+
+async function openSetDetail(setId){
+  const meta = findSetMeta(setId);
+  $('sets-browse').style.display = 'none';
+  $('set-detail').style.display = 'block';
+  $('set-detail-name').textContent = meta?.name || setId;
+  $('set-detail-meta').textContent = [meta?.serieName, meta?.official != null ? meta.official + ' cartes' : null]
+    .filter(Boolean).join(' · ') || '—';
+  const logo = $('set-detail-logo');
+  if(meta?.logo){ logo.src = meta.logo + '.webp'; logo.style.display = 'block'; }
+  else logo.style.display = 'none';
+
+  const grid = $('set-cards-grid');
+  grid.innerHTML = '';
+  const wasCached = cachedSetIds.has(setId);
+  $('set-detail-status').textContent = wasCached ? '📦 Chargé depuis le cache local.' : '⏳ Téléchargement de la liste (mise en cache pour la suite)…';
+
+  try{
+    const cards = await getSetCardList(setId); // met en cache au passage — voir commentaire de section
+    cachedSetIds.add(setId);
+    // Tri par numéro imprimé (localId), qui peut être non numérique (promos "SWSH001",
+    // cartes secrètes) : on trie numériquement quand c'est possible, alphabétiquement sinon.
+    const sorted = cards.slice().sort((a,b)=>{
+      const na = parseInt(a.localId,10), nb = parseInt(b.localId,10);
+      if(!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return String(a.localId).localeCompare(String(b.localId));
+    });
+    grid.innerHTML = sorted.map(c => `
+      <div class="card-thumb">
+        <img src="${esc(c.image)}/low.webp" alt="" loading="lazy">
+        <div class="card-num">#${esc(c.localId)}</div>
+      </div>`).join('');
+    $('set-detail-status').textContent = `${sorted.length} carte(s)` +
+      (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.');
+  } catch(err){
+    $('set-detail-status').textContent = '⚠️ Impossible de charger les cartes : ' + err.message;
+  }
+}
+
+$('btn-sets-back').addEventListener('click', ()=>{
+  $('set-detail').style.display = 'none';
+  $('sets-browse').style.display = 'block';
+  renderSeriesList(); // rafraîchit les pastilles : le set qu'on vient d'ouvrir est maintenant en cache
+});
+
+$('sets-filter').addEventListener('input', ()=>{ if(seriesIndex) renderSeriesList(); });
+
 // ---------------- CARD SEARCH ----------------
 let searchToken = 0;
 $('search-name').addEventListener('input', ()=>{
@@ -3916,11 +4296,13 @@ async function doSearch(){
 
 function normalizeCard(detail){
   return {
+    id: detail.id, // conservé pour le cache d'empreinte visuelle (getCardImageHash) et le raccourci hash-first
     name: detail.name,
     number: detail.localId,
     rarity: detail.rarity,
     set: { id: detail.set?.id, name: detail.set?.name },
     images: { small: detail.image ? detail.image + '/low.webp' : '' },
+    imageBase: detail.image || '', // base brute (sans suffixe), nécessaire à getCardImageHash
     variantsDetailed: detail.variants_detailed || []
   };
 }

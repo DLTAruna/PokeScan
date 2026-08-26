@@ -886,6 +886,75 @@ infinie garantie si l'échec est persistant). Vérifié : un échec HTTP simulé
 bien l'indicateur ET apparaît dans le diagnostic local consultable sans connexion
 distante.
 
+### 4.33 Cache local IndexedDB (dump TCGdex) + onglet Sets
+`localStorage` (plafond ~5-10 Mo, déjà signalé "quota dépassé, tant pis" dans le code)
+remplacé par **IndexedDB** pour tout ce qui vient de TCGdex : table des sets, listes de
+cartes par set, fiches détaillées, empreintes visuelles. `getCardDetailCached(id)`
+devient le point de passage UNIQUE pour `/cards/{id}` — cache-first, réactualisation
+après 14 jours (le prix bouge, l'identité de la carte non), et repli sur une version
+périmée si le réseau échoue plutôt qu'une erreur. Corrige au passage un doublon d'appels
+réseau dans `resolveCardBestEffort` (deux boucles refaisaient les mêmes requêtes).
+
+Bouton Réglages « Précharger tout le catalogue » : dumpe la liste de cartes de TOUS les
+sets d'un coup (~200 requêtes, **mesuré 2,6 s**) plutôt que de les découvrir un par un
+au fil des scans. Ne pré-télécharge PAS les fiches détaillées carte par carte (des
+milliers de requêtes pour un gain minime — elles sont mises en cache à la volée).
+
+**Onglet Sets** (demande utilisateur, façon pokecardex/series) : catalogue complet par
+série, avec pastille verte par set indiquant si sa liste de cartes est en cache local —
+sert de vérification visuelle concrète que le dump est bien en place. Ouvrir un set
+affiche ses cartes ET met sa liste en cache au passage (même `getSetCardList()` que
+l'identification : naviguer ici accélère réellement les scans suivants). Index des séries
+lui-même mis en cache 30 jours. Vérifié : 19 séries / 200 sets listés, pastilles passant
+au vert après préchargement (197 sets), filtre par nom de set/série, deux colonnes sur
+375 px.
+
+### 4.34 Relevé Samsung : ce n'est ni le score ni le flou, c'est le cadrage de la bande
+Relevé réel (32 observations, appareil Samsung, Chrome 151) contredisant l'hypothèse de
+départ (« ça bloque sur `MIN_SCORE` ») : le score est à **1.00 sur la quasi-totalité des
+tentatives** (une seule à 0.66). Le motif dominant est « numéro illisible » — **14 refus
+sur ~24 tentatives** — et chacun paie le plein tarif `recognize()` (378 à 1529 ms)
+puisque la netteté passe largement (souvent 300-777 pour un seuil à 40).
+
+Ce que les textes OCR bruts montrent directement : sur les échecs, la bande lue contient
+SEULEMENT la ligne « Faiblesse × 2 Résistance » (`"hee ×2 Resistanee"`, `"2"`, `"0L"`,
+`"G"`) — la bande tombait AU-DESSUS du numéro. Sur les captures réussies, elle contient
+les trois lignes empilées (Faiblesse/Résistance, illustrateur, numéro), preuve
+qu'attraper des lignes parasites au-dessus ne gêne pas : `extractNumbers()` les ignore
+déjà. Corrigé en desserrant le bord HAUT de la bande (`fy` 0.84 → 0.80, `fh` 0.15 →
+0.19) ; le bord BAS reste à 99 % (le numéro est collé au bord de la carte).
+
+Contre-hypothèse écartée par les mêmes données : la piste « stabilité de netteté »
+(l'autofocus `continuous` fait osciller la netteté : 777 → 562 → 171 → 981 → 113) ne
+tient pas — une capture RÉUSSIT à netteté 156 alors que des refus sont à 777, 442, 300.
+La netteté ne discrimine pas succès et échec ici, un verrou dessus n'aurait rien changé.
+
+Également ajusté dans la même passe, à valider sur le prochain relevé : `MIN_SCORE`
+0.5 → 0.35, `AIM_COOLDOWN_MS` 700 → 400, `MIN_READ_INTERVAL_MS` 150 → 100, et le **score
+du détecteur affiché en direct** pendant la visée (jusque-là calculé à chaque frame mais
+visible seulement a posteriori dans le diagnostic).
+
+### 4.35 Raccourci visuel : sauter recognize() sur un doublon déjà vu
+Constat dans le même relevé : `48/165` et `37/165` sont chacun capturés DEUX fois à ~1,8 s
+d'écart, payant `recognize()` intégralement les deux fois. Les doublons sont par ailleurs
+très fréquents en pratique (plusieurs exemplaires d'une même carte dans une collection).
+
+Une fois une carte confirmée par la voie normale, son empreinte visuelle (dHash de
+l'image de référence TCGdex, déjà en cache IndexedDB) est retenue pour la session
+(`sessionCardHashes`, vidée à chaque démarrage caméra). À chaque tentative suivante, la
+carte redressée est comparée à ces empreintes AVANT tout appel OCR : en cas de
+correspondance nette, `recognize()` est sauté entièrement (`skipRecognize`), tout en
+conservant les contrôles de géométrie et de netteté (sécurité inchangée). Se dégrade
+silencieusement vers l'OCR normal si rien ne correspond — aucune régression possible.
+
+Seuil `STRICT_VISUAL_MATCH_DIST = 16`, volontairement bien plus strict que le repli
+best-effort existant (32) : ici on décide de NE PAS lire la carte, donc une erreur coûte
+cher. **À calibrer sur relevé réel** — le journal note désormais `via:'hash-visuel'` et
+l'écart mesuré à chaque déclenchement. Nuance honnête : les distances observées pour de
+BONNES correspondances sur le mécanisme de repli étaient de 15-25, donc un seuil à 16
+pourrait ne déclencher que rarement en pratique. Vérifié en isolation (image de référence
+comparée à elle-même → distance 0) ; le comportement sur photo réelle reste à mesurer.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
@@ -914,8 +983,12 @@ numéro lisible.
    vitesse OCR constatée sur diagnostic réel (577-1625ms → 2100-3050ms), probablement
    un coût de synchronisation multi-thread supérieur au gain sur cet appareil. À ne pas
    retenter sans un moyen de comparer plusieurs appareils/relevés, pas un seul.
-9. Whitelist de caractères (chiffres + `/`) côté `ppu-paddle-ocr` si l'API l'expose — à
-   vérifier, pourrait réduire l'espace de recherche du décodeur.
+9. ~~Whitelist de caractères (chiffres + `/`) côté `ppu-paddle-ocr`~~ — **écarté** :
+   l'API n'expose aucune option de ce type (vérifié dans la doc de la librairie ; seul un
+   fichier de dictionnaire complet personnalisé serait possible). Sans grand intérêt de
+   toute façon : restreindre le vocabulaire n'allège que le décodage (argmax sur ~6900
+   symboles, déjà négligeable sur une bande de 20-40 positions), pas l'extraction de
+   features convolutive qui domine le coût.
 10. Modèle OCR plus léger/quantifié si `ppu-paddle-ocr` en propose une variante — réduirait
     à la fois le poids téléchargé et le temps d'inférence.
 11. ~~Mise au point caméra (Samsung)~~ — correctif posé (§4.17), résultat réel à confirmer

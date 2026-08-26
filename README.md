@@ -34,6 +34,14 @@ passer par l'URL hébergée (Vercel, GitHub Pages…) ou `http://localhost`.
 
 Chaque carte de la file est marquée ✅ identifiée · 🤔 à vérifier · ❌ illisible.
 
+## Onglet Sets
+
+Parcours du catalogue complet, série par série (façon pokecardex). Chaque set affiche une
+pastille verte quand sa liste de cartes est déjà en cache local — pratique pour vérifier
+d'un coup d'œil ce qui est prêt pour une identification sans réseau. Ouvrir un set montre
+toutes ses cartes **et** met sa liste en cache au passage : naviguer ici accélère
+réellement les scans suivants.
+
 ## Notes techniques
 
 - L'OCR travaille sur le **fichier d'origine**, jamais sur la version compressée : le
