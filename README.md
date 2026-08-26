@@ -65,6 +65,18 @@ désactive le suivi si besoin.
   détaillées (prix, rareté) restent chargées à la demande et sont réactualisées après
   14 jours (le prix bouge, l'identité de la carte non).
 
+## Banc d'essai (`bench.html`)
+
+Page de test séparée qui mesure le taux de lecture du numéro sur un échantillon aléatoire
+du catalogue. La vérité terrain est gratuite (`localId` + `cardCount.official`), donc la
+mesure est objective sur des centaines de cartes sans annotation manuelle. Plusieurs
+fenêtres de recadrage sont comparées **sur la même image**, et celle qui mène est
+réévaluée périodiquement sur l'ensemble accumulé.
+
+⚠️ Il teste des **illustrations officielles**, pas des photos : il valide la géométrie du
+recadrage à travers les époques de cartes, mais ne dit rien de la robustesse au flou ou
+aux reflets. Une dégradation synthétique optionnelle s'en approche sans la remplacer.
+
 ## Limites connues
 
 - L'identification n'est pas garantie : elle propose, l'utilisateur confirme.

@@ -1074,6 +1074,88 @@ rotation 0), inclinaison de 20°/15° → −13,85°/10,38°, saturation bornée
 borné 1-4 avec recentrage, boucle d'animation arrêtée et image plein format libérée à la
 fermeture. Rendu vérifié en 375 px et en desktop.
 
+### 4.40 Banc d'essai automatisé (`bench.html`)
+Page de test indépendante, qui exploite le fait qu'on dispose d'une **vérité terrain
+gratuite** : pour chaque carte du catalogue, `localId` donne le numérateur et
+`cardCount.official` du set le dénominateur. On peut donc mesurer objectivement le taux de
+lecture sur des centaines de cartes sans aucune annotation manuelle.
+
+**Ce qu'il mesure — et ce qu'il ne mesure pas.** Les cartes testées sont les illustrations
+officielles : nettes, cadrées, sans reflet. Le banc **ne dit rien** de la robustesse au
+flou, aux reflets ou à l'angle, c'est-à-dire l'essentiel de la difficulté réelle en photo.
+Une dégradation synthétique optionnelle (flou, rotation, variation d'éclairage, ré-encodage
+JPEG, rendu à la même largeur de travail que le pipeline réel) s'en approche sans la
+remplacer — pas de reflet spéculaire, pas de vraie perspective. Ce qu'il mesure très bien,
+en revanche : **la géométrie du recadrage à travers les époques**, la fenêtre étant figée
+alors que le numéro n'est pas placé au même endroit sur une Base Set de 1999, une e-Card,
+une full-art ou une carte SV.
+
+Rappel : PaddleOCR et Scanic sont des modèles tiers, **non réentraînables** ici. Le banc
+optimise nos paramètres autour d'eux, pas les modèles.
+
+**Choix de conception, pour que la mesure veuille dire quelque chose :**
+- La logique de parsing du numéro (table des sosies, replis quand le « / » est perdu, règle
+  des 3 vrais chiffres) n'est **pas recopiée** : elle est extraite à l'exécution depuis
+  `index.html` et réévaluée telle quelle (le bloc contient une interpolation, réévaluée
+  comme template littéral exactement comme le fait l'app en construisant son worker). Une
+  copie finirait par diverger, et le banc mesurerait alors du code qui n'est plus celui qui
+  tourne. Si l'extraction échoue, le banc **refuse de démarrer** plutôt que de mentir.
+- Toutes les variantes de fenêtre sont lues sur **la même image dégradée** : même flou,
+  même angle, même compression — seule façon d'attribuer un écart au recadrage.
+- L'adaptation périodique se fait sur **l'ensemble accumulé**, jamais sur les N dernières
+  cartes : avec 10 échantillons, une carte vaut 10 points de pourcentage, on suivrait le
+  bruit. Un écart net (2 points) est exigé pour changer de variante, sinon elle oscille
+  en permanence sans amélioration réelle. C'est la correction directe de l'erreur de
+  méthode commise en §4.36.
+- Les cartes au `localId` non numérique (promos type `SWSH001`) sont écartées : elles
+  n'ont pas de « XXX/XXX » imprimé comparable, les inclure ferait chuter le taux pour une
+  raison sans rapport avec le recadrage.
+
+**Garde-fou ajouté après l'avoir vu échouer en vrai** : deux exécutions successives ont
+désigné des gagnants DIFFÉRENTS à la 10e carte (« plus bas », puis « droite »). La marge
+fixe de 2 points ne suffit pas quand les totaux sont minuscules. Ajoutés : un échantillon
+minimal (40 cartes) avant toute bascule, et une marge exprimée en **écarts-types** plutôt
+qu'en points fixes — sur une proportion, l'incertitude vaut ~√(p(1−p)/n), soit ±15 points
+à n=10 mais ±5 à n=100 ; une marge fixe ignore complètement cette différence.
+
+### 4.41 Découverte du banc : le numéro change de côté selon l'époque
+Premier résultat exploitable, et il est structurel. Sur un échantillon de sets anciens
+(tirage aléatoire, 79 cartes), **toutes** les fenêtres ancrées à gauche font **0/79**,
+tandis que la fenêtre droite fait 26/79. Vérifié visuellement, sans ambiguïté :
+
+| carte | bande gauche (production) | bande droite |
+|---|---|---|
+| Fossile #27 (1999) | `Illus. Mitsuhiro Arita ©1995,96,98` — pas de numéro | **`27/62 ★`** |
+| SV 151 #7 (2023) | **`G MEW FR 007/165`** | `Retraite ★ …` — pas de numéro |
+
+La fenêtre de production ne couvre que les 45 % de gauche : elle est donc
+**structurellement aveugle aux cartes de l'ère Wizards** (jusqu'à ~2003), où le numéro est
+imprimé en bas à DROITE. Sur un second échantillon (plus moderne), le gradient par série
+est net et monotone :
+
+| série | taux |
+|---|---|
+| Écarlate et Violet (2023+) | 70 % |
+| Épée et Bouclier (2020-22) | 40 % |
+| Soleil et Lune (2017-19) | 33 % |
+| XY (2014-16) | **0 %** |
+
+Pour une collection de 1000+ cartes qui contient forcément de l'ancien, c'est un angle
+mort majeur — et il était invisible jusqu'ici, les tests terrain ayant tous porté sur des
+cartes SV récentes.
+
+**Correctif évident, mais PAS retenu en l'état** : lire une image composite empilant la
+bande gauche et la bande droite en un seul appel `recognize()` (idée n°7 du backlog).
+Mesuré : **36,6 % pour le composite contre 36,6 % pour la production**, pour un coût de
+641 ms contre 385 ms. Autrement dit, il coûte 66 % plus cher sans rien apporter sur cet
+échantillon. Hypothèse à creuser : l'empilement perturbe la détection de zones de texte de
+PaddleOCR (bandes accolées lues comme une seule ligne). Conformément à la leçon de §4.38,
+**rien n'est expédié tant que le gain n'est pas mesuré** — le correctif reste à trouver.
+
+Rappel de portée : tout ceci porte sur des illustrations officielles dégradées
+synthétiquement, pas sur de vraies photos. Le gradient par époque, lui, est une propriété
+de la mise en page imprimée : il se transpose tel quel.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
