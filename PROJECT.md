@@ -1199,6 +1199,36 @@ positifs** (plus de texte lu = plus d'occasions de mal lire). Elle achète donc 
 +11,6 points de réussite au prix de +4 points d'erreurs silencieuses. Ce n'est plus un
 choix évident, et il était impossible à poser avant cette métrique.
 
+### 4.44 Instrumentation de la dégradation intra-session (thermique ou mémoire ?)
+Le plus gros effet mesuré à ce jour n'est expliqué par aucun réglage : `recognize()` passe
+de 754 ms à 2529 ms en 41 secondes de scan continu (§4.38), soit **×3,35 à l'intérieur
+d'une seule session**. C'est très probablement ce que l'utilisateur ressent (« ça met 1 à
+2 secondes »), bien plus que le coût d'un appel isolé.
+
+Deux causes plausibles, jamais départagées :
+- **limitation thermique** du CPU (inférence WASM soutenue sur téléphone) ;
+- **pression mémoire** — suspect concret : chaque capture retient dans `pendingQueue` une
+  photo en dataURL (base64, +33 % de volume) **et** son blob d'origine, jamais relâchés
+  avant la fin de la session.
+
+Aucune correction n'est tentée avant d'avoir la réponse : c'est exactement ce qui manquait
+aux tentatives §4.34 et §4.36, expédiées sur une hypothèse plausible et toutes deux
+fausses. Trois champs ajoutés à chaque tentative (`sessionS`, `heapMb`, `queueLen`), plus
+un **résumé en tête du rapport** qui compare la première et la seconde moitié des appels
+avec l'évolution du tas en regard :
+
+```
+dégradation : recognize 1150ms (1re moitié, ~0s) -> 2230ms (2e moitié, ~36s)  = x1.94
+              tas 70Mo -> 142Mo  (file 0 -> 5 cartes)
+              → tas stable + temps qui monte = thermique ; les deux montent ensemble = mémoire
+```
+
+Ce résumé existe précisément parce que recalculer ces moyennes à la main sur chaque relevé
+est ce qui a produit la conclusion fausse de §4.36 (comparaison de deux sessions de durées
+différentes). `performance.memory` est propre à Chrome — exactement le navigateur des
+relevés terrain ; ailleurs la ligne mémoire est remplacée par une mention explicite plutôt
+qu'une valeur inventée. Vérifié dans les deux cas.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

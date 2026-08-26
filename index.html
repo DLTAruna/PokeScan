@@ -3051,8 +3051,38 @@ function sendDiagRemote(entry){
   });
 }
 
+// Instant du démarrage caméra, pour dater chaque tentative DANS la session plutôt qu'en
+// absolu — voir camSessionInstrumentation ci-dessous.
+let camStartedAt = 0;
+
+// Mémoire JS utilisée, en Mo. `performance.memory` est non standard et propre à Chrome
+// (exactement le navigateur des relevés terrain) ; ailleurs on renvoie null plutôt que
+// d'inventer une valeur.
+function heapMb(){
+  const m = performance.memory;
+  return m ? Math.round(m.usedJSHeapSize / 1048576) : null;
+}
+
+// Chaque tentative de lecture est datée dans la session et accompagnée de l'état mémoire.
+// Motif : le plus gros effet mesuré à ce jour n'est expliqué par AUCUN réglage — sur un
+// relevé réel, recognize() passe de 754 ms (8 premières tentatives) à 2529 ms (8
+// dernières) en 41 secondes, soit x3,35 à l'intérieur d'une seule session. Deux causes
+// plausibles et non départagées : limitation thermique du CPU (inférence WASM soutenue),
+// ou pression mémoire — chaque capture retient dans pendingQueue une photo en dataURL
+// (base64, +33 % de volume) ET son blob d'origine, jamais relâchés avant la fin.
+//
+// Ces trois champs suffisent à trancher : si le tas grossit en même temps que recognize()
+// ralentit, c'est la mémoire (corrigeable) ; s'il reste plat pendant que le temps monte,
+// c'est le thermique (à contourner autrement). Aucune correction n'est tentée avant
+// d'avoir la réponse — mesurer d'abord, c'est précisément ce qui manquait aux tentatives
+// précédentes.
 function diagPush(kind, data){
   const entry = Object.assign({k:kind, t:Date.now()}, data);
+  if(kind === 'try'){
+    entry.heapMb = heapMb();
+    entry.queueLen = pendingQueue.length;
+    entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
+  }
   diagLog.push(entry);
   if(diagLog.length > DIAG_MAX) diagLog.shift();
   sendDiagRemote(entry);
@@ -3081,6 +3111,32 @@ function buildDiagReport(){
   l.push('réglages    : netteté min=' + MIN_SHARPNESS + '  détection ' + DETECT_LONG_EDGE + 'px' +
          '  stabilité<=' + MAX_CORNER_SHIFT + '  score min=' + MIN_SCORE);
   l.push('analyse fond: ' + (detectRunning ? 'suspendue (caméra active)' : (queueAnalysisRunning ? 'en cours' : 'au repos')));
+
+  // Verdict direct sur la dégradation intra-session (voir diagPush) : compare la première
+  // et la dernière moitié des appels recognize() de la session, avec l'évolution du tas en
+  // regard. Sans ce résumé il fallait recalculer ces moyennes à la main sur chaque relevé,
+  // ce qui est exactement ce qui a conduit à une conclusion fausse en comparant deux
+  // sessions de durées différentes (§4.38).
+  const reco = diagLog.filter(e => e.k === 'try' && e.tRecognize != null && e.sessionS != null);
+  if(reco.length >= 6){
+    const moy = a => Math.round(a.reduce((x,y)=>x+y,0) / a.length);
+    const mid = Math.floor(reco.length/2);
+    const t1 = moy(reco.slice(0,mid).map(e=>e.tRecognize));
+    const t2 = moy(reco.slice(mid).map(e=>e.tRecognize));
+    const h1 = reco.slice(0,mid).filter(e=>e.heapMb!=null).map(e=>e.heapMb);
+    const h2 = reco.slice(mid).filter(e=>e.heapMb!=null).map(e=>e.heapMb);
+    l.push('');
+    l.push('dégradation : recognize ' + t1 + 'ms (1re moitié, ~' + reco[0].sessionS + 's) -> ' +
+           t2 + 'ms (2e moitié, ~' + reco[reco.length-1].sessionS + 's)  = x' + (t2/Math.max(t1,1)).toFixed(2));
+    if(h1.length && h2.length){
+      l.push('              tas ' + moy(h1) + 'Mo -> ' + moy(h2) + 'Mo  (file ' +
+             reco[0].queueLen + ' -> ' + reco[reco.length-1].queueLen + ' cartes)');
+      l.push('              → tas stable + temps qui monte = thermique ; les deux montent ensemble = mémoire');
+    } else {
+      l.push('              (mesure mémoire indisponible sur ce navigateur)');
+    }
+  }
+
   l.push('');
   l.push('--- ' + diagLog.length + ' dernières observations (la plus récente en bas) ---');
   const t0 = diagLog.length ? diagLog[0].t : 0;
@@ -3098,6 +3154,11 @@ function buildDiagReport(){
         // même sans déclenchement du raccourci, c'est ce qui permet de calibrer son seuil
         // (SAME_PHOTO_MATCH_DIST) sur des mesures plutôt qu'à l'estime.
         (e.hashDist != null ? ('  écartVisuel=' + e.hashDist) : '') +
+        // Position dans la session + état mémoire : c'est le couple qui départage
+        // « limitation thermique » et « pression mémoire » (voir diagPush).
+        (e.sessionS != null ? ('  t=' + e.sessionS + 's') : '') +
+        (e.heapMb != null ? ('  tas=' + e.heapMb + 'Mo') : '') +
+        (e.queueLen != null ? ('  file=' + e.queueLen) : '') +
         (e.rotated ? '  tourné' : ''));
       if(e.tExtract != null) l.push('              phases   : redressement=' + e.tExtract + 'ms' +
         '  resize=' + e.tCardBmp + 'ms  worker=' + e.tWorker + 'ms' +
@@ -3825,6 +3886,7 @@ function startAimLoop(){
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
   sessionCardHashes = []; // nouvelle session caméra -> le raccourci visuel repart de zéro
+  camStartedAt = Date.now(); // origine de temps pour l'instrumentation session (voir diagPush)
   setAimHint('Préparation de la lecture…');
 
   const video = $('video');
