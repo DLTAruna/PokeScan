@@ -2198,10 +2198,15 @@ async function startCamera(){
       // focusMode:'continuous' (dans `advanced`, seule forme standard) : sans lui,
       // certains navigateurs ne font la mise au point qu'une fois au démarrage du flux
       // et jamais plus ensuite.
+      // zoom:{ideal:1} : sur les téléphones multi-objectifs (Samsung notamment), le
+      // "objectif arrière" logique que facingMode:'environment' ouvre par défaut peut
+      // démarrer sur le grand-angle (~0.6x) plutôt que l'objectif principal (1x) —
+      // constaté par l'utilisateur. Le grand-angle a une profondeur de champ/mise au
+      // point différente, peu adaptée à une prise de vue rapprochée d'une carte.
       video: {
         facingMode:'environment',
         width:{ideal:1920}, height:{ideal:1440},
-        advanced:[{focusMode:'continuous'}]
+        advanced:[{focusMode:'continuous'}, {zoom:1}]
       },
       audio:false
     });
@@ -2211,19 +2216,25 @@ async function startCamera(){
     // obtenu, et on ne le fait QUE si l'appareil déclare le supporter (getCapabilities)
     // pour éviter une exception sur un réglage qu'il ne connaît pas. Les capacités
     // réelles sont remontées au diagnostic — c'est la seule façon de savoir, sur un
-    // appareil qu'on ne peut pas tester ici, si le focus continu est même disponible.
+    // appareil qu'on ne peut pas tester ici, si le focus continu / le zoom sont même
+    // disponibles, et si "1" est une valeur acceptée dans la plage réelle de l'appareil.
     const track = cameraStream.getVideoTracks()[0];
     try{
       const caps = track.getCapabilities ? track.getCapabilities() : {};
       if(caps.focusMode && caps.focusMode.includes('continuous')){
         await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
       }
+      if(caps.zoom && caps.zoom.min <= 1 && caps.zoom.max >= 1){
+        await track.applyConstraints({advanced:[{zoom:1}]});
+      }
       const settings = track.getSettings ? track.getSettings() : {};
       diagPush('err', {msg:'caméra: focusMode capacités=' + JSON.stringify(caps.focusMode||null) +
                           ' réglage=' + (settings.focusMode||'?') +
+                          ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
+                          ' réglage=' + (settings.zoom ?? '?') +
                           ' résolution=' + settings.width + 'x' + settings.height});
     }catch(e){
-      diagPush('err', {msg:'caméra: focusMode non applicable (' + e.message + ')'});
+      diagPush('err', {msg:'caméra: focusMode/zoom non applicable (' + e.message + ')'});
     }
 
     $('video').srcObject = cameraStream;

@@ -429,6 +429,18 @@ poussés au diagnostic (`caméra: focusMode capacités=... réglage=... résolut
 le prochain relevé dira si le Samsung expose ce réglage ou si c'est une vraie limite
 plateforme, sans quoi il n'existe aucune solution côté web.
 
+**Cause réelle identifiée par l'utilisateur ensuite** : le flou venait de l'objectif
+sélectionné, pas (seulement) de l'absence de mise au point continue — sur les
+téléphones multi-objectifs (Samsung notamment), `facingMode:'environment'` peut ouvrir
+l'objectif logique sur le grand-angle (~0.6×) plutôt que le principal (1×). Le
+grand-angle a une profondeur de champ/mise au point différente, mal adaptée à une prise
+de vue rapprochée d'une carte. Corrigé en ajoutant `zoom:{ideal:1}` aux contraintes
+initiales ET en le reconfirmant après coup via `track.applyConstraints({advanced:
+[{zoom:1}]})` — même schéma que `focusMode`, appliqué uniquement si `getCapabilities()`
+déclare une plage de zoom couvrant 1 (`caps.zoom.min <= 1 && caps.zoom.max >= 1`), pour
+ne jamais lever d'exception sur un réglage hors plage. Les capacités de zoom réelles
+sont poussées au même message de diagnostic que le focus.
+
 ### 4.18 En-têtes COOP/COEP pour le WASM multi-thread — posés puis RETIRÉS (régression constatée)
 `vercel.json` ajoutait `Cross-Origin-Opener-Policy: same-origin` et
 `Cross-Origin-Embedder-Policy: credentialless` sur toutes les routes — active
