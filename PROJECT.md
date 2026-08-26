@@ -730,6 +730,34 @@ Vérifié par simulation isolée de la logique (streak/hash/numéro) : la captur
 passe normalement ; une re-présentation volontaire après une absence confirmée est
 acceptée.
 
+### 4.28 Pré-filtre de forme, avant le redressement complet
+Relevé réel (60 tentatives, `?format=stats`) : **29 sur 60 (48 %)** rejetées comme
+« forme incompatible » — bien plus fréquent que constaté jusqu'ici, coûtant en moyenne
+417 ms (jusqu'à 772 ms) à chaque fois, tout ça pour occuper `readInFlight` sans jamais
+atteindre l'OCR. Cause probable : depuis le retrait du verrou de stabilité pré-tentative
+(§4.20/§4.22, pour capturer plus vite), une lecture est tentée dès la première détection
+à score suffisant — y compris sur des cadrages transitoires (carte encore en train
+d'être positionnée) qui ne passent le filtre de forme qu'APRÈS avoir payé le coût du
+redressement complet.
+
+Ajouté un pré-filtre bon marché, calculé directement à partir des coins bruts déjà en
+main (aucun coût de calcul, pas d'appel réseau/Worker) : une estimation grossière du
+ratio par distance euclidienne entre coins (mise à l'échelle par les dimensions vidéo
+réelles — les coins sont des fractions 0-1, pas des pixels). Tolérance volontairement
+plus large (0,35 contre 0,25 pour le filtre précis) : cette estimation ne corrige pas la
+perspective, un faux rejet ici coûterait une vraie carte ratée pour de bon — seules les
+formes clairement hors sujet s'arrêtent là ; les cas limites continuent jusqu'au filtre
+précis existant, inchangé, après redressement. Nouveau libellé de diagnostic distinct
+(« forme incompatible (pré-filtre) ») pour voir, sur le prochain relevé, quelle part des
+rejets est désormais interceptée tôt.
+
+Vérifié par simulation isolée (coins reconstruits pour donner un vrai ratio 88/63 une
+fois mis à l'échelle par les dimensions vidéo) : une carte portrait bien cadrée et une
+carte légèrement tournée (paysage) passent toutes deux correctement ; une forme
+carrée-ish est parfois encore acceptée par ce filtre large (tolérance volontairement
+généreuse) mais reste alors rattrapée par le filtre précis existant — aucune régression
+possible, seulement une économie partielle à affiner sur le prochain relevé réel.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

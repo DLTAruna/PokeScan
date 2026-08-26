@@ -2837,6 +2837,36 @@ async function attemptRead(corners, score){
     const video = $('video');
     if(!video || !video.videoWidth) return;
 
+    // Pré-filtre de forme, bon marché, AVANT le redressement complet (qui coûte
+    // ~100ms de calcul sur le fil principal — la seule partie du pipeline qui ne
+    // tourne pas dans un Worker). Estimation grossière du ratio directement à partir
+    // des coins bruts déjà en main (aucun coût de calcul supplémentaire), pour écarter
+    // tout de suite une forme manifestement incompatible sans attendre l'extraction
+    // pour s'en apercevoir. Constaté sur diagnostic réel : depuis le retrait du verrou
+    // de stabilité (§4.22, pour capturer plus vite), "forme incompatible" représentait
+    // à lui seul 29 tentatives sur 60 — chacune occupant readInFlight ~400ms pour rien,
+    // retardant d'autant la tentative suivante. Tolérance volontairement plus large
+    // (0.35 contre 0.25) que le filtre précis ci-dessous : cette estimation ne corrige
+    // pas la perspective, un faux rejet ici coûterait une vraie carte ratée — seuls les
+    // cas clairement hors sujet doivent s'arrêter là, les cas limites vont jusqu'au
+    // filtre précis, inchangé, après redressement.
+    {
+      const vw0 = video.videoWidth, vh0 = video.videoHeight;
+      const toPx = (c) => [c[0]*vw0, c[1]*vh0];
+      const [rtl, rtr, rbr, rbl] = [toPx(corners.tl), toPx(corners.tr), toPx(corners.br), toPx(corners.bl)];
+      const dist = (a,b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
+      const estW = (dist(rtl,rtr) + dist(rbl,rbr)) / 2;
+      const estH = (dist(rtl,rbl) + dist(rtr,rbr)) / 2;
+      const estRatio = estH / (estW || 1);
+      const roughInv = 1/CARD_RATIO;
+      const roughlyPortrait  = Math.abs(estRatio - CARD_RATIO) / CARD_RATIO <= 0.35;
+      const roughlyLandscape = Math.abs(estRatio - roughInv) / roughInv <= 0.35;
+      if(!roughlyPortrait && !roughlyLandscape){
+        diagPush('try', {ok:false, hint:'forme incompatible (pré-filtre)', score, ratio:+estRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
+        return;
+      }
+    }
+
     const scanic = await getScanic();
     // Chronométrage détaillé (voir §4.23) : tExtract couvre le redimensionnement natif +
     // le redressement par perspective (fil principal, coût proportionnel à ce qu'on lui
