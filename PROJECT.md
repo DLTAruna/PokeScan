@@ -860,6 +860,32 @@ repère visuel demandé pour rester lisible d'un coup d'œil pendant la visée. 
 par inspection des styles calculés : cercles 38×38px (`border-radius:50%`), couleur
 distincte confirmée sur le bouton actif.
 
+### 4.32 Ne plus imposer AUCUN zoom par défaut + rendre visibles les échecs d'envoi
+Retour terrain confirmé, précis : à 2× (Nosferapti, Mimitoss) net ; à 1× (Goupix)
+toujours flou. Preuve directe que "1" continue de correspondre au grand-angle sur cet
+appareil, même après le correctif §4.30 (qui appliquait `zoom:1` par défaut tant
+qu'aucun choix n'avait été fait — cette valeur par défaut est exactement celle qu'on
+vient de prouver fausse).
+
+Corrigé en cessant d'imposer QUOI QUE CE SOIT tant que l'utilisateur n'a fait aucun
+choix explicite : `hasZoomPreference()` distingue "aucune préférence enregistrée" de
+"l'utilisateur a choisi 1×" — sans préférence, la caméra démarre sur son propre
+réglage natif (aucune entrée `zoom` dans les contraintes), plutôt que sur une
+supposition qu'on a maintenant vue fausse deux fois sur le même type d'appareil.
+Vérifié : `buildCameraConstraints` ne contient aucune entrée `zoom` tant qu'aucune
+préférence n'est sauvegardée, et applique bien `{zoom:2}` une fois un choix fait.
+
+**Bug distinct découvert au passage** : la case « envoyer en direct » avait été
+cochée par l'utilisateur, mais AUCUNE donnée n'est arrivée sur deux relevés
+consécutifs — `sendDiagRemote` avalait silencieusement toute erreur
+(`.catch(()=>{})`), rendant un échec d'envoi totalement invisible, y compris pour
+nous. Corrigé : un indicateur (`#diag-remote-status`) affiche maintenant
+immédiatement ✅/⚠️ à côté de la case, et toute erreur est aussi ajoutée à `diagLog`
+en local (jamais via `diagPush()`, qui rappellerait `sendDiagRemote` — boucle
+infinie garantie si l'échec est persistant). Vérifié : un échec HTTP simulé affiche
+bien l'indicateur ET apparaît dans le diagnostic local consultable sans connexion
+distante.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

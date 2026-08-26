@@ -302,6 +302,7 @@
         <label style="margin-left:10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
           <input type="checkbox" id="chk-diag-remote">📡 envoyer en direct (debug)
         </label>
+        <span id="diag-remote-status" style="margin-left:6px; font-size:11px;"></span>
       </div>
       <pre id="diag-view" style="display:none; background:var(--panel2); border:1px solid var(--border);
            border-radius:8px; padding:8px; font-size:10.5px; max-height:260px; overflow:auto;
@@ -2269,15 +2270,31 @@ let currentCameraDeviceId = null;
 // l'utilisateur a lui-même trouvée nette sur SON appareil, pour ne plus avoir à la
 // rebasculer à chaque démarrage de la caméra.
 const ZOOM_PREF_KEY = 'pokescanZoomPref';
+// Distingue "aucun choix fait" de "l'utilisateur a choisi 1×" : forcer zoom:1 par
+// défaut s'est révélé activement FAUX sur un appareil réel (Samsung — "1×" y
+// correspond au grand-angle ~0.6x, net seulement après bascule manuelle sur 2×). On
+// ne devine donc plus RIEN tant que l'utilisateur n'a rien choisi lui-même : la
+// caméra démarre sur son propre réglage natif, pas sur une valeur qu'on impose.
+function hasZoomPreference(){
+  return localStorage.getItem(ZOOM_PREF_KEY) != null;
+}
 function getPreferredZoom(){
   const saved = parseFloat(localStorage.getItem(ZOOM_PREF_KEY));
-  return Number.isFinite(saved) ? saved : 1;
+  return Number.isFinite(saved) ? saved : 1; // repli d'AFFICHAGE seulement (bouton actif) — voir renderZoomButtons
 }
 function savePreferredZoom(z){
   localStorage.setItem(ZOOM_PREF_KEY, String(z));
 }
 
 function buildCameraConstraints(deviceId){
+  // focusMode:'continuous' (dans `advanced`, seule forme standard) : sans lui,
+  // certains navigateurs ne font la mise au point qu'une fois au démarrage du flux
+  // et jamais plus ensuite. Le zoom n'est ajouté QUE si l'utilisateur a déjà fait un
+  // choix explicite (voir hasZoomPreference) — sinon on laisse la caméra ouvrir sur
+  // son objectif natif plutôt que d'imposer une valeur dont on sait qu'elle peut être
+  // fausse selon l'appareil.
+  const advanced = [{focusMode:'continuous'}];
+  if(hasZoomPreference()) advanced.push({zoom:getPreferredZoom()});
   return {
     // Résolution remontée à 1920x1440 (elle était plafonnée à 1280x960) : sur
     // certains appareils (constaté : Samsung), demander une résolution basse pousse
@@ -2286,18 +2303,10 @@ function buildCameraConstraints(deviceId){
     // plein capteur. Sans risque de ralentissement cette fois : tout le pipeline
     // (détection, redressement, lecture) downscale déjà très tôt (§4.6, §4.10) — la
     // caméra n'a plus besoin de fournir une petite image, on la réduit nous-mêmes.
-    // focusMode:'continuous' (dans `advanced`, seule forme standard) : sans lui,
-    // certains navigateurs ne font la mise au point qu'une fois au démarrage du flux
-    // et jamais plus ensuite.
-    // zoom:{ideal:getPreferredZoom()} : "1" n'a aucune sémantique universelle (voir
-    // ZOOM_PREF_KEY ci-dessus) — constaté sur un Samsung où le "1×" affiché restait en
-    // fait sur l'objectif grand-angle (~0.6x réel), net seulement une fois basculé sur
-    // 2×. On démarre donc sur la dernière valeur que l'utilisateur a lui-même choisie
-    // comme nette sur CET appareil, pas sur une constante devinée à l'avance.
     video: {
       ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'environment'}),
       width:{ideal:1920}, height:{ideal:1440},
-      advanced:[{focusMode:'continuous'}, {zoom:getPreferredZoom()}]
+      advanced
     },
     audio:false
   };
@@ -2316,9 +2325,11 @@ async function applyTrackTweaksAndDiagnostics(track){
     if(caps.focusMode && caps.focusMode.includes('continuous')){
       await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
     }
-    const preferredZoom = getPreferredZoom();
-    if(caps.zoom && caps.zoom.min <= preferredZoom && caps.zoom.max >= preferredZoom){
-      await track.applyConstraints({advanced:[{zoom:preferredZoom}]});
+    if(hasZoomPreference()){
+      const preferredZoom = getPreferredZoom();
+      if(caps.zoom && caps.zoom.min <= preferredZoom && caps.zoom.max >= preferredZoom){
+        await track.applyConstraints({advanced:[{zoom:preferredZoom}]});
+      }
     }
     const settings = track.getSettings ? track.getSettings() : {};
     diagPush('err', {msg:'caméra: focusMode capacités=' + JSON.stringify(caps.focusMode||null) +
@@ -2532,13 +2543,28 @@ function getDiagDeviceId(){
 }
 
 // Best-effort, jamais attendu : une panne réseau ne doit ni ralentir ni casser le scan.
+// L'échec restait auparavant totalement invisible (catch(()=>{}) muet) — retour
+// utilisateur : la case était bien cochée, mais rien n'arrivait côté serveur, sans
+// aucun moyen de le remarquer avant d'attendre en vain plusieurs échanges. On NE
+// rappelle PAS diagPush() ici pour signaler l'échec (elle appellerait sendDiagRemote,
+// qui échouerait pour la même raison probable, qui rappellerait diagPush... boucle
+// infinie) : l'entrée d'échec est ajoutée directement à diagLog, et un indicateur
+// s'affiche juste à côté de la case, visible sans même ouvrir le diagnostic.
 function sendDiagRemote(entry){
   if(!diagRemoteEnabled) return;
+  const statusEl = $('diag-remote-status');
   fetch('/api/log', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({device: getDiagDeviceId(), ...entry})
-  }).catch(()=>{});
+  }).then(res => {
+    if(!res.ok) throw new Error('HTTP ' + res.status);
+    if(statusEl) statusEl.textContent = '✅ envoyé ' + new Date().toLocaleTimeString();
+  }).catch(err => {
+    if(statusEl) statusEl.textContent = '⚠️ échec d\'envoi (' + err.message + ')';
+    diagLog.push({k:'err', t:Date.now(), msg:'diagnostic distant : échec envoi (' + err.message + ')'});
+    if(diagLog.length > DIAG_MAX) diagLog.shift();
+  });
 }
 
 function diagPush(kind, data){
