@@ -2190,8 +2190,24 @@ const EXTRACT_LONG_EDGE = 1200;
 // l'image) au-delà duquel on considère que la carte bouge encore. Un tremblement de main
 // déplace les coins de bien moins que ça d'une détection à l'autre (~100 ms) ; un
 // changement de carte les déplace beaucoup plus.
-const MAX_CORNER_SHIFT = 0.02;
+// Relevé à 0.035 (était 0.02) : retour utilisateur — le temps réel passé à "stabiliser"
+// dépassait largement les 1-2 détections nécessaires en théorie, en grande partie à
+// cause des redémarrages du compteur (voir lowScoreStreak plus bas), mais le seuil
+// lui-même était aussi plus strict que le tremblement de main naturel ne le permettait
+// en une seule paire de détections. Le filet de sécurité reste le contrôle de netteté
+// après coup (MIN_SHARPNESS, sur l'image réellement capturée) : un seuil un peu plus
+// tolérant ici ne fait que tenter la lecture un peu plus tôt, pas accepter une image
+// vraiment floue.
+const MAX_CORNER_SHIFT = 0.035;
 let prevCorners = null;
+
+// Tolère un score de détection isolé, ponctuellement sous MIN_SCORE (occlusion
+// passagère, reflet, main qui repositionne la carte un instant), sans repartir de zéro
+// sur la comparaison de stabilité. Avant ce compteur, UN SEUL raté suffisait à effacer
+// prevCorners et à redémarrer toute la séquence — c'était la cause la plus concrète du
+// délai ressenti de 1-2s, bien plus que le seuil de tolérance lui-même.
+let lowScoreStreak = 0;
+const LOW_SCORE_RESET_STREAK = 3;
 
 function maxCornerShift(a, b){
   let m = 0;
@@ -2514,8 +2530,15 @@ async function detectLoop(){
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
       setAimHint('Vise la carte');
-      prevCorners = null;   // la carte est sortie du champ : la prochaine devra se re-confirmer
+      // Un raté isolé (reflet, main qui repositionne la carte un instant) ne doit pas
+      // effacer la progression déjà accumulée — seul un décrochage SOUTENU signifie
+      // vraiment que la carte est sortie du champ. Avant ce compteur, un seul coup dur
+      // remettait tout à zéro et forçait à réaccumuler deux détections concordantes
+      // depuis le début : la cause la plus concrète du délai ressenti de 1-2s.
+      lowScoreStreak++;
+      if(lowScoreStreak >= LOW_SCORE_RESET_STREAK) prevCorners = null;
     } else {
+      lowScoreStreak = 0;
       setOverlayTarget('lecture', d.corners);
 
       // Verrou de stabilité : une carte qui bouge donne une image filée, donc un OCR
@@ -2529,7 +2552,10 @@ async function detectLoop(){
 
       const now = Date.now();
       if(!stable){
-        setAimHint('Stabilise la carte');
+        // Message à deux paliers plutôt qu'un texte figé : un vrai signal de proximité
+        // (pas une simple animation cosmétique), basé sur l'écart mesuré par rapport au
+        // seuil — pour que l'attente se ressente comme une progression, pas un blocage.
+        setAimHint(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte');
       } else if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
@@ -2829,6 +2855,7 @@ function stopAimLoop(){
   readInFlight = false;
   overlayRenderRunning = false;
   prevCorners = null;
+  lowScoreStreak = 0;
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
   const cvs = $('aim-overlay');

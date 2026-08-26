@@ -452,6 +452,33 @@ expiré, le chargement démarre dès l'ouverture de la page au lieu d'attendre l
 succès de lecture en direct — sans ce préchauffage, c'est spécifiquement CE premier
 résultat qui restait bloqué sur « recherche... » le temps du chargement.
 
+### 4.20 Le délai « Stabilise la carte » venait des redémarrages, pas du seuil lui-même
+Retour utilisateur : tenir la carte immobile 1-2 secondes avant capture, frustrant. Le
+verrou de stabilité (§ ci-dessus) ne compare pourtant que DEUX détections consécutives —
+en théorie quasi instantané. La vraie cause : `prevCorners` était remis à `null` au
+moindre passage du score sous `MIN_SCORE` (reflet, main qui repositionne la carte un
+instant), ce qui effaçait toute la progression accumulée et forçait à réaccumuler deux
+détections concordantes depuis zéro — potentiellement plusieurs fois de suite.
+
+Deux corrections :
+- `lowScoreStreak` tolère désormais jusqu'à 2 ratés isolés avant de vraiment considérer
+  que la carte est sortie du champ (`LOW_SCORE_RESET_STREAK = 3`) — un blip ponctuel ne
+  coûte plus toute la progression.
+- `MAX_CORNER_SHIFT` relevé de 0.02 à 0.035 : le seuil était aussi plus strict que le
+  tremblement de main naturel ne le permettait en une seule paire de détections. Le
+  filet de sécurité reste le contrôle de netteté après coup (sur l'image réellement
+  capturée, pas sur la géométrie estimée) — un seuil plus tolérant ici tente la lecture
+  un peu plus tôt, il n'accepte pas une image vraiment floue à sa place.
+
+Vérifié par simulation isolée (logique copiée hors DOM, injouable en conditions réelles
+sans caméra) : un raté isolé ne réinitialise plus `prevCorners`, et la comparaison de
+stabilité reprend correctement dès le retour d'une bonne détection.
+
+Habillage de l'attente, pendant qu'elle dure encore un peu : le message affiché a
+maintenant deux paliers (« Presque… reste immobile » sous 2,5× le seuil de stabilité,
+« Stabilise la carte » au-delà) au lieu d'un texte figé — un vrai signal de proximité
+basé sur l'écart mesuré, pas une animation cosmétique sans rapport avec l'état réel.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
