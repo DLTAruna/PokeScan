@@ -42,6 +42,14 @@ Chaque carte de la file est marquée ✅ identifiée · 🤔 à vérifier · ❌
   l'affichage.
 - Aucune clé API n'est nécessaire.
 - Prix indicatifs : Cardmarket (€) en priorité, TCGPlayer ($) en repli.
+- **Cache local (IndexedDB)** : tout ce qui vient de TCGdex (listes de cartes par set,
+  fiches détaillées, hashs visuels) est mis en cache dans IndexedDB. Un set ou une carte
+  déjà rencontrés ne redéclenchent plus aucun appel réseau — utile pour les doublons
+  (très fréquents dans une collection) et pour rescanner un set déjà vu. Onglet
+  Réglages → « Base de cartes hors-ligne » : bouton pour précharger la liste de tous
+  les sets d'un coup plutôt que de les découvrir au fil des scans. Les fiches
+  détaillées (prix, rareté) restent chargées à la demande et sont réactualisées après
+  14 jours (le prix bouge, l'identité de la carte non).
 
 ## Limites connues
 

@@ -591,6 +591,17 @@
     </div>
 
     <div class="panel">
+      <h2>📦 Base de cartes hors-ligne</h2>
+      <p class="sub">Chaque set (numéro, nom, image) vu une fois reste en cache local (IndexedDB) : le revoir plus tard — un doublon, un set déjà scanné — ne fait <b>plus aucun appel réseau</b>. Ce bouton précharge la liste de <b>tous</b> les sets d'un coup, pour une identification quasi instantanée dès le début, même sur une connexion faible. Les fiches détaillées (prix, rareté) restent chargées à la demande, carte par carte, et sont elles aussi mises en cache (14 jours avant réactualisation du prix).</p>
+      <div class="row">
+        <button class="btn-primary" id="btn-download-catalogue">📦 Précharger tout le catalogue</button>
+        <button class="btn-danger" id="btn-clear-catalogue">🗑️ Vider le cache local</button>
+      </div>
+      <div class="progress-bar" id="catalogue-progress"><div class="fill" id="catalogue-progress-fill"></div></div>
+      <p class="hint" id="catalogue-status">Chargement du statut du cache local...</p>
+    </div>
+
+    <div class="panel">
       <h2>Réglages par défaut</h2>
       <div class="row">
         <div>
@@ -1515,11 +1526,102 @@ function parseCardCode(rawText){
   return { number: null, denominator: null, codeCandidates };
 }
 
+// ---------------- CACHE LOCAL (IndexedDB) ----------------
+// Tout ce qui vient de TCGdex (sets, listes de cartes, fiches détaillées, hashs
+// visuels) est mis en cache ici plutôt qu'en localStorage : quota bien plus large
+// (localStorage plafonne à ~5-10 Mo, déjà juste pour un catalogue de plusieurs
+// milliers de cartes) et accès asynchrone (jamais de blocage du thread principal
+// sur un gros blob JSON). C'est ce qui permet de "dumper" le catalogue en local :
+// une fois une carte/un set vus une première fois, plus aucun aller-retour réseau
+// n'est nécessaire pour les reconnaître à nouveau (très courant : doublons dans une
+// collection, sets déjà scannés).
+const IDB_NAME = 'pokescan_cache_v1';
+const IDB_VERSION = 1;
+let idbPromise = null;
+
+function openIdb(){
+  if(idbPromise) return idbPromise;
+  idbPromise = new Promise((resolve, reject)=>{
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = ()=>{
+      const db = req.result;
+      if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', {keyPath:'key'});
+      if(!db.objectStoreNames.contains('cardLists')) db.createObjectStore('cardLists', {keyPath:'setId'});
+      if(!db.objectStoreNames.contains('cardHashes')) db.createObjectStore('cardHashes', {keyPath:'cardId'});
+      if(!db.objectStoreNames.contains('cardDetail')) db.createObjectStore('cardDetail', {keyPath:'cardId'});
+    };
+    req.onsuccess = ()=> resolve(req.result);
+    req.onerror = ()=> reject(req.error);
+  });
+  return idbPromise;
+}
+
+// IndexedDB indisponible (navigation privée stricte, quota refusé...) -> on dégrade
+// silencieusement en "pas de cache" plutôt que de casser l'identification.
+async function idbGet(store, key){
+  try{
+    const db = await openIdb();
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readonly');
+      const req = tx.objectStore(store).get(key);
+      req.onsuccess = ()=> resolve(req.result || null);
+      req.onerror = ()=> reject(req.error);
+    });
+  } catch(e){ return null; }
+}
+
+async function idbSet(store, value){
+  try{
+    const db = await openIdb();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).put(value);
+      tx.oncomplete = resolve;
+      tx.onerror = ()=> reject(tx.error);
+    });
+  } catch(e){ /* pas grave, juste pas de cache cette fois */ }
+}
+
+async function idbDelete(store, key){
+  try{
+    const db = await openIdb();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).delete(key);
+      tx.oncomplete = resolve;
+      tx.onerror = ()=> reject(tx.error);
+    });
+  } catch(e){ /* rien à faire */ }
+}
+
+async function idbCount(store){
+  try{
+    const db = await openIdb();
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readonly');
+      const req = tx.objectStore(store).count();
+      req.onsuccess = ()=> resolve(req.result);
+      req.onerror = ()=> reject(req.error);
+    });
+  } catch(e){ return 0; }
+}
+
+async function idbClearAll(){
+  try{
+    const db = await openIdb();
+    await Promise.all(['meta','cardLists','cardHashes','cardDetail'].map(store=> new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).clear();
+      tx.oncomplete = resolve;
+      tx.onerror = ()=> reject(tx.error);
+    })));
+  } catch(e){ /* rien à faire */ }
+}
+
 // ---------------- TABLE DES CODES DE SET (ex: "MEW" -> id TCGdex "sv03.5") ----------------
 // TCGdex n'expose ce code (`abbreviation.official`) que sur le détail de chaque set,
 // pas sur la liste globale -> on construit la table une fois (~220 requêtes), mise en
-// cache 30 jours dans localStorage.
-const SET_MAP_CACHE_KEY = 'tcgdex_set_map_v1';
+// cache 30 jours dans IndexedDB.
 const SET_MAP_MAX_AGE_MS = 30*24*3600*1000;
 
 async function pLimit(items, limit, fn){
@@ -1540,12 +1642,10 @@ async function pLimit(items, limit, fn){
 // repli quand le code lettré (ex "MEW") n'est pas OCRisable de façon fiable (police
 // stylisée bien plus dure à lire pour Tesseract que le simple numéro).
 async function loadSetAbbreviationMap(onProgress){
-  try{
-    const cached = JSON.parse(localStorage.getItem(SET_MAP_CACHE_KEY) || 'null');
-    if(cached && (Date.now() - cached.builtAt) < SET_MAP_MAX_AGE_MS && cached.byDenominator){
-      return {map: cached.map, byDenominator: cached.byDenominator};
-    }
-  } catch(e){ /* cache corrompu, on reconstruit */ }
+  const cached = await idbGet('meta', 'setAbbrMap');
+  if(cached && (Date.now() - cached.builtAt) < SET_MAP_MAX_AGE_MS && cached.byDenominator){
+    return {map: cached.map, byDenominator: cached.byDenominator};
+  }
 
   const listRes = await fetchWithRetry('https://api.tcgdex.net/v2/en/sets', {}, {maxRetries:2});
   if(!listRes.ok) throw new Error('HTTP '+listRes.status);
@@ -1576,18 +1676,63 @@ async function loadSetAbbreviationMap(onProgress){
       .map(e=>e.id);
   }
 
-  localStorage.setItem(SET_MAP_CACHE_KEY, JSON.stringify({builtAt: Date.now(), map, byDenominator}));
+  await idbSet('meta', {key:'setAbbrMap', builtAt: Date.now(), map, byDenominator});
   return {map, byDenominator};
 }
 
+// ---------------- DUMP COMPLET DU CATALOGUE (usage hors-ligne) ----------------
+// Pré-remplit le cache IndexedDB avec la liste de cartes (id/numéro/image) de TOUS
+// les sets, pas seulement ceux rencontrés au fil des scans. Une fois fait, la
+// résolution par numéro (fetchCardExact) et par correspondance visuelle ne fait plus
+// AUCUN appel réseau, quel que soit le set scanné. Ne télécharge pas les fiches
+// détaillées (prix/rareté) de chaque carte une à une : ça représenterait des milliers
+// de requêtes individuelles pour un gain minime (elles sont de toute façon mises en
+// cache à la volée, cf. getCardDetailCached) — seule la liste par set (1 requête par
+// set, ~200 sets) est pré-téléchargée ici.
+async function downloadFullCatalogue(onProgress){
+  const listRes = await fetchWithRetry('https://api.tcgdex.net/v2/en/sets', {}, {maxRetries:2});
+  if(!listRes.ok) throw new Error('HTTP '+listRes.status);
+  const sets = await listRes.json();
+  let done = 0;
+  await pLimit(sets, 6, async (s)=>{
+    try{ await getSetCardList(s.id); } catch(e){ /* un set en échec n'empêche pas les autres */ }
+    done++;
+    if(onProgress) onProgress(done, sets.length);
+  });
+  await idbSet('meta', {key:'catalogueBuiltAt', value: Date.now()});
+}
+
+async function getCatalogueStatus(){
+  const [setCount, cardDetailCount, meta] = await Promise.all([
+    idbCount('cardLists'),
+    idbCount('cardDetail'),
+    idbGet('meta', 'catalogueBuiltAt')
+  ]);
+  return {setCount, cardDetailCount, builtAt: meta?.value || null};
+}
+
+// Résout d'abord via la liste du set (déjà en cache la plupart du temps -> zéro
+// appel réseau) : elle donne l'id réel de la carte, dont la fiche détaillée passe
+// ensuite par getCardDetailCached (cache-first elle aussi). Repli sur l'appel direct
+// classique seulement si le set n'a jamais été rencontré (liste pas encore en cache).
 async function fetchCardExact(setId, number){
-  const tried = new Set();
-  for(const num of [number, number.padStart(3,'0'), number.padStart(2,'0'), String(parseInt(number,10))]){
-    if(tried.has(num)) continue;
-    tried.add(num);
+  const variants = [...new Set([number, number.padStart(3,'0'), number.padStart(2,'0'), String(parseInt(number,10))])];
+  try{
+    const list = await getSetCardList(setId);
+    if(list.length){
+      for(const num of variants){
+        const brief = list.find(c => stripLeadingZero(String(c.localId||'')) === stripLeadingZero(num));
+        if(brief) return await getCardDetailCached(brief.id);
+      }
+      return null; // liste connue, aucun de ces numéros n'existe dans ce set -> inutile de retenter en direct
+    }
+  } catch(e){ /* liste indisponible, repli ci-dessous */ }
+
+  for(const num of variants){
     try{
-      const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${setId}-${num}`, {}, {maxRetries:1, baseDelay:400});
-      if(r.ok) return normalizeCard(await r.json());
+      const id = `${setId}-${num}`;
+      const card = await getCardDetailCached(id);
+      if(card) return card;
     } catch(e){ /* essai suivant */ }
   }
   return null;
@@ -1670,27 +1815,18 @@ function hammingDistance(a, b){
   return Number(count);
 }
 
-const CARD_LIST_CACHE_KEY = 'tcgdex_set_cardlist_v1';
-const CARD_HASH_CACHE_KEY = 'tcgdex_card_hash_v1';
-
-function loadJsonCache(key){
-  try{ return JSON.parse(localStorage.getItem(key) || '{}'); } catch(e){ return {}; }
-}
-function saveJsonCache(key, obj){
-  try{ localStorage.setItem(key, JSON.stringify(obj)); } catch(e){ /* quota localStorage dépassé, tant pis pour le cache */ }
-}
-
-// Liste des cartes d'un set (id, localId, image) — mise en cache indéfiniment,
-// un set ne change pratiquement jamais une fois publié.
+// Liste des cartes d'un set (id, localId, image) — mise en cache indéfiniment dans
+// IndexedDB, un set ne change pratiquement jamais une fois publié. Une fois un set
+// rencontré une première fois (scan ou pré-téléchargement), plus aucun appel réseau
+// n'est nécessaire pour y résoudre un numéro -> voir fetchCardExact.
 async function getSetCardList(setId){
-  const cache = loadJsonCache(CARD_LIST_CACHE_KEY);
-  if(cache[setId]) return cache[setId];
+  const cached = await idbGet('cardLists', setId);
+  if(cached) return cached.list;
   const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/sets/${setId}`, {}, {maxRetries:1, baseDelay:400});
   if(!r.ok) return [];
   const detail = await r.json();
   const list = (detail.cards || []).filter(c=>c.image).map(c=>({id:c.id, localId:c.localId, image:c.image}));
-  cache[setId] = list;
-  saveJsonCache(CARD_LIST_CACHE_KEY, cache);
+  await idbSet('cardLists', {setId, list, cachedAt: Date.now()});
   return list;
 }
 
@@ -1698,14 +1834,33 @@ async function getSetCardList(setId){
 // officielle d'une carte ne change pas). Coûteux la 1ère fois (téléchargement de
 // l'image), quasi gratuit ensuite pour tout le reste de la session/les sessions futures.
 async function getCardImageHash(cardId, imageBase){
-  const cache = loadJsonCache(CARD_HASH_CACHE_KEY);
-  if(cache[cardId]) return BigInt('0x'+cache[cardId]);
+  const cached = await idbGet('cardHashes', cardId);
+  if(cached) return BigInt('0x'+cached.hash);
   try{
     const hash = await dHashFromImageSource(imageBase + '/high.webp');
-    cache[cardId] = hash.toString(16);
-    saveJsonCache(CARD_HASH_CACHE_KEY, cache);
+    await idbSet('cardHashes', {cardId, hash: hash.toString(16)});
     return hash;
   } catch(e){ return null; }
+}
+
+// Fiche détaillée d'une carte (nom, rareté, prix...) — point de passage unique pour
+// tout appel à /cards/{id}. Cache-first : l'identité de la carte ne change jamais,
+// seul le prix bouge -> on retolère une fiche en cache jusqu'à CARD_DETAIL_MAX_AGE_MS
+// avant de revérifier. Si le réseau échoue et qu'une version périmée existe, on la
+// renvoie quand même plutôt que de renvoyer une erreur (dégradation, pas de panne).
+const CARD_DETAIL_MAX_AGE_MS = 14*24*3600*1000;
+async function getCardDetailCached(id){
+  const cached = await idbGet('cardDetail', id);
+  if(cached && (Date.now() - cached.fetchedAt) < CARD_DETAIL_MAX_AGE_MS) return cached.detail;
+  try{
+    const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
+    if(r.ok){
+      const card = normalizeCard(await r.json());
+      await idbSet('cardDetail', {cardId:id, detail:card, fetchedAt:Date.now()});
+      return card;
+    }
+  } catch(e){ /* réseau indisponible */ }
+  return cached ? cached.detail : null;
 }
 
 // Compare la photo à toutes les cartes des sets candidats (identifiés par le code ou
@@ -1734,28 +1889,25 @@ async function resolveCardByVisualMatch(photoDataUrl, candidateSetIds){
   // proche des bonnes correspondances. Sans recadrage précis de la carte au préalable
   // (le "cadre de visée" du chantier 2), cette distance seule ne suffit pas à garantir
   // une identification fiable — c'est une proposition à faire vérifier, pas un verdict.
-  const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${best.id}`, {}, {maxRetries:1, baseDelay:400});
-  if(r.ok) return {card: normalizeCard(await r.json()), distance: bestDist, confidence: 'low'};
-  return null;
+  const card = await getCardDetailCached(best.id);
+  return card ? {card, distance: bestDist, confidence: 'low'} : null;
 }
 
 async function findClosestNumberInSet(setId, number, maxDistance=5){
   try{
-    const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/sets/${setId}`, {}, {maxRetries:1, baseDelay:400});
-    if(!r.ok) return null;
-    const setDetail = await r.json();
+    const list = await getSetCardList(setId); // déjà en cache la plupart du temps
     const target = parseInt(number, 10);
     if(Number.isNaN(target)) return null;
     let best = null, bestDist = Infinity;
-    for(const c of (setDetail.cards || [])){
+    for(const c of list){
       const n = parseInt(c.localId, 10);
       if(Number.isNaN(n)) continue;
       const dist = Math.abs(n - target);
       if(dist < bestDist){ bestDist = dist; best = c; }
     }
     if(best && bestDist <= maxDistance){
-      const r2 = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${best.id}`, {}, {maxRetries:1, baseDelay:400});
-      if(r2.ok) return { card: normalizeCard(await r2.json()), distance: bestDist };
+      const card = await getCardDetailCached(best.id);
+      if(card) return { card, distance: bestDist };
     }
   } catch(e){ /* pas de proposition */ }
   return null;
@@ -1837,11 +1989,7 @@ async function rankBriefsByVisualMatch(photoDataUrl, briefs, maxCandidates=25){
 }
 
 async function fetchCardById(id){
-  try{
-    const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
-    if(r.ok) return normalizeCard(await r.json());
-  } catch(e){ /* carte introuvable */ }
-  return null;
+  return getCardDetailCached(id);
 }
 
 // Repli par le nom : quand la résolution par numéro échoue (dénominateur mal lu, set
@@ -3604,7 +3752,7 @@ $('btn-rebuild-set-map').addEventListener('click', async ()=>{
   const status = $('set-map-status');
   status.textContent = '🔎 Reconstruction de la table des sets...';
   try{
-    localStorage.removeItem(SET_MAP_CACHE_KEY);
+    await idbDelete('meta', 'setAbbrMap');
     const loaded = await loadSetAbbreviationMap((done,total)=>{
       status.textContent = `🔎 Reconstruction... (${done}/${total})`;
     });
@@ -3614,6 +3762,46 @@ $('btn-rebuild-set-map').addEventListener('click', async ()=>{
   } catch(err){
     status.textContent = '⚠️ Échec du chargement : '+err.message;
   }
+});
+
+async function refreshCatalogueStatus(){
+  const s = await getCatalogueStatus();
+  const built = s.builtAt ? new Date(s.builtAt).toLocaleDateString('fr-FR') : null;
+  $('catalogue-status').textContent = built
+    ? `✅ Catalogue complet préchargé le ${built} — ${s.setCount} set(s), ${s.cardDetailCount} fiche(s) carte détaillée(s) en cache.`
+    : `${s.setCount} set(s) et ${s.cardDetailCount} fiche(s) carte en cache (au fil des scans — pas encore de préchargement complet).`;
+}
+refreshCatalogueStatus();
+
+$('btn-download-catalogue').addEventListener('click', async ()=>{
+  const btn = $('btn-download-catalogue');
+  const bar = $('catalogue-progress');
+  const fill = $('catalogue-progress-fill');
+  btn.disabled = true;
+  bar.style.display = 'block';
+  fill.style.width = '0%';
+  $('catalogue-status').textContent = '📦 Préchargement en cours...';
+  try{
+    await downloadFullCatalogue((done, total)=>{
+      fill.style.width = Math.round(done/total*100)+'%';
+      $('catalogue-status').textContent = `📦 Préchargement... (${done}/${total} sets)`;
+    });
+    toast('📦 Catalogue préchargé — identification hors-ligne prête.');
+  } catch(err){
+    $('catalogue-status').textContent = '⚠️ Échec du préchargement : '+err.message;
+  } finally {
+    btn.disabled = false;
+    bar.style.display = 'none';
+    await refreshCatalogueStatus();
+  }
+});
+
+$('btn-clear-catalogue').addEventListener('click', async ()=>{
+  await idbClearAll();
+  setAbbrMap = null;
+  setDenominatorMap = null;
+  toast('🗑️ Cache local vidé.');
+  await refreshCatalogueStatus();
 });
 
 // ---------------- FETCH WITH RETRY (backoff) ----------------
@@ -3695,15 +3883,10 @@ async function doSearch(){
     const candidates = briefs.slice(0, 8);
     status.textContent = candidates.length ? `Chargement de ${candidates.length} résultat(s)...` : 'Aucun résultat — vérifie l\'orthographe ou élargis la recherche.';
 
-    const details = await Promise.all(candidates.map(async b=>{
-      try{
-        const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${b.id}`, {}, {maxRetries:2, baseDelay:500});
-        return r.ok ? await r.json() : null;
-      } catch(e){ return null; }
-    }));
+    const details = await Promise.all(candidates.map(b => getCardDetailCached(b.id).catch(()=>null)));
     if(myToken !== searchToken) return;
 
-    let cards = details.filter(Boolean).map(normalizeCard);
+    let cards = details.filter(Boolean);
     if(setName) cards = cards.filter(c => (c.set?.name||'').toLowerCase().includes(setName));
 
     currentResults = cards;
@@ -4015,28 +4198,18 @@ function downloadBlob(blob, filename){
 updateQueueBadges();
 renderQueueStrip();
 
-// Réutilise la table des sets déjà en cache (si présente) sans reconstruire au démarrage.
-try{
-  const cached = JSON.parse(localStorage.getItem(SET_MAP_CACHE_KEY) || 'null');
-  if(cached && (Date.now() - cached.builtAt) < SET_MAP_MAX_AGE_MS && cached.byDenominator){
-    setAbbrMap = cached.map;
-    setDenominatorMap = cached.byDenominator;
-    $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
-  }
-} catch(e){ /* cache absent ou corrompu, sera reconstruite au premier scan */ }
-
-// Si le cache local n'a rien donné (première visite, ou expiré), précharge la table
-// des sets dès maintenant plutôt que d'attendre la première carte scannée en direct :
-// resolveLiveResult() la charge sinon à la volée au premier succès, ce qui retarderait
-// tout spécialement CE résultat-là (le badge ✅/🤔 reste bloqué sur "recherche..." le
-// temps du chargement). Même logique que le préchauffage des workers ci-dessous.
-if(!setAbbrMap){
-  loadSetAbbreviationMap(()=>{}).then(loaded=>{
-    setAbbrMap = loaded.map;
-    setDenominatorMap = loaded.byDenominator;
-    if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
-  }).catch(()=>{ /* resolveLiveResult retentera au premier scan */ });
-}
+// Précharge la table des sets dès l'ouverture de la page plutôt que d'attendre la
+// première carte scannée en direct : resolveLiveResult() la charge sinon à la volée
+// au premier succès, ce qui retarderait tout spécialement CE résultat-là (le badge
+// ✅/🤔 reste bloqué sur "recherche..." le temps du chargement). Si elle est déjà en
+// cache (IndexedDB), loadSetAbbreviationMap() la renvoie quasi instantanément — pas
+// besoin d'une pré-vérification synchrone séparée. Même logique que le préchauffage
+// des workers ci-dessous.
+loadSetAbbreviationMap(()=>{}).then(loaded=>{
+  setAbbrMap = loaded.map;
+  setDenominatorMap = loaded.byDenominator;
+  if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+}).catch(()=>{ /* resolveLiveResult retentera au premier scan */ });
 
 // Préchauffe les deux workers (OCR + détecteur, ~9,5 Mo à eux deux au premier chargement)
 // dès l'ouverture de la page plutôt qu'au clic sur "Démarrer la caméra" : c'est le
