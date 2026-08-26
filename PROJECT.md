@@ -646,6 +646,22 @@ façon non ambiguë (même fournisseur d'exécution forcé des deux côtés, com
 propre). Confirme la conclusion précédente sur des bases plus solides : ne pas
 changer de modèle.
 
+### 4.25 Sélecteur de zoom manuel
+Demande directe (l'utilisateur a vu ce contrôle dans une appli concurrente) : donner la
+main sur l'objectif/zoom plutôt que de dépendre uniquement de l'auto-réglage à 1x
+(§4.17), qui peut ne pas suffire selon l'appareil. Boutons remplis dynamiquement à
+partir de `track.getCapabilities().zoom` (`min`/`max` réels de l'appareil) — jamais une
+liste 0.6/1/2/3 devinée à l'avance : `[min, 1, 2, 3, max]` filtré à la plage réelle,
+dédupliqué, arrondi à 0,1 près. Masqué et vidé entièrement si l'appareil ne déclare
+aucune capacité de zoom (pas de contrôle qui ne ferait rien). Clic → simple
+`track.applyConstraints({advanced:[{zoom}]})`, avec le réglage réel remonté au
+diagnostic caméra existant en cas d'échec.
+
+Vérifié avec des `track` factices reproduisant deux profils (0,6-5x façon Samsung
+multi-objectifs, et 1-8x) : boutons corrects dans les deux cas, mise en évidence du
+palier actif, application réelle de la contrainte au clic, et masquage propre quand la
+capacité est absente.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

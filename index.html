@@ -135,6 +135,15 @@
     overflow:hidden; text-overflow:ellipsis; opacity:.85;
   }
   .cam-stop{position:absolute; top:10px; left:10px; background:rgba(0,0,0,.6); color:#fff; border:none; border-radius:14px; padding:5px 12px; font-size:12px;}
+  /* Sélecteur de zoom manuel : rempli dynamiquement selon les niveaux réellement
+     supportés par l'appareil (track.getCapabilities().zoom) — vide et masqué si
+     l'appareil n'expose pas cette capacité, jamais une liste figée devinée. */
+  .zoom-row{display:flex; gap:8px; justify-content:center; padding:6px 0; flex-shrink:0;}
+  .zoom-btn{
+    background:rgba(255,255,255,.08); color:#fff; border:1px solid var(--border);
+    border-radius:16px; padding:6px 14px; font-size:12.5px; font-weight:600;
+  }
+  .zoom-btn.active{background:var(--accent); color:#1a1a1a; border-color:var(--accent);}
   /* Panneau de résultat live : montre le numéro dès qu'il est lu, puis se complète
      (nom/set/prix) quand la résolution TCGdex répond — voir resolveLiveResult(). */
   .live-result{
@@ -261,6 +270,7 @@
         <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
         <button class="capture-fab" id="btn-capture-frame">📸</button>
       </div>
+      <div class="zoom-row" id="zoom-row" style="display:none;"></div>
       <div class="live-result" id="live-result" style="display:none;">
         <img id="live-result-img" src="" alt="">
         <div class="live-result-info">
@@ -2184,6 +2194,45 @@ $('btn-auto-capture').addEventListener('click', ()=>{
   $('btn-auto-capture').textContent = autoCaptureEnabled ? '⚡ Auto' : '✋ Manuel';
 });
 
+// Boutons de zoom manuel — remplis dynamiquement selon ce que l'appareil déclare
+// réellement supporter (jamais une liste 0.6/1/2/3 devinée à l'avance) : demandé par
+// l'utilisateur après avoir vu ce contrôle dans une appli concurrente, pour pouvoir
+// corriger lui-même l'objectif si l'auto-réglage à 1x (§4.17) ne suffit pas partout.
+function renderZoomButtons(track, caps){
+  const row = $('zoom-row');
+  if(!row) return;
+  if(!caps.zoom || caps.zoom.min == null || caps.zoom.max == null){
+    row.style.display = 'none';
+    row.innerHTML = '';
+    return;
+  }
+  // Quelques paliers usuels, filtrés à la plage réelle de l'appareil — pas de valeur
+  // ajoutée si elle n'existe pas physiquement dessus.
+  const candidates = [caps.zoom.min, 1, 2, 3, caps.zoom.max].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
+  const levels = [...new Set(candidates.map(z => Math.round(z*10)/10))].sort((a,b)=>a-b);
+  const settings = track.getSettings ? track.getSettings() : {};
+  const current = settings.zoom ?? 1;
+
+  row.innerHTML = levels.map(z =>
+    `<button class="zoom-btn${Math.abs(z-current)<0.05 ? ' active' : ''}" data-zoom="${z}">${z}×</button>`
+  ).join('');
+  row.style.display = 'flex';
+
+  row.querySelectorAll('.zoom-btn').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const z = parseFloat(btn.dataset.zoom);
+      try{
+        await track.applyConstraints({advanced:[{zoom:z}]});
+        row.querySelectorAll('.zoom-btn').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+        diagPush('err', {msg:'caméra: zoom manuel -> ' + z + '×'});
+      }catch(e){
+        diagPush('err', {msg:'caméra: zoom manuel ' + z + '× échoué (' + e.message + ')'});
+      }
+    });
+  });
+}
+
 async function startCamera(){
   $('cam-error').textContent = '';
   try{
@@ -2233,6 +2282,7 @@ async function startCamera(){
                           ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
                           ' réglage=' + (settings.zoom ?? '?') +
                           ' résolution=' + settings.width + 'x' + settings.height});
+      renderZoomButtons(track, caps);
     }catch(e){
       diagPush('err', {msg:'caméra: focusMode/zoom non applicable (' + e.message + ')'});
     }
@@ -3033,6 +3083,8 @@ function stopCamera(){
   $('cam-fullscreen-area').classList.remove('fs');
   document.documentElement.style.overflow = '';
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
+  $('zoom-row').style.display = 'none';
+  $('zoom-row').innerHTML = '';
   // La caméra libère le worker OCR : la file mise en attente pendant la prise de vue
   // peut repartir, et sans plus aucune concurrence elle ira à pleine vitesse.
   processQueueAnalysis();
