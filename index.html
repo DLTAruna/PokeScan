@@ -14,52 +14,112 @@
   }
 }
 </script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700;800&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14.5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3Cpath d='M2 16a14 14 0 0 1 28 0z' fill='%23ee1515' stroke='%2316181d' stroke-width='2'/%3E%3Crect x='2' y='14.5' width='28' height='3' fill='%2316181d'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3C/svg%3E">
 <style>
   :root{
-    --bg:#0f1115; --panel:#171a21; --panel2:#1f232c; --border:#2a2f3a;
-    --text:#eef0f3; --muted:#9aa3b2; --accent:#ffcb05; --accent2:#3d7dca;
-    --good:#3ba55d; --warn:#e0a12a; --bad:#e0553f; --radius:12px;
+    --bg:#0a0d16; --panel:#151a24; --panel2:#1c2331; --border:#2a3244;
+    --text:#f1f3f8; --muted:#93a0b7; --accent:#ffcb05; --accent-dark:#e0a900; --accent2:#3d7dca; --accent2-dark:#2f68a8;
+    --red:#ee1515; --good:#3ba55d; --warn:#e0a12a; --bad:#e85b45; --radius:16px;
+    --shadow:0 8px 22px rgba(0,0,0,.35);
   }
   *{box-sizing:border-box;}
+  ::selection{background:var(--accent); color:#1a1a1a;}
+  ::-webkit-scrollbar{width:10px; height:10px;}
+  ::-webkit-scrollbar-track{background:var(--bg);}
+  ::-webkit-scrollbar-thumb{background:var(--border); border-radius:6px;}
+  ::-webkit-scrollbar-thumb:hover{background:var(--accent2);}
   body{
-    margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
-    background:var(--bg); color:var(--text); padding-bottom:80px;
+    margin:0; font-family:'Nunito',-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    background:
+      radial-gradient(circle at 12% 0%, rgba(61,125,202,.18), transparent 42%),
+      radial-gradient(circle at 88% 10%, rgba(238,21,21,.13), transparent 38%),
+      radial-gradient(circle at 50% 100%, rgba(255,203,5,.07), transparent 55%),
+      var(--bg);
+    background-attachment:fixed;
+    color:var(--text); padding-bottom:80px; min-height:100vh;
   }
+  h1,h2,.tab-btn,.stat .num{font-family:'Baloo 2','Nunito',sans-serif;}
   header{
-    background:linear-gradient(135deg,#2a3f9e,#3d7dca); padding:18px 16px; position:sticky; top:0; z-index:20;
-    box-shadow:0 2px 10px rgba(0,0,0,.3);
+    background:linear-gradient(135deg,#c81212 0%,#2a3f9e 55%,#3d7dca 100%);
+    padding:20px 16px 16px; position:sticky; top:0; z-index:20;
+    box-shadow:0 4px 18px rgba(0,0,0,.4); border-bottom:3px solid var(--accent);
+    position:sticky; overflow:hidden;
   }
-  header h1{margin:0; font-size:19px; display:flex; align-items:center; gap:8px;}
-  header p{margin:4px 0 0; font-size:12.5px; color:#dbe6ff;}
-  .tabs{display:flex; gap:6px; margin-top:12px; flex-wrap:wrap;}
+  header::before{
+    content:''; position:absolute; inset:0; pointer-events:none; opacity:.10;
+    background-image:radial-gradient(circle at 20% 130%, #fff 0 3px, transparent 4px),
+                      radial-gradient(circle at 62% -30%, #fff 0 3px, transparent 4px),
+                      radial-gradient(circle at 90% 60%, #fff 0 2px, transparent 3px);
+    background-size:120px 120px, 90px 90px, 60px 60px;
+  }
+  .pkb-art{
+    position:absolute; top:-14px; right:-4px; width:92px; height:92px; opacity:.24;
+    object-fit:contain; pointer-events:none; filter:drop-shadow(0 4px 10px rgba(0,0,0,.5));
+  }
+  .pkb-brand{display:flex; align-items:center; gap:10px; position:relative; z-index:1;}
+  .pokeball{
+    width:26px; height:26px; border-radius:50%; flex-shrink:0; position:relative;
+    background:linear-gradient(#fff 0 46%, #16181d 46% 54%, var(--red) 54% 100%);
+    box-shadow:inset 0 0 0 2px #16181d, 0 2px 5px rgba(0,0,0,.4);
+  }
+  .pokeball::after{
+    content:''; position:absolute; top:50%; left:50%; width:9px; height:9px; background:#fff;
+    border:2px solid #16181d; border-radius:50%; transform:translate(-50%,-50%);
+  }
+  .pokeball.spin{animation:pkbSpin 1s linear infinite;}
+  @keyframes pkbSpin{to{transform:rotate(360deg);}}
+  header h1{margin:0; font-size:21px; font-weight:800; letter-spacing:.2px; display:flex; align-items:center; gap:8px; position:relative; z-index:1;}
+  header p{margin:5px 0 0; font-size:12.5px; color:#e8edff; position:relative; z-index:1;}
+  .tabs{display:flex; gap:6px; margin-top:14px; flex-wrap:wrap; position:relative; z-index:1;}
   .tab-btn{
-    background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.25); color:#fff;
-    padding:7px 12px; border-radius:20px; font-size:12.5px; cursor:pointer;
+    background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.28); color:#fff;
+    padding:7px 13px; border-radius:20px; font-size:12.5px; cursor:pointer; font-weight:600;
+    transition:background .18s ease, box-shadow .18s ease;
   }
-  .tab-btn.active{background:#fff; color:#2a3f9e; font-weight:600;}
+  .tab-btn:hover{background:rgba(255,255,255,.24);}
+  .tab-btn.active{background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a; font-weight:800; box-shadow:0 3px 10px rgba(0,0,0,.3); border-color:transparent;}
   main{max-width:900px; margin:0 auto; padding:16px;}
   .panel{
-    background:var(--panel); border:1px solid var(--border); border-radius:var(--radius);
-    padding:16px; margin-bottom:16px;
+    background:linear-gradient(180deg, var(--panel), var(--panel2) 130%);
+    border:1px solid var(--border); border-radius:var(--radius);
+    padding:18px; margin-bottom:16px; position:relative; box-shadow:var(--shadow); overflow:hidden;
   }
-  .panel h2{margin:0 0 4px; font-size:15px;}
-  .panel .sub{color:var(--muted); font-size:12.5px; margin:0 0 14px;}
-  label{display:block; font-size:12.5px; color:var(--muted); margin:10px 0 4px;}
+  .panel::before{
+    content:''; position:absolute; top:0; left:0; right:0; height:3px;
+    background:linear-gradient(90deg,var(--red),var(--accent),var(--accent2));
+  }
+  .panel h2{margin:0 0 4px; font-size:16px; font-weight:700;}
+  .panel .sub{color:var(--muted); font-size:12.5px; margin:0 0 14px; line-height:1.5;}
+  label{display:block; font-size:12.5px; color:var(--muted); margin:10px 0 4px; font-weight:600;}
   input[type=text], input[type=number], input[type=password], select, textarea{
     width:100%; background:var(--panel2); border:1px solid var(--border); color:var(--text);
-    padding:10px; border-radius:8px; font-size:14px; font-family:inherit;
+    padding:10px; border-radius:10px; font-size:14px; font-family:inherit; transition:border-color .15s ease;
+  }
+  input[type=text]:focus, input[type=number]:focus, input[type=password]:focus, select:focus, textarea:focus{
+    outline:none; border-color:var(--accent2); box-shadow:0 0 0 3px rgba(61,125,202,.25);
   }
   textarea{resize:vertical; min-height:70px;}
   .row{display:flex; gap:10px; flex-wrap:wrap; align-items:flex-end;}
   .row > *{flex:1; min-width:140px;}
   button{
-    cursor:pointer; border:none; border-radius:8px; padding:10px 16px; font-size:13.5px; font-weight:600;
+    cursor:pointer; border:none; border-radius:10px; padding:10px 16px; font-size:13.5px; font-weight:700;
+    transition:transform .12s ease, box-shadow .12s ease, background .15s ease; letter-spacing:.1px;
   }
-  .btn-primary{background:var(--accent2); color:#fff;}
-  .btn-primary:hover{background:#2f68a8;}
-  .btn-gold{background:var(--accent); color:#1a1a1a;}
+  button:active{transform:scale(.97);}
+  .btn-primary{background:linear-gradient(135deg,var(--accent2),var(--accent2-dark)); color:#fff; box-shadow:0 3px 10px rgba(61,125,202,.35);}
+  .btn-primary:hover{background:linear-gradient(135deg,#4d8bd6,var(--accent2));}
+  .btn-gold{
+    background:linear-gradient(135deg,#ffe066,var(--accent) 60%,var(--accent-dark)); color:#1a1a1a;
+    box-shadow:0 3px 10px rgba(255,203,5,.35); position:relative; overflow:hidden;
+  }
+  .btn-gold:hover{box-shadow:0 4px 14px rgba(255,203,5,.5);}
   .btn-ghost{background:var(--panel2); color:var(--text); border:1px solid var(--border);}
+  .btn-ghost:hover{border-color:var(--accent2); background:#212a3b;}
   .btn-danger{background:transparent; color:var(--bad); border:1px solid var(--bad);}
+  .btn-danger:hover{background:rgba(232,91,69,.12);}
   .btn-sm{padding:5px 9px; font-size:12px;}
   .hint{font-size:11.5px; color:var(--muted); margin-top:4px;}
   .badge{display:inline-block; font-size:10.5px; padding:2px 7px; border-radius:10px; background:var(--panel2); color:var(--muted); margin-left:6px;}
@@ -103,9 +163,13 @@
   .flash:not(.show){transition:opacity .25s;}
   .capture-fab{
     position:absolute; bottom:16px; left:50%; transform:translateX(-50%); width:64px; height:64px;
-    border-radius:50%; background:#fff; border:4px solid var(--accent); font-size:24px;
+    border-radius:50%; border:3px solid var(--accent); font-size:22px;
+    background:radial-gradient(circle at center, #fff 0 33%, transparent 34%),
+               linear-gradient(#ee1515 0 46%, #16181d 46% 54%, #fff 54% 100%);
     display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(0,0,0,.4);
+    transition:transform .12s ease;
   }
+  .capture-fab:active{transform:translateX(-50%) scale(.94);}
   /* ---- cadre de visée : rouge = pas de carte, jaune = à ajuster, vert = prêt ---- */
   .aim-overlay{
     position:absolute; inset:0; width:100%; height:100%;
@@ -154,21 +218,22 @@
     font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;
     padding:0;
   }
-  .zoom-btn.active{background:rgba(0,0,0,.55); color:var(--accent); border-color:var(--accent);}
+  .zoom-btn.active{background:rgba(0,0,0,.55); color:var(--accent); border-color:var(--accent); box-shadow:0 0 0 3px rgba(255,203,5,.25);}
   /* Panneau de résultat live : montre le numéro dès qu'il est lu, puis se complète
      (nom/set/prix) quand la résolution TCGdex répond — voir resolveLiveResult(). */
   .live-result{
     display:flex; gap:10px; align-items:center; background:var(--panel2); border:1px solid var(--border);
-    border-radius:10px; padding:8px 10px; margin-top:8px; position:relative;
+    border-radius:12px; padding:8px 10px; margin-top:8px; position:relative; box-shadow:var(--shadow);
   }
-  .live-result img{width:46px; height:64px; object-fit:contain; border-radius:6px; background:#0a0a0a; flex-shrink:0;}
+  .live-result img{width:46px; height:64px; object-fit:contain; border-radius:6px; background:#0a0a0a; flex-shrink:0; box-shadow:0 2px 6px rgba(0,0,0,.4);}
   .live-result-info{flex:1; min-width:0; font-size:12.5px; display:flex; flex-direction:column; gap:1px; padding-right:22px;}
   .live-result-info .lr-row{display:flex; justify-content:space-between; gap:8px; min-width:0;}
   .live-result-info .lr-row b{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; flex:1; text-align:right;}
   .live-result-info .lr-lbl{color:var(--muted); font-size:11px; flex-shrink:0;}
   .live-result .lr-badge{position:absolute; top:8px; right:10px; font-size:15px;}
   .queue-strip{display:flex; gap:6px; overflow-x:auto; margin-top:10px; padding-bottom:4px;}
-  .queue-strip img{width:44px; height:60px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid var(--border);}
+  .queue-strip img{width:44px; height:60px; object-fit:cover; border-radius:6px; flex-shrink:0; border:1px solid var(--border); transition:transform .12s ease;}
+  .queue-strip img:hover{transform:translateY(-3px); border-color:var(--accent2);}
 
   /* ---- identify: apercu de la file avec statut OCR ---- */
   .qo-thumb{position:relative; flex-shrink:0; cursor:pointer;}
@@ -184,9 +249,10 @@
   /* ---- identify ---- */
   .identify-topbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:4px;}
   .identify-topbar > *{flex:1; min-width:110px;}
-  .identify-photo-wrap{position:relative; text-align:center; background:#0a0a0a; border-radius:var(--radius); padding:10px; min-height:160px; display:flex; align-items:center; justify-content:center;}
-  .identify-photo{max-width:100%; max-height:46vh; border-radius:8px;}
-  .no-photo-placeholder{color:var(--muted); font-size:13px; padding:40px 10px;}
+  .identify-photo-wrap{position:relative; text-align:center; background:#0a0a0a; border-radius:var(--radius); padding:10px; min-height:160px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border);}
+  .identify-photo{max-width:100%; max-height:46vh; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.5);}
+  .no-photo-placeholder{color:var(--muted); font-size:13px; padding:40px 10px; text-align:center;}
+  .empty-icon{display:block; width:64px; height:64px; object-fit:contain; margin:0 auto 10px; opacity:.45; filter:grayscale(.15);}
   .confirm-overlay{
     position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
     background:rgba(10,14,20,.6); border-radius:var(--radius); opacity:0; pointer-events:none;
@@ -197,7 +263,7 @@
   .search-results{max-height:320px; overflow-y:auto; margin-top:8px; display:flex; flex-direction:column; gap:6px;}
   .result-item{
     display:flex; gap:10px; align-items:center; background:var(--panel2); border:1px solid var(--border);
-    border-radius:8px; padding:8px; cursor:pointer;
+    border-radius:10px; padding:8px; cursor:pointer; transition:border-color .12s ease, background .12s ease;
   }
   .result-item:hover, .result-item.highlighted{border-color:var(--accent2); background:#212945;}
   .result-item img{width:40px; height:56px; object-fit:contain; border-radius:4px; background:#0a0a0a;}
@@ -220,18 +286,18 @@
   .table-wrap{overflow-x:auto;}
   .empty-state{color:var(--muted); text-align:center; padding:30px 10px; font-size:13.5px;}
   .stat-row{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px;}
-  .stat{background:var(--panel2); border:1px solid var(--border); border-radius:10px; padding:10px 14px; flex:1; min-width:120px;}
-  .stat .num{font-size:20px; font-weight:700;}
+  .stat{background:var(--panel2); border:1px solid var(--border); border-top:2px solid var(--accent2); border-radius:10px; padding:10px 14px; flex:1; min-width:120px;}
+  .stat .num{font-size:22px; font-weight:800; color:var(--accent);}
   .stat .lbl{font-size:11px; color:var(--muted);}
   .charlimit{font-size:11px; text-align:right; color:var(--muted);}
   .charlimit.over{color:var(--bad); font-weight:600;}
   .toast{
-    position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:#222; color:#fff;
-    padding:10px 18px; border-radius:20px; font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.4);
+    position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:linear-gradient(135deg,#26304a,#1a2233); color:#fff;
+    padding:10px 18px; border-radius:20px; font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.5); border:1px solid var(--border);
     z-index:100; opacity:0; transition:opacity .25s;
   }
   .toast.show{opacity:1;}
-  .guide h3{font-size:14px; margin:18px 0 6px;}
+  .guide h3{font-size:14px; margin:18px 0 6px; color:var(--accent); border-left:3px solid var(--accent2); padding-left:8px;}
   .guide p, .guide li{font-size:13px; color:#c7cdd6; line-height:1.55;}
   .guide code{background:var(--panel2); padding:1px 6px; border-radius:4px; font-size:12px;}
   .guide table{margin-top:8px;}
@@ -242,12 +308,21 @@
   .flexend{display:flex; justify-content:flex-end; gap:8px; flex-wrap:wrap;}
   .divider{height:1px; background:var(--border); margin:14px 0;}
   .link-btn{background:none; border:none; color:#7fb2ef; text-decoration:underline; padding:0; font-size:12.5px; font-weight:400;}
+
+  .pkb-footer{
+    max-width:900px; margin:8px auto 0; padding:18px 16px 30px; text-align:center;
+    color:var(--muted); font-size:11.5px; display:flex; align-items:center; justify-content:center; gap:8px;
+  }
 </style>
 </head>
 <body>
 
 <header>
-  <h1>🃏 PokéScan → eBay Lister</h1>
+  <img class="pkb-art" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="" aria-hidden="true">
+  <div class="pkb-brand">
+    <span class="pokeball"></span>
+    <h1>PokéScan <span style="opacity:.65; font-weight:600;">→</span> eBay Lister</h1>
+  </div>
   <p>Capture en rafale ou en masse, identifie à toute vitesse, exporte pour eBay.</p>
   <div class="tabs">
     <button class="tab-btn active" data-tab="capture">📸 Capture (<span class="queue-badge">0</span>)</button>
@@ -373,7 +448,10 @@
 
       <div class="identify-photo-wrap" id="identify-photo-wrap">
         <img id="identify-photo" class="identify-photo" style="display:none;">
-        <div class="no-photo-placeholder" id="identify-placeholder">Aucune photo en attente.<br>Tu peux quand même chercher une carte et l'ajouter sans photo, ou aller dans l'onglet Capture.</div>
+        <div class="no-photo-placeholder" id="identify-placeholder">
+          <img class="empty-icon" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png" alt="" aria-hidden="true">
+          Aucune photo en attente.<br>Tu peux quand même chercher une carte et l'ajouter sans photo, ou aller dans l'onglet Capture.
+        </div>
         <div class="confirm-overlay" id="confirm-overlay"><div class="confirm-check">✅</div></div>
       </div>
 
@@ -429,7 +507,10 @@
           <tbody id="batch-tbody"></tbody>
         </table>
       </div>
-      <div class="empty-state" id="batch-empty">Aucune carte ajoutée pour le moment. Va dans l'onglet "Capture" puis "Identifier" pour commencer.</div>
+      <div class="empty-state" id="batch-empty">
+        <img class="empty-icon" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/132.png" alt="" aria-hidden="true">
+        Aucune carte ajoutée pour le moment. Va dans l'onglet "Capture" puis "Identifier" pour commencer.
+      </div>
     </div>
   </section>
 
@@ -583,6 +664,11 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
   </section>
 
 </main>
+
+<footer class="pkb-footer">
+  <span class="pokeball" style="width:15px; height:15px;"></span>
+  Fait avec 💛 pour les dresseurs qui trient leur classeur à la main.
+</footer>
 
 <div class="toast" id="toast"></div>
 <div class="undo-bar" id="undo-bar">
