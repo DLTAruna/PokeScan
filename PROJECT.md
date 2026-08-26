@@ -776,6 +776,54 @@ n'affichait de message — corrigé en ajoutant `setAimHint('Écarte les autres 
 cadre')` aux deux endroits (pré-filtre et filtre précis), pour donner un indice
 actionnable plutôt que de laisser l'utilisateur deviner pourquoi ça ne capture pas.
 
+### 4.30 Retour de test Samsung : deux problèmes distincts
+Diagnostic réel confirmant l'environnement : `moteurDemandé=["wasm"]` (pas
+`["webgpu","wasm"]`) — sur CE Samsung, `isWebGpuAvailable()` renvoie `false` d'entrée :
+WebGPU n'est pas disponible du tout dans ce navigateur, pas un échec de repli. Netteté
+basse sur toutes les tentatives de ce relevé (68-315), cohérent avec le point suivant.
+
+**1. Le "1×" affiché ne correspond pas à un vrai 1x sur cet appareil** — confirmé par
+l'utilisateur : rester net exige de basculer manuellement sur 2×. Ça valide et durcit
+la conclusion de §4.26 : la valeur numérique "1" n'a AUCUNE sémantique garantie d'un
+appareil à l'autre — ce n'est pas "l'objectif principal", c'est juste "le minimum de la
+plage de zoom de la caméra qui a été ouverte", quelle qu'elle soit. Imposer `zoom:1`
+par défaut était donc une hypothèse qui s'est révélée activement fausse sur cet
+appareil précis.
+
+Corrigé en cessant de deviner une valeur universelle : `ZOOM_PREF_KEY`
+(`localStorage`) retient le dernier niveau de zoom que l'UTILISATEUR a lui-même
+choisi et trouvé net sur SON appareil (mis à jour à chaque clic sur un bouton de la
+rangée de zoom), réutilisé comme valeur de démarrage par défaut la fois suivante — au
+lieu de "1" à chaque redémarrage de la caméra. Toujours "1" tant qu'aucun choix n'a
+encore été fait (reste un point de départ raisonnable en l'absence d'information).
+
+**2. Régression sur l'anti-doublon "même carte"** — retour utilisateur : une
+protection qui fonctionnait "il y a 2 versions" ("même carte détectée, présente la
+suivante") ne se déclenche plus pour une carte tenue à la main, immobile en
+apparence : plusieurs captures du même numéro s'enchaînent. Cause probable : le
+tremblement naturel de la main (jamais assez pour faire chuter le score sous
+`MIN_SCORE`, donc `cardConfirmedAbsentSinceCapture` ne se déclenche jamais) est
+désormais capté plus souvent depuis le retrait du verrou de stabilité (§4.20/§4.22) —
+et une lecture OCR peut varier légèrement d'un appel à l'autre (bruit du moteur),
+donc même un numéro identique entre deux captures ne prouve pas que la carte a
+vraiment bougé. Le contrôle de ressemblance visuelle (dHash) peut aussi être mis en
+défaut par ce même tremblement (angle légèrement différent à chaque prise).
+
+Ajouté un second signal complémentaire : `cornerMoveSinceCapture`, le déplacement
+CUMULÉ des coins (pas la seule comparaison entre deux détections consécutives, qui ne
+capte que le dernier petit pas) depuis la dernière capture, remis à zéro à chaque
+capture réussie. Une capture du même numéro n'est acceptée comme nouvelle que si le
+score est retombé sous le seuil À UN MOMENT (comme avant) OU si ce déplacement cumulé
+dépasse `SAME_CARD_MOVE_THRESHOLD` (0,12, nettement au-dessus du tremblement de main
+normal) — une vraie re-présentation volontaire (l'utilisateur confirme : la carte
+bougera forcément dans ce cas) déclenche presque toujours l'un des deux signaux,
+contrairement à un tremblement sur place.
+
+Vérifié par simulation isolée : une carte immobile dont l'OCR redonne le même numéro
+mais un hash légèrement différent (tremblement) est maintenant bien rejetée comme
+doublon ; une carte différente entre les deux passe normalement ; une re-présentation
+volontaire avec un déplacement franc des coins est acceptée.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
