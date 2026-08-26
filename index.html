@@ -126,6 +126,12 @@
     position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
   }
+  /* Masqué par défaut, affiché seulement si l'appareil expose plusieurs objectifs
+     distincts (voir startCamera) — pas de bouton qui ne ferait rien. */
+  .lens-switch{
+    position:absolute; top:44px; right:10px; background:rgba(0,0,0,.6); color:#fff;
+    border:1px solid var(--border); border-radius:14px; padding:4px 10px; font-size:12px;
+  }
   /* Rappel de prise en main : les doigts posés sur les bords gênent la détection du
      quadrilatère de la carte, même si le numéro (bas-gauche) reste visible. */
   .grip-hint{
@@ -264,6 +270,7 @@
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
         <div class="flash" id="flash"></div>
         <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
+        <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Objectif</button>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
         <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
@@ -2233,59 +2240,93 @@ function renderZoomButtons(track, caps){
   });
 }
 
+// Liste des caméras vidéo une fois l'autorisation accordée (les labels ne sont
+// renseignés qu'après, pas avant — enumerateDevices() avant toute autorisation ne
+// renvoie que des deviceId vides). Sert au bouton "changer d'objectif" ci-dessous :
+// sur certains téléphones multi-objectifs, chaque objectif physique (principal,
+// grand-angle, téléobjectif) est exposé comme un appareil SÉPARÉ ; sur d'autres,
+// l'OS les fusionne en une seule caméra logique où le zoom ne fait que recadrer
+// numériquement l'image déjà ouverte, sans jamais changer d'objectif — on ne peut
+// savoir dans quel cas on est qu'en énumérant réellement ce que l'appareil déclare.
+let availableCameras = [];
+let currentCameraDeviceId = null;
+
+function buildCameraConstraints(deviceId){
+  return {
+    // Résolution remontée à 1920x1440 (elle était plafonnée à 1280x960) : sur
+    // certains appareils (constaté : Samsung), demander une résolution basse pousse
+    // le pilote caméra vers un mode capteur dégradé où l'autofocus ne s'engage même
+    // plus — comportement absent d'une appli caméra native, qui demande toujours le
+    // plein capteur. Sans risque de ralentissement cette fois : tout le pipeline
+    // (détection, redressement, lecture) downscale déjà très tôt (§4.6, §4.10) — la
+    // caméra n'a plus besoin de fournir une petite image, on la réduit nous-mêmes.
+    // focusMode:'continuous' (dans `advanced`, seule forme standard) : sans lui,
+    // certains navigateurs ne font la mise au point qu'une fois au démarrage du flux
+    // et jamais plus ensuite.
+    // zoom:{ideal:1} : sur les téléphones multi-objectifs (Samsung notamment), le
+    // "objectif arrière" logique que facingMode:'environment' ouvre par défaut peut
+    // démarrer sur le grand-angle (~0.6x) plutôt que l'objectif principal (1x) —
+    // constaté par l'utilisateur, mais insuffisant si ce zoom est purement numérique
+    // (voir buildCameraConstraints appelant / switchLens ci-dessous).
+    video: {
+      ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'environment'}),
+      width:{ideal:1920}, height:{ideal:1440},
+      advanced:[{focusMode:'continuous'}, {zoom:1}]
+    },
+    audio:false
+  };
+}
+
+// `advanced` dans les contraintes initiales n'est pas honoré par tous les
+// navigateurs : on retente explicitement via applyConstraints() une fois le flux
+// obtenu, et on ne le fait QUE si l'appareil déclare le supporter (getCapabilities)
+// pour éviter une exception sur un réglage qu'il ne connaît pas. Les capacités
+// réelles sont remontées au diagnostic — c'est la seule façon de savoir, sur un
+// appareil qu'on ne peut pas tester ici, si le focus continu / le zoom sont même
+// disponibles, et si "1" est une valeur acceptée dans la plage réelle de l'appareil.
+async function applyTrackTweaksAndDiagnostics(track){
+  try{
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if(caps.focusMode && caps.focusMode.includes('continuous')){
+      await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+    }
+    if(caps.zoom && caps.zoom.min <= 1 && caps.zoom.max >= 1){
+      await track.applyConstraints({advanced:[{zoom:1}]});
+    }
+    const settings = track.getSettings ? track.getSettings() : {};
+    diagPush('err', {msg:'caméra: focusMode capacités=' + JSON.stringify(caps.focusMode||null) +
+                        ' réglage=' + (settings.focusMode||'?') +
+                        ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
+                        ' réglage=' + (settings.zoom ?? '?') +
+                        ' résolution=' + settings.width + 'x' + settings.height +
+                        ' label=' + (track.label || '?')});
+    renderZoomButtons(track, caps);
+  }catch(e){
+    diagPush('err', {msg:'caméra: focusMode/zoom non applicable (' + e.message + ')'});
+  }
+}
+
 async function startCamera(){
   $('cam-error').textContent = '';
   try{
-    cameraStream = await navigator.mediaDevices.getUserMedia({
-      // Résolution remontée à 1920x1440 (elle était plafonnée à 1280x960) : sur
-      // certains appareils (constaté : Samsung), demander une résolution basse pousse
-      // le pilote caméra vers un mode capteur dégradé où l'autofocus ne s'engage même
-      // plus — comportement absent d'une appli caméra native, qui demande toujours le
-      // plein capteur. Sans risque de ralentissement cette fois : tout le pipeline
-      // (détection, redressement, lecture) downscale déjà très tôt (§4.6, §4.10) — la
-      // caméra n'a plus besoin de fournir une petite image, on la réduit nous-mêmes.
-      // focusMode:'continuous' (dans `advanced`, seule forme standard) : sans lui,
-      // certains navigateurs ne font la mise au point qu'une fois au démarrage du flux
-      // et jamais plus ensuite.
-      // zoom:{ideal:1} : sur les téléphones multi-objectifs (Samsung notamment), le
-      // "objectif arrière" logique que facingMode:'environment' ouvre par défaut peut
-      // démarrer sur le grand-angle (~0.6x) plutôt que l'objectif principal (1x) —
-      // constaté par l'utilisateur. Le grand-angle a une profondeur de champ/mise au
-      // point différente, peu adaptée à une prise de vue rapprochée d'une carte.
-      video: {
-        facingMode:'environment',
-        width:{ideal:1920}, height:{ideal:1440},
-        advanced:[{focusMode:'continuous'}, {zoom:1}]
-      },
-      audio:false
-    });
+    cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(null));
+    currentCameraDeviceId = cameraStream.getVideoTracks()[0].getSettings().deviceId || null;
 
-    // `advanced` dans les contraintes initiales n'est pas honoré par tous les
-    // navigateurs : on retente explicitement via applyConstraints() une fois le flux
-    // obtenu, et on ne le fait QUE si l'appareil déclare le supporter (getCapabilities)
-    // pour éviter une exception sur un réglage qu'il ne connaît pas. Les capacités
-    // réelles sont remontées au diagnostic — c'est la seule façon de savoir, sur un
-    // appareil qu'on ne peut pas tester ici, si le focus continu / le zoom sont même
-    // disponibles, et si "1" est une valeur acceptée dans la plage réelle de l'appareil.
-    const track = cameraStream.getVideoTracks()[0];
+    // Énumère les caméras dispo maintenant que l'autorisation est accordée (les
+    // labels ne sont visibles qu'à partir de là) — remonté au diagnostic pour savoir,
+    // sur CET appareil précis, si plusieurs objectifs distincts existent réellement.
     try{
-      const caps = track.getCapabilities ? track.getCapabilities() : {};
-      if(caps.focusMode && caps.focusMode.includes('continuous')){
-        await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
-      }
-      if(caps.zoom && caps.zoom.min <= 1 && caps.zoom.max >= 1){
-        await track.applyConstraints({advanced:[{zoom:1}]});
-      }
-      const settings = track.getSettings ? track.getSettings() : {};
-      diagPush('err', {msg:'caméra: focusMode capacités=' + JSON.stringify(caps.focusMode||null) +
-                          ' réglage=' + (settings.focusMode||'?') +
-                          ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
-                          ' réglage=' + (settings.zoom ?? '?') +
-                          ' résolution=' + settings.width + 'x' + settings.height});
-      renderZoomButtons(track, caps);
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      availableCameras = devices.filter(d => d.kind === 'videoinput');
+      diagPush('err', {msg:'caméra: objectifs détectés = ' + JSON.stringify(
+        availableCameras.map(d => ({id:d.deviceId.slice(0,8), label:d.label || '(sans nom)'})))});
     }catch(e){
-      diagPush('err', {msg:'caméra: focusMode/zoom non applicable (' + e.message + ')'});
+      availableCameras = [];
+      diagPush('err', {msg:'caméra: énumération des objectifs échouée (' + e.message + ')'});
     }
+    $('btn-switch-lens').style.display = availableCameras.length > 1 ? 'block' : 'none';
+
+    await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
 
     $('video').srcObject = cameraStream;
     $('video-wrap').classList.add('active');
@@ -2300,6 +2341,27 @@ async function startCamera(){
     $('cam-error').textContent = '⚠️ Caméra indisponible ('+err.message+'). Utilise "Import en masse" ou "Photo unique" ci-dessous à la place.';
   }
 }
+
+// Bascule vers l'objectif SUIVANT de la liste énumérée au démarrage — un vrai
+// changement d'appareil (deviceId), pas juste un zoom numérique sur celui déjà ouvert.
+// Ne fait rien de spécial si l'appareil ne fusionne ses objectifs qu'en une seule
+// caméra logique (bouton alors masqué, availableCameras.length <= 1).
+async function switchLens(){
+  if(availableCameras.length < 2) return;
+  const idx = availableCameras.findIndex(d => d.deviceId === currentCameraDeviceId);
+  const next = availableCameras[(idx + 1) % availableCameras.length];
+  try{
+    const newStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(next.deviceId));
+    if(cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = newStream;
+    currentCameraDeviceId = next.deviceId;
+    $('video').srcObject = cameraStream;
+    await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
+  }catch(e){
+    diagPush('err', {msg:'caméra: changement d\'objectif échoué (' + e.message + ')'});
+  }
+}
+$('btn-switch-lens').addEventListener('click', switchLens);
 
 // ---------------- VISÉE ET CAPTURE AUTOMATIQUE ----------------
 // La géométrie seule ne suffit pas : une carte bien cadrée peut rester illisible (flou,
@@ -3085,6 +3147,9 @@ function stopCamera(){
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
   $('zoom-row').style.display = 'none';
   $('zoom-row').innerHTML = '';
+  $('btn-switch-lens').style.display = 'none';
+  availableCameras = [];
+  currentCameraDeviceId = null;
   // La caméra libère le worker OCR : la file mise en attente pendant la prise de vue
   // peut repartir, et sans plus aucune concurrence elle ira à pleine vitesse.
   processQueueAnalysis();

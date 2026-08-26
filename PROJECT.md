@@ -662,6 +662,42 @@ multi-objectifs, et 1-8x) : boutons corrects dans les deux cas, mise en évidenc
 palier actif, application réelle de la contrainte au clic, et masquage propre quand la
 capacité est absente.
 
+### 4.26 Zoom manuel insuffisant sur Samsung : 0/39 captures — bascule d'objectif réel
+Retour utilisateur après test réel avec le sélecteur de zoom (§4.25) : « impression que
+c'est un zoom numérique, ça ne change pas l'objectif ». Diagnostic confirmé : **39
+tentatives, 0 capture réussie**. Deux indices convergents dans les logs :
+- Netteté pas uniformément mauvaise (souvent 300-500, largement au-dessus du seuil de
+  40) — donc pas un flou global qui bloquerait tout.
+- Plusieurs lectures montrent le texte de la barre **Faiblesse/Résistance** (milieu de
+  carte) au lieu du numéro (bas de carte) — un signe que la bande de lecture n'est pas
+  positionnée là où elle devrait sur cet appareil précis, pas seulement du flou.
+
+Bonne nouvelle distincte : la vitesse (255-678 ms par tentative) est excellente sur cet
+appareil — les optimisations précédentes tiennent, le problème restant est uniquement
+optique.
+
+Le constraint `zoom` du Media Capture API n'a **aucune sémantique garantie** :
+certains appareils/pilotes l'implémentent comme un vrai changement d'objectif optique
+(zoomRatio Android exposé jusqu'au niveau logique multi-caméra), d'autres comme un
+simple recadrage/agrandissement numérique de l'image déjà ouverte sur le capteur en
+cours — impossible à savoir sans tester, et le second cas n'apporte aucune netteté en
+plus.
+
+Ajouté : **énumération réelle des caméras** (`navigator.mediaDevices.
+enumerateDevices()`, appelée seulement après l'autorisation accordée — les `label`
+sont vides avant) pour savoir si CET appareil expose plusieurs objectifs physiques
+comme des `deviceId` distincts (constaté en pratique sur nombre de téléphones Samsung,
+contrairement à un iPhone qui les fusionne). Si oui, un bouton « 🔄 Objectif »
+(masqué sinon) relance `getUserMedia` avec `deviceId:{exact:...}` — un changement
+d'appareil réel, pas un zoom — en cyclant parmi les caméras détectées. La liste
+d'objectifs détectés (id tronqué + label) est poussée au diagnostic.
+
+Vérifié avec `getUserMedia`/`enumerateDevices` simulés (deux objectifs arrière
+factices) : détection correcte du nombre d'objectifs, affichage conditionnel du
+bouton, bascule de `deviceId` effective. Seule la ré-assignation finale de
+`video.srcObject` n'a pu être vérifiée de bout en bout ici (un faux flux n'est pas une
+vraie instance `MediaStream`, limite de l'environnement de test, pas du code).
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
