@@ -698,6 +698,38 @@ bouton, bascule de `deviceId` effective. Seule la ré-assignation finale de
 `video.srcObject` n'a pu être vérifiée de bout en bout ici (un faux flux n'est pas une
 vraie instance `MediaStream`, limite de l'environnement de test, pas du code).
 
+### 4.27 Capture « fantôme » : la même carte recapturée pendant son retrait
+Retour utilisateur : en retirant une carte du cadre, une deuxième capture se déclenche
+parfois pour le MÊME numéro que la précédente, alors qu'il n'y a plus de carte. Analyse
+du relevé : le numéro `41/165` apparaît deux fois à 2,2 s d'écart, puis encore deux fois
+un peu plus tard — bien au-delà d'`AIM_COOLDOWN_MS` (700 ms), donc le simple délai entre
+captures ne l'empêche pas.
+
+Cause probable : le verrou de stabilité pré-tentative a été retiré (§4.20/§4.22) pour
+capturer plus vite, sans attendre un cadrage jugé parfait — un effet de bord assumé à
+l'époque mais pas totalement anticipé : une lecture peut désormais se déclencher
+PENDANT le retrait de la carte (main qui la retire progressivement), retombant par
+malchance sur le même numéro. Le seul garde-fou anti-doublon existant (`hexHamming` sur
+l'empreinte visuelle de la carte entière) ne suffit pas toujours : une image de carte
+en cours de retrait (angle, flou, doigts dans le cadre) peut différer assez du dernier
+hash enregistré pour PASSER ce test, alors que c'est bien la même carte physique.
+
+Ajouté un second signal, plus robuste que la seule ressemblance d'image :
+`cardConfirmedAbsentSinceCapture`, mis à `true` dans `detectLoop` dès qu'une détection
+repasse sous `MIN_SCORE` (signal volontairement immédiat, sans attendre un décrochage
+soutenu — n'affecte que ce garde-fou, pas l'affichage). Une capture est maintenant
+écartée si le numéro lu est identique au précédent ET que la carte n'a jamais été vue
+absente depuis cette dernière capture — qu'elle ressemble visuellement ou non à la
+précédente. Une VRAIE re-présentation de la même carte (deux exemplaires, nouveau scan
+volontaire) reste acceptée normalement dès qu'un passage sous le seuil a été observé
+entre les deux, ce qui arrive presque toujours en pratique quand la carte quitte
+réellement le cadre.
+
+Vérifié par simulation isolée de la logique (streak/hash/numéro) : la capture fantôme
+(même numéro, jamais vue absente) est rejetée ; une carte différente entre les deux
+passe normalement ; une re-présentation volontaire après une absence confirmée est
+acceptée.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

@@ -2379,8 +2379,22 @@ let autoCaptureEnabled = true;
 let ocrReadyForCamera = false;
 let lastCaptureAt = 0;
 let lastCaptureHash = null;   // empreinte hexadécimale renvoyée par le worker
+let lastCaptureNumber = null; // {number, denominator} de la dernière capture — voir cardConfirmedAbsentSinceCapture
 let readInFlight = false;
 let lastReadAttemptAt = 0;
+
+// Anti-doublon "carte fantôme" : retirer une carte de devant la caméra prend un peu de
+// temps (la main la retire progressivement), et le verrou de stabilité pré-tentative a
+// été retiré (§4.20/§4.22) pour capturer plus vite — une lecture peut donc se déclencher
+// PENDANT ce retrait et retomber, par malchance, sur le même numéro que la capture
+// précédente. Le contrôle de ressemblance visuelle (dHash) ne suffit pas toujours à
+// l'écarter : une image de carte en cours de retrait (angle, flou, doigts) peut différer
+// assez du dernier hash enregistré pour passer le test, alors même que c'est la même
+// carte physique. Ce drapeau, mis à jour par detectLoop dès qu'une détection repasse
+// sous MIN_SCORE, sert de second signal, plus robuste : si le numéro lu est identique au
+// précédent ET que la carte n'a jamais été confirmée absente entre-temps, la capture est
+// écartée même si l'image ne ressemblait pas assez à la précédente pour le premier test.
+let cardConfirmedAbsentSinceCapture = true;
 
 const AIM_COOLDOWN_MS = 700;      // délai mini entre deux captures
 // Abaissé de 400 à 150 : une tentative ratée ne coûte plus que quelques centaines de ms
@@ -2768,6 +2782,12 @@ async function detectLoop(){
       // depuis le début : la cause la plus concrète du délai ressenti de 1-2s.
       lowScoreStreak++;
       if(lowScoreStreak >= LOW_SCORE_RESET_STREAK) prevCorners = null;
+      // Signal volontairement immédiat, pas soumis au compteur ci-dessus : sert
+      // uniquement à écarter une "carte fantôme" (voir la déclaration de la variable),
+      // pas à juger si la carte est vraiment partie pour l'affichage — être trop
+      // prudent ici ne coûte rien (seule une capture PORTANT LE MÊME NUMÉRO que la
+      // précédente est concernée), autant l'être.
+      cardConfirmedAbsentSinceCapture = true;
     } else {
       lowScoreStreak = 0;
       setOverlayTarget('lecture', d.corners);
@@ -2916,7 +2936,18 @@ async function attemptRead(corners, score){
       diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms, raw:r.text, rotated, ...timing});
       return;
     }
-    if(lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4){
+    // Anti-doublon "carte fantôme" (voir la déclaration de cardConfirmedAbsentSinceCapture) :
+    // écarté soit par ressemblance visuelle directe (dHash — la même image, quasiment),
+    // soit — repli plus robuste — si le numéro lu est identique au précédent ET que la
+    // carte n'a jamais été vue absente depuis cette dernière capture. Une carte qui a
+    // vraiment quitté puis revient (deux exemplaires, nouveau scan volontaire) laisse
+    // toujours une trace d'absence entre les deux ; une lecture déclenchée pendant le
+    // retrait de la MÊME carte n'en laisse aucune.
+    const visuallyDuplicate = lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4;
+    const sameNumberNeverConfirmedGone = lastCaptureNumber
+      && r.number === lastCaptureNumber.number && r.denominator === lastCaptureNumber.denominator
+      && !cardConfirmedAbsentSinceCapture;
+    if(visuallyDuplicate || sameNumberNeverConfirmedGone){
       setAimHint('Même carte — présente la suivante');
       if(r.carte && r.carte.close) r.carte.close();
       return;
@@ -2924,6 +2955,8 @@ async function attemptRead(corners, score){
 
     // Lecture réussie : on garde la carte redressée puis recadrée renvoyée par le worker.
     lastCaptureHash = r.hash;
+    lastCaptureNumber = {number:r.number, denominator:r.denominator};
+    cardConfirmedAbsentSinceCapture = false;
     lastCaptureAt = Date.now();
     const cv = document.createElement('canvas');
     cv.width = r.carte.width; cv.height = r.carte.height;
@@ -3174,6 +3207,8 @@ async function captureFrame(){
   // Empreinte volontairement remise à zéro : une capture manuelle ne doit pas faire
   // passer la carte suivante pour un doublon.
   lastCaptureHash = null;
+  lastCaptureNumber = null;
+  cardConfirmedAbsentSinceCapture = true;
   lastCaptureAt = Date.now();
 
   const dataUrl = source.toDataURL('image/jpeg', 0.8);
