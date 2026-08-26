@@ -401,6 +401,57 @@ téléphones) ; il n'existe aucun moyen web standard de forcer un taux fixe au-d
 que l'écran affiche. Rien à changer côté code pour ce point précis — déjà au maximum
 possible.
 
+### 4.17 Mise au point caméra dégradée sur certains appareils (constaté : Samsung)
+Retour utilisateur : sur son Samsung, la mise au point ne s'engageait même pas via la
+page web, rendant la capture live inutilisable, alors qu'une appli caméra native n'a pas
+ce problème. `getUserMedia` n'imposait aucune contrainte de mise au point, et la
+résolution demandée était plafonnée à 1280×960 — un choix fait pour épargner le pipeline
+OCR, mais qui peut aussi pousser le pilote caméra de certains appareils vers un mode
+capteur dégradé où l'autofocus ne s'engage plus (une appli native demande toujours le
+plein capteur).
+
+Deux corrections, sans regain de coût de traitement (le pipeline downscale déjà tout
+très tôt — §4.6, §4.10 — la caméra n'a plus besoin de fournir une petite image) :
+- Résolution demandée remontée à 1920×1440.
+- `focusMode:'continuous'` demandé dans les contraintes ET reconfirmé après coup via
+  `track.applyConstraints()` (uniquement si `getCapabilities()` déclare le supporter —
+  certains navigateurs n'honorent ce réglage que via cette seconde voie, pas dans les
+  contraintes initiales de `getUserMedia`).
+
+Honnêteté nécessaire, non vérifiable ici (pas d'accès à un vrai appareil Samsung) : le
+support de `focusMode` varie selon navigateur/puce, donc ce correctif n'est pas garanti
+à 100 %. Les capacités et réglages RÉELS rapportés par l'appareil sont maintenant
+poussés au diagnostic (`caméra: focusMode capacités=... réglage=... résolution=...`) —
+le prochain relevé dira si le Samsung expose ce réglage ou si c'est une vraie limite
+plateforme, sans quoi il n'existe aucune solution côté web.
+
+### 4.18 En-têtes COOP/COEP pour le WASM multi-thread
+`vercel.json` ajoute `Cross-Origin-Opener-Policy: same-origin` et
+`Cross-Origin-Embedder-Policy: credentialless` sur toutes les routes — active
+`SharedArrayBuffer`/`crossOriginIsolated`, condition nécessaire au WASM multi-thread
+d'onnxruntime-web (utilisé en interne par Scanic et ppu-paddle-ocr).
+
+`credentialless` plutôt que `require-corp` : ce dernier bloque tout sous-ressource
+cross-origin qui ne déclare pas explicitement un en-tête CORP — ça aurait cassé les
+images de cartes TCGdex (serveur externe, aucun contrôle sur ses en-têtes). En mode
+`credentialless`, les sous-ressources cross-origin publiques (images TCGdex, scripts
+jsdelivr) continuent de charger normalement, simplement sans être envoyées avec des
+identifiants (cookies) — sans incidence ici, aucune de ces ressources n'en a besoin.
+
+Limite honnête : activer ces en-têtes crée la PRÉCONDITION du multi-thread, mais ne
+garantit pas qu'onnxruntime-web l'exploite réellement — ça dépend de son propre choix
+interne (`ort.env.wasm.numThreads`), sur lequel Scanic/ppu-paddle-ocr n'exposent aucun
+réglage direct depuis ce code. À mesurer sur le prochain diagnostic (durée OCR avant/
+après) plutôt qu'à supposer.
+
+### 4.19 Préchauffage de la table des sets TCGdex
+Même logique que le préchauffage des workers (§4.15) appliquée à la table des sets
+(`setAbbrMap`/`setDenominatorMap`, utilisée par `resolveCardBestEffort` pour retrouver
+le set à partir du numéro) : si le cache local (`localStorage`, 30 jours) est absent ou
+expiré, le chargement démarre dès l'ouverture de la page au lieu d'attendre le premier
+succès de lecture en direct — sans ce préchauffage, c'est spécifiquement CE premier
+résultat qui restait bloqué sur « recherche... » le temps du chargement.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
@@ -425,11 +476,16 @@ numéro lisible.
 7. Fusionner les deux tentatives OCR (bande serrée + repli large, §4.8) en un seul appel
    `recognize()` sur une image composite, si le prochain diagnostic confirme un coût fixe
    important par appel — non fait faute de données pour trancher.
-8. En-têtes COOP/COEP (`vercel.json`) pour activer `SharedArrayBuffer` → WASM multi-thread
-   côté OCR (pas seulement détection) — le plus gros levier restant vu que l'OCR est
-   maintenant le vrai goulot, pas encore posé.
+8. ~~En-têtes COOP/COEP (`vercel.json`)~~ — posés (§4.18), effet réel sur la vitesse OCR
+   à confirmer par diagnostic (dépend d'onnxruntime-web, pas garanti par les seuls
+   en-têtes).
 9. Whitelist de caractères (chiffres + `/`) côté `ppu-paddle-ocr` si l'API l'expose — à
    vérifier, pourrait réduire l'espace de recherche du décodeur.
+10. Modèle OCR plus léger/quantifié si `ppu-paddle-ocr` en propose une variante — réduirait
+    à la fois le poids téléchargé et le temps d'inférence.
+11. ~~Mise au point caméra (Samsung)~~ — correctif posé (§4.17), résultat réel à confirmer
+    par le prochain diagnostic (capacités remontées).
+12. ~~Préchauffage table des sets TCGdex~~ — fait, voir §4.19.
 
 ## 7. Risques
 

@@ -4,6 +4,7 @@ node_modules/
 # Sauvegardes de progression et exports (contiennent les photos de l'utilisateur)
 *.json
 !package.json
+!vercel.json
 pokemon-ebay-progress-*.json
 ebay-export-*.csv
 pokemon-photos-*.zip

@@ -2096,14 +2096,44 @@ async function startCamera(){
   $('cam-error').textContent = '';
   try{
     cameraStream = await navigator.mediaDevices.getUserMedia({
-      // Résolution la plus haute possible : c'est le nombre de pixels sur la ligne du
-      // numéro qui détermine la réussite de l'OCR. On demande du 1080p+ et on laisse
-      // le navigateur retomber sur ce que la caméra sait faire.
-      // 1280 et non 1920 : au-delà, chaque image coûte beaucoup plus cher à analyser
-      // sur mobile pour un gain nul — la carte redressée ne fait que 600px de large.
-      video: { facingMode:'environment', width:{ideal:1280}, height:{ideal:960} },
+      // Résolution remontée à 1920x1440 (elle était plafonnée à 1280x960) : sur
+      // certains appareils (constaté : Samsung), demander une résolution basse pousse
+      // le pilote caméra vers un mode capteur dégradé où l'autofocus ne s'engage même
+      // plus — comportement absent d'une appli caméra native, qui demande toujours le
+      // plein capteur. Sans risque de ralentissement cette fois : tout le pipeline
+      // (détection, redressement, lecture) downscale déjà très tôt (§4.6, §4.10) — la
+      // caméra n'a plus besoin de fournir une petite image, on la réduit nous-mêmes.
+      // focusMode:'continuous' (dans `advanced`, seule forme standard) : sans lui,
+      // certains navigateurs ne font la mise au point qu'une fois au démarrage du flux
+      // et jamais plus ensuite.
+      video: {
+        facingMode:'environment',
+        width:{ideal:1920}, height:{ideal:1440},
+        advanced:[{focusMode:'continuous'}]
+      },
       audio:false
     });
+
+    // `advanced` dans les contraintes initiales n'est pas honoré par tous les
+    // navigateurs : on retente explicitement via applyConstraints() une fois le flux
+    // obtenu, et on ne le fait QUE si l'appareil déclare le supporter (getCapabilities)
+    // pour éviter une exception sur un réglage qu'il ne connaît pas. Les capacités
+    // réelles sont remontées au diagnostic — c'est la seule façon de savoir, sur un
+    // appareil qu'on ne peut pas tester ici, si le focus continu est même disponible.
+    const track = cameraStream.getVideoTracks()[0];
+    try{
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if(caps.focusMode && caps.focusMode.includes('continuous')){
+        await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
+      }
+      const settings = track.getSettings ? track.getSettings() : {};
+      diagPush('err', {msg:'caméra: focusMode capacités=' + JSON.stringify(caps.focusMode||null) +
+                          ' réglage=' + (settings.focusMode||'?') +
+                          ' résolution=' + settings.width + 'x' + settings.height});
+    }catch(e){
+      diagPush('err', {msg:'caméra: focusMode non applicable (' + e.message + ')'});
+    }
+
     $('video').srcObject = cameraStream;
     $('video-wrap').classList.add('active');
     $('cam-start-row').style.display = 'none';
@@ -3421,6 +3451,19 @@ try{
     $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
   }
 } catch(e){ /* cache absent ou corrompu, sera reconstruite au premier scan */ }
+
+// Si le cache local n'a rien donné (première visite, ou expiré), précharge la table
+// des sets dès maintenant plutôt que d'attendre la première carte scannée en direct :
+// resolveLiveResult() la charge sinon à la volée au premier succès, ce qui retarderait
+// tout spécialement CE résultat-là (le badge ✅/🤔 reste bloqué sur "recherche..." le
+// temps du chargement). Même logique que le préchauffage des workers ci-dessous.
+if(!setAbbrMap){
+  loadSetAbbreviationMap(()=>{}).then(loaded=>{
+    setAbbrMap = loaded.map;
+    setDenominatorMap = loaded.byDenominator;
+    if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+  }).catch(()=>{ /* resolveLiveResult retentera au premier scan */ });
+}
 
 // Préchauffe les deux workers (OCR + détecteur, ~9,5 Mo à eux deux au premier chargement)
 // dès l'ouverture de la page plutôt qu'au clic sur "Démarrer la caméra" : c'est le
