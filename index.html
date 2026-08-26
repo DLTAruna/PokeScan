@@ -728,6 +728,29 @@ function getVisionWorker(){
               out.push({ number:left.replace(/^0+(?=\\d)/,''), denominator:right.replace(/^0+(?=\\d)/,'') });
             }
           }
+          if(out.length) return out;
+
+          // Repli, tenté SEULEMENT si aucun « / » trouvé nulle part : PaddleOCR perd
+          // parfois ce trait fin (le premier détail à disparaître sous un léger flou),
+          // rendant un bloc de chiffres collés ("007763" au lieu de "007/163") — constaté
+          // sur diagnostic réel, alors que les chiffres eux-mêmes restent lisibles.
+          // Découpage borné à des longueurs plausibles (dénominateur 2-3 chiffres,
+          // numérateur <= dénominateur) pour ne pas transformer n'importe quelle suite de
+          // chiffres (dégâts d'attaque...) en faux numéro — un candidat de trop reste de
+          // toute façon dégradé en "à vérifier" par la résolution TCGdex en aval, jamais
+          // accepté comme certain sans confirmation par le nom (voir resolveCardBestEffort).
+          const runs = normDigits(t).replace(/\\D/g,' ').split(' ').filter(r => r.length>=4 && r.length<=7);
+          for(const run of runs){
+            for(const denomLen of [3,2]){
+              const numLen = run.length - denomLen;
+              if(numLen < 1 || numLen > 3) continue;
+              const number = run.slice(0, numLen).replace(/^0+(?=\\d)/,'');
+              const denominator = run.slice(numLen).replace(/^0+(?=\\d)/,'');
+              if(Number(denominator) >= 10 && Number(number) > 0 && Number(number) <= Number(denominator)){
+                out.push({number, denominator});
+              }
+            }
+          }
           return out;
         }
         // Netteté : variance du laplacien. Écarte les images bougées avant l'OCR.
@@ -1069,6 +1092,24 @@ function extractNumberCandidates(rawText){
     const right = normalizeDigits(text.slice(i+1, i+4)).replace(/\D/g,'');
     if(left.length >= 2 && right.length >= 2){
       out.push({ number: left.replace(/^0+(?=\d)/,''), denominator: right.replace(/^0+(?=\d)/,'') });
+    }
+  }
+  if(out.length) return out;
+
+  // Repli, tenté SEULEMENT si aucun « / » trouvé nulle part — même logique que
+  // extractNumbers() côté worker (voir ce commentaire pour le détail) : PaddleOCR perd
+  // parfois ce trait fin, rendant un bloc de chiffres collés ("007163" au lieu de
+  // "007/163") alors que les chiffres eux-mêmes restent lisibles.
+  const runs = normalizeDigits(text).replace(/\D/g,' ').split(' ').filter(r => r.length>=4 && r.length<=7);
+  for(const run of runs){
+    for(const denomLen of [3,2]){
+      const numLen = run.length - denomLen;
+      if(numLen < 1 || numLen > 3) continue;
+      const number = run.slice(0, numLen).replace(/^0+(?=\d)/,'');
+      const denominator = run.slice(numLen).replace(/^0+(?=\d)/,'');
+      if(Number(denominator) >= 10 && Number(number) > 0 && Number(number) <= Number(denominator)){
+        out.push({number, denominator});
+      }
     }
   }
   return out;

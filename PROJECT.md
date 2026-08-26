@@ -479,6 +479,38 @@ maintenant deux paliers (« Presque… reste immobile » sous 2,5× le seuil de 
 « Stabilise la carte » au-delà) au lieu d'un texte figé — un vrai signal de proximité
 basé sur l'écart mesuré, pas une animation cosmétique sans rapport avec l'état réel.
 
+### 4.21 Le numéro est lisible mais ne capture pas : le « / » manquant, pas le seuil
+Retour utilisateur juste après §4.20 : « ça capture moins bien, pourtant le numéro
+apparaît très bien à l'écran ». Diagnostic réel : plusieurs « numéro illisible »
+montrent des chiffres presque intacts mais SANS caractère `/` du tout (`"G MEWn
+007763"`, `"GMWno07iise"`) — or `extractNumbers`/`extractNumberCandidates` exigeaient
+strictement un `/` littéral (`if(t[i] !== '/') continue`), qu'il soit présent ou non
+ailleurs dans le texte. PaddleOCR perd ce trait fin plus facilement que les chiffres
+eux-mêmes (premier détail à disparaître sous un léger flou) — un problème préexistant
+aux deux chaînes d'extraction (worker ET analyse de file), pas propre au direct,
+probablement aggravé par l'assouplissement de §4.20 (plus de frames marginalement
+bougées acceptées, le trait fin en pâtit disproportionnellement plus que des chiffres
+plus épais).
+
+Repli ajouté aux DEUX fonctions (même logique dupliquée depuis toujours) : si aucun
+`/` n'est trouvé nulle part, cherche un bloc de chiffres collés (4-7 chiffres après
+normalisation des sosies) et tente un découpage plausible (dénominateur 2-3 chiffres,
+numérateur ≤ dénominateur) — jamais en concurrence avec le cas normal (`/` trouvé),
+seulement en dernier recours.
+
+Vérifié de bout en bout via le vrai worker (pas une copie) : `"041165"` (sans slash)
+→ `41/165` correctement retrouvé ; `"007/165"` (cas normal) inchangé ; `"20 30"`
+(chiffres de dégâts, non adjacents) → toujours `illisible`, aucun faux positif.
+
+Limite assumée : un texte doublement corrompu (chiffre ET séparateur perdus, ex.
+`"007763"` pour un vrai `"7/165"`) produit un candidat plausible mais FAUX
+(`7/763`) plutôt qu'un blocage propre. Risque atténué par le système de confiance
+existant (§4.1, §4.13) : sans confirmation du nom, un tel candidat ne peut de toute
+façon jamais ressortir en ✅, seulement en 🤔 (ou en « non identifiée » si aucun set
+réel ne correspond à ce dénominateur, cas le plus fréquent). Effet de bord à surveiller
+sur le prochain diagnostic : une capture de plus peut atterrir dans la file avec un
+numéro erroné là où l'ancien comportement se contentait de réessayer silencieusement.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
