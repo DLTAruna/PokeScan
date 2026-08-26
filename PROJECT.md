@@ -239,11 +239,15 @@ la hauteur reste plus tolérante (0.62-0.99 contre 0.84-0.99). Testé isolément
 placé hors de la bande serrée mais dans la moitié gauche est toujours rattrapé (810 ms),
 et un échec total résout en <500 ms au lieu de plusieurs secondes.
 
-Le moteur PaddleOCR n'exposant pas d'annulation, un `Promise.race` avec un délai de
-1200 ms borne l'ATTENTE de l'appelant (qui peut redonner la main à la boucle de visée),
-pas le calcul lui-même — un appel abandonné continue de tourner en tâche de fond dans le
-worker. Utile quand même : mieux vaut ne plus bloquer l'appelant sur un repli qui,
-empiriquement, ne trouve jamais rien.
+**RETIRÉ ENSUITE** : même resserré et borné dans le temps, ce repli n'a JAMAIS trouvé un
+numéro sur l'ensemble des relevés réels collectés (plusieurs dizaines d'observations,
+plusieurs sessions) — et c'est lui qui faisait qu'une tentative ratée (le cas le plus
+fréquent, avant qu'une carte soit parfaitement cadrée) coûtait 1,8-3 s au lieu de
+quelques centaines de ms, exactement la source du délai que l'utilisateur ressentait.
+Objectif explicite à partir de là : capturer vite sans exiger un cadrage parfait plutôt
+que maximiser le taux de récupération d'un repli qui ne rapportait rien. Vérifié : un
+échec résout maintenant en ~220 ms au lieu de plusieurs secondes, la lecture normale
+(bande serrée) inchangée (~330 ms sur le même test).
 
 Piège associé : la netteté doit être mesurée sur la **carte entière**, pas sur la bande
 serrée. Une bande sans contenu (mise en page atypique, zone sombre et lisse d'une
@@ -530,6 +534,33 @@ sosies substitués) : un mot n'en contient jamais aucun, un numéro imprimé mê
 contient très majoritairement. Vérifié de bout en bout via le vrai worker : texte
 « Résistance » seul → `illisible` (plus de faux positif) ; `"041165"` (sans slash) →
 `41/165` toujours récupéré ; `"007/165"` (cas normal) inchangé.
+
+### 4.22 Capturer vite sans cadrage parfait, plutôt qu'attendre un cadrage jugé "sûr"
+Retour utilisateur explicite : l'objectif est de capturer sans attendre que la carte
+soit parfaitement immobile — l'attente perçue restait frustrante malgré les réglages
+successifs de §4.20. Changement d'approche : au lieu d'ajuster encore les seuils d'un
+verrou pré-tentative, retirer ce qui rendait un ÉCHEC coûteux, pour pouvoir en tenter
+beaucoup sans que ça se voie.
+
+- **Repli sur la bande large retiré** (voir §4.8, mise à jour) : 0 % de succès sur tous
+  les relevés réels collectés, mais coûtait le plus cher à chaque échec — le cas le
+  plus fréquent avant un cadrage parfait.
+- **Verrou de stabilité géométrique retiré comme condition de déclenchement** (il
+  exigeait deux détections consécutives concordantes avant même de tenter une lecture) :
+  le vrai filet de sécurité contre le flou reste le contrôle de netteté fait APRÈS coup
+  sur l'image réellement capturée (`MIN_SHARPNESS`), pas cette comparaison de position.
+  Un échec de netteté ou un numéro non trouvé ne coûte plus que ~200 ms maintenant que
+  le repli large est retiré — la tentative peut donc se permettre d'être précoce.
+  `moved` (écart entre deux détections) reste calculé pour l'indice visuel
+  (« Presque… » / « Stabilise la carte »), mais ne bloque plus rien.
+- **`MIN_READ_INTERVAL_MS` abaissé de 400 à 150 ms** : cohérent avec le nouveau coût
+  d'un échec, on peut se permettre de retenter plus vite.
+
+Le bouton 📸 (capture manuelle) reste en place pour l'instant comme filet de secours,
+en vue d'être retiré une fois la capture automatique jugée fiable sans lui.
+
+Vérifié via le vrai worker : lecture normale toujours ~330 ms, un échec (bande serrée
+sans numéro) résout maintenant en ~220 ms au lieu de plusieurs secondes.
 
 ## 5. Résultats mesurés
 

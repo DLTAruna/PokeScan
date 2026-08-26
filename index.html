@@ -872,42 +872,26 @@ function getVisionWorker(){
               // nouvelle — constaté : trois numéros distincts ('111/111','222/222',
               // '333/333') ont tous renvoyé le premier lu. Sans intérêt de toute façon,
               // deux images caméra n'étant jamais identiques au bit près.
-              let via = 'serree';
-              let res = await s.recognize(serree, {noCache:true});
-              let text = (res && res.text) || '';
-              let cands = extractNumbers(text);
+              const res = await s.recognize(serree, {noCache:true});
+              const text = (res && res.text) || '';
+              const cands = extractNumbers(text);
 
-              // Repli, restreint et borné dans le temps — sur diagnostic réel (41
-              // observations), l'ancienne version (largeur 0.78, toute la largeur de la
-              // carte) n'a JAMAIS trouvé un seul numéro, mais a coûté de 815 ms à 8,7 s à
-              // chaque déclenchement, attrapant du texte d'attaque au passage (« Coud'Krâne »,
-              // « Morsure »...). Le numéro est TOUJOURS ancré à gauche (voir bande serrée
-              // ci-dessus) : resserré sur la même largeur, seule la hauteur reste plus
-              // tolérante (0.62-0.99 contre 0.84-0.99) pour rattraper les mises en page où
-              // il siège un peu plus haut.
-              if(!cands.length){
-                via = 'large';
-                const large = crop(0, 0.62, 0.48, 0.37, 1);
-                // Le moteur ne peut pas être interrompu en cours de route (pas d'annulation
-                // exposée par ppu-paddle-ocr) : la course contre un délai ne libère donc que
-                // l'ATTENTE de l'appelant, pas le worker lui-même, qui finira le calcul
-                // abandonné en tâche de fond. Utile quand même — l'appelant peut redonner la
-                // main à la boucle de visée au lieu de rester bloqué plusieurs secondes sur
-                // un repli qui, empiriquement, ne trouve jamais rien.
-                const timeout = new Promise(resolve => setTimeout(()=>resolve(null), 1200));
-                const res2 = await Promise.race([s.recognize(large, {noCache:true}), timeout]);
-                const text2 = (res2 && res2.text) || '';
-                text = text + ' ⟨large⟩ ' + text2;
-                cands = extractNumbers(text2);
-              }
-
+              // Le repli sur une bande large a été RETIRÉ : sur tous les relevés réels
+              // collectés (plusieurs dizaines d'observations, plusieurs sessions), il n'a
+              // trouvé un numéro dans AUCUN cas, mais coûtait de 815 ms à 8,7 s à chaque
+              // déclenchement (attrapant souvent du texte d'attaque au passage). Comme il
+              // se déclenchait précisément sur chaque tentative ratée, c'était lui qui
+              // faisait qu'un échec — le cas le plus fréquent avant qu'une carte soit
+              // parfaitement cadrée — coûtait plusieurs secondes au lieu de quelques
+              // centaines de ms. Objectif : capturer vite sans exiger un cadrage parfait,
+              // donc un échec doit rester bon marché pour qu'on puisse en tenter beaucoup.
               if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible'}); return; }
 
               const carte = await createImageBitmap(card);
               // Empreinte anti-doublon prise sur la CARTE entière et non sur la bande :
               // deux cartes différentes peuvent avoir des bas de carte proches, alors que
               // l'illustration les sépare nettement.
-              postMessage({id, ok:true, sharp, text, via, hash:dHash(card),
+              postMessage({id, ok:true, sharp, text, via:'serree', hash:dHash(card),
                            number:cands[0].number, denominator:cands[0].denominator,
                            carte}, [carte]);
               return;
@@ -2232,7 +2216,11 @@ let readInFlight = false;
 let lastReadAttemptAt = 0;
 
 const AIM_COOLDOWN_MS = 700;      // délai mini entre deux captures
-const MIN_READ_INTERVAL_MS = 400; // délai mini entre deux TENTATIVES de lecture (succès ou non)
+// Abaissé de 400 à 150 : une tentative ratée ne coûte plus que quelques centaines de ms
+// maintenant que le repli sur la bande large a été retiré (0% de succès sur tous les
+// relevés réels, mais jusqu'à plusieurs secondes de coût à chaque échec) et que le
+// verrou de stabilité ne bloque plus la tentative elle-même — autant réessayer vite.
+const MIN_READ_INTERVAL_MS = 150; // délai mini entre deux TENTATIVES de lecture (succès ou non)
 const DETECT_MIN_DELAY_MS = 60;   // pause plancher entre deux détections (protège le CPU si le worker répond très vite)
 const CARD_RATIO = 88/63;         // hauteur/largeur d'une carte Pokémon
 const MIN_SCORE = 0.5;            // confiance mini du détecteur pour tenter la lecture
@@ -2612,22 +2600,26 @@ async function detectLoop(){
       lowScoreStreak = 0;
       setOverlayTarget('lecture', d.corners);
 
-      // Verrou de stabilité : une carte qui bouge donne une image filée, donc un OCR
-      // condamné d'avance — et un OCR raté coûte des secondes. On dispose déjà des coins
-      // à chaque image, donc mesurer le déplacement ne coûte rien. Exiger deux détections
-      // consécutives concordantes sert aussi de confirmation : une détection isolée et
-      // fugace ne déclenche plus de lecture.
+      // Le verrou de stabilité (exiger deux détections consécutives concordantes avant
+      // de tenter une lecture) a été RETIRÉ comme condition de déclenchement. Le vrai
+      // filet de sécurité contre le flou est le contrôle de netteté fait APRÈS coup sur
+      // l'image réellement capturée (MIN_SHARPNESS) — pas cette comparaison de position,
+      // qui ne faisait que retarder la toute première tentative. Un échec de netteté (ou
+      // un numéro non trouvé) ne coûte plus que quelques centaines de ms maintenant que
+      // le repli sur la bande large a été retiré (voir le worker) : autant tenter tôt,
+      // quitte à échouer vite, plutôt que d'attendre un cadrage jugé "parfait" avant
+      // d'essayer. `moved` reste calculé pour l'indice visuel, plus pour bloquer.
       const moved = prevCorners ? maxCornerShift(prevCorners, d.corners) : Infinity;
       prevCorners = d.corners;
-      const stable = moved <= MAX_CORNER_SHIFT;
+      if(moved > MAX_CORNER_SHIFT){
+        // Message à deux paliers, purement informatif désormais : un vrai signal de
+        // proximité basé sur l'écart mesuré, pas une simple animation — mais qui ne
+        // retient plus la tentative de lecture ci-dessous.
+        setAimHint(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte');
+      }
 
       const now = Date.now();
-      if(!stable){
-        // Message à deux paliers plutôt qu'un texte figé : un vrai signal de proximité
-        // (pas une simple animation cosmétique), basé sur l'écart mesuré par rapport au
-        // seuil — pour que l'attente se ressente comme une progression, pas un blocage.
-        setAimHint(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte');
-      } else if(!readInFlight
+      if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
         lastReadAttemptAt = now;
