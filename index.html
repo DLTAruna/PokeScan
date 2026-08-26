@@ -708,7 +708,7 @@ function getVisionWorker(){
         // donc lisible tel quel après initialize() ; le rappel de repli de la librairie
         // (onFallback) le met déjà à jour avec le moteur RÉELLEMENT utilisé, pas
         // seulement celui demandé au départ.
-        let ocrDiag = { requested: null, actual: null, initMs: null };
+        let ocrDiag = { requested: null, actual: null, initMs: null, fallbackWarnings: null };
         async function ensure(){
           if(svc) return svc;
           if(!svcPromise) svcPromise = (async ()=>{
@@ -717,8 +717,17 @@ function getVisionWorker(){
             const gpu = await mod.isWebGpuAvailable();
             ocrDiag.requested = gpu ? ['webgpu','wasm'] : ['wasm'];
             const s = new mod.PaddleOcrService();
-            await s.initialize();
+            // La librairie journalise elle-même (console.warn, session-factory.js) la
+            // raison exacte d'un repli webgpu->wasm quand la création de session lève
+            // une exception JS à cet endroit — jusqu'ici perdu, ce warning n'était
+            // capté nulle part. Interception temporaire, restaurée juste après : ne
+            // doit RIEN changer d'autre au comportement de la console.
+            const warnings = [];
+            const origWarn = console.warn;
+            console.warn = (...args) => { warnings.push(args.map(String).join(' ')); origWarn.apply(console, args); };
+            try{ await s.initialize(); } finally { console.warn = origWarn; }
             ocrDiag.actual = (s.options && s.options.session && s.options.session.executionProviders) || null;
+            ocrDiag.fallbackWarnings = warnings.length ? warnings : null;
             ocrDiag.initMs = Math.round(performance.now() - t0);
             svc = s; return s;
           })();
@@ -2973,7 +2982,8 @@ function startAimLoop(){
         ' réseau=' + (nav.connection?.effectiveType ?? '?') +
         ' initOCR=' + (diag.initMs != null ? diag.initMs+'ms' : '?') +
         ' moteurDemandé=' + JSON.stringify(diag.requested ?? null) +
-        ' moteurRéel=' + JSON.stringify(diag.actual ?? null)});
+        ' moteurRéel=' + JSON.stringify(diag.actual ?? null) +
+        ' repli=' + (diag.fallbackWarnings ? JSON.stringify(diag.fallbackWarnings) : 'aucun averti')});
     })
     .catch(err=>{
       workerBroken = true;

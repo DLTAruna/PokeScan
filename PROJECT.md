@@ -601,6 +601,39 @@ la caméra levait une `ReferenceError` et cassait `buildDiagReport()` en entier,
 silencieusement — repéré en testant la case précisément avant d'avoir démarré la
 caméra dans ce test. Corrigé par une déclaration `let` explicite.
 
+### 4.24 Le plancher est maintenant l'appel recognize() lui-même — CPU confirmé, pas GPU
+Premier relevé exploitant le diagnostic détaillé (§4.23) : sur 19 tentatives,
+`tRecognize` (l'appel OCR proprement dit) coûte en moyenne **1717 ms** (médiane
+1652 ms) — environ **80 % du temps total** (2152 ms en moyenne). Tout le reste du
+pipeline (redressement, redimensionnement, préparation, netteté) ne pèse que
+quelques centaines de ms cumulées. Conclusion directe : il ne reste plus rien à
+gratter côté orchestration applicative — ce qui reste est le coût de calcul brut du
+moteur OCR sur cet appareil.
+
+Le diagnostic d'environnement confirme aussi `moteurDemandé=["webgpu","wasm"]` mais
+`moteurRéel=["cpu"]` : un GPU est bien détecté disponible (`isWebGpuAvailable()` →
+`true`, sinon `webgpu` n'aurait pas été demandé du tout), mais l'inférence tourne
+quand même sur CPU pur.
+
+**Creusé plus loin** : un intercepteur temporaire de `console.warn` posé autour de
+`initialize()` (la librairie journalise elle-même tout repli déclenché par une
+exception JS à la création de session) n'a capté **aucun avertissement**
+(`fallbackWarnings: null`) — le passage de webgpu à cpu ne lève donc pas d'exception
+à cet endroit. Cela suggère que `webgpu` n'est probablement pas un fournisseur
+d'exécution réellement opérationnel dans cette configuration de librairie
+(bundle onnxruntime-web utilisé), plutôt qu'un échec propre à un appareil précis —
+la bascule vers un vrai GPU (WebGPU natif, hors de cette librairie) resterait un
+chantier bien plus lourd, pour un résultat incertain, tel qu'évalué plus tôt (§4.7).
+
+**Modèle quantifié re-testé, cette fois en forçant `wasm` explicitement des deux
+côtés** (contexte CPU pur, fidèle à ce qui tourne réellement sur l'appareil — le
+premier test, §4.24 précédent en discussion, tournait sur un GPU de bureau où l'écart
+pouvait ne pas se transposer) : `v6-tiny` (actuel) à ~67 ms par appel contre
+`v5-en-mobile-int8` à ~137 ms — le modèle actuel reste le plus rapide, cette fois de
+façon non ambiguë (même fournisseur d'exécution forcé des deux côtés, comparaison
+propre). Confirme la conclusion précédente sur des bases plus solides : ne pas
+changer de modèle.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
