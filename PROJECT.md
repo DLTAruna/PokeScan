@@ -824,6 +824,42 @@ mais un hash légèrement différent (tremblement) est maintenant bien rejetée 
 doublon ; une carte différente entre les deux passe normalement ; une re-présentation
 volontaire avec un déplacement franc des coins est acceptée.
 
+### 4.31 Trois ajustements suite au retour Samsung
+**Bug trouvé en se relisant sur §4.30 point 2, avant tout nouveau retour terrain** :
+`cornerMoveSinceCapture` sommait les `moved` de chaque cycle — un CUMUL ne peut que
+croître avec le temps. Même un tremblement qui oscille sans jamais vraiment déplacer
+la carte finit, après suffisamment de cycles, par dépasser n'importe quel seuil fixe :
+plus l'utilisateur restait longtemps sur la même carte immobile, plus une fausse
+détection de mouvement devenait probable — l'inverse de l'effet recherché, et
+cohérent avec le nouveau retour utilisateur (« ça prend quand même de multiples
+photos si je ne bouge pas »). Reproduit et confirmé par simulation isolée : une
+simple boucle de 30 cycles de tremblement minime (±0,005, jamais un vrai
+déplacement) finissait par laisser passer une capture au cycle 25 avec l'ancien
+code.
+
+Corrigé en remplaçant le cumul par `lastCaptureCorners` : un ÉCART NET entre la
+position actuelle des coins et celle enregistrée AU MOMENT de la dernière capture
+(pas une somme de petits pas). Un tremblement sur place oscille autour d'un point
+fixe et reste proche de cette référence indéfiniment, contrairement à un vrai
+retrait/repositionnement. Revérifié par simulation : les mêmes 30 cycles de
+tremblement ne laissent plus fuiter aucune capture, une vraie re-présentation
+reste acceptée normalement.
+
+**Zoom : liste curatée, pas dérivée du max brut de l'appareil**. Retour utilisateur :
+un palier "30×" (max brut sur certains appareils) n'a aucun intérêt pour
+photographier une carte de près et n'a fait qu'encombrer la rangée. Remplacé
+`[caps.zoom.min, 1, 2, 3, caps.zoom.max]` par une liste fixe `[0.6, 1, 2, 5]`, toujours
+filtrée à la plage réelle de l'appareil (pas de bouton pour une valeur non
+supportée) — 0,6 et 1 sont les deux positions les plus souvent fusionnées à tort sur
+les téléphones multi-objectifs (§4.26), les deux doivent rester choisissables
+explicitement.
+
+**Cercles au lieu de pastilles rectangulaires**, avec le niveau actif distingué par la
+COULEUR du cercle (bordure + texte en accent doré) plutôt qu'un simple remplissage —
+repère visuel demandé pour rester lisible d'un coup d'œil pendant la visée. Vérifié
+par inspection des styles calculés : cercles 38×38px (`border-radius:50%`), couleur
+distincte confirmée sur le bouton actif.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

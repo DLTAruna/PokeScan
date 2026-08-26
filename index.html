@@ -144,12 +144,17 @@
   /* Sélecteur de zoom manuel : rempli dynamiquement selon les niveaux réellement
      supportés par l'appareil (track.getCapabilities().zoom) — vide et masqué si
      l'appareil n'expose pas cette capacité, jamais une liste figée devinée. */
-  .zoom-row{display:flex; gap:8px; justify-content:center; padding:6px 0; flex-shrink:0;}
+  .zoom-row{display:flex; gap:10px; justify-content:center; padding:6px 0; flex-shrink:0;}
+  /* Cercles façon appli caméra native (pas des pastilles rectangulaires) : le niveau
+     actif se distingue par sa COULEUR de cercle (accent), pas seulement un remplissage
+     — repère visuel demandé pour rester lisible d'un coup d'œil pendant la visée. */
   .zoom-btn{
-    background:rgba(255,255,255,.08); color:#fff; border:1px solid var(--border);
-    border-radius:16px; padding:6px 14px; font-size:12.5px; font-weight:600;
+    width:38px; height:38px; border-radius:50%; flex-shrink:0;
+    background:rgba(0,0,0,.55); color:#fff; border:2px solid rgba(255,255,255,.35);
+    font-size:12px; font-weight:700; display:flex; align-items:center; justify-content:center;
+    padding:0;
   }
-  .zoom-btn.active{background:var(--accent); color:#1a1a1a; border-color:var(--accent);}
+  .zoom-btn.active{background:rgba(0,0,0,.55); color:var(--accent); border-color:var(--accent);}
   /* Panneau de résultat live : montre le numéro dès qu'il est lu, puis se complète
      (nom/set/prix) quand la résolution TCGdex répond — voir resolveLiveResult(). */
   .live-result{
@@ -2213,9 +2218,14 @@ function renderZoomButtons(track, caps){
     row.innerHTML = '';
     return;
   }
-  // Quelques paliers usuels, filtrés à la plage réelle de l'appareil — pas de valeur
-  // ajoutée si elle n'existe pas physiquement dessus.
-  const candidates = [caps.zoom.min, 1, 2, 3, caps.zoom.max].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
+  // Paliers curatés pour de la photo rapprochée (une carte), pas dérivés du max brut de
+  // l'appareil : sur certains téléphones, `caps.zoom.max` vaut 30 — un palier "30×" n'a
+  // aucun intérêt ici et n'a fait qu'encombrer la rangée (retour utilisateur). 0,6
+  // (grand-angle) et 1 (objectif principal) sont les deux positions les plus
+  // fréquemment fusionnées à tort sur les téléphones multi-objectifs — les deux doivent
+  // rester choisissables explicitement. Filtré à la plage réelle : pas de bouton pour
+  // une valeur que l'appareil ne supporte physiquement pas.
+  const candidates = [0.6, 1, 2, 5].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
   const levels = [...new Set(candidates.map(z => Math.round(z*10)/10))].sort((a,b)=>a-b);
   const settings = track.getSettings ? track.getSettings() : {};
   const current = settings.zoom ?? getPreferredZoom();
@@ -2421,11 +2431,19 @@ let cardConfirmedAbsentSinceCapture = true;
 // stabilité (§4.20/§4.22) — chaque tentative repart d'une image fraîche, et une lecture
 // OCR peut varier légèrement d'un appel à l'autre (bruit du moteur), donc même un numéro
 // STRICTEMENT identique ne prouve pas que la carte a vraiment bougé entre deux captures.
-// On mesure donc en plus le déplacement CUMULÉ des coins depuis la dernière capture
-// (somme des `moved` observés par detectLoop, pas juste la comparaison entre deux
-// détections consécutives) : une carte réellement représentée après avoir été retirée
-// laisse un déplacement cumulé bien plus grand qu'un tremblement de main sur place.
-let cornerMoveSinceCapture = 0;
+//
+// BUG trouvé en se relisant, avant tout retour terrain sur ce point précis : une
+// première version sommait les `moved` observés à chaque cycle (un cumul de distance
+// parcourue). Un cumul ne peut QUE croître avec le temps — même un tremblement qui
+// oscille sans jamais vraiment déplacer la carte finit, au bout de suffisamment de
+// cycles, par dépasser n'importe quel seuil fixe : plus l'utilisateur reste longtemps
+// sur la même carte immobile, plus un faux "la carte a bougé" devenait probable,
+// l'inverse de l'effet recherché. Corrigé en comparant la position ACTUELLE des coins
+// à celle enregistrée AU MOMENT de la dernière capture (un écart net, pas une somme de
+// petits pas) : un tremblement sur place oscille autour d'un point fixe et reste
+// proche de cette référence indéfiniment, alors qu'un vrai retrait/repositionnement
+// s'en écarte réellement et durablement.
+let lastCaptureCorners = null;
 const SAME_CARD_MOVE_THRESHOLD = 0.12; // nettement au-dessus du tremblement de main normal
 
 const AIM_COOLDOWN_MS = 700;      // délai mini entre deux captures
@@ -2835,10 +2853,6 @@ async function detectLoop(){
       // d'essayer. `moved` reste calculé pour l'indice visuel, plus pour bloquer.
       const moved = prevCorners ? maxCornerShift(prevCorners, d.corners) : Infinity;
       prevCorners = d.corners;
-      // Cumul, pas juste la dernière comparaison : un tremblement de main fait plein de
-      // petits pas qui, mis bout à bout entre deux captures rapprochées, doivent quand
-      // même rester sous SAME_CARD_MOVE_THRESHOLD — voir la déclaration de la variable.
-      cornerMoveSinceCapture += moved;
       if(moved > MAX_CORNER_SHIFT){
         // Message à deux paliers, purement informatif désormais : un vrai signal de
         // proximité basé sur l'écart mesuré, pas une simple animation — mais qui ne
@@ -3015,17 +3029,19 @@ async function attemptRead(corners, score){
       return;
     }
     // Anti-doublon "carte fantôme" (voir la déclaration de cardConfirmedAbsentSinceCapture
-    // et cornerMoveSinceCapture) : écarté par ressemblance visuelle directe (dHash), OU —
+    // et lastCaptureCorners) : écarté par ressemblance visuelle directe (dHash), OU —
     // repli plus robuste — si le numéro lu est identique au précédent ET qu'aucun des
     // deux signaux de "la carte a vraiment bougé/disparu" ne s'est déclenché depuis :
-    // ni un passage sous MIN_SCORE, ni un déplacement cumulé des coins suffisant. Une
-    // carte qui a vraiment quitté puis revient (deux exemplaires, nouveau scan
-    // volontaire, la carte bougera forcément pour ça) déclenche presque toujours l'un
-    // des deux ; un simple tremblement de main sur une carte immobile ne déclenche ni
-    // l'un ni l'autre, contrairement à une comparaison stricte du numéro lu seul (le
-    // bruit de l'OCR peut faire varier le texte reconnu même sans mouvement réel).
+    // ni un passage sous MIN_SCORE, ni un écart net (pas cumulé) entre la position
+    // actuelle des coins et celle enregistrée à la dernière capture. Une carte qui a
+    // vraiment quitté puis revient (deux exemplaires, nouveau scan volontaire, la carte
+    // bougera forcément pour ça) déclenche presque toujours l'un des deux ; un simple
+    // tremblement de main sur une carte immobile ne déclenche ni l'un ni l'autre,
+    // contrairement à une comparaison stricte du numéro lu seul (le bruit de l'OCR peut
+    // faire varier le texte reconnu même sans mouvement réel).
     const visuallyDuplicate = lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4;
-    const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture || cornerMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD;
+    const netMoveSinceCapture = lastCaptureCorners ? maxCornerShift(lastCaptureCorners, corners) : Infinity;
+    const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture || netMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD;
     const sameNumberNeverConfirmedNew = lastCaptureNumber
       && r.number === lastCaptureNumber.number && r.denominator === lastCaptureNumber.denominator
       && !cardConfirmedNewSinceCapture;
@@ -3038,8 +3054,8 @@ async function attemptRead(corners, score){
     // Lecture réussie : on garde la carte redressée puis recadrée renvoyée par le worker.
     lastCaptureHash = r.hash;
     lastCaptureNumber = {number:r.number, denominator:r.denominator};
+    lastCaptureCorners = corners;
     cardConfirmedAbsentSinceCapture = false;
-    cornerMoveSinceCapture = 0;
     lastCaptureAt = Date.now();
     const cv = document.createElement('canvas');
     cv.width = r.carte.width; cv.height = r.carte.height;
@@ -3243,7 +3259,6 @@ function stopAimLoop(){
   overlayRenderRunning = false;
   prevCorners = null;
   lowScoreStreak = 0;
-  cornerMoveSinceCapture = 0;
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
   const cvs = $('aim-overlay');
@@ -3292,8 +3307,8 @@ async function captureFrame(){
   // passer la carte suivante pour un doublon.
   lastCaptureHash = null;
   lastCaptureNumber = null;
+  lastCaptureCorners = null;
   cardConfirmedAbsentSinceCapture = true;
-  cornerMoveSinceCapture = 0;
   lastCaptureAt = Date.now();
 
   const dataUrl = source.toDataURL('image/jpeg', 0.8);
