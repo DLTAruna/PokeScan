@@ -56,8 +56,28 @@
     background-size:120px 120px, 90px 90px, 60px 60px;
   }
   .pkb-art{
-    position:absolute; top:-14px; right:-4px; width:92px; height:92px; opacity:.24;
-    object-fit:contain; pointer-events:none; filter:drop-shadow(0 4px 10px rgba(0,0,0,.5));
+    position:absolute; top:-14px; right:-4px; width:92px; height:92px; opacity:.26;
+    object-fit:contain; pointer-events:none; filter:drop-shadow(0 4px 10px rgba(0,0,0,.5)); z-index:0;
+  }
+  .pkb-art-2{
+    position:absolute; top:-18px; right:120px; width:82px; height:82px; opacity:.18;
+    object-fit:contain; pointer-events:none; filter:drop-shadow(0 4px 10px rgba(0,0,0,.5)); z-index:0;
+    transform:scaleX(-1);
+  }
+  .pkb-art-3{
+    position:absolute; top:2px; right:220px; width:64px; height:64px; opacity:.15;
+    object-fit:contain; pointer-events:none; filter:drop-shadow(0 4px 10px rgba(0,0,0,.5)); z-index:0;
+    transform:scaleX(-1);
+  }
+  .pkb-art-4{
+    position:absolute; top:-70px; right:-60px; width:360px; height:360px;
+    opacity:.07; object-fit:contain; pointer-events:none; z-index:0;
+  }
+  @media (max-width:760px){
+    .pkb-art-2, .pkb-art-3{display:none;}
+  }
+  @media (max-width:520px){
+    .pkb-art-4{display:none;}
   }
   .pkb-brand{display:flex; align-items:center; gap:10px; position:relative; z-index:1;}
   .pokeball{
@@ -318,7 +338,10 @@
 <body>
 
 <header>
+  <img class="pkb-art-4" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/384.png" alt="" aria-hidden="true">
   <img class="pkb-art" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="" aria-hidden="true">
+  <img class="pkb-art-2" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/6.png" alt="" aria-hidden="true">
+  <img class="pkb-art-3" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/160.png" alt="" aria-hidden="true">
   <div class="pkb-brand">
     <span class="pokeball"></span>
     <h1>PokéScan <span style="opacity:.65; font-weight:600;">→</span> eBay Lister</h1>
