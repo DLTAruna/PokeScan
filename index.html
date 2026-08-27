@@ -2894,10 +2894,24 @@ $('btn-diag-test').addEventListener('click', async ()=>{
     const texte = await res.text();
     const lignes = [
       'Test du relais de diagnostic',
+      'adresse     : ' + location.origin,
       'statut HTTP : ' + res.status + (res.ok ? ' ✅' : ' ⚠️'),
-      'réponse     : ' + texte.slice(0, 600),
+      'réponse     : ' + (texte.trim() ? texte.slice(0, 600) : '(vide)'),
       ''
     ];
+    // api/log.js répond TOUJOURS en JSON. Une réponse vide ou non-JSON signifie qu'un autre
+    // serveur a répondu à sa place — typiquement un serveur de fichiers statiques, qui
+    // renvoie 405 corps vide à un POST. Diagnostiquer ça comme une panne du relais
+    // enverrait chercher un problème de jeton ou de gist là où il n'y en a aucun.
+    const estNotreApi = texte.trim().startsWith('{');
+    if(!estNotreApi){
+      lignes.push('📍 Ce n\'est pas le relais qui a répondu, mais un serveur de fichiers.');
+      lignes.push('   La route /api/log n\'existe QUE sur le déploiement Vercel.');
+      lignes.push('   Ouvre l\'app depuis son adresse Vercel (https://…vercel.app),');
+      lignes.push('   pas depuis un aperçu local ni un fichier ouvert directement.');
+      el.textContent = lignes.join('\n');
+      return;
+    }
     if(res.ok){
       lignes.push('✅ Le relais fonctionne. Coche « envoyer en direct » et scanne :');
       lignes.push('   les observations partent par lots, plus besoin de copier-coller.');
