@@ -3088,8 +3088,14 @@ async function applyTrackTweaksAndDiagnostics(track){
       }
     }
     const settings = track.getSettings ? track.getSettings() : {};
+    // `pointsOfInterest` remonté explicitement : c'est lui qui permet de viser la mise au
+    // point ailleurs qu'au centre du cadre, et sa disponibilité varie fortement d'un
+    // appareil à l'autre. Sans le savoir, impossible de dire si un flou persistant sur le
+    // numéro vient de l'appareil ou de notre code.
+    focusPointSupporte = !!(caps.pointsOfInterest);
     diagPush('err', {msg:'caméra: focusMode capacités=' + JSON.stringify(caps.focusMode||null) +
                         ' réglage=' + (settings.focusMode||'?') +
+                        ' pointDeMiseAuPoint=' + (focusPointSupporte ? 'supporté' : 'non supporté') +
                         ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
                         ' réglage=' + (settings.zoom ?? '?') +
                         ' résolution=' + settings.width + 'x' + settings.height +
@@ -3410,6 +3416,54 @@ async function viderFileDiag(){
 // observations d'une session — souvent les plus intéressantes — seraient perdues.
 document.addEventListener('visibilitychange', ()=>{ if(document.hidden) viderFileDiag(); });
 window.addEventListener('pagehide', viderFileDiag);
+
+// ---------------- MISE AU POINT CIBLÉE SUR LE NUMÉRO ----------------
+// Retour utilisateur : « le focus ne se met pas à l'endroit des numéros ». C'est exact —
+// l'autofocus vise le centre du cadre par défaut, alors que le numéro est en BAS de carte.
+// Sur une carte tenue légèrement inclinée, le bas peut se retrouver hors du plan net, et
+// c'est cohérent avec les échecs où l'OCR ne lit RIEN d'exploitable (« 0L », « OLl Ad ») :
+// la netteté globale de la carte est bonne, mais pas celle de la bande lue.
+//
+// On dispose d'un atout : les coins de la carte sont détectés à chaque image, donc on sait
+// exactement où tombe la bande du numéro dans le cadre — pas besoin de deviner.
+let focusPointSupporte = false;
+let dernierFocusAt = 0, dernierFocusPos = null;
+const FOCUS_INTERVAL_MS = 1500;   // l'autofocus a besoin de temps pour converger
+const FOCUS_DEPLACEMENT_MIN = 0.05;
+
+// Centre de la bande du numéro, exprimé en fractions de la CARTE puis projeté dans le cadre
+// par interpolation sur le quadrilatère détecté (la carte n'est jamais parfaitement de face).
+function centreBandeNumero(corners){
+  const u = 0.22, v = 0.92;   // milieu de la zone 0-45 % × 84-99 %
+  const haut = [corners.tl[0] + u*(corners.tr[0]-corners.tl[0]),
+                corners.tl[1] + u*(corners.tr[1]-corners.tl[1])];
+  const bas  = [corners.bl[0] + u*(corners.br[0]-corners.bl[0]),
+                corners.bl[1] + u*(corners.br[1]-corners.bl[1])];
+  return {x: haut[0] + v*(bas[0]-haut[0]), y: haut[1] + v*(bas[1]-haut[1])};
+}
+
+async function viserMiseAuPoint(corners){
+  if(!focusPointSupporte || !cameraStream || !corners) return;
+  const now = Date.now();
+  // Espacé dans le temps : redemander une mise au point à chaque image empêcherait
+  // justement l'autofocus de converger — il repartirait en permanence de zéro.
+  if(now - dernierFocusAt < FOCUS_INTERVAL_MS) return;
+  const p = centreBandeNumero(corners);
+  if(p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
+  // Et seulement si la cible a réellement bougé : réappliquer la même position relancerait
+  // un cycle de mise au point pour rien, avec le flou transitoire que ça implique.
+  if(dernierFocusPos && Math.hypot(p.x-dernierFocusPos.x, p.y-dernierFocusPos.y) < FOCUS_DEPLACEMENT_MIN) return;
+  dernierFocusAt = now; dernierFocusPos = p;
+  try{
+    const track = cameraStream.getVideoTracks()[0];
+    if(track) await track.applyConstraints({advanced:[{pointsOfInterest:[{x:p.x, y:p.y}]}]});
+  }catch(e){
+    // Un appareil peut annoncer la capacité et refuser la contrainte : on cesse d'essayer
+    // plutôt que de relancer un échec toutes les 1,5 s pendant toute la session.
+    focusPointSupporte = false;
+    diagPush('err', {msg:'caméra: point de mise au point refusé (' + e.message + ')'});
+  }
+}
 
 // Instant du démarrage caméra, pour dater chaque tentative DANS la session plutôt qu'en
 // absolu — voir camSessionInstrumentation ci-dessous.
@@ -3805,6 +3859,9 @@ async function detectLoop(){
     } else {
       lowScoreStreak = 0;
       setOverlayTarget('lecture', d.corners);
+      // Carte localisée : on oriente la mise au point vers la bande du numéro plutôt que
+      // de laisser l'autofocus viser le centre du cadre (voir viserMiseAuPoint).
+      viserMiseAuPoint(d.corners);
 
       // Le verrou de stabilité (exiger deux détections consécutives concordantes avant
       // de tenter une lecture) a été RETIRÉ comme condition de déclenchement. Le vrai

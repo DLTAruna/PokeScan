@@ -165,6 +165,10 @@
       </select>
     </div>
     <div>
+      <label>Largeur de travail (px)</label>
+      <input type="number" id="cfg-largeur" value="600" min="400" max="2000" step="100">
+    </div>
+    <div>
       <label>Set précis (optionnel)</label>
       <input type="text" id="cfg-set" placeholder="ex : 151, sv03.5, Célébrations…" autocomplete="off">
     </div>
@@ -650,6 +654,17 @@ async function renderCard(img, degrade){
 // les reflets spéculaires d'une surface holographique, et la main qui tient la carte. C'est
 // plus proche du réel que la dégradation simple, pas équivalent.
 // =============================================================================
+// Largeur à laquelle la carte redressée est ramenée avant l'OCR. L'app utilise 600 px.
+// Question décisive avant d'implémenter une capture pleine résolution
+// (`ImageCapture.takePhoto()` donne 4080×3072 contre 1440×1920 pour le flux vidéo) : à quoi
+// bon capturer plus fin si tout est ramené à 600 px juste après ?
+//
+// À NE PAS confondre avec le zoom de la bande, déjà mesuré sans effet (×1.5 à ×4
+// identiques) : celui-là agrandit une image existante sans ajouter la moindre information,
+// alors qu'élargir la largeur de travail CONSERVE des détails réellement présents dans la
+// photo. Deux mécanismes différents, d'où cette mesure séparée.
+let LARGEUR_TRAVAIL = 600;
+
 const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
 let scanicMod = null, scanner = null;
 
@@ -775,7 +790,10 @@ async function fabriquerPhoto(base, intensite){
 // parce qu'un échec de détection et un échec d'OCR n'appellent pas les mêmes correctifs.
 async function pipelineDetection(photo){
   const sc = await getScanner();
-  const DETECT_LONG_EDGE = 512, EXTRACT_LONG_EDGE = 1200, MIN_SCORE = 0.35;
+  // Le plafond de redressement suit la largeur de travail : le laisser à 1200 px
+  // brideraient la mesure en amont, et on croirait à tort qu'élargir ne sert à rien.
+  const DETECT_LONG_EDGE = 512, MIN_SCORE = 0.35;
+  const EXTRACT_LONG_EDGE = Math.max(1200, Math.round(LARGEUR_TRAVAIL * 88/63 * 1.7));
 
   const d = Math.min(1, DETECT_LONG_EDGE / Math.max(photo.width, photo.height));
   const dw = Math.round(photo.width*d), dh = Math.round(photo.height*d);
@@ -838,7 +856,7 @@ async function pipelineDetection(photo){
 
   // Ramené à la largeur de travail de l'app, pour que les fractions de découpe aient le
   // même sens que dans le pipeline réel.
-  const W = 600, H = Math.round(W*R);
+  const W = LARGEUR_TRAVAIL, H = Math.round(W*R);
   const norm = document.createElement('canvas');
   norm.width = W; norm.height = H;
   norm.getContext('2d').drawImage(sortie, 0, 0, W, H);
@@ -952,7 +970,7 @@ async function preparerPhotoReelle(blob){
   // ici, et l'accepter fausserait le taux à la baisse pour une raison sans rapport.
   const ratio = img.naturalHeight / img.naturalWidth, R = 88/63;
   if(Math.abs(ratio - R)/R > 0.30) return {echec: 'ni carte détectée, ni proportion de carte'};
-  const W = 600, H = Math.round(W*R);
+  const W = LARGEUR_TRAVAIL, H = Math.round(W*R);
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   c.getContext('2d').drawImage(img, 0, 0, W, H);
@@ -1080,6 +1098,11 @@ async function run(){
     log('✅ Logique de parsing extraite de index.html (' + parsingSrc.length + ' caractères) — le banc teste le vrai code, pas une copie.');
 
     const mode = $('cfg-mode').value;
+    // Lue depuis le formulaire, et non modifiable de l'extérieur : le module a sa propre
+    // portée, donc une affectation depuis la console ne crée qu'une globale que le banc
+    // ignore — piège rencontré en vrai, avec deux runs « à largeurs différentes » qui
+    // tournaient en réalité tous les deux à 600 px et donnaient donc le même chiffre.
+    LARGEUR_TRAVAIL = parseInt($('cfg-largeur').value, 10) || 600;
     const minYear = parseInt($('cfg-era').value, 10) || 0;
     let pool;
     if(mode === 'zip'){
@@ -1117,6 +1140,7 @@ async function run(){
     if(horsNumerotation) log(`✨ ${horsNumerotation} carte(s) hors numérotation dans l'échantillon (full art, illustration rare, secrète).`);
     const nomMode = {crop:'illustration recadrée', photo:'photo simulée, pipeline complet',
                      zip:'mes photos réelles'}[mode] || mode;
+    log('📐 Largeur de travail : ' + LARGEUR_TRAVAIL + ' px (l\'app utilise 600).');
     log('🎲 Échantillon de ' + N + ' carte(s) · mode « ' + nomMode + ' »' +
         // La dégradation ne s'applique pas à de vraies photos : elles portent déjà leurs
         // propres défauts. L'afficher laisserait croire qu'on les abîme en plus.
