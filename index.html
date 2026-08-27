@@ -729,18 +729,47 @@
         <p class="hint" style="margin-top:8px;">Si le texte est illisible ou mal cadré, ajuste "Zone OCR (% bas de carte)" dans les Réglages, en fonction de tes propres photos.</p>
       </div>
 
-      <div class="row" style="margin-top:12px;">
-        <div>
-          <label>Nom de la carte</label>
-          <input type="text" id="search-name" placeholder="ex: Dracaufeu, Pikachu..." autocomplete="off">
+      <div style="margin-top:12px;">
+        <label>Rechercher une carte</label>
+        <input type="text" id="search-name" placeholder="ex : Dracaufeu 199 · 199/165 · Pikachu" autocomplete="off">
+      </div>
+      <div class="hint" style="margin-top:6px;">
+        <button class="link-btn" id="btn-toggle-filtres">🔎 Filtres</button>
+        <span id="filtres-resume"></span>
+      </div>
+      <div id="search-filtres" style="display:none; margin-top:8px;">
+        <div class="row">
+          <div>
+            <label>Série</label>
+            <select id="search-serie"><option value="">Toutes les séries</option></select>
+          </div>
+          <div>
+            <label>Année (à partir de)</label>
+            <select id="search-annee">
+              <option value="">Toutes les années</option>
+              <option value="2020">2020+ (Épée et Bouclier →)</option>
+              <option value="2017">2017+ (Soleil et Lune →)</option>
+              <option value="2011">2011+ (Noir &amp; Blanc →)</option>
+              <option value="1999">1999+ (tout le catalogue)</option>
+            </select>
+          </div>
         </div>
-        <div>
-          <label>Set / édition (optionnel, filtre)</label>
-          <input type="text" id="search-set" placeholder="ex: Obsidian Flames" autocomplete="off">
+        <div class="row">
+          <div>
+            <label>Rareté</label>
+            <select id="search-rarete"><option value="">Toutes les raretés</option></select>
+          </div>
+          <div>
+            <label>Set / édition</label>
+            <input type="text" id="search-set" placeholder="ex : 151, sv03.5, Obsidienne" autocomplete="off">
+          </div>
+        </div>
+        <div class="flexend" style="margin-top:8px;">
+          <button class="link-btn" id="btn-reset-filtres">Réinitialiser les filtres</button>
         </div>
       </div>
       <div class="hint" id="search-status"></div>
-      <div class="hint">Astuce clavier : tape le nom, flèches ↑↓ pour choisir, Entrée pour ajouter instantanément.</div>
+      <div class="hint">Astuce clavier : tape le nom (et le numéro), flèches ↑↓ pour choisir, Entrée pour ajouter instantanément.</div>
       <div class="search-results" id="search-results"></div>
 
       <div class="flexend" style="margin-top:10px;">
@@ -4701,7 +4730,9 @@ function renderIdentify(){
     placeholder.style.display = 'block';
   }
   $('search-name').value = '';
-  $('search-set').value = '';
+  // Les filtres (set, série, année, rareté) NE sont PAS remis à zéro en passant à la
+  // carte suivante : quand on dépouille un lot d'un même set, les réappliquer à chaque
+  // carte serait une corvée. Seul le bouton « Réinitialiser les filtres » les efface.
   $('search-results').innerHTML = '';
   $('search-status').textContent = '';
   if($('ocr-debug-preview')){ $('ocr-debug-preview').src = ''; $('ocr-debug-text').textContent = '—'; }
@@ -4826,7 +4857,9 @@ let cachedSetIds = new Set();
 
 async function loadSeriesIndex(onProgress){
   const cached = await idbGet('meta', 'seriesIndex');
-  if(cached && (Date.now() - cached.builtAt) < SERIES_INDEX_MAX_AGE_MS) return cached.series;
+  // version : l'index d'origine ne gardait pas les dates de sortie, indispensables au
+  // filtre par année. Un cache d'ancienne forme doit être reconstruit (19 requêtes).
+  if(cached && cached.version === 2 && (Date.now() - cached.builtAt) < SERIES_INDEX_MAX_AGE_MS) return cached.series;
 
   const listRes = await fetchWithRetry('https://api.tcgdex.net/v2/fr/series', {}, {maxRetries:2});
   if(!listRes.ok) throw new Error('HTTP '+listRes.status);
@@ -4835,10 +4868,12 @@ async function loadSeriesIndex(onProgress){
   let done = 0;
   const series = await pLimit(list, 6, async (s)=>{
     let sets = [];
+    let serieDate = '';
     try{
       const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/series/${s.id}`, {}, {maxRetries:1, baseDelay:400});
       if(r.ok){
         const d = await r.json();
+        serieDate = d.releaseDate || '';
         sets = (d.sets || []).map(x=>({
           id: x.id, name: x.name, logo: x.logo || '', symbol: x.symbol || '',
           official: x.cardCount?.official ?? null, total: x.cardCount?.total ?? null
@@ -4847,11 +4882,11 @@ async function loadSeriesIndex(onProgress){
     } catch(e){ /* une série en échec n'empêche pas les autres */ }
     done++;
     if(onProgress) onProgress(done, list.length);
-    return {id:s.id, name:s.name, logo:s.logo || '', sets};
+    return {id:s.id, name:s.name, logo:s.logo || '', releaseDate: serieDate, sets};
   });
 
   const kept = series.filter(s => s.sets.length);
-  await idbSet('meta', {key:'seriesIndex', builtAt: Date.now(), series: kept});
+  await idbSet('meta', {key:'seriesIndex', version: 2, builtAt: Date.now(), series: kept});
   return kept;
 }
 
@@ -5751,6 +5786,28 @@ $('search-set').addEventListener('input', ()=>{
   clearTimeout(searchDebounce);
   searchDebounce = setTimeout(doSearch, 400);
 });
+
+// Les listes déroulantes relancent la recherche immédiatement : contrairement à une
+// saisie au clavier, un choix dans un menu est définitif, attendre 400 ms n'apporte rien.
+for(const id of ['search-serie','search-annee','search-rarete']){
+  $(id).addEventListener('change', ()=>{ clearTimeout(searchDebounce); doSearch(); });
+}
+
+$('btn-toggle-filtres').addEventListener('click', ()=>{
+  const box = $('search-filtres');
+  const ouvert = box.style.display !== 'none';
+  box.style.display = ouvert ? 'none' : 'block';
+  // Les options (séries, raretés) ne sont chargées qu'à la première ouverture : inutile
+  // de payer l'index des séries pour quelqu'un qui ne filtre jamais.
+  if(!ouvert) remplirOptionsFiltres();
+});
+
+$('btn-reset-filtres').addEventListener('click', ()=>{
+  $('search-serie').value = ''; $('search-annee').value = '';
+  $('search-rarete').value = ''; $('search-set').value = '';
+  majResumeFiltres();
+  doSearch();
+});
 $('search-name').addEventListener('keydown', (e)=>{
   if(e.key === 'ArrowDown'){ e.preventDefault(); moveHighlight(1); }
   else if(e.key === 'ArrowUp'){ e.preventDefault(); moveHighlight(-1); }
@@ -5773,65 +5830,269 @@ function renderResultHighlight(){
   });
 }
 
+// Découpe une saisie libre en nom + numéro. TCGdex accepte les deux critères ensemble
+// (`?name=Dracaufeu&localId=199` renvoie exactement une carte), donc autant laisser
+// l'utilisateur taper « Dracaufeu 199 » d'un trait plutôt que de lui faire remplir deux
+// champs — c'est ce qu'il a naturellement sous les yeux sur la carte.
+//
+// Formes reconnues :
+//   « Dracaufeu 199 »   -> nom Dracaufeu, numéro 199
+//   « 199/165 »         -> numéro 199 (le dénominateur sert de filtre de set)
+//   « Dracaufeu »       -> nom seul
+//   « 199 Dracaufeu »   -> idem, l'ordre est libre
+function parseRequete(saisie){
+  let reste = ' ' + saisie.trim() + ' ';
+  let numero = '', denominateur = '';
+
+  // « 199/165 » d'abord : la barre est sans ambiguïté, on la consomme avant tout le reste.
+  const fraction = reste.match(/\s(\d{1,3})\s*\/\s*(\d{1,3})\s/);
+  if(fraction){
+    numero = fraction[1]; denominateur = fraction[2];
+    reste = reste.replace(fraction[0], ' ');
+  } else {
+    // Sinon, un groupe de chiffres isolé. Les noms de cartes Pokémon n'en contiennent
+    // pas (les rares « 151 » ou « ex » sont des noms de SET, pas de carte), donc un
+    // nombre détaché est un numéro de collection.
+    const seul = reste.match(/\s(\d{1,3})\s/);
+    if(seul){ numero = seul[1]; reste = reste.replace(seul[0], ' '); }
+  }
+  return { nom: reste.trim(), numero, denominateur };
+}
+
+// Métadonnées de set consolidées depuis l'index des séries : id -> {nom, série, année}.
+// Sert à filtrer les résultats SANS charger le détail de chaque carte — l'id d'une carte
+// TCGdex commence par l'id de son set (« sv03.5-199 »), l'information est donc déjà là.
+let metaSetsRecherche = null;
+async function chargerMetaSetsRecherche(){
+  if(metaSetsRecherche) return metaSetsRecherche;
+  const series = await loadSeriesIndex(()=>{});
+  seriesIndex = series;
+  const meta = {};
+  for(const serie of series){
+    const annee = serie.releaseDate ? parseInt(String(serie.releaseDate).slice(0,4), 10) : null;
+    for(const st of (serie.sets || [])){
+      meta[st.id] = {nom: st.name, serieId: serie.id, serieNom: serie.name, annee, official: st.official};
+    }
+  }
+  metaSetsRecherche = meta;
+  return meta;
+}
+
+// L'id de set est le préfixe de l'id de carte, mais les ids de set contiennent eux-mêmes
+// des tirets (« sv03.5 », « swsh12.5 ») : on ne peut pas se contenter de couper au
+// premier tiret, il faut chercher le préfixe le plus long qui soit un set connu.
+function setDepuisIdCarte(cardId, meta){
+  let i = cardId.lastIndexOf('-');
+  while(i > 0){
+    const cand = cardId.slice(0, i);
+    if(meta[cand]) return cand;
+    i = cardId.lastIndexOf('-', i - 1);
+  }
+  return null;
+}
+
+async function remplirOptionsFiltres(){
+  try{
+    const meta = await chargerMetaSetsRecherche();
+    const sel = $('search-serie');
+    if(sel && sel.options.length <= 1){
+      const vues = new Map();
+      for(const m of Object.values(meta)) if(m.serieId) vues.set(m.serieId, m.serieNom);
+      // Plus récentes en tête : c'est là que se trouve l'essentiel de ce qui se revend.
+      const tri = [...vues.entries()].sort((a,b)=> a[1].localeCompare(b[1]));
+      for(const [id, nom] of tri){
+        const o = document.createElement('option');
+        o.value = id; o.textContent = nom;
+        sel.appendChild(o);
+      }
+    }
+  }catch(e){ /* filtres série indisponibles, la recherche marche quand même */ }
+
+  try{
+    const sel = $('search-rarete');
+    if(sel && sel.options.length <= 1){
+      let raretes = await idbGet('meta', 'raretes');
+      if(!raretes || (Date.now() - raretes.builtAt) > SERIES_INDEX_MAX_AGE_MS){
+        const r = await fetchWithRetry('https://api.tcgdex.net/v2/fr/rarities', {}, {maxRetries:1});
+        if(r.ok){
+          raretes = {key:'raretes', builtAt: Date.now(), liste: await r.json()};
+          await idbSet('meta', raretes);
+        }
+      }
+      for(const nom of (raretes?.liste || [])){
+        const o = document.createElement('option');
+        o.value = nom; o.textContent = nom;
+        sel.appendChild(o);
+      }
+    }
+  }catch(e){ /* filtre rareté indisponible */ }
+}
+
+function filtresActifs(){
+  return {
+    serie: $('search-serie')?.value || '',
+    annee: parseInt($('search-annee')?.value, 10) || 0,
+    rarete: $('search-rarete')?.value || '',
+    set: ($('search-set')?.value || '').trim().toLowerCase()
+  };
+}
+
+function majResumeFiltres(){
+  const f = filtresActifs();
+  const bouts = [];
+  if(f.serie && $('search-serie').selectedOptions[0]) bouts.push($('search-serie').selectedOptions[0].textContent);
+  if(f.annee) bouts.push(f.annee + '+');
+  if(f.rarete) bouts.push(f.rarete);
+  if(f.set) bouts.push('set « ' + $('search-set').value.trim() + ' »');
+  const el = $('filtres-resume');
+  if(el) el.textContent = bouts.length ? ' · ' + bouts.join(' · ') : '';
+}
+
+// Résultats filtrés en attente d'affichage : la recherche par nom peut ramener plus de
+// cent cartes (112 « Dracaufeu » au catalogue) et charger cent fiches détaillées d'un
+// coup serait long pour rien. On en affiche PAGE_RESULTATS à la fois, le reste derrière
+// un bouton — mais on ne tronque plus la liste elle-même, contrairement à la version
+// précédente qui coupait à 8 AVANT d'appliquer le filtre de set : le filtre ne pouvait
+// alors quasiment jamais trouver quoi que ce soit, d'où l'impression que la plupart des
+// cartes étaient absentes du catalogue.
+const PAGE_RESULTATS = 24;
+let restantsRecherche = [];
+
 async function doSearch(){
   const myToken = ++searchToken;
-  const name = $('search-name').value.trim();
-  const setName = $('search-set').value.trim().toLowerCase();
+  const saisie = $('search-name').value.trim();
   const resultsBox = $('search-results');
   const status = $('search-status');
   currentResults = [];
+  restantsRecherche = [];
   highlightedIndex = -1;
-  if(!name){ resultsBox.innerHTML=''; status.textContent=''; return; }
+  majResumeFiltres();
+
+  const {nom, numero, denominateur} = parseRequete(saisie);
+  const f = filtresActifs();
+  if(!nom && !numero){ resultsBox.innerHTML=''; status.textContent=''; return; }
 
   status.textContent = 'Recherche...';
   resultsBox.innerHTML = '';
 
-  const briefUrl = `https://api.tcgdex.net/v2/fr/cards?name=${encodeURIComponent(name)}`;
+  const params = [];
+  if(nom) params.push('name=' + encodeURIComponent(nom));
+  if(numero) params.push('localId=' + encodeURIComponent(numero));
+  const briefUrl = 'https://api.tcgdex.net/v2/fr/cards?' + params.join('&');
 
   try{
-    const briefRes = await fetchWithRetry(briefUrl, {}, {
-      maxRetries: 3, baseDelay: 600, onRetry: (attempt, max, err)=>{
-        if(myToken !== searchToken) return;
-        status.textContent = `⏳ L'API a répondu par une erreur (${err.message}), nouvelle tentative ${attempt}/${max}...`;
-      }
-    });
+    const [briefRes, meta] = await Promise.all([
+      fetchWithRetry(briefUrl, {}, {
+        maxRetries: 3, baseDelay: 600, onRetry: (attempt, max, err)=>{
+          if(myToken !== searchToken) return;
+          status.textContent = `⏳ L'API a répondu par une erreur (${err.message}), nouvelle tentative ${attempt}/${max}...`;
+        }
+      }),
+      chargerMetaSetsRecherche().catch(()=> ({}))
+    ]);
     if(myToken !== searchToken) return;
     if(!briefRes.ok) throw new Error('HTTP '+briefRes.status);
-    const briefs = await briefRes.json();
+    let briefs = await briefRes.json();
     if(myToken !== searchToken) return;
+    const totalBrut = briefs.length;
 
-    const candidates = briefs.slice(0, 8);
-    status.textContent = candidates.length ? `Chargement de ${candidates.length} résultat(s)...` : 'Aucun résultat — vérifie l\'orthographe ou élargis la recherche.';
-
-    const details = await Promise.all(candidates.map(b => getCardDetailCached(b.id).catch(()=>null)));
-    if(myToken !== searchToken) return;
-
-    let cards = details.filter(Boolean);
-    if(setName) cards = cards.filter(c => (c.set?.name||'').toLowerCase().includes(setName));
-
-    currentResults = cards;
-    status.textContent = cards.length ? `${cards.length} résultat(s) — Entrée pour ajouter le 1er` : 'Aucun résultat — vérifie l\'orthographe, le set, ou élargis la recherche.';
-    resultsBox.innerHTML = '';
-    cards.forEach((card,i)=>{
-      const div = document.createElement('div');
-      div.className = 'result-item';
-      const price = getBestPrice(card);
-      div.innerHTML = `
-        <img src="${card.images?.small || ''}" loading="lazy">
-        <div class="result-info">
-          <b>${card.name}</b><br>
-          ${card.set?.name || ''} · #${card.number} · ${card.rarity || '?'}
-        </div>
-        <div class="result-price">${price.market ? formatPrice(price) : '—'}</div>
-      `;
-      div.addEventListener('click', ()=> quickAdd(card));
-      div.addEventListener('mouseenter', ()=>{ highlightedIndex = i; renderResultHighlight(); });
-      resultsBox.appendChild(div);
+    // Filtres applicables sans charger les fiches détaillées (set, série, année,
+    // dénominateur) : appliqués AVANT la pagination, sinon ils ne portent que sur les
+    // premiers résultats et paraissent ne rien trouver.
+    let ecartesMeta = 0;
+    briefs = briefs.filter(b=>{
+      const setId = setDepuisIdCarte(b.id, meta);
+      const m = setId ? meta[setId] : null;
+      if(f.set){
+        if(!m) return false;
+        if(!(setId.toLowerCase().includes(f.set) || (m.nom||'').toLowerCase().includes(f.set))) return false;
+      }
+      if(f.serie){ if(!m || m.serieId !== f.serie) return false; }
+      if(f.annee){ if(!m || !m.annee || m.annee < f.annee){ ecartesMeta++; return false; } }
+      // Le dénominateur tapé (« 199/165 ») désigne la taille officielle du set : c'est
+      // le même départage que celui utilisé par la lecture caméra.
+      if(denominateur && m && m.official && String(m.official) !== denominateur) return false;
+      return true;
     });
+
+    if(!briefs.length){
+      status.textContent = totalBrut
+        ? `Aucun résultat après filtres (${totalBrut} carte(s) trouvée(s) avant filtrage) — élargis ou réinitialise les filtres.`
+        : 'Aucun résultat — vérifie l\'orthographe ou le numéro.';
+      return;
+    }
+
+    restantsRecherche = briefs;
+    status.textContent = `${briefs.length} carte(s) trouvée(s) — chargement...`;
+    await afficherPageResultats(myToken, totalBrut);
   } catch(err){
     if(myToken !== searchToken) return;
     status.textContent = '⚠️ Erreur de recherche (après plusieurs tentatives) : '+err.message+'. Vérifie ta connexion internet, ou réessaie dans un instant si l\'API est temporairement instable.';
   }
+}
+
+async function afficherPageResultats(myToken, totalBrut){
+  const resultsBox = $('search-results');
+  const status = $('search-status');
+  const f = filtresActifs();
+
+  // La rareté n'existe que sur la fiche détaillée : quand elle est filtrée, il faut
+  // parcourir plus de candidats pour remplir une page. On avance par lots jusqu'à en
+  // avoir assez, plutôt que de tout charger d'avance.
+  const ajoutes = [];
+  let ecartesRarete = 0;
+  while(ajoutes.length < PAGE_RESULTATS && restantsRecherche.length){
+    const lot = restantsRecherche.splice(0, PAGE_RESULTATS);
+    const details = await Promise.all(lot.map(b => getCardDetailCached(b.id).catch(()=>null)));
+    if(myToken !== searchToken) return;
+    for(const c of details.filter(Boolean)){
+      if(f.rarete && (c.rarity || '') !== f.rarete){ ecartesRarete++; continue; }
+      ajoutes.push(c);
+    }
+    if(!f.rarete) break; // sans filtre de rareté, un seul lot suffit toujours
+  }
+
+  currentResults = currentResults.concat(ajoutes);
+  if(highlightedIndex < 0 && currentResults.length) highlightedIndex = -1;
+
+  for(let i = currentResults.length - ajoutes.length; i < currentResults.length; i++){
+    const card = currentResults[i];
+    const div = document.createElement('div');
+    div.className = 'result-item';
+    const price = getBestPrice(card);
+    div.innerHTML = `
+      <img src="${card.images?.small || ''}" loading="lazy">
+      <div class="result-info">
+        <b>${esc(card.name)}</b><br>
+        ${esc(card.set?.name || '')} · #${esc(card.number)} · ${esc(card.rarity || '?')}
+      </div>
+      <div class="result-price">${price.market ? formatPrice(price) : '—'}</div>
+    `;
+    div.addEventListener('click', ()=> quickAdd(card));
+    div.addEventListener('mouseenter', ()=>{ highlightedIndex = i; renderResultHighlight(); });
+    resultsBox.appendChild(div);
+  }
+
+  const ancienBouton = $('btn-plus-resultats');
+  if(ancienBouton) ancienBouton.remove();
+  if(restantsRecherche.length){
+    const b = document.createElement('button');
+    b.className = 'btn-ghost';
+    b.id = 'btn-plus-resultats';
+    b.style.marginTop = '8px';
+    b.textContent = `Afficher plus (${restantsRecherche.length} restante(s))`;
+    b.addEventListener('click', ()=> afficherPageResultats(myToken, totalBrut));
+    resultsBox.appendChild(b);
+  }
+
+  const parts = [`${currentResults.length} affichée(s)`];
+  if(restantsRecherche.length) parts.push(`${restantsRecherche.length} de plus`);
+  if(totalBrut && totalBrut > currentResults.length + restantsRecherche.length){
+    parts.push(`${totalBrut - currentResults.length - restantsRecherche.length} écartée(s) par les filtres`);
+  }
+  status.textContent = currentResults.length
+    ? parts.join(' · ') + ' — Entrée pour ajouter le 1er'
+    : 'Aucun résultat après filtres — élargis ou réinitialise les filtres.';
 }
 
 function normalizeCard(detail){
