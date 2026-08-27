@@ -58,12 +58,13 @@ modèle de segmentation tournant dans le navigateur, puis déplacé plus vite qu
 quand tu inclines : ça donne une vraie profondeur, là où l'holo ne fait que glisser sur une
 image plate.
 
-⚠️ Le premier calcul d'une carte prend **~30 s sur ordinateur, davantage sur téléphone**, et
-ce coût est incompressible (le modèle a une entrée figée). Il est fait dans un worker et ne
-bloque jamais : la carte s'affiche tout de suite à plat et passe en relief quand c'est prêt.
-Le masque est ensuite **mis en cache** — la même carte se rouvre en ~100 ms. La découpe est
-inégale selon les illustrations (le modèle est entraîné sur des photos, pas sur du dessin) :
-d'où l'interrupteur.
+Le premier calcul d'une carte prend **~4 s sur ordinateur** (modèle U²-Netp, 4,7 Mo). Il est
+fait dans un worker et ne bloque jamais : la carte s'affiche tout de suite, avec déjà l'effet
+de diorama, et passe en relief complet quand c'est prêt. Le masque est ensuite **mis en
+cache** — la même carte se rouvre en ~70 ms.
+
+⚠️ La découpe reste inégale selon les illustrations (le modèle est entraîné sur des photos,
+pas sur du dessin) : d'où l'interrupteur.
 
 ## Notes techniques
 

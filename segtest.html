@@ -86,6 +86,8 @@
   <button class="btn-gold" id="btn-run-crop">🔬 Test 2 — recadré sur l'illustration</button>
   <button class="btn-ghost" id="btn-anim" disabled>▶️ Animer le parallaxe</button>
   <button class="btn-ghost" id="btn-perf">⏱️ Mesurer le coût selon la résolution</button>
+  <button class="btn-gold" id="btn-compare">⚖️ Comparer RMBG-1.4 vs U²-Netp</button>
+  <button class="btn-ghost" id="btn-u2-seul">⚡ U²-Netp seul (1 carte)</button>
   <div class="status" id="status">Prêt.</div>
 </div>
 
@@ -93,7 +95,7 @@
 </main>
 
 <script type="module">
-import { AutoModel, AutoProcessor, RawImage } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+import { AutoModel, AutoProcessor, RawImage, Tensor } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
 
 const $ = id => document.getElementById(id);
 
@@ -289,6 +291,212 @@ async function lancer(recadrer){
 
 $('btn-run').addEventListener('click', ()=> lancer(false));
 $('btn-run-crop').addEventListener('click', ()=> lancer(true));
+
+// ---------------------------------------------------------------------------
+// Comparaison de modèles, sur LES MÊMES cartes et les mêmes recadrages : temps ET
+// qualité côte à côte. Le temps seul ne suffirait pas à décider — un masque
+// inutilisable en 4 s ne vaut pas mieux qu'un bon masque en 45.
+// ---------------------------------------------------------------------------
+const MODELES = {
+  // Prétraitement décrit explicitement (voir preparerEntree) : taille d'entrée, moyenne et
+  // écart-type de normalisation. Chaque modèle a les siens — RMBG centre autour de 0,5 sans
+  // mise à l'échelle, U²-Net utilise la normalisation ImageNet de son entraînement.
+  'RMBG-1.4': { id:'briaai/RMBG-1.4', poids:'~45 Mo', licence:'non commerciale',
+    dtype:'q8',   // ce dépôt publie bien une version quantifiée, nettement plus légère
+    config:{ model_type:'custom' },
+    taille:1024, moyenne:[0.5,0.5,0.5], ecartType:[1,1,1] },
+  'U²-Netp':  { id:'BritishWerewolf/U-2-Netp', poids:'~4,7 Mo', licence:'Apache 2.0',
+    config:{ model_type:'custom' },
+    taille:320, moyenne:[0.485,0.456,0.406], ecartType:[0.229,0.224,0.225] },
+};
+
+// Prétraitement fait à la main plutôt que via AutoProcessor. Motif : passer une `config`
+// à AutoProcessor ne suffit pas — il lit quand même le `preprocessor_config.json` distant
+// et refuse un `image_processor_type` qu'il ne connaît pas (constaté sur U²-Netp, l'erreur
+// revenait malgré la configuration fournie). Construire le tenseur soi-même supprime toute
+// dépendance à ce fichier, et rend le prétraitement explicite et vérifiable.
+function preparerEntree(image, taille, moyenne, ecartType){
+  const c = document.createElement('canvas');
+  c.width = taille; c.height = taille;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  // Le modèle attend une image carrée : on étire, comme le fait le prétraitement d'origine
+  // de U²-Net (pas de conservation du rapport d'aspect).
+  ctx.drawImage(image.toCanvas ? image.toCanvas() : image, 0, 0, taille, taille);
+  const px = ctx.getImageData(0, 0, taille, taille).data;
+
+  // Disposition NCHW : un plan complet par canal, pas des pixels entrelacés.
+  const n = taille * taille;
+  const data = new Float32Array(3 * n);
+  for(let i=0;i<n;i++){
+    data[i]         = (px[i*4]   / 255 - moyenne[0]) / ecartType[0];
+    data[n + i]     = (px[i*4+1] / 255 - moyenne[1]) / ecartType[1];
+    data[2*n + i]   = (px[i*4+2] / 255 - moyenne[2]) / ecartType[2];
+  }
+  return new Tensor('float32', data, [1, 3, taille, taille]);
+}
+
+const modelesCharges = {};
+async function chargerModele(nom){
+  if(modelesCharges[nom]) return modelesCharges[nom];
+  const d = MODELES[nom];
+  log(`⏳ chargement de ${nom} (${d.poids})…`);
+  // dtype explicite : transformers.js réclame par défaut une variante quantifiée
+  // (`onnx/model_quantized.onnx`) que tous les dépôts ne publient pas — constaté sur
+  // U²-Netp (« Could not locate file »). On demande donc le poids réellement présent.
+  const opts = { dtype: d.dtype || 'fp32' };
+  const m = d.config
+    ? await AutoModel.from_pretrained(d.id, { ...opts, config: d.config })
+    : await AutoModel.from_pretrained(d.id, opts);
+  modelesCharges[nom] = {m};
+  return modelesCharges[nom];
+}
+
+// Les modèles ne nomment pas leur entrée pareil (`input` pour RMBG, `input.1` pour
+// U²-Netp — constaté via « Missing the following inputs: input.1 »). Plutôt que de coder
+// un nom par modèle, on interroge la session ONNX : ça marchera aussi pour le prochain
+// modèle qu'on voudra essayer.
+function nomEntree(m){
+  const s = m?.sessions?.model ?? m?.session;
+  const noms = s?.inputNames;
+  return (noms && noms.length) ? noms[0] : 'input';
+}
+
+async function masquePour(nom, image){
+  const {m} = await chargerModele(nom);
+  const d = MODELES[nom];
+  const t0 = performance.now();
+  const entree = preparerEntree(image, d.taille, d.moyenne, d.ecartType);
+  const sortie = await m({ [nomEntree(m)]: entree });
+  // Les deux modèles ne nomment pas leur sortie pareil : on prend la première disponible
+  // plutôt que de coder en dur un nom qui ne vaudrait que pour l'un des deux.
+  const tenseur = sortie.output ?? sortie.logits ?? Object.values(sortie)[0];
+  const brut = Array.isArray(tenseur) ? tenseur[0] : tenseur[0] ?? tenseur;
+  const masque = await RawImage.fromTensor(brut.mul(255).to('uint8')).resize(image.width, image.height);
+  return { masque, ms: Math.round(performance.now() - t0) };
+}
+
+// Boucle d'itération courte : passer par les 7 cartes ET RMBG à chaque essai coûtait deux
+// minutes pour vérifier une ligne de plomberie.
+$('btn-u2-seul').addEventListener('click', async ()=>{
+  $('btn-u2-seul').disabled = true;
+  $('results').innerHTML = '';
+  try{
+    const [id, desc, base] = CARTES[0];
+    const img0 = await RawImage.fromURL(base + '/high.webp');
+    const rogne = await rogner(base, img0);
+    const image = await RawImage.fromURL(rogne.toDataURL('image/png'));
+    log('⏳ U²-Netp sur une carte…');
+    const { masque, ms } = await masquePour('U²-Netp', image);
+    const st = analyserMasque(masque.data);
+
+    const box = document.createElement('div');
+    box.className = 'card-row';
+    box.innerHTML = `<h3>${desc} — U²-Netp — ${ms} ms</h3>`;
+    for(const [lbl, rendu] of [['illustration', null], ['masque', 'm'], ['sujet détouré', 'd']]){
+      const sh = document.createElement('div'); sh.className = 'shot';
+      sh.innerHTML = `<div class="lbl">${lbl}</div>`;
+      const c = document.createElement('canvas');
+      c.width = image.width; c.height = image.height;
+      const cx = c.getContext('2d');
+      const bmp = await createImageBitmap(await (await fetch(rogne.toDataURL('image/png'))).blob());
+      if(rendu === 'm'){
+        const d2 = cx.createImageData(image.width, image.height);
+        for(let i=0;i<masque.data.length;i++){ d2.data[i*4]=d2.data[i*4+1]=d2.data[i*4+2]=masque.data[i]; d2.data[i*4+3]=255; }
+        cx.putImageData(d2,0,0);
+      } else if(rendu === 'd'){
+        for(let y=0;y<c.height;y+=16) for(let x=0;x<c.width;x+=16){
+          cx.fillStyle = ((x/16 + y/16) % 2) ? '#333' : '#555'; cx.fillRect(x,y,16,16);
+        }
+        const t = document.createElement('canvas'); t.width=image.width; t.height=image.height;
+        const tc = t.getContext('2d'); tc.drawImage(bmp,0,0,image.width,image.height);
+        const px = tc.getImageData(0,0,image.width,image.height);
+        for(let i=0;i<masque.data.length;i++) px.data[i*4+3] = masque.data[i];
+        tc.putImageData(px,0,0); cx.drawImage(t,0,0);
+      } else {
+        cx.drawImage(bmp,0,0,image.width,image.height);
+      }
+      sh.appendChild(c);
+      box.appendChild(sh);
+    }
+    box.insertAdjacentHTML('beforeend', `<div class="verdict ${st.classe}">${st.verdict}<br>sujet ${(st.part*100).toFixed(0)} % · flou ${(st.flou*100).toFixed(0)} % · ${ms} ms</div>`);
+    $('results').appendChild(box);
+    log(`✅ U²-Netp : ${ms} ms · sujet ${(st.part*100).toFixed(0)} %`);
+  }catch(e){ log('❌ ' + e.message); }
+  finally{ $('btn-u2-seul').disabled = false; }
+});
+
+$('btn-compare').addEventListener('click', async ()=>{
+  $('btn-compare').disabled = true;
+  $('results').innerHTML = '';
+  const bilan = {};
+  for(const nom of Object.keys(MODELES)) bilan[nom] = {ms:[], parts:[], echecs:0};
+
+  try{
+    for(const [id, desc, base] of CARTES){
+      const img0 = await RawImage.fromURL(base + '/high.webp');
+      const rogne = await rogner(base, img0);
+      const image = await RawImage.fromURL(rogne.toDataURL('image/png'));
+
+      const box = document.createElement('div');
+      box.className = 'card-row';
+      box.innerHTML = `<h3>${desc} <span style="color:var(--muted);font-weight:400">— ${id}</span></h3>`;
+      const orig = document.createElement('div');
+      orig.className = 'shot';
+      orig.innerHTML = `<div class="lbl">illustration</div>`;
+      const io = document.createElement('img'); io.src = rogne.toDataURL('image/png'); orig.appendChild(io);
+      box.appendChild(orig);
+      $('results').appendChild(box);
+
+      for(const nom of Object.keys(MODELES)){
+        log(`⏳ ${desc} — ${nom}…`);
+        try{
+          const { masque, ms } = await masquePour(nom, image);
+          const st = analyserMasque(masque.data);
+          bilan[nom].ms.push(ms); bilan[nom].parts.push(st.part);
+
+          const sh = document.createElement('div');
+          sh.className = 'shot';
+          sh.innerHTML = `<div class="lbl">${nom} — ${ms} ms</div>`;
+          const c = document.createElement('canvas');
+          c.width = image.width; c.height = image.height;
+          const cx = c.getContext('2d');
+          const d = cx.createImageData(image.width, image.height);
+          // Sujet détouré sur damier plutôt que masque brut : c'est là qu'on voit les
+          // halos, les bords sales et ce qui a réellement été gardé.
+          const bmp = await createImageBitmap(await (await fetch(rogne.toDataURL('image/png'))).blob());
+          cx.drawImage(bmp, 0, 0, image.width, image.height);
+          const px = cx.getImageData(0,0,image.width,image.height);
+          for(let i=0;i<masque.data.length;i++) px.data[i*4+3] = masque.data[i];
+          const damier = document.createElement('canvas');
+          damier.width = image.width; damier.height = image.height;
+          const dx = damier.getContext('2d');
+          for(let y=0;y<damier.height;y+=16) for(let x=0;x<damier.width;x+=16){
+            dx.fillStyle = ((x/16 + y/16) % 2) ? '#333' : '#555';
+            dx.fillRect(x,y,16,16);
+          }
+          cx.putImageData(px,0,0);
+          dx.drawImage(c, 0, 0);
+          sh.appendChild(damier);
+          sh.insertAdjacentHTML('beforeend',
+            `<div class="verdict ${st.classe}">sujet ${(st.part*100).toFixed(0)} % · flou ${(st.flou*100).toFixed(0)} %</div>`);
+          box.appendChild(sh);
+        }catch(e){
+          bilan[nom].echecs++;
+          box.insertAdjacentHTML('beforeend',
+            `<div class="shot"><div class="lbl">${nom}</div><div class="verdict v-bad">échec : ${e.message}</div></div>`);
+        }
+      }
+    }
+
+    const moy = a => a.length ? Math.round(a.reduce((s,x)=>s+x,0)/a.length) : 0;
+    const resume = Object.entries(bilan).map(([nom,b])=>
+      `${nom} : ${moy(b.ms)} ms en moyenne · couverture ${(moy(b.parts.map(p=>p*100)))} %` +
+      (b.echecs ? ` · ${b.echecs} échec(s)` : ''));
+    log('✅ ' + resume.join('   |   ') +
+        '  —  compare les colonnes à l\'œil : le temps ne décide pas seul, un masque inutilisable rapidement ne vaut rien.');
+  }catch(e){ log('❌ ' + e.message); }
+  finally{ $('btn-compare').disabled = false; }
+});
 
 // Coût selon la résolution d'entrée. Question décisive pour un usage téléphone : le modèle
 // tourne à 1024×1024 par défaut, ce qui coûte 22-25 s ici. Le coût d'une convolution suit

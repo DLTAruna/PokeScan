@@ -1388,6 +1388,51 @@ Reste à traiter : les 45 s. Piste retenue, non encore mesurée — **U²-Netp**
 la question commerciale). À comparer côte à côte avec RMBG avant de basculer : un masque
 inutilisable en 4 s ne vaut pas mieux qu'un bon masque en 45.
 
+### 4.50 Bascule sur U²-Netp — meilleur ET plus rapide
+Comparaison directe des deux modèles sur les **mêmes 7 cartes** et les mêmes recadrages
+(`segtest.html`, bouton dédié) :
+
+| | RMBG-1.4 | U²-Netp |
+|---|---|---|
+| temps moyen | 13 844 ms | **2 681 ms** (5,2×) |
+| poids | 45 Mo | **4,7 Mo** |
+| licence | non commerciale | **Apache 2.0** |
+| couverture moyenne | 52 % | 24 % |
+
+La couverture plus faible était le signe d'un masque plus **serré**, pas amputé — établi par
+contrôle visuel, la métrique seule aurait pu l'interpréter comme une dégradation. Sur les
+images : Pikachu détouré proprement là où RMBG gardait le mur et les feuillages, Celebi net
+là où RMBG embarquait du décor, et sur la Double rare où RMBG prenait **92 %** de
+l'illustration (échec total) U²-Netp trouve le sujet. Il gagne donc sur les quatre plans à
+la fois, ce qui est rare — la décision ne demandait aucun arbitrage.
+
+Mesuré après bascule dans l'app : **3,8 s** contre 30,9 s pour le même Dracaufeu sur la même
+machine, réouverture en **71 ms**.
+
+**Quatre erreurs de plomberie à traverser**, aucune venant du modèle — notées parce qu'elles
+se reposeront au prochain changement de modèle :
+1. `Unknown image_processor_type` → fournir une `config` à `AutoProcessor` **ne suffit pas** :
+   il lit quand même le `preprocessor_config.json` distant. Seule issue : **construire le
+   tenseur d'entrée à la main** (redimensionnement, normalisation, disposition NCHW), ce qui
+   supprime la dépendance et rend le prétraitement explicite.
+2. `Could not locate file: model_quantized.onnx` → transformers.js réclame une variante
+   quantifiée par défaut ; `dtype` explicite selon ce que le dépôt publie réellement.
+3. `Missing the following inputs: input.1` → le nom de l'entrée varie d'un modèle à
+   l'autre. Lu dans la session ONNX (`inputNames`) plutôt que codé en dur, donc valable
+   pour tout futur modèle.
+4. U²-Net renvoie plusieurs sorties (supervision profonde) : la première est la carte de
+   saillance, les suivantes sont intermédiaires.
+
+**Masques étiquetés par modèle** (`SEG_TAG`) : un masque calculé par un autre modèle est
+ignoré plutôt que réutilisé. Sans ça, un changement de modèle laisserait cohabiter deux
+qualités de découpe sans qu'on puisse les distinguer, et le gain resterait invisible sur
+toutes les cartes déjà vues.
+
+**Nuance sur le coût mesuré précédemment** : RMBG est passé de 23,6 s à 13,9 s de moyenne
+entre deux passages, sans changement de code — c'est le modèle déjà en cache navigateur. Les
+45 s constatées sur téléphone incluaient donc le téléchargement des 45 Mo. Avec U²-Netp à
+4,7 Mo, ce poste devient négligeable en plus du gain sur le calcul.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

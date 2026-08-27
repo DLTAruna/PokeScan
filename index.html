@@ -4571,10 +4571,26 @@ $('sets-filter').addEventListener('input', ()=>{ if(seriesIndex) renderSeriesLis
 // produit parfois des formes arbitraires (blob circulaire coupant un visage, décor happé
 // avec le sujet). D'où l'interrupteur, et le repli silencieux sur l'affichage plat.
 //
-// Licence : RMBG-1.4 (Bria) est NON COMMERCIALE. Acceptable pour un usage personnel et
-// pour évaluer ; à remplacer par U²-Netp (Apache 2.0, 4,7 Mo, entrée native 320×320 donc
-// bien plus rapide) si l'effet est conservé dans un outil qui sert à vendre.
+// MODÈLE : U²-Netp, retenu après comparaison directe avec RMBG-1.4 sur les mêmes 7 cartes
+// (voir segtest.html). Il gagne sur les quatre plans à la fois :
+//   temps     13 844 ms -> 2 681 ms de moyenne (5,2x)
+//   poids     45 Mo     -> 4,7 Mo (le téléchargement initial cesse d'être un coût)
+//   licence   non commerciale -> Apache 2.0
+//   qualité   masques nettement plus SERRÉS et plus justes — Pikachu détouré proprement
+//             là où RMBG gardait le mur et les feuillages, et sur une carte où RMBG
+//             prenait 92 % de l'illustration (échec total) U²-Netp trouve le sujet.
+// La couverture plus faible (24 % contre 52 % en moyenne) était le signe d'un masque plus
+// serré, pas amputé : c'est le contrôle visuel qui l'a établi, la métrique seule aurait pu
+// l'interpréter comme une dégradation.
 const SEG_MODULE = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+const SEG_MODELE = 'BritishWerewolf/U-2-Netp';
+const SEG_TAILLE = 320;                          // entrée native du modèle
+const SEG_MOYENNE = [0.485, 0.456, 0.406];       // normalisation ImageNet, comme à l'entraînement
+const SEG_ECART = [0.229, 0.224, 0.225];
+// Étiquette du modèle enregistrée avec chaque masque : un masque calculé par un AUTRE
+// modèle ne doit pas être réutilisé tel quel, sinon un changement de modèle laisserait
+// coexister deux qualités de découpe sans qu'on puisse les distinguer.
+const SEG_TAG = 'u2netp-1';
 // Fenêtre d'illustration d'une carte moderne. Segmenter la carte ENTIÈRE ne marche pas :
 // le modèle y voit la carte comme l'objet à détourer et renvoie un masque quasi plein
 // (mesuré : 87-90 % de couverture, inexploitable). En ne lui donnant que l'illustration,
@@ -4589,28 +4605,60 @@ function getSegWorker(){
   segWorkerPromise = new Promise((resolve, reject)=>{
     try{
       const src = `
-        import { AutoModel, AutoProcessor, RawImage } from ${JSON.stringify(SEG_MODULE)};
-        let model = null, processor = null, pret = null;
+        import { AutoModel, RawImage, Tensor } from ${JSON.stringify(SEG_MODULE)};
+        let model = null, pret = null;
         async function ensure(){
           if(pret) return pret;
           pret = (async ()=>{
-            model = await AutoModel.from_pretrained('briaai/RMBG-1.4', { config:{ model_type:'custom' } });
-            processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', { config:{
-              do_normalize:true, do_pad:false, do_rescale:true, do_resize:true,
-              image_mean:[0.5,0.5,0.5], image_std:[1,1,1],
-              resample:2, rescale_factor:1/255, size:{width:1024, height:1024} } });
+            // dtype explicite : transformers.js réclame par défaut une variante quantifiée
+            // (onnx/model_quantized.onnx) que ce dépôt ne publie pas.
+            model = await AutoModel.from_pretrained(${JSON.stringify(SEG_MODELE)},
+              { dtype:'fp32', config:{ model_type:'custom' } });
           })();
           return pret;
         }
+
+        // Prétraitement fait à la main plutôt que via AutoProcessor : celui-ci lit le
+        // preprocessor_config.json distant et refuse un image_processor_type qu'il ne
+        // connaît pas — le cas de ce dépôt, y compris en lui passant une config. Le faire
+        // soi-même supprime cette dépendance et rend le traitement explicite.
+        function preparerEntree(image, taille, moyenne, ecart){
+          const c = new OffscreenCanvas(taille, taille);
+          const ctx = c.getContext('2d', {willReadFrequently:true});
+          ctx.drawImage(image.toCanvas(), 0, 0, taille, taille);
+          const px = ctx.getImageData(0, 0, taille, taille).data;
+          const n = taille * taille;
+          const data = new Float32Array(3 * n);  // disposition NCHW : un plan par canal
+          for(let i=0;i<n;i++){
+            data[i]       = (px[i*4]   / 255 - moyenne[0]) / ecart[0];
+            data[n + i]   = (px[i*4+1] / 255 - moyenne[1]) / ecart[1];
+            data[2*n + i] = (px[i*4+2] / 255 - moyenne[2]) / ecart[2];
+          }
+          return new Tensor('float32', data, [1, 3, taille, taille]);
+        }
+
+        // Le nom de l'entrée varie d'un modèle à l'autre ('input' ici, 'input.1' là) :
+        // on le lit dans la session ONNX plutôt que de le coder en dur.
+        function nomEntree(m){
+          const s = m?.sessions?.model ?? m?.session;
+          const noms = s?.inputNames;
+          return (noms && noms.length) ? noms[0] : 'input';
+        }
+
         self.onmessage = async (e)=>{
           const { id, dataUrl } = e.data;
           try{
             const t0 = performance.now();
             await ensure();
             const image = await RawImage.fromURL(dataUrl);
-            const { pixel_values } = await processor(image);
-            const { output } = await model({ input: pixel_values });
-            const m = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(image.width, image.height);
+            const entree = preparerEntree(image, ${SEG_TAILLE},
+              ${JSON.stringify(SEG_MOYENNE)}, ${JSON.stringify(SEG_ECART)});
+            const sortie = await model({ [nomEntree(model)]: entree });
+            // U²-Net renvoie plusieurs sorties intermédiaires : la première est la carte
+            // de saillance finale, les suivantes sont des sorties de supervision profonde.
+            const t = sortie.output ?? sortie.logits ?? Object.values(sortie)[0];
+            const brut = Array.isArray(t) ? t[0] : (t[0] ?? t);
+            const m = await RawImage.fromTensor(brut.mul(255).to('uint8')).resize(image.width, image.height);
             // Seuls les octets du masque repartent (pas de bitmap) : le fil principal le
             // recompose, et l'objet reste petit à stocker en cache.
             postMessage({ id, ok:true, w:image.width, h:image.height,
@@ -4668,14 +4716,18 @@ async function segExtraireIllustration(imageBase){
 // calcul. Le calcul est décidé par l'appelant, qui sait s'il peut se permettre l'attente.
 async function segMasqueEnCache(cardId){
   const e = await idbGet('cardMasks', cardId);
-  return e ? {masque: e.masque, w: e.w, h: e.h} : null;
+  // Un masque produit par un autre modèle est ignoré plutôt que réutilisé : sans ce
+  // contrôle, un changement de modèle laisserait cohabiter deux qualités de découpe sans
+  // qu'on puisse les distinguer, et le gain resterait invisible sur les cartes déjà vues.
+  if(!e || e.tag !== SEG_TAG) return null;
+  return {masque: e.masque, w: e.w, h: e.h};
 }
 
 async function segCalculerMasque(cardId, imageBase, onProgres){
   const { dataUrl } = await segExtraireIllustration(imageBase);
   if(onProgres) onProgres('calcul');
   const r = await segCall(dataUrl);
-  await idbSet('cardMasks', {cardId, masque: r.masque, w: r.w, h: r.h, ms: r.ms, at: Date.now()});
+  await idbSet('cardMasks', {cardId, tag: SEG_TAG, masque: r.masque, w: r.w, h: r.h, ms: r.ms, at: Date.now()});
   return {masque: r.masque, w: r.w, h: r.h, ms: r.ms};
 }
 
