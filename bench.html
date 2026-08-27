@@ -1073,7 +1073,10 @@ function renderStats(){
 function renderFailures(){
   $('fail-tbody').innerHTML = failures.slice(-60).reverse().map(f=>`
     <tr>
-      <td><img class="fail-thumb" src="${f.image}/low.webp" loading="lazy"><br><span class="mut">${f.setName}</span></td>
+      <!-- En mode zip, l'échec vient d'une photo réelle et non d'une carte du catalogue :
+           il n'y a alors pas d'illustration de référence. Sans cette garde, la vignette
+           demandait « undefined/low.webp » (404 + image cassée dans le rapport). -->
+      <td>${f.image ? `<img class="fail-thumb" src="${f.image}/low.webp" loading="lazy"><br>` : ''}<span class="mut">${f.setName || '—'}</span></td>
       <td><code>${f.expected}</code></td>
       <td class="ko">${f.got ? '<code>'+f.got+'</code>' : '—'}</td>
       <td><code>${(f.text||'(vide)').replace(/[<>&]/g,'')}</code></td>
