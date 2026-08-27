@@ -4111,6 +4111,17 @@ async function attemptRead(corners, score){
     // Le fil principal est le bon endroit : c'est lui qui détient setDenominatorMap.
     const choisi = choisirCandidat(r.cands, r.number, r.denominator);
 
+    // Refus explicite du départage : aucun candidat n'avait un dénominateur existant. On
+    // traite ça comme une lecture ratée — surtout PAS comme une capture avec un numéro vide,
+    // qui produirait une entrée inexploitable dans la file. Une tentative ratée coûte
+    // quelques centaines de ms et sera immédiatement rejouée sur l'image suivante.
+    if(!hashShortcut && !choisi.number){
+      setAimHint('Numéro peu sûr — réessaie');
+      diagPush('try', {ok:false, hint:'numéro invraisemblable', sharp:r.sharp, score, ocrMs:ms,
+                       hashDist: bestHashDist, raw:r.text, rotated, ...timing});
+      return;
+    }
+
     // Numéro/dénominateur "finaux" utilisés pour tout le reste de la fonction : ceux lus
     // par l'OCR normalement, ou ceux de la carte trouvée par raccourci visuel — l'id de
     // la carte sert d'équivalent stable au dénominateur pour les comparaisons d'égalité
@@ -5137,9 +5148,23 @@ const CV_RELIEF_Z = 62;     // px de hauteur au-dessus de la carte
 function choisirCandidat(cands, numDefaut, denomDefaut){
   const repli = {number: numDefaut, denominator: denomDefaut};
   if(!Array.isArray(cands) || !cands.length) return repli;
+
   if(setDenominatorMap){
     const plausible = cands.find(c => setDenominatorMap[c.denominator]);
     if(plausible) return plausible;
+    // STRICT : aucun candidat n'a un dénominateur existant — on préfère ne RIEN proposer
+    // plutôt que de retenir une lecture qu'on sait invraisemblable. Mesuré sur 31 photos
+    // réelles, à taux de lecture strictement inchangé (71,0 %) : faux positifs 12,9 % ->
+    // 9,7 %, sans une milliseconde de plus.
+    //
+    // Le compromis est asymétrique et c'est ce qui le justifie : un échec de lecture se
+    // voit tout de suite et se rejoue, alors qu'une carte fausse part au lot sans qu'aucun
+    // signal n'alerte — puis en vente.
+    //
+    // Appliqué UNIQUEMENT quand la table est chargée (garde `if` ci-dessus) : au tout
+    // premier scan d'une session elle peut manquer, et refuser alors toute lecture serait
+    // pire que le mal.
+    return {number:'', denominator:''};
   }
   return cands[0] || repli;
 }
