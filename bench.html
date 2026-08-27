@@ -94,6 +94,18 @@
   .bar-row .bar{height:100%; background:linear-gradient(90deg,var(--accent2),var(--good));}
   .bar-row .val{width:78px; text-align:right; flex-shrink:0; color:var(--muted); font-size:11.5px;}
   .variant-active{color:var(--accent); font-weight:800;}
+  /* Aperçus du pipeline. Les canvas font 1000 px de large à l'état natif : sans contrainte
+     de largeur ils débordent complètement et rendent la page inutilisable. */
+  .card-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:10px;
+    padding:12px 0; border-bottom:1px solid var(--border);}
+  .card-row h3{grid-column:1/-1; margin:0; font-size:13.5px; color:var(--accent);
+    font-family:'Baloo 2',sans-serif;}
+  .shot{background:#0a0a0a; border:1px solid var(--border); border-radius:8px; overflow:hidden;}
+  .shot .lbl{font-size:10.5px; color:var(--muted); padding:4px 7px; background:rgba(0,0,0,.4);}
+  .shot canvas{width:100%; height:auto; display:block;}
+  .verdict{font-size:11px; margin:0; padding:4px 7px;}
+  .v-ok{background:rgba(59,165,93,.15); color:var(--good);}
+  .v-bad{background:rgba(232,91,69,.15); color:var(--bad);}
   a{color:#7fb2ef;}
 </style>
 </head>
@@ -113,6 +125,12 @@
     Ce banc <b>ne mesure donc pas</b> la robustesse au flou, aux reflets ni à l'angle — c'est-à-dire
     l'essentiel de la difficulté réelle en photo. La dégradation synthétique ci-dessous s'en approche,
     sans la remplacer.<br><br>
+    <b>Deux modes.</b> « Illustration recadrée » découpe la bande à des fractions fixes, comme si le
+    redressement était parfait — il ne teste donc que la <b>seconde moitié</b> du pipeline (OCR et
+    parsing). « Photo simulée » compose la carte sur un fond avec perspective, reflets et éclairage
+    inégal, puis fait tourner <b>tout</b> le pipeline : détection de la carte, redressement, découpe,
+    OCR. C'est le seul mode qui teste l'étape où se logeait l'hypothèse du rognage par le bas.
+    L'écart entre les deux modes mesure directement ce que coûte la détection.<br><br>
     Ce qu'il mesure <b>vraiment bien</b>, en revanche : la <b>géométrie du recadrage à travers les
     époques</b>. Le numéro n'est pas placé au même endroit sur une carte Base Set de 1999, une e-Card,
     une full-art ou une carte Écarlate et Violet — et la fenêtre est aujourd'hui figée. La vérité
@@ -137,6 +155,13 @@
     <div>
       <label>Adaptation toutes les N cartes</label>
       <input type="number" id="cfg-interval" value="10" min="5" max="100" step="5">
+    </div>
+    <div>
+      <label>Mode</label>
+      <select id="cfg-mode">
+        <option value="crop">Illustration recadrée (rapide)</option>
+        <option value="photo">Photo simulée — pipeline complet</option>
+      </select>
     </div>
     <div>
       <label>Époque des cartes</label>
@@ -170,6 +195,11 @@
   <h2 style="font-size:14px; margin-top:16px;">Fenêtres de recadrage comparées</h2>
   <p class="sub">Chaque carte est lue avec toutes les variantes ci-dessous, sur la même image : la comparaison est donc à conditions strictement égales. La variante retenue (<span class="variant-active">en doré</span>) est réévaluée toutes les N cartes sur <b>l'ensemble accumulé</b>, jamais sur les 10 dernières seules — sur si peu d'échantillons, ce serait du bruit, pas un signal.</p>
   <div id="variants-box"></div>
+
+  <!-- Aperçus du pipeline en mode photo : photo simulée -> carte redressée -> bande lue.
+       Sans ces images, un taux effondré est inexploitable — impossible de distinguer une
+       simulation trop dure d'un redressement défaillant. -->
+  <div id="apercus"></div>
 
   <h2 style="font-size:14px; margin-top:18px;">Réussite par série (est-ce que la fenêtre tient selon les époques ?)</h2>
   <div id="series-box"><p class="sub">—</p></div>
@@ -281,6 +311,10 @@ let running = false, stopRequested = false;
 let activeVariant = 0;
 let stats = [];   // par variante : {ok, total}
 let tested = 0, ocrMsTotal = 0, ocrCalls = 0, ignorees = 0;
+// Échecs du pipeline de DÉTECTION, comptés par cause (aucune détection, score trop bas,
+// forme incompatible…). Séparés des échecs de lecture : une carte non trouvée et un numéro
+// non lu n'appellent pas les mêmes correctifs, et un taux unique masquerait lequel domine.
+let echecsDetection = {};
 let seriesStats = {};   // serieName -> {ok, total} (sur la variante active)
 let failures = [];
 let parsingSrc = null;
@@ -376,7 +410,11 @@ function workerCall(type, payload, transfer){
 // ---------------------------------------------------------------------------
 function openIdb(){
   return new Promise((resolve, reject)=>{
-    const req = indexedDB.open('pokescan_cache_v1', 1);
+    // Aucune version demandée : le banc ne fait que LIRE le cache de l'application, il ne
+    // doit donc jamais imposer de schéma. Fixer un numéro le faisait échouer dès que l'app
+    // montait de version (« The requested version (1) is less than the existing version (2) »),
+    // et le banc repartait alors silencieusement sur un téléchargement complet.
+    const req = indexedDB.open('pokescan_cache_v1');
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
     req.onupgradeneeded = ()=> { try{ req.transaction.abort(); }catch(e){} reject(new Error('cache absent')); };
@@ -548,6 +586,254 @@ async function renderCard(img, degrade){
   return out;
 }
 
+// =============================================================================
+// MODE « PHOTO SIMULÉE » — pipeline complet
+//
+// Le mode recadré part de l'illustration officielle découpée à des fractions fixes : il
+// suppose donc un redressement PARFAIT et ne teste jamais la détection de la carte ni
+// `extractDocument`. Or c'est précisément là que se logeait l'hypothèse du rognage par le
+// bas (§4.36) — l'étape la plus suspecte n'était pas mesurée.
+//
+// Ici on fabrique une image qui ressemble à une photo au téléphone : la carte est posée sur
+// un fond, vue sous un angle, avec un éclairage inégal et un reflet. Puis on fait tourner
+// TOUT le pipeline réel : détection Scanic -> extractDocument -> découpe -> OCR. La vérité
+// terrain reste automatique, donc la mesure tient à l'échelle, contrairement à des photos
+// trouvées en ligne qu'il faudrait étiqueter une par une.
+//
+// Ce que ça ne reproduit toujours pas : la vraie optique (profondeur de champ, aberrations),
+// les reflets spéculaires d'une surface holographique, et la main qui tient la carte. C'est
+// plus proche du réel que la dégradation simple, pas équivalent.
+// =============================================================================
+const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+let scanicMod = null, scanner = null;
+
+async function getScanner(){
+  if(scanner) return scanner;
+  if(!scanicMod) scanicMod = await import(SCANIC_MODULE);
+  const sc = new scanicMod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+  await sc.initialize();
+  scanner = sc;
+  return sc;
+}
+
+// Transformation projective d'une image vers un quadrilatère quelconque. Canvas ne sait
+// faire que des transformations affines ; on découpe donc l'image en bandes horizontales
+// fines, chacune dessinée avec sa propre affine — l'erreur devient invisible dès quelques
+// dizaines de bandes, et ça évite d'embarquer une bibliothèque pour l'occasion.
+function dessinerEnQuad(ctx, img, quad, bandes = 90){
+  const {tl, tr, br, bl} = quad;
+  const lerp = (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+  for(let i=0;i<bandes;i++){
+    const t0 = i/bandes, t1 = (i+1)/bandes;
+    const g0 = lerp(tl, bl, t0), d0 = lerp(tr, br, t0);
+    const g1 = lerp(tl, bl, t1), d1 = lerp(tr, br, t1);
+    const sy = img.height * t0, sh = Math.ceil(img.height / bandes) + 1;
+    // Affine qui envoie le rectangle source sur le trapèze de la bande.
+    const dx = d0[0]-g0[0], dy = d0[1]-g0[1];
+    ctx.save();
+    ctx.setTransform(dx/img.width, dy/img.width,
+                     (g1[0]-g0[0])/(sh||1), (g1[1]-g0[1])/(sh||1),
+                     g0[0], g0[1]);
+    ctx.drawImage(img, 0, sy, img.width, sh, 0, 0, img.width, sh);
+    ctx.restore();
+  }
+}
+
+// Fabrique une « photo » de la carte : fond, perspective, éclairage, reflet, flou, JPEG.
+// (`rand` est défini plus bas, avec les utilitaires de dégradation.)
+async function fabriquerPhoto(base, intensite){
+  const src = await createImageBitmap(await (await fetch(base + '/high.webp')).blob());
+  const W = 1000, H = 1333;                     // cadre façon capteur de téléphone, en portrait
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Fond : dégradé neutre plutôt qu'une couleur unie — un fond parfaitement uni rendrait la
+  // détection des bords artificiellement facile.
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  const teinte = Math.round(rand(35, 90));
+  g.addColorStop(0, `rgb(${teinte},${teinte+6},${teinte+10})`);
+  g.addColorStop(1, `rgb(${teinte+25},${teinte+22},${teinte+18})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  // Grain : une surface réelle n'est jamais lisse, et le détecteur s'appuie sur les bords.
+  for(let i=0;i<2200;i++){
+    ctx.fillStyle = `rgba(255,255,255,${rand(0.01,0.05)})`;
+    ctx.fillRect(rand(0,W), rand(0,H), rand(1,3), rand(1,3));
+  }
+
+  // Quadrilatère de la carte : centré, avec inclinaison et rotation résiduelle. C'est ce qui
+  // oblige le pipeline à redresser — et donc ce que le mode recadré ne testait pas.
+  const amp = intensite === 'light' ? 0.35 : 1;
+  const marge = 0.10;
+  const cx = W/2 + rand(-40,40)*amp, cy = H/2 + rand(-50,50)*amp;
+  const demiL = W*(0.5-marge)/2 * rand(1.25, 1.55);
+  const demiH = demiL * (88/63);
+  const inclX = rand(-0.16, 0.16)*amp;   // fuite horizontale (carte penchée à gauche/droite)
+  const inclY = rand(-0.13, 0.13)*amp;   // fuite verticale (carte penchée en avant/arrière)
+  const rot   = rand(-0.10, 0.10)*amp;   // rotation résiduelle dans le plan
+  const pt = (sx, sy)=>{
+    // Perspective simple : plus un coin s'éloigne, plus il se resserre vers le centre.
+    const fx = 1 + inclX*sx, fy = 1 + inclY*sy;
+    let x = sx*demiL*fy, y = sy*demiH*fx;
+    const xr = x*Math.cos(rot) - y*Math.sin(rot);
+    const yr = x*Math.sin(rot) + y*Math.cos(rot);
+    return [cx + xr, cy + yr];
+  };
+  const quad = {tl:pt(-1,-1), tr:pt(1,-1), br:pt(1,1), bl:pt(-1,1)};
+
+  // Ombre portée de la carte sur le fond : sans elle, le bord bas serait trop net et la
+  // détection trop facile par rapport au réel.
+  ctx.save();
+  ctx.filter = 'blur(9px)';
+  ctx.fillStyle = 'rgba(0,0,0,.45)';
+  ctx.beginPath();
+  ctx.moveTo(quad.tl[0]+8, quad.tl[1]+12); ctx.lineTo(quad.tr[0]+8, quad.tr[1]+12);
+  ctx.lineTo(quad.br[0]+8, quad.br[1]+12); ctx.lineTo(quad.bl[0]+8, quad.bl[1]+12);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  dessinerEnQuad(ctx, src, quad);
+
+  // Éclairage inégal + reflet : la lumière d'une pièce n'est jamais uniforme, et une carte
+  // vernie renvoie une bande brillante qui peut recouvrir le numéro.
+  const lum = ctx.createLinearGradient(rand(0,W), 0, rand(0,W), H);
+  lum.addColorStop(0, `rgba(255,255,240,${rand(0.05,0.16)*amp})`);
+  lum.addColorStop(1, `rgba(0,0,30,${rand(0.05,0.20)*amp})`);
+  ctx.fillStyle = lum; ctx.fillRect(0,0,W,H);
+  if(intensite !== 'light'){
+    const refl = ctx.createLinearGradient(cx-demiL, cy-demiH, cx+demiL, cy+demiH);
+    const p = rand(0.2, 0.8);
+    refl.addColorStop(Math.max(0,p-0.13), 'rgba(255,255,255,0)');
+    refl.addColorStop(p, `rgba(255,255,255,${rand(0.10,0.30)})`);
+    refl.addColorStop(Math.min(1,p+0.13), 'rgba(255,255,255,0)');
+    ctx.fillStyle = refl; ctx.fillRect(0,0,W,H);
+  }
+
+  // Flou de mise au point puis ré-encodage JPEG, dans cet ordre : c'est celui de la chaîne
+  // réelle (l'appareil floute puis compresse).
+  const flou = intensite === 'light' ? rand(0.2,0.7) : rand(0.5,1.8);
+  const q    = intensite === 'light' ? 0.88 : rand(0.62,0.82);
+  const f = document.createElement('canvas');
+  f.width = W; f.height = H;
+  const fc = f.getContext('2d');
+  fc.filter = `blur(${flou.toFixed(2)}px)`;
+  fc.drawImage(c, 0, 0);
+  fc.filter = 'none';
+  const jpeg = f.toDataURL('image/jpeg', q);
+  const out = await loadImage(jpeg);
+  return {photo: out, quadVrai: quad};
+}
+
+// Fait tourner le pipeline réel sur la photo simulée : détection -> redressement.
+// Renvoie la carte redressée, ou une raison d'échec — chaque raison est comptée à part,
+// parce qu'un échec de détection et un échec d'OCR n'appellent pas les mêmes correctifs.
+async function pipelineDetection(photo){
+  const sc = await getScanner();
+  const DETECT_LONG_EDGE = 512, EXTRACT_LONG_EDGE = 1200, MIN_SCORE = 0.35;
+
+  const d = Math.min(1, DETECT_LONG_EDGE / Math.max(photo.width, photo.height));
+  const dw = Math.round(photo.width*d), dh = Math.round(photo.height*d);
+  const petit = document.createElement('canvas');
+  petit.width = dw; petit.height = dh;
+  petit.getContext('2d', {willReadFrequently:true}).drawImage(photo, 0, 0, dw, dh);
+  const imgData = petit.getContext('2d').getImageData(0, 0, dw, dh);
+
+  let res = null;
+  try{ res = await sc.scan(imgData, { mode:'detect', detector:'ml' }); }catch(e){}
+  if(!res || !res.corners) return {echec:'aucune détection'};
+  if(res.score != null && res.score < MIN_SCORE) return {echec:'score trop bas', score:res.score};
+
+  const c = res.corners;
+  const coins = {
+    tl:[c.topLeft.x/dw, c.topLeft.y/dh], tr:[c.topRight.x/dw, c.topRight.y/dh],
+    br:[c.bottomRight.x/dw, c.bottomRight.y/dh], bl:[c.bottomLeft.x/dw, c.bottomLeft.y/dh]
+  };
+
+  // Même homothétie de 4 % que l'application (voir §4.36) : c'est un des réglages qu'on
+  // veut justement pouvoir mesurer ici.
+  const MARGE = 0.04;
+  const mx = (coins.tl[0]+coins.tr[0]+coins.br[0]+coins.bl[0])/4;
+  const my = (coins.tl[1]+coins.tr[1]+coins.br[1]+coins.bl[1])/4;
+  const e = Math.min(1, EXTRACT_LONG_EDGE / Math.max(photo.width, photo.height));
+  const vw = Math.round(photo.width*e), vh = Math.round(photo.height*e);
+  const grow = (p)=>({x:(mx+(p[0]-mx)*(1+MARGE))*vw, y:(my+(p[1]-my)*(1+MARGE))*vh});
+
+  const frame = document.createElement('canvas');
+  frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(photo, 0, 0, vw, vh);
+
+  let ex = null;
+  try{
+    // extractDocument est exporté par le MODULE, pas porté par l'instance Scanner — c'est
+    // ainsi que l'app l'appelle (elle garde le module, pas seulement le scanner).
+    ex = await scanicMod.extractDocument(frame, {
+      topLeft:grow(coins.tl), topRight:grow(coins.tr),
+      bottomRight:grow(coins.br), bottomLeft:grow(coins.bl)
+    }, {output:'canvas'});
+  }catch(err){ return {echec:'redressement : ' + err.message}; }
+  if(!ex || !ex.success || !ex.output) return {echec:'redressement échoué'};
+
+  // Filtre de forme, identique à l'app : un quadrilatère qui ne ressemble pas à une carte
+  // est écarté plutôt que lu de travers.
+  const ratio = ex.output.height / ex.output.width, R = 88/63;
+  const portrait  = Math.abs(ratio - R)/R <= 0.25;
+  const paysage   = Math.abs(ratio - 1/R)*R <= 0.25;
+  if(!portrait && !paysage) return {echec:'forme incompatible', ratio:+ratio.toFixed(2)};
+
+  let sortie = ex.output;
+  if(paysage && !portrait){
+    const r = document.createElement('canvas');
+    r.width = sortie.height; r.height = sortie.width;
+    const rc = r.getContext('2d');
+    rc.translate(r.width/2, r.height/2); rc.rotate(-Math.PI/2);
+    rc.drawImage(sortie, -sortie.width/2, -sortie.height/2);
+    sortie = r;
+  }
+
+  // Ramené à la largeur de travail de l'app, pour que les fractions de découpe aient le
+  // même sens que dans le pipeline réel.
+  const W = 600, H = Math.round(W*R);
+  const norm = document.createElement('canvas');
+  norm.width = W; norm.height = H;
+  norm.getContext('2d').drawImage(sortie, 0, 0, W, H);
+  return {carte: norm, score: res.score};
+}
+
+let apercusMontres = 0;
+
+// Affiche la photo simulée, la carte redressée et la bande réellement lue. C'est le seul
+// moyen de savoir si un taux bas vient de la simulation, du redressement ou de l'OCR.
+function montrerApercu(card, photo, r){
+  const box = document.createElement('div');
+  box.className = 'card-row';
+  box.innerHTML = `<h3>🔍 Aperçu pipeline — ${card.setName} #${card.localId}
+    <span style="color:var(--muted);font-weight:400">attendu ${card.localId}/${card.official}</span></h3>`;
+
+  const ajouter = (titre, source, note)=>{
+    const sh = document.createElement('div'); sh.className = 'shot';
+    sh.innerHTML = `<div class="lbl">${titre}</div>`;
+    if(source){
+      const c = document.createElement('canvas');
+      c.width = source.width; c.height = source.height;
+      c.getContext('2d').drawImage(source, 0, 0);
+      sh.appendChild(c);
+    }
+    if(note) sh.insertAdjacentHTML('beforeend', `<div class="verdict ${r.echec?'v-bad':'v-ok'}">${note}</div>`);
+    box.appendChild(sh);
+  };
+
+  ajouter('photo simulée', photo, null);
+  if(r.echec){
+    ajouter('redressement', null, '❌ ' + r.echec);
+  } else {
+    ajouter('carte redressée', r.carte, `score ${r.score != null ? r.score.toFixed(2) : '?'}`);
+    // La bande de production, telle qu'elle sera réellement envoyée à l'OCR : c'est là
+    // qu'on voit si le numéro y est, décentré, ou carrément absent.
+    ajouter('bande lue (production)', cropVariant(r.carte, VARIANTS[0]), null);
+  }
+  $('apercus').appendChild(box);
+}
+
 function cropVariant(card, v){
   const W = card.width, H = card.height;
   const parts = v.parts || [{fx:v.fx, fy:v.fy, fw:v.fw, fh:v.fh}];
@@ -658,6 +944,7 @@ async function run(){
   running = true; stopRequested = false;
   $('btn-start').disabled = true; $('btn-stop').disabled = false;
   failures = []; tested = 0; ocrMsTotal = 0; ocrCalls = 0; seriesStats = {}; activeVariant = 0; ignorees = 0;
+  echecsDetection = {}; apercusMontres = 0;
   stats = VARIANTS.map(()=>({okAny:0, total:0, ms:0,
     pol: Object.fromEntries(NOMS_POLITIQUES.map(n=>[n,{ok:0,fp:0}]))}));
   renderStats();
@@ -667,6 +954,7 @@ async function run(){
     parsingSrc = await loadParsingSource();
     log('✅ Logique de parsing extraite de index.html (' + parsingSrc.length + ' caractères) — le banc teste le vrai code, pas une copie.');
 
+    const mode = $('cfg-mode').value;
     const minYear = parseInt($('cfg-era').value, 10) || 0;
     const pool = await buildCardPool(minYear);
     if(!pool.length) throw new Error('aucune carte exploitable trouvée');
@@ -682,7 +970,14 @@ async function run(){
     const interval = parseInt($('cfg-interval').value,10) || 10;
     const degrade = $('cfg-degrade').value;
     const sample = pool.sort(()=> Math.random()-0.5).slice(0, N);
-    log('🎲 Échantillon de ' + N + ' cartes tirées au hasard · dégradation « ' + degrade + ' » · adaptation toutes les ' + interval + ' cartes.');
+    log('🎲 Échantillon de ' + N + ' cartes tirées au hasard · mode « ' +
+        (mode === 'photo' ? 'photo simulée, pipeline complet' : 'illustration recadrée') +
+        ' » · dégradation « ' + degrade + ' » · adaptation toutes les ' + interval + ' cartes.');
+    if(mode === 'photo'){
+      log('   La carte est composée sur un fond avec perspective, éclairage et reflet, puis');
+      log('   détectée et redressée comme en usage réel. Les échecs de DÉTECTION sont comptés');
+      log('   à part : ils ne relèvent pas des mêmes correctifs que les échecs de lecture.');
+    }
     log('');
 
     for(let i=0; i<sample.length; i++){
@@ -693,8 +988,36 @@ async function run(){
 
       let rendered;
       try{
-        const img = await loadImage(card.image + '/high.webp');
-        rendered = await renderCard(img, degrade);
+        if(mode === 'photo'){
+          // Pipeline complet : photo simulée -> détection -> redressement. Un échec ici est
+          // compté SÉPARÉMENT des échecs de lecture : ne pas trouver la carte et ne pas
+          // lire son numéro sont deux problèmes distincts, qui appellent des correctifs
+          // distincts. Les confondre dans un taux unique masquerait lequel domine.
+          const {photo} = await fabriquerPhoto(card.image, degrade);
+          const r = await pipelineDetection(photo);
+          // Aperçu des premières cartes : sans regarder la photo simulée ET la carte
+          // redressée, un taux effondré est inexploitable — impossible de distinguer « la
+          // simulation est trop dure » de « le redressement abîme la carte ». La leçon a
+          // déjà été payée une fois avec une métrique qui annonçait « découpe nette » sur
+          // un masque totalement faux.
+          // L'aperçu est un confort de diagnostic : s'il échoue, il ne doit SURTOUT pas
+          // faire compter la carte comme ratée. C'est arrivé — un identifiant d'élément
+          // erroné faisait planter l'affichage, et les cartes concernées étaient comptées
+          // comme « images non chargées », gonflant un taux d'échec parfaitement faux.
+          if(apercusMontres < 4){
+            apercusMontres++;
+            try{ montrerApercu(card, photo, r); }
+            catch(e){ log('⚠️ aperçu indisponible : ' + e.message); }
+          }
+          if(r.echec){
+            echecsDetection[r.echec] = (echecsDetection[r.echec] || 0) + 1;
+            continue;
+          }
+          rendered = r.carte;
+        } else {
+          const img = await loadImage(card.image + '/high.webp');
+          rendered = await renderCard(img, degrade);
+        }
       }catch(e){
         // Ignorer en silence a déjà faussé un run entier (voir loadImage) : on compte, et
         // on alerte dès que le taux d'échec de chargement devient anormal — au-delà de
@@ -792,8 +1115,18 @@ async function run(){
 
     renderStats(); renderFailures();
     log('');
+    // `ignorees` ne compte QUE les images non chargées : y mêler les échecs de détection
+    // déclencherait l'alerte de fiabilité (prévue pour un problème réseau) sur un résultat
+    // parfaitement valide — un échec de détection EST une mesure, pas une donnée manquante.
     log('🏁 Terminé — ' + tested + ' cartes testées' +
-        (ignorees ? `, ${ignorees} ignorées faute d'image (${Math.round(ignorees/(tested+ignorees)*100)} %)` : '') + '.');
+        (ignorees ? `, ${ignorees} images non chargées (${Math.round(ignorees/(tested+ignorees)*100)} %)` : '') + '.');
+    const causes = Object.entries(echecsDetection);
+    if(causes.length){
+      const totalDet = causes.reduce((s,[,n])=>s+n, 0);
+      log(`Échecs de DÉTECTION : ${totalDet} sur ${tested+totalDet} (${Math.round(totalDet/(tested+totalDet)*100)} %) —`);
+      causes.sort((a,b)=>b[1]-a[1]).forEach(([c,n])=> log(`   ${c} : ${n}`));
+      log('   (une carte non trouvée n\'atteint jamais l\'OCR : ce taux se cumule aux échecs de lecture)');
+    }
     if(ignorees/(tested+ignorees) > 0.05){
       log('⛔ Plus de 5 % de cartes non chargées : ces résultats sont à considérer comme');
       log('   NON FIABLES. Relance avec l\'onglet au premier plan.');
