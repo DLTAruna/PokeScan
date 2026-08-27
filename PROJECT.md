@@ -1525,6 +1525,46 @@ le détail des textes OCR, qui montraient `206165` toujours non lu — impossibl
 correctif — j'aurais conclu que mes corrections ne servaient à rien. Corrigé par
 `?nocache=` + `cache:'no-store'`.
 
+### 4.53 Vérification visuelle par dHash — mesurée, insuffisante, non retenue
+Problème visé : quand l'OCR perd un chiffre, le numéro tronqué désigne **une carte qui
+existe**. Vérifié sur les trois cas réels — `194` lu `19`, `171` lu `17`, `41` lu `27` : les
+trois numéros erronés correspondent à de vraies cartes du set. L'application renvoie donc la
+mauvaise carte AVEC ASSURANCE.
+
+Conséquence importante : **aucune correction par proximité ne peut fonctionner**. Distance
+numérique ou distance d'édition, les deux candidats sont également valides. Seule
+l'illustration les distingue — d'où l'idée de contre-vérifier par empreinte visuelle.
+
+**Mesuré, et le résultat condamne l'approche.** Écart dHash entre la photo redressée et le
+visuel officiel :
+
+| carte | écart avec la **vraie** | écart avec la **fausse** |
+|---|---|---|
+| 194 | 20 | 33 |
+| 171 | 30 | 30 |
+| 041 | 26 | **17** (la fausse est plus proche) |
+
+Recadrer sur la seule illustration (le cadre et la mise en page sont quasi identiques d'une
+carte à l'autre du set, ce qui dilue le signal) fait passer de 1/3 à 2/3 de cas discriminés
+— mais la carte 041 résiste à toutes les configurations testées (grilles 8, 16, 24 px).
+
+Distribution complète sur les 29 photos correctement lues, écart avec la BONNE carte :
+`11,15,16,19,19,19,19,19,20,20,20,21,22,22,22,23,24,24,26,26,27,28,29,30,31,31,32,32,33`
+(médiane 22, max 33). Les mauvaises cartes donnaient 23, 35, 36 : **les distributions se
+recouvrent presque entièrement**. Un seuil à 30 signalerait 5 cartes correctes sur 29
+(17 % de fausses alertes) pour n'attraper que 2 erreurs sur 3 — et éroderait la confiance
+dans le marqueur ✅ sans fiabiliser grand-chose.
+
+Code écrit puis **retiré** : il aurait parfois remplacé une bonne réponse par une mauvaise.
+
+**Ce qui marcherait vraiment** : un dHash fait 64 bits sur une image réduite à 9×8 — trop
+grossier pour séparer deux illustrations d'un même set sous éclairage variable. Un
+**descripteur appris** (embedding CNN de quelques centaines de dimensions) discriminerait
+sans commune mesure, et l'infrastructure est déjà là : ONNX Runtime chargé, catalogue en
+cache, modèle de segmentation opérationnel. C'est la vraie réponse à « est-ce que l'IA
+aiderait » — pas sur la détection de carte (déjà à 4 % d'échecs) ni sur l'OCR, mais sur
+**l'identification par l'illustration**.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
