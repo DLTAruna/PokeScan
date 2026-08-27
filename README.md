@@ -95,6 +95,28 @@ réévaluée périodiquement sur l'ensemble accumulé.
 recadrage à travers les époques de cartes, mais ne dit rien de la robustesse au flou ou
 aux reflets. Une dégradation synthétique optionnelle s'en approche sans la remplacer.
 
+## Collecte de photos réelles (`capture-server.js`)
+
+Le banc synthétique est structurellement pessimiste : l'illustration source TCGdex ne fait
+que 600 px de large, donc la carte y occupe environ deux fois moins de pixels que sur une
+vraie photo (~560 px contre ~1150 px sur un capteur 1440×1920). Pour un taux de lecture
+absolu crédible, il faut de vraies photos.
+
+```bash
+node capture-server.js
+```
+
+Le serveur affiche une adresse `http://192.168.x.x:8899` à ouvrir **sur le téléphone**
+(même Wi-Fi). Tu photographies une carte, tu saisis le numéro que tu lis dessus, et la photo
+part directement dans `photos-test/` sur le PC.
+
+Les fichiers sont nommés `PKMN-{set}-{numéro}-{horodatage}.jpg`, exactement comme l'export
+de l'app : le banc les lit donc tel quel, la vérité terrain venant du nom de fichier.
+
+Note : la page utilise l'appareil photo **natif** (`<input capture>`) et non `getUserMedia`,
+qui exigerait HTTPS et ne fonctionnerait pas sur une adresse IP locale. Bénéfice au passage,
+la photo native est mieux définie que l'aperçu vidéo.
+
 ## Limites connues
 
 - L'identification n'est pas garantie : elle propose, l'utilisateur confirme.

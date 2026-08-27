@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>PokéScan — collecte de photos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@700;800&family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14.5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3Cpath d='M2 16a14 14 0 0 1 28 0z' fill='%23ee1515' stroke='%2316181d' stroke-width='2'/%3E%3Crect x='2' y='14.5' width='28' height='3' fill='%2316181d'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0a0d16; --panel:#151a24; --panel2:#1c2331; --border:#2a3244;
+    --text:#f1f3f8; --muted:#93a0b7; --accent:#ffcb05; --accent2:#3d7dca;
+    --red:#ee1515; --good:#3ba55d; --bad:#e85b45;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:'Nunito',system-ui,sans-serif; color:var(--text);
+    background:radial-gradient(circle at 15% 0%, rgba(61,125,202,.18), transparent 45%),
+               radial-gradient(circle at 85% 8%, rgba(238,21,21,.12), transparent 40%), var(--bg);
+    background-attachment:fixed;
+    padding:0 0 calc(30px + env(safe-area-inset-bottom));
+  }
+  header{
+    background:linear-gradient(135deg,#c81212,#2a3f9e 55%,#3d7dca);
+    padding:calc(14px + env(safe-area-inset-top)) 16px 14px;
+    border-bottom:3px solid var(--accent);
+  }
+  header h1{margin:0; font-size:18px; font-family:'Baloo 2',sans-serif; display:flex; align-items:center; gap:8px;}
+  .pokeball{
+    width:22px; height:22px; border-radius:50%; flex-shrink:0; position:relative;
+    background:linear-gradient(#fff 0 46%, #16181d 46% 54%, var(--red) 54% 100%);
+    box-shadow:inset 0 0 0 2px #16181d;
+  }
+  .pokeball::after{content:''; position:absolute; top:50%; left:50%; width:7px; height:7px;
+    background:#fff; border:2px solid #16181d; border-radius:50%; transform:translate(-50%,-50%);}
+  main{max-width:560px; margin:0 auto; padding:14px;}
+  .panel{
+    background:linear-gradient(180deg,var(--panel),var(--panel2) 130%); border:1px solid var(--border);
+    border-radius:14px; padding:14px; margin-bottom:14px;
+  }
+  .sub{color:var(--muted); font-size:12.5px; line-height:1.55; margin:0 0 12px;}
+  label{display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; font-weight:700;}
+  input[type=text]{
+    width:100%; background:var(--panel2); border:1px solid var(--border); color:var(--text);
+    padding:13px; border-radius:10px; font-size:17px; font-family:inherit;
+    /* 17px minimum : en dessous, iOS zoome automatiquement au focus et casse la mise en page. */
+  }
+  input[type=text]:focus{outline:none; border-color:var(--accent2);}
+  input[type=file]{display:none;}
+  .row{display:flex; gap:10px;}
+  .row > *{flex:1;}
+  button{
+    cursor:pointer; border:none; border-radius:12px; padding:15px 16px; font-size:15px;
+    font-weight:800; width:100%; font-family:inherit;
+  }
+  button:disabled{opacity:.45;}
+  .btn-gold{background:linear-gradient(135deg,#ffe066,var(--accent) 60%,#e0a900); color:#1a1a1a;}
+  .btn-ghost{background:var(--panel2); color:var(--text); border:1px solid var(--border);}
+  #apercu{
+    width:100%; border-radius:12px; display:none; margin-top:12px; background:#000;
+    max-height:46vh; object-fit:contain;
+  }
+  .compteur{
+    display:flex; align-items:baseline; gap:8px; justify-content:center;
+    background:var(--panel2); border:1px solid var(--border); border-radius:12px; padding:12px;
+  }
+  .compteur b{font-size:30px; font-family:'Baloo 2',sans-serif; color:var(--accent);}
+  .etat{font-size:13px; margin-top:10px; padding:10px 12px; border-radius:10px; text-align:center; display:none;}
+  .etat.ok{display:block; background:rgba(59,165,93,.15); color:var(--good);}
+  .etat.ko{display:block; background:rgba(232,91,69,.15); color:var(--bad);}
+  .recent{font-size:11.5px; color:var(--muted); margin-top:10px; word-break:break-all; line-height:1.7;}
+  code{background:var(--panel2); padding:2px 6px; border-radius:5px; font-size:12px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1><span class="pokeball"></span> Collecte de photos</h1>
+</header>
+
+<main>
+  <div class="panel">
+    <p class="sub">
+      Photographie une carte, indique le numéro que tu <b>lis dessus</b>, envoie. La photo part
+      directement sur le PC — c'est cette lecture manuelle qui sert de référence pour juger
+      l'OCR, donc recopie exactement ce qui est imprimé.
+    </p>
+
+    <label>Set (repris d'une photo à l'autre)</label>
+    <input type="text" id="set" placeholder="ex : sv03.5" autocomplete="off" autocapitalize="off">
+
+    <label>Numéro imprimé sur la carte</label>
+    <input type="text" id="numero" placeholder="ex : 199" inputmode="numeric" autocomplete="off">
+
+    <div style="margin-top:14px;">
+      <button class="btn-gold" id="btn-photo">📷 Prendre une photo</button>
+    </div>
+    <input type="file" id="fichier" accept="image/*" capture="environment">
+
+    <img id="apercu" alt="">
+
+    <div class="row" style="margin-top:12px; display:none;" id="ligne-envoi">
+      <button class="btn-gold" id="btn-envoyer">⬆️ Envoyer</button>
+      <button class="btn-ghost" id="btn-annuler">✕ Jeter</button>
+    </div>
+
+    <div class="etat" id="etat"></div>
+  </div>
+
+  <div class="panel">
+    <div class="compteur"><b id="total">0</b> <span>photo(s) reçues sur le PC</span></div>
+    <div class="recent" id="recent"></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let blobCourant = null;
+
+// Le set est retenu d'une photo à l'autre : en pratique on photographie une pile du même
+// set, et le retaper à chaque carte serait le principal frein à la collecte.
+try{ $('set').value = localStorage.getItem('captureSet') || ''; }catch(e){}
+$('set').addEventListener('change', ()=>{
+  try{ localStorage.setItem('captureSet', $('set').value); }catch(e){}
+});
+
+function etat(msg, ok){
+  const e = $('etat');
+  e.textContent = msg;
+  e.className = 'etat ' + (ok ? 'ok' : 'ko');
+}
+
+$('btn-photo').addEventListener('click', ()=> $('fichier').click());
+
+$('fichier').addEventListener('change', ()=>{
+  const f = $('fichier').files[0];
+  if(!f) return;
+  blobCourant = f;
+  $('apercu').src = URL.createObjectURL(f);
+  $('apercu').style.display = 'block';
+  $('ligne-envoi').style.display = 'flex';
+  // Taille affichée : c'est le signal qui dit si la photo est bien en pleine résolution.
+  // Une image de quelques dizaines de Ko trahirait une compression agressive, et toute la
+  // collecte perdrait son intérêt (le but est justement d'avoir plus de définition que la
+  // simulation).
+  etat(`Photo prête — ${Math.round(f.size/1024)} Ko`, true);
+});
+
+$('btn-annuler').addEventListener('click', ()=>{
+  blobCourant = null;
+  $('fichier').value = '';
+  $('apercu').style.display = 'none';
+  $('ligne-envoi').style.display = 'none';
+  $('etat').className = 'etat';
+});
+
+$('btn-envoyer').addEventListener('click', async ()=>{
+  if(!blobCourant) return;
+  const numero = $('numero').value.trim();
+  if(!numero){ etat('Indique d\'abord le numéro lu sur la carte.', false); return; }
+
+  $('btn-envoyer').disabled = true;
+  etat('⏳ Envoi…', true);
+  try{
+    const q = new URLSearchParams({set: $('set').value.trim(), numero});
+    const r = await fetch('/upload?' + q, {method:'POST', body: blobCourant});
+    const d = await r.json();
+    if(!d.ok) throw new Error(d.erreur || 'échec');
+    etat(`✅ Envoyée (${d.ko} Ko) — ${d.fichier}`, true);
+    blobCourant = null;
+    $('fichier').value = '';
+    $('apercu').style.display = 'none';
+    $('ligne-envoi').style.display = 'none';
+    // Le numéro est vidé, pas le set : on enchaîne sur la carte suivante de la même pile.
+    $('numero').value = '';
+    $('numero').focus();
+    rafraichir();
+  }catch(e){
+    etat('⚠️ ' + e.message + ' — le PC est-il toujours allumé et sur le même Wi-Fi ?', false);
+  }finally{ $('btn-envoyer').disabled = false; }
+});
+
+// Compteur relu depuis le serveur plutôt que tenu en mémoire : il reste juste après un
+// rechargement de page ou si plusieurs appareils envoient.
+async function rafraichir(){
+  try{
+    const d = await (await fetch('/liste')).json();
+    $('total').textContent = d.total;
+    $('recent').textContent = d.photos.slice(-6).reverse().join('  ·  ');
+  }catch(e){ /* serveur injoignable : le compteur reste tel quel */ }
+}
+rafraichir();
+setInterval(rafraichir, 5000);
+</script>
+</body>
+</html>

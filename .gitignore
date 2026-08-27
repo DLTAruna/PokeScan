@@ -15,6 +15,10 @@ pokemon-photos-*.zip
 *.jpeg
 *.webp
 
+# Photos collectées depuis le téléphone pour le banc (voir capture-server.js) : photos
+# personnelles, volumineuses, et sans intérêt pour qui clone le dépôt.
+photos-test/
+
 # Système
 .DS_Store
 Thumbs.db
