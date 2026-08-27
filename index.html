@@ -464,6 +464,22 @@
     mix-blend-mode:screen; opacity:.5;
     box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.35);
   }
+  /* Couche « sujet » : le Pokémon détouré, superposé exactement sur l'illustration
+     d'origine et décalé plus fort qu'elle. C'est l'écart entre les deux qui fait le
+     relief. Positionnée en fractions de la carte (voir SEG_FENETRE), donc elle suit
+     l'image quelle que soit sa taille affichée. */
+  .cv-subject{
+    position:absolute; pointer-events:none; opacity:0;
+    transition:opacity .5s ease; will-change:transform;
+  }
+  .cv-stage.relief .cv-subject{opacity:1;}
+  /* Sans le masque, la carte reste affichée normalement : le relief est un supplément,
+     jamais une condition d'affichage. */
+  .cv-relief-etat{
+    position:absolute; bottom:-9px; left:50%; transform:translateX(-50%);
+    background:rgba(0,0,0,.75); color:var(--muted); font-size:10px;
+    padding:2px 9px; border-radius:9px; white-space:nowrap; pointer-events:none;
+  }
   .cv-badge-holo{
     position:absolute; top:-9px; left:50%; transform:translateX(-50%);
     background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a;
@@ -931,7 +947,9 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
     <div class="cv-shine" id="cv-shine"></div>
     <div class="cv-glare" id="cv-glare"></div>
     <div class="cv-bevel"></div>
+    <canvas class="cv-subject" id="cv-subject"></canvas>
     <div class="cv-badge-holo" id="cv-badge-holo">✨ holographique</div>
+    <div class="cv-relief-etat" id="cv-relief-etat" style="display:none;"></div>
   </div>
   <div class="cv-bar">
     <button id="cv-zoom-out">−</button>
@@ -939,6 +957,7 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
     <button id="cv-zoom-in">+</button>
     <button id="cv-tilt" class="on">📱 Parallaxe</button>
     <button id="cv-holo-toggle" class="on">✨ Holo</button>
+    <button id="cv-relief-toggle" class="on">🧊 Relief</button>
   </div>
   <div class="cv-hint" id="cv-hint">Incline le téléphone pour faire jouer la lumière · pince pour zoomer</div>
 </div>
@@ -1805,7 +1824,11 @@ function parseCardCode(rawText){
 // n'est nécessaire pour les reconnaître à nouveau (très courant : doublons dans une
 // collection, sets déjà scannés).
 const IDB_NAME = 'pokescan_cache_v1';
-const IDB_VERSION = 1;
+// v2 : ajout du magasin `cardMasks` (masques de découpe du sujet, voir le module de
+// segmentation). Le numéro de version doit augmenter pour qu'onupgradeneeded se déclenche
+// sur les navigateurs ayant déjà la base en v1 — sans ça, le magasin n'existerait jamais
+// chez les utilisateurs existants et toute lecture échouerait silencieusement.
+const IDB_VERSION = 2;
 let idbPromise = null;
 
 function openIdb(){
@@ -1818,6 +1841,7 @@ function openIdb(){
       if(!db.objectStoreNames.contains('cardLists')) db.createObjectStore('cardLists', {keyPath:'setId'});
       if(!db.objectStoreNames.contains('cardHashes')) db.createObjectStore('cardHashes', {keyPath:'cardId'});
       if(!db.objectStoreNames.contains('cardDetail')) db.createObjectStore('cardDetail', {keyPath:'cardId'});
+      if(!db.objectStoreNames.contains('cardMasks')) db.createObjectStore('cardMasks', {keyPath:'cardId'});
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -4487,6 +4511,136 @@ $('btn-sets-back').addEventListener('click', ()=>{
 
 $('sets-filter').addEventListener('input', ()=>{ if(seriesIndex) renderSeriesList(); });
 
+// ---------------- DÉCOUPE DU SUJET (relief par parallaxe de couches) ----------------
+// Sépare le Pokémon du décor pour le faire bouger à une vitesse différente : c'est ce qui
+// donne une VRAIE profondeur, là où les calques holographiques ne font que glisser sur une
+// image plate.
+//
+// Coût mesuré : ~22,7 s par carte, et cette valeur est INCOMPRESSIBLE — le graphe ONNX de
+// RMBG-1.4 a une entrée figée à 1024×1024, vérifié en balayant de 1024 à 256 px (temps
+// constant, masques rigoureusement identiques). Sur un téléphone sans WebGPU — le cas de
+// l'appareil visé — il faut compter bien plus. Toute l'architecture découle de là :
+//   - le masque est calculé UNE FOIS puis mis en cache (IndexedDB), les ouvertures
+//     suivantes sont instantanées ;
+//   - le calcul tourne dans un WORKER, sinon l'interface serait figée 20 à 90 secondes ;
+//   - il n'est JAMAIS bloquant : la carte s'affiche à plat immédiatement et bascule en
+//     relief quand le masque arrive ;
+//   - il n'est déclenché QUE sur la carte réellement ouverte, jamais depuis la grille —
+//     sinon ouvrir un set lancerait des dizaines de segmentations.
+//
+// Limite assumée, constatée sur 7 cartes de test : une seule découpe était vraiment propre.
+// Le modèle cherche « ce qui ressort » sur une PHOTO ; sur de l'illustration stylisée il
+// produit parfois des formes arbitraires (blob circulaire coupant un visage, décor happé
+// avec le sujet). D'où l'interrupteur, et le repli silencieux sur l'affichage plat.
+//
+// Licence : RMBG-1.4 (Bria) est NON COMMERCIALE. Acceptable pour un usage personnel et
+// pour évaluer ; à remplacer par U²-Netp (Apache 2.0, 4,7 Mo, entrée native 320×320 donc
+// bien plus rapide) si l'effet est conservé dans un outil qui sert à vendre.
+const SEG_MODULE = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+// Fenêtre d'illustration d'une carte moderne. Segmenter la carte ENTIÈRE ne marche pas :
+// le modèle y voit la carte comme l'objet à détourer et renvoie un masque quasi plein
+// (mesuré : 87-90 % de couverture, inexploitable). En ne lui donnant que l'illustration,
+// il y cherche l'objet saillant, c'est-à-dire le Pokémon.
+const SEG_FENETRE = {fx:0.07, fy:0.11, fw:0.86, fh:0.43};
+
+let segWorker = null, segWorkerPromise = null, segSeq = 0;
+const segPending = new Map();
+
+function getSegWorker(){
+  if(segWorkerPromise) return segWorkerPromise;
+  segWorkerPromise = new Promise((resolve, reject)=>{
+    try{
+      const src = `
+        import { AutoModel, AutoProcessor, RawImage } from ${JSON.stringify(SEG_MODULE)};
+        let model = null, processor = null, pret = null;
+        async function ensure(){
+          if(pret) return pret;
+          pret = (async ()=>{
+            model = await AutoModel.from_pretrained('briaai/RMBG-1.4', { config:{ model_type:'custom' } });
+            processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', { config:{
+              do_normalize:true, do_pad:false, do_rescale:true, do_resize:true,
+              image_mean:[0.5,0.5,0.5], image_std:[1,1,1],
+              resample:2, rescale_factor:1/255, size:{width:1024, height:1024} } });
+          })();
+          return pret;
+        }
+        self.onmessage = async (e)=>{
+          const { id, dataUrl } = e.data;
+          try{
+            const t0 = performance.now();
+            await ensure();
+            const image = await RawImage.fromURL(dataUrl);
+            const { pixel_values } = await processor(image);
+            const { output } = await model({ input: pixel_values });
+            const m = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(image.width, image.height);
+            // Seuls les octets du masque repartent (pas de bitmap) : le fil principal le
+            // recompose, et l'objet reste petit à stocker en cache.
+            postMessage({ id, ok:true, w:image.width, h:image.height,
+                          masque: m.data, ms: Math.round(performance.now()-t0) }, [m.data.buffer]);
+          }catch(err){ postMessage({ id, ok:false, error:(err && err.message) || String(err) }); }
+        };
+      `;
+      const w = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+      w.onmessage = (e)=>{
+        const p = segPending.get(e.data.id);
+        if(!p) return;
+        segPending.delete(e.data.id);
+        e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+      };
+      w.onerror = (e)=> reject(new Error('worker segmentation : ' + (e.message || 'chargement impossible')));
+      segWorker = w;
+      resolve(w);
+    }catch(err){ reject(err); }
+  });
+  return segWorkerPromise;
+}
+
+function segCall(dataUrl){
+  return getSegWorker().then(w => new Promise((resolve, reject)=>{
+    const id = ++segSeq;
+    segPending.set(id, {resolve, reject});
+    // Borne généreuse : sur un téléphone sans WebGPU, une segmentation peut légitimement
+    // demander plus d'une minute. Trop court, on abandonnerait un calcul qui allait aboutir.
+    setTimeout(()=>{
+      if(segPending.has(id)){ segPending.delete(id); reject(new Error('segmentation : délai dépassé')); }
+    }, 180000);
+    w.postMessage({id, dataUrl});
+  }));
+}
+
+// Découpe l'illustration de la carte et la renvoie en dataURL, prête pour le worker.
+async function segExtraireIllustration(imageBase){
+  const img = await new Promise((res, rej)=>{
+    const i = new Image();
+    i.crossOrigin = 'anonymous';
+    i.onload = ()=> res(i);
+    i.onerror = ()=> rej(new Error('image indisponible'));
+    i.src = imageBase + '/high.webp';
+  });
+  const c = document.createElement('canvas');
+  c.width  = Math.round(img.naturalWidth  * SEG_FENETRE.fw);
+  c.height = Math.round(img.naturalHeight * SEG_FENETRE.fh);
+  c.getContext('2d').drawImage(img,
+    Math.round(img.naturalWidth * SEG_FENETRE.fx), Math.round(img.naturalHeight * SEG_FENETRE.fy),
+    c.width, c.height, 0, 0, c.width, c.height);
+  return { dataUrl: c.toDataURL('image/png'), illus: c };
+}
+
+// Renvoie {masque, w, h} depuis le cache, ou null si absent — sans jamais déclencher de
+// calcul. Le calcul est décidé par l'appelant, qui sait s'il peut se permettre l'attente.
+async function segMasqueEnCache(cardId){
+  const e = await idbGet('cardMasks', cardId);
+  return e ? {masque: e.masque, w: e.w, h: e.h} : null;
+}
+
+async function segCalculerMasque(cardId, imageBase, onProgres){
+  const { dataUrl } = await segExtraireIllustration(imageBase);
+  if(onProgres) onProgres('calcul');
+  const r = await segCall(dataUrl);
+  await idbSet('cardMasks', {cardId, masque: r.masque, w: r.w, h: r.h, ms: r.ms, at: Date.now()});
+  return {masque: r.masque, w: r.w, h: r.h, ms: r.ms};
+}
+
 // ---------------- VISUALISEUR DE CARTE (zoom + parallaxe accéléromètre) ----------------
 // Affiche une carte en grand et la fait pivoter légèrement en 3D selon l'inclinaison du
 // téléphone, avec un reflet qui balaie la surface — l'idée étant de retrouver la
@@ -4501,6 +4655,12 @@ let cvTiltEnabled = true;
 // simple goût), et le redemander à chaque ouverture serait pénible.
 let cvHoloEnabled = localStorage.getItem('cvHolo') !== '0';
 let cvCardIsSpecial = false;
+// Le relief est coûteux (voir le module de segmentation) : on n'y touche que si
+// l'utilisateur le veut, et le choix est conservé.
+let cvReliefEnabled = localStorage.getItem('cvRelief') !== '0';
+let cvReliefPret = false;   // masque disponible pour la carte affichée
+let cvSeqCarte = 0;         // évite d'appliquer un masque arrivé après un changement de carte
+let cvCardIdCourant = null; // carte affichée, pour pouvoir relancer le relief après réactivation
 
 // Une carte « spéciale » (ex, full art, illustration rare, secrète…) a un fini
 // holographique dans la réalité ; une commune est mate. Appliquer l'effet à tout
@@ -4564,6 +4724,87 @@ function cvApplyTransform(){
       const dx = -nx * 3, dy = ny * 3;
       bevel.style.boxShadow = `inset ${dx.toFixed(1)}px ${dy.toFixed(1)}px 6px rgba(255,255,255,.28), inset 0 0 0 1.5px rgba(255,255,255,.3)`;
     }
+  }
+
+  cvMajRelief();
+}
+
+// Déplace la couche « sujet » PLUS que la carte elle-même. Tout le relief tient dans cet
+// écart : à déplacement égal, on ne verrait qu'un calque collé à l'image.
+function cvMajRelief(){
+  const sub = $('cv-subject');
+  if(!sub || !cvReliefPret) return;
+  const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
+  // Amplitude en % de la largeur du sujet : rester en unités relatives garde l'effet
+  // identique que la carte soit affichée en grand ou en petit.
+  sub.style.transform = `translate(${(nx*3.2).toFixed(2)}%, ${(-ny*3.2).toFixed(2)}%) scale(1.045)`;
+}
+
+// Recompose la couche « sujet » à partir du masque : l'illustration, rendue transparente
+// partout sauf sur le sujet. Le masque est adouci d'un pixel — une frontière dure ferait
+// ressortir chaque défaut de découpe, et ils sont fréquents sur de l'illustration.
+async function cvAppliquerMasque(imageBase, masque, mw, mh){
+  const { illus } = await segExtraireIllustration(imageBase);
+  const c = $('cv-subject');
+  c.width = mw; c.height = mh;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(illus, 0, 0, mw, mh);
+  const px = ctx.getImageData(0, 0, mw, mh);
+  for(let i=0;i<masque.length;i++) px.data[i*4+3] = masque[i];
+  ctx.putImageData(px, 0, 0);
+  // Positionnement en pourcentages de la carte : identique à la fenêtre utilisée pour la
+  // découpe, donc le sujet retombe pile sur son emplacement d'origine.
+  c.style.left   = (SEG_FENETRE.fx*100) + '%';
+  c.style.top    = (SEG_FENETRE.fy*100) + '%';
+  c.style.width  = (SEG_FENETRE.fw*100) + '%';
+  c.style.height = (SEG_FENETRE.fh*100) + '%';
+  c.style.filter = 'blur(0.4px)';
+}
+
+function cvMajEtatRelief(texte){
+  const el = $('cv-relief-etat');
+  if(!el) return;
+  el.style.display = texte ? 'block' : 'none';
+  if(texte) el.textContent = texte;
+}
+
+// Prépare le relief pour la carte ouverte. Deux régimes très différents :
+//  - masque déjà en cache  -> appliqué immédiatement, coût nul ;
+//  - masque absent         -> calcul lancé en arrière-plan, la carte reste affichée à plat
+//                             et bascule en relief à l'arrivée. Jamais d'attente bloquante.
+async function cvPreparerRelief(imageBase, cardId, monSeq){
+  cvReliefPret = false;
+  $('cv-stage').classList.remove('relief');
+  cvMajEtatRelief('');
+  if(!cardId || !cvReliefEnabled) return;
+
+  try{
+    const cache = await segMasqueEnCache(cardId);
+    if(monSeq !== cvSeqCarte) return;
+    if(cache){
+      await cvAppliquerMasque(imageBase, cache.masque, cache.w, cache.h);
+      if(monSeq !== cvSeqCarte) return;
+      cvReliefPret = true;
+      $('cv-stage').classList.add('relief');
+      cvMajRelief();
+      return;
+    }
+
+    // Premier calcul pour cette carte : long, donc annoncé explicitement plutôt que de
+    // laisser croire à un blocage. Le temps réellement mesuré est ensuite affiché — c'est
+    // la seule façon de savoir ce que ça coûte sur l'appareil de l'utilisateur.
+    cvMajEtatRelief('🧊 calcul du relief… (première fois pour cette carte)');
+    const r = await segCalculerMasque(cardId, imageBase);
+    if(monSeq !== cvSeqCarte) return;
+    await cvAppliquerMasque(imageBase, r.masque, r.w, r.h);
+    if(monSeq !== cvSeqCarte) return;
+    cvReliefPret = true;
+    $('cv-stage').classList.add('relief');
+    cvMajRelief();
+    cvMajEtatRelief(`🧊 relief calculé en ${(r.ms/1000).toFixed(1)} s — instantané la prochaine fois`);
+    setTimeout(()=>{ if(monSeq === cvSeqCarte) cvMajEtatRelief(''); }, 4000);
+  }catch(e){
+    if(monSeq === cvSeqCarte) cvMajEtatRelief('🧊 relief indisponible : ' + e.message);
   }
 }
 
@@ -4674,6 +4915,10 @@ function openCardViewer(imageBase, label, cardId){
   // retard que le montrer puis le retirer sous les yeux de l'utilisateur.
   cvCardIsSpecial = false;
   cvMajHolo();
+
+  // Le relief est préparé en parallèle, sans jamais retarder l'affichage de la carte.
+  cvCardIdCourant = cardId || null;
+  cvPreparerRelief(imageBase, cardId, ++cvSeqCarte);
   if(cardId){
     getCardDetailCached(cardId).then(card=>{
       // La fiche arrive après coup : ne rien appliquer si l'utilisateur a déjà ouvert une
@@ -4695,6 +4940,12 @@ function closeCardViewer(){
   cvStopSensor();
   if(cvRaf){ cancelAnimationFrame(cvRaf); cvRaf = null; }
   $('cv-img').src = ''; // libère l'image plein format, inutile une fois fermé
+  // Invalide toute segmentation encore en vol : son résultat ne doit pas s'appliquer à la
+  // prochaine carte ouverte.
+  cvSeqCarte++;
+  cvReliefPret = false; cvCardIdCourant = null;
+  $('cv-stage').classList.remove('relief');
+  cvMajEtatRelief('');
 }
 
 $('cv-close').addEventListener('click', closeCardViewer);
@@ -4705,6 +4956,21 @@ $('cv-holo-toggle').addEventListener('click', ()=>{
   cvHoloEnabled = !cvHoloEnabled;
   localStorage.setItem('cvHolo', cvHoloEnabled ? '1' : '0');
   cvMajHolo();
+});
+
+$('cv-relief-toggle').addEventListener('click', ()=>{
+  cvReliefEnabled = !cvReliefEnabled;
+  localStorage.setItem('cvRelief', cvReliefEnabled ? '1' : '0');
+  $('cv-relief-toggle').classList.toggle('on', cvReliefEnabled);
+  if(!cvReliefEnabled){
+    cvReliefPret = false;
+    $('cv-stage').classList.remove('relief');
+    cvMajEtatRelief('');
+  } else {
+    // Réactivation : on relance la préparation pour la carte affichée (immédiate si le
+    // masque est déjà en cache).
+    cvPreparerRelief($('cv-img').src.replace(/\/high\.webp.*$/, ''), cvCardIdCourant, ++cvSeqCarte);
+  }
 });
 
 $('cv-zoom-in').addEventListener('click', ()=> cvSetZoom(cvZoom + 0.5));

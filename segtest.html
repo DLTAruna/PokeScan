@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PokéScan — test de découpe du sujet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;800&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14.5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3Cpath d='M2 16a14 14 0 0 1 28 0z' fill='%23ee1515' stroke='%2316181d' stroke-width='2'/%3E%3Crect x='2' y='14.5' width='28' height='3' fill='%2316181d'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#0a0d16; --panel:#151a24; --panel2:#1c2331; --border:#2a3244;
+    --text:#f1f3f8; --muted:#93a0b7; --accent:#ffcb05; --accent2:#3d7dca;
+    --red:#ee1515; --good:#3ba55d; --warn:#e0a12a; --bad:#e85b45;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:'Nunito',system-ui,sans-serif; color:var(--text);
+    background:radial-gradient(circle at 12% 0%, rgba(61,125,202,.16), transparent 42%), var(--bg);
+    background-attachment:fixed; padding-bottom:50px;
+  }
+  h1,h2{font-family:'Baloo 2',sans-serif;}
+  header{background:linear-gradient(135deg,#c81212,#2a3f9e 55%,#3d7dca); padding:16px;
+    border-bottom:3px solid var(--accent);}
+  header h1{margin:0; font-size:19px;}
+  header p{margin:4px 0 0; font-size:12.5px; color:#e8edff;}
+  main{max-width:1080px; margin:0 auto; padding:16px;}
+  .panel{background:linear-gradient(180deg,var(--panel),var(--panel2) 130%); border:1px solid var(--border);
+    border-radius:14px; padding:16px; margin-bottom:16px;}
+  .sub{color:var(--muted); font-size:12.5px; line-height:1.55; margin:0 0 12px;}
+  .warn{background:rgba(224,161,42,.1); border:1px solid rgba(224,161,42,.4); border-radius:10px;
+    padding:11px 13px; font-size:12.5px; line-height:1.6; color:#f0dcb0; margin-bottom:14px;}
+  .warn b{color:var(--warn);}
+  button{cursor:pointer; border:none; border-radius:10px; padding:10px 16px; font-size:13.5px; font-weight:700;}
+  button:disabled{opacity:.5; cursor:not-allowed;}
+  .btn-gold{background:linear-gradient(135deg,#ffe066,var(--accent) 60%,#e0a900); color:#1a1a1a;}
+  .btn-ghost{background:var(--panel2); color:var(--text); border:1px solid var(--border);}
+  .status{font-size:12.5px; color:var(--muted); margin-top:10px;}
+  .card-row{display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px;
+    padding:14px 0; border-bottom:1px solid var(--border);}
+  .card-row h3{grid-column:1/-1; margin:0; font-size:14px; color:var(--accent); font-family:'Baloo 2',sans-serif;}
+  .shot{background:#0a0a0a; border:1px solid var(--border); border-radius:8px; overflow:hidden;}
+  .shot .lbl{font-size:10.5px; color:var(--muted); padding:4px 7px; background:rgba(0,0,0,.4);}
+  .shot canvas, .shot img{width:100%; display:block;}
+  /* Scène de démonstration : le sujet découpé est décalé par rapport au décor, ce qui
+     montre immédiatement si la découpe tient la route — un mauvais masque saute aux yeux. */
+  .scene{position:relative; overflow:hidden; background:#000;}
+  .scene canvas{position:absolute; inset:0; width:100%; height:100%;}
+  .scene .base{position:relative;}
+  .verdict{font-size:11.5px; margin-top:5px; padding:4px 7px; border-radius:6px;}
+  .v-ok{background:rgba(59,165,93,.15); color:var(--good);}
+  .v-mid{background:rgba(224,161,42,.15); color:var(--warn);}
+  .v-bad{background:rgba(232,91,69,.15); color:var(--bad);}
+  code{background:var(--panel2); padding:1px 5px; border-radius:4px; font-size:11.5px;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🔬 Test de découpe du sujet</h1>
+  <p>Faisabilité : peut-on isoler le Pokémon du décor pour un vrai effet de profondeur ?</p>
+</header>
+
+<main>
+<div class="panel">
+  <h2>Ce que ce test doit trancher</h2>
+  <p class="sub">
+    L'effet holographique actuel ne fait que glisser des calques sur une image plate : aucune
+    information de profondeur, donc pas de relief. Pour un vrai parallaxe, il faut séparer le
+    <b>sujet</b> du <b>décor</b> — ce que Pokémon Pocket obtient avec des calques fournis par les
+    illustrateurs, que nous n'avons pas.
+  </p>
+  <div class="warn">
+    ⚠️ <b>Ce n'est pas acquis.</b> Les modèles de détection d'objet saillant sont entraînés sur des
+    <b>photos</b>, pas sur de l'illustration. Sur une carte où le Pokémon se fond dans le décor, ou
+    entouré d'énergie et d'effets, la découpe peut être franchement mauvaise (ailes coupées, halo,
+    morceaux de fond collés au sujet). Ce test sert précisément à le voir avant de construire quoi
+    que ce soit dessus.<br><br>
+    <b>Licence :</b> RMBG-1.4 (Bria) est sous licence <b>non commerciale</b>. Utilisable pour évaluer,
+    mais à remplacer par un modèle Apache/MIT (U²-Net) si l'effet est retenu dans un outil qui sert
+    à vendre.<br><br>
+    <b>Poids :</b> ~45 Mo au premier chargement, puis mis en cache par le navigateur.
+  </div>
+  <button class="btn-gold" id="btn-run">🔬 Test 1 — carte entière</button>
+  <button class="btn-gold" id="btn-run-crop">🔬 Test 2 — recadré sur l'illustration</button>
+  <button class="btn-ghost" id="btn-anim" disabled>▶️ Animer le parallaxe</button>
+  <button class="btn-ghost" id="btn-perf">⏱️ Mesurer le coût selon la résolution</button>
+  <div class="status" id="status">Prêt.</div>
+</div>
+
+<div id="results"></div>
+</main>
+
+<script type="module">
+import { AutoModel, AutoProcessor, RawImage } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+
+const $ = id => document.getElementById(id);
+
+// Échantillon volontairement varié : c'est la DIVERSITÉ qui informe, pas le nombre. Une
+// découpe qui marche sur une carte classique bien contrastée ne dit rien de son
+// comportement sur une full-art où l'illustration couvre tout, ni sur une carte noyée
+// d'effets d'énergie.
+const CARTES = [
+  ['sv03.5-199', 'Illustration spéciale rare (full-art, décor complexe)', 'https://assets.tcgdex.net/fr/sv/sv03.5/199'],
+  ['sv03.5-006', 'Double rare (fenêtre d’illustration classique)',        'https://assets.tcgdex.net/fr/sv/sv03.5/006'],
+  ['cel25-5',    'Holo rare (fond uni, sujet net)',                        'https://assets.tcgdex.net/fr/swsh/cel25/5'],
+  ['swsh1-1',    'Holo rare V (effets d’énergie autour du sujet)',         'https://assets.tcgdex.net/fr/swsh/swsh1/1'],
+  ['sm1-1',      'Commune Soleil-Lune',                                    'https://assets.tcgdex.net/fr/sm/sm1/1'],
+  ['xy1-1',      'Commune XY',                                             'https://assets.tcgdex.net/fr/xy/xy1/1'],
+  ['bw1-1',      'Commune Noir & Blanc',                                   'https://assets.tcgdex.net/fr/bw/bw1/1'],
+];
+
+let model = null, processor = null;
+const scenes = [];
+
+function log(msg){ $('status').textContent = msg; }
+
+async function charger(){
+  log('⏳ Téléchargement du modèle (~45 Mo, mis en cache ensuite)…');
+  model = await AutoModel.from_pretrained('briaai/RMBG-1.4', { config: { model_type:'custom' } });
+  processor = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', {
+    config: {
+      do_normalize:true, do_pad:false, do_rescale:true, do_resize:true,
+      image_mean:[0.5,0.5,0.5], image_std:[1,1,1],
+      resample:2, rescale_factor:1/255, size:{width:1024, height:1024},
+    }
+  });
+  log('✅ Modèle prêt.');
+}
+
+// Mesure la qualité du masque sans jugement humain : un masque exploitable couvre une part
+// raisonnable de l'image (ni quasi vide, ni quasi tout), et présente une frontière NETTE
+// (peu de pixels dans les valeurs intermédiaires). Un masque flou sur toute sa surface est
+// le signe que le modèle n'a rien su décider — cas typique sur une illustration.
+function analyserMasque(masque){
+  let couverts = 0, intermediaires = 0;
+  for(let i=0;i<masque.length;i++){
+    const v = masque[i];
+    if(v > 128) couverts++;
+    if(v > 40 && v < 215) intermediaires++;
+  }
+  const part = couverts / masque.length;
+  const flou = intermediaires / masque.length;
+  let verdict, classe;
+  if(part < 0.05 || part > 0.92){ verdict = 'inexploitable — le masque prend presque rien ou presque tout'; classe = 'v-bad'; }
+  else if(flou > 0.25){ verdict = 'frontière très floue — le modèle n’a pas su trancher'; classe = 'v-mid'; }
+  else if(flou > 0.12){ verdict = 'frontière moyennement nette'; classe = 'v-mid'; }
+  else { verdict = 'découpe nette'; classe = 'v-ok'; }
+  return { part, flou, verdict, classe };
+}
+
+// Recadrage sur la fenêtre d'illustration d'une carte moderne. Raison d'être : sur la carte
+// ENTIÈRE, le modèle sélectionne la carte comme sujet (elle EST l'objet photographié) et
+// renvoie un masque quasi plein — inutilisable. En ne lui donnant que l'illustration, il
+// voit une scène et devrait y chercher l'objet saillant, c'est-à-dire le Pokémon.
+// Fractions approximatives et volontairement généreuses : ce test cherche à savoir si la
+// PISTE tient, pas à caler des bords au pixel près.
+const FENETRE_ILLUS = {fx:0.07, fy:0.11, fw:0.86, fh:0.43};
+
+async function rogner(base, image){
+  const src = await createImageBitmap(await (await fetch(base + '/high.webp')).blob());
+  const W = image.width, H = image.height;
+  const c = document.createElement('canvas');
+  c.width  = Math.round(W * FENETRE_ILLUS.fw);
+  c.height = Math.round(H * FENETRE_ILLUS.fh);
+  c.getContext('2d').drawImage(src,
+    Math.round(W*FENETRE_ILLUS.fx), Math.round(H*FENETRE_ILLUS.fy),
+    c.width, c.height, 0, 0, c.width, c.height);
+  return c;
+}
+
+async function traiter(id, desc, base, recadrer){
+  const box = document.createElement('div');
+  box.className = 'card-row';
+  box.innerHTML = `<h3>${desc} <span style="color:var(--muted);font-weight:400">— ${id}${recadrer?' · recadré':''}</span></h3>`;
+  $('results').appendChild(box);
+
+  let image = await RawImage.fromURL(base + '/high.webp');
+  let urlAffichage = base + '/high.webp';
+  if(recadrer){
+    const c = await rogner(base, image);
+    urlAffichage = c.toDataURL('image/png');
+    image = await RawImage.fromURL(urlAffichage);
+  }
+  const t0 = performance.now();
+  const { pixel_values } = await processor(image);
+  const { output } = await model({ input: pixel_values });
+  const ms = Math.round(performance.now() - t0);
+
+  const masque = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(image.width, image.height);
+  const stats = analyserMasque(masque.data);
+
+  // 1) Original
+  const orig = document.createElement('div');
+  orig.className = 'shot';
+  orig.innerHTML = `<div class="lbl">original</div>`;
+  const io = document.createElement('img'); io.src = urlAffichage; orig.appendChild(io);
+  box.appendChild(orig);
+
+  // 2) Masque brut — c'est LUI qui dit la vérité sur la découpe
+  const mBox = document.createElement('div');
+  mBox.className = 'shot';
+  mBox.innerHTML = `<div class="lbl">masque (blanc = sujet)</div>`;
+  const mc = document.createElement('canvas');
+  mc.width = image.width; mc.height = image.height;
+  const mctx = mc.getContext('2d');
+  const mimg = mctx.createImageData(image.width, image.height);
+  for(let i=0;i<masque.data.length;i++){
+    const v = masque.data[i];
+    mimg.data[i*4] = mimg.data[i*4+1] = mimg.data[i*4+2] = v;
+    mimg.data[i*4+3] = 255;
+  }
+  mctx.putImageData(mimg, 0, 0);
+  mBox.appendChild(mc);
+  mBox.insertAdjacentHTML('beforeend',
+    `<div class="verdict ${stats.classe}">${stats.verdict}<br>
+     sujet ${(stats.part*100).toFixed(0)} % · flou ${(stats.flou*100).toFixed(0)} % · ${ms} ms</div>`);
+  box.appendChild(mBox);
+
+  // 3) Sujet détouré sur damier — révèle les halos et les bords sales
+  const cut = document.createElement('div');
+  cut.className = 'shot';
+  cut.innerHTML = `<div class="lbl">sujet détouré</div>`;
+  const cc = document.createElement('canvas');
+  cc.width = image.width; cc.height = image.height;
+  const cctx = cc.getContext('2d');
+  const damier = 16;
+  for(let y=0;y<cc.height;y+=damier) for(let x=0;x<cc.width;x+=damier){
+    cctx.fillStyle = ((x/damier + y/damier) % 2) ? '#333' : '#555';
+    cctx.fillRect(x,y,damier,damier);
+  }
+  const src = await createImageBitmap(await (await fetch(urlAffichage)).blob());
+  const tmp = document.createElement('canvas');
+  tmp.width = image.width; tmp.height = image.height;
+  const tctx = tmp.getContext('2d');
+  tctx.drawImage(src, 0, 0, image.width, image.height);
+  const px = tctx.getImageData(0,0,image.width,image.height);
+  for(let i=0;i<masque.data.length;i++) px.data[i*4+3] = masque.data[i];
+  tctx.putImageData(px, 0, 0);
+  cctx.drawImage(tmp, 0, 0);
+  cut.appendChild(cc);
+  box.appendChild(cut);
+
+  // 4) Scène de parallaxe : décor derrière, sujet devant et décalé. C'est le rendu final
+  //    envisagé — le seul juge utile, un masque « correct » pouvant donner un effet raté.
+  const sc = document.createElement('div');
+  sc.className = 'shot';
+  sc.innerHTML = `<div class="lbl">parallaxe (sujet décalé)</div>`;
+  const scene = document.createElement('div');
+  scene.className = 'scene';
+  scene.style.aspectRatio = image.width + '/' + image.height;
+  const fond = document.createElement('canvas');
+  fond.width = image.width; fond.height = image.height;
+  fond.getContext('2d').drawImage(src, 0, 0, image.width, image.height);
+  const devant = document.createElement('canvas');
+  devant.width = image.width; devant.height = image.height;
+  devant.getContext('2d').drawImage(tmp, 0, 0);
+  scene.appendChild(fond); scene.appendChild(devant);
+  sc.appendChild(scene);
+  box.appendChild(sc);
+  scenes.push(devant);
+
+  return stats;
+}
+
+async function lancer(recadrer){
+  $('btn-run').disabled = $('btn-run-crop').disabled = true;
+  $('results').innerHTML = '';
+  scenes.length = 0;
+  try{
+    if(!model) await charger();
+    const bilan = [];
+    for(const [id, desc, base] of CARTES){
+      log(`⏳ ${desc}${recadrer?' (recadré)':''}…`);
+      try{ bilan.push({id, ...(await traiter(id, desc, base, recadrer))}); }
+      catch(e){ log('⚠️ ' + id + ' : ' + e.message); }
+    }
+    const nets = bilan.filter(b=>b.classe === 'v-ok').length;
+    const partMoy = bilan.length ? bilan.reduce((s,b)=>s+b.part,0)/bilan.length : 0;
+    log(`✅ Terminé — ${nets}/${bilan.length} découpes jugées nettes, sujet ${(partMoy*100).toFixed(0)} % en moyenne. ` +
+        `⚠️ Le verdict automatique ne juge que la NETTETÉ des bords, pas ce qui a été découpé : ` +
+        `un masque couvrant ~90 % signifie que le modèle a pris toute l'image. Juge à l'œil sur « sujet détouré ».`);
+    $('btn-anim').disabled = false;
+  }catch(err){
+    log('❌ ' + err.message);
+  }finally{ $('btn-run').disabled = $('btn-run-crop').disabled = false; }
+}
+
+$('btn-run').addEventListener('click', ()=> lancer(false));
+$('btn-run-crop').addEventListener('click', ()=> lancer(true));
+
+// Coût selon la résolution d'entrée. Question décisive pour un usage téléphone : le modèle
+// tourne à 1024×1024 par défaut, ce qui coûte 22-25 s ici. Le coût d'une convolution suit
+// la SURFACE, donc diviser le côté par deux devrait diviser le temps par ~4. Reste à savoir
+// si le masque s'en trouve dégradé — pour un effet de parallaxe le masque est de toute
+// façon adouci sur ses bords, donc une précision moindre peut suffire.
+// À mesurer sur le téléphone visé, pas seulement ici : WebGPU est absent de cet appareil
+// (diagnostic OCR : moteurDemandé=["wasm"]), donc c'est le chemin WASM qui compte.
+$('btn-perf').addEventListener('click', async ()=>{
+  $('btn-perf').disabled = true;
+  $('results').innerHTML = '';
+  try{
+    const base = 'https://assets.tcgdex.net/fr/sv/sv03.5/199';
+    const img0 = await RawImage.fromURL(base + '/high.webp');
+    const rogne = await rogner(base, img0);
+    const image = await RawImage.fromURL(rogne.toDataURL('image/png'));
+
+    if(!model) await charger();
+    const lignes = [];
+    for(const taille of [1024, 768, 512, 384, 256]){
+      const proc = await AutoProcessor.from_pretrained('briaai/RMBG-1.4', {
+        config:{ do_normalize:true, do_pad:false, do_rescale:true, do_resize:true,
+          image_mean:[0.5,0.5,0.5], image_std:[1,1,1], resample:2, rescale_factor:1/255,
+          size:{width:taille, height:taille} }
+      });
+      log(`⏱️ mesure à ${taille}×${taille}…`);
+      const t0 = performance.now();
+      const { pixel_values } = await proc(image);
+      const { output } = await model({ input: pixel_values });
+      const ms = Math.round(performance.now() - t0);
+      const m = await RawImage.fromTensor(output[0].mul(255).to('uint8')).resize(image.width, image.height);
+      const st = analyserMasque(m.data);
+
+      const box = document.createElement('div');
+      box.className = 'card-row';
+      box.innerHTML = `<h3>${taille}×${taille} — ${ms} ms</h3>`;
+      const sh = document.createElement('div'); sh.className='shot';
+      sh.innerHTML = `<div class="lbl">masque</div>`;
+      const c = document.createElement('canvas'); c.width=image.width; c.height=image.height;
+      const cx = c.getContext('2d'); const d = cx.createImageData(image.width,image.height);
+      for(let i=0;i<m.data.length;i++){ d.data[i*4]=d.data[i*4+1]=d.data[i*4+2]=m.data[i]; d.data[i*4+3]=255; }
+      cx.putImageData(d,0,0); sh.appendChild(c);
+      sh.insertAdjacentHTML('beforeend', `<div class="verdict ${st.classe}">sujet ${(st.part*100).toFixed(0)} % · flou ${(st.flou*100).toFixed(0)} %</div>`);
+      box.appendChild(sh);
+      $('results').appendChild(box);
+      lignes.push(`${taille}px : ${ms} ms · sujet ${(st.part*100).toFixed(0)} %`);
+    }
+    log('✅ ' + lignes.join('  |  '));
+  }catch(e){ log('❌ ' + e.message); }
+  finally{ $('btn-perf').disabled = false; }
+});
+
+// Animation : le sujet oscille devant le décor. Un masque médiocre devient évident dès que
+// ça bouge — bien plus qu'en image fixe.
+let anim = null;
+$('btn-anim').addEventListener('click', ()=>{
+  if(anim){ cancelAnimationFrame(anim); anim = null; $('btn-anim').textContent = '▶️ Animer le parallaxe'; return; }
+  $('btn-anim').textContent = '⏸ Arrêter';
+  const t0 = performance.now();
+  const boucle = ()=>{
+    const d = Math.sin((performance.now()-t0)/900) * 3.5;
+    for(const c of scenes) c.style.transform = `translate(${d}%, ${d*0.35}%) scale(1.06)`;
+    anim = requestAnimationFrame(boucle);
+  };
+  boucle();
+});
+</script>
+</body>
+</html>

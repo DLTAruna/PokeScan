@@ -1301,6 +1301,60 @@ est estompé avec une infobulle explicite — un bouton actif sans effet visible
 pour une panne. Vérifié : détection correcte sur « Double rare », « Illustration spéciale
 rare », « Holo Rare V » (actif) et « Rare » (inactif), bascule et persistance fonctionnelles.
 
+### 4.48 Relief par découpe du sujet — faisabilité mesurée puis implémentée
+Objectif : séparer le Pokémon du décor pour le faire bouger à une vitesse différente. Les
+calques holographiques (§4.47) ne font que glisser sur une image plate — aucune information
+de profondeur, donc aucun relief réel. Pokémon Pocket y parvient avec des calques fournis
+par les illustrateurs, que nous n'avons pas : il faut les reconstruire.
+
+**Test de faisabilité, deux passages** (`segtest.html`, modèle RMBG-1.4 via transformers.js) :
+
+1. *Sur la carte entière* — échec net. Masque à **87-90 % de couverture** : le modèle
+   sélectionne LA CARTE comme sujet, puisqu'elle est l'objet photographié. Il n'a aucune
+   notion du « Pokémon à l'intérieur de l'illustration ». Aucun réglage ne corrige un
+   décalage de sémantique.
+2. *Recadré sur la fenêtre d'illustration* — le modèle cherche enfin dans la bonne zone,
+   mais le résultat reste très inégal sur 7 cartes : une découpe vraiment propre
+   (Dracaufeu full-art, avec un nuage happé au passage), une à 92 % (toute l'illustration),
+   un **blob circulaire coupant en plein visage** (Celebi V), et plusieurs gardant de larges
+   morceaux de décor.
+
+**Piège d'auto-évaluation à noter** : la métrique automatique annonçait « découpe nette »
+sur le premier passage — elle mesurait la NETTETÉ des bords sans vérifier CE QUI avait été
+découpé, et les bords de la carte sont parfaitement nets. Sans contrôle visuel, on
+concluait à un succès sur un échec total. Le libellé avertit désormais explicitement.
+
+**Le coût est incompressible.** Balayage de la résolution d'entrée (1024 → 256 px) : temps
+constant (~22,7 s) et masques **rigoureusement identiques** — le graphe ONNX de RMBG-1.4 a
+une entrée figée à 1024×1024, la configuration du processeur est ignorée. Le levier
+résolution n'existe pas pour ce modèle. Mesuré ici : 30,9 s sur un PC 4 cœurs sans WebGPU.
+Sur le Samsung visé (`isWebGpuAvailable()` → `false`, cf. §4.30), il faut compter davantage.
+
+**Architecture retenue, entièrement dictée par ce coût :**
+- masque calculé **une seule fois par carte** puis mis en cache dans IndexedDB (base montée
+  en **v2**, magasin `cardMasks` — le numéro de version doit augmenter, sinon le magasin
+  n'existerait jamais chez les utilisateurs ayant déjà la base) ;
+- calcul dans un **Worker**, sinon l'interface serait figée 30 à 90 secondes ;
+- **jamais bloquant** : la carte s'affiche à plat immédiatement et bascule en relief à
+  l'arrivée du masque ;
+- déclenché **uniquement sur la carte ouverte**, jamais depuis la grille — sinon ouvrir un
+  set lancerait des dizaines de segmentations ;
+- une segmentation encore en vol est **invalidée** si l'utilisateur change de carte
+  (`cvSeqCarte`), sinon son masque s'appliquerait à la mauvaise carte ;
+- masque **adouci d'un demi-pixel** : une frontière dure ferait ressortir chaque défaut de
+  découpe, et ils sont fréquents ;
+- **le temps réel est affiché** (« relief calculé en X s ») : c'est le chiffre qui décidera
+  s'il faut basculer sur U²-Netp.
+
+Vérifié : premier calcul 30,9 s, **réouverture de la même carte en 105 ms** (cache), couche
+sujet décalée de la carte, interrupteur 🧊 Relief fonctionnel et persistant.
+
+**Deux réserves ouvertes.** *Licence* : RMBG-1.4 (Bria) est **non commerciale** — acceptable
+pour un usage personnel, à remplacer par U²-Netp (Apache 2.0, 4,7 Mo, entrée native
+320×320 donc potentiellement une poignée de secondes) si l'effet est conservé dans un outil
+qui sert à vendre. *Qualité* : une découpe sur sept était vraiment propre — attendre des
+ratés, d'où l'interrupteur et le repli silencieux sur l'affichage plat.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

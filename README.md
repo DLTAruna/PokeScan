@@ -53,6 +53,18 @@ déplacent à des vitesses différentes selon l'angle — ce décalage entre cou
 sensation de relief. Les cartes communes restent mates, comme dans la réalité. Bouton
 « ✨ Holo » pour couper l'effet (préférence conservée).
 
+**Relief (expérimental)** — bouton « 🧊 Relief ». Le Pokémon est découpé du décor par un
+modèle de segmentation tournant dans le navigateur, puis déplacé plus vite que l'arrière-plan
+quand tu inclines : ça donne une vraie profondeur, là où l'holo ne fait que glisser sur une
+image plate.
+
+⚠️ Le premier calcul d'une carte prend **~30 s sur ordinateur, davantage sur téléphone**, et
+ce coût est incompressible (le modèle a une entrée figée). Il est fait dans un worker et ne
+bloque jamais : la carte s'affiche tout de suite à plat et passe en relief quand c'est prêt.
+Le masque est ensuite **mis en cache** — la même carte se rouvre en ~100 ms. La découpe est
+inégale selon les illustrations (le modèle est entraîné sur des photos, pas sur du dessin) :
+d'où l'interrupteur.
+
 ## Notes techniques
 
 - L'OCR travaille sur le **fichier d'origine**, jamais sur la version compressée : le
