@@ -3212,6 +3212,29 @@ let sessionCardHashes = []; // [{cardId, card, hash(BigInt)}]
 // distribution des distances photo-à-photo sur un vrai relevé.
 const SAME_PHOTO_MATCH_DIST = 10;
 
+// Empreinte calculée sur la SEULE ILLUSTRATION, pas sur la carte entière. Le cadre, le
+// bandeau et la mise en page sont quasi identiques d'une carte à l'autre d'un même set :
+// les inclure noie le seul signal réellement discriminant. Mesuré sur photos réelles :
+//
+//                     même carte (2 photos)   cartes différentes   marge
+//   carte entière            31                    min 20          -11  ← signal INVERSÉ
+//   illustration seule       23                    min 26           +3
+//
+// Avec la carte entière, deux cartes DIFFÉRENTES pouvaient donc être plus proches que deux
+// photos de la MÊME : le raccourci ne pouvait pas fonctionner, ce que le terrain confirmait
+// (déclenché 1 fois sur 36 captures).
+const ZONE_ILLUSTRATION = {x:0.07, y:0.11, w:0.86, h:0.43};
+
+function hashIllustration(carte){
+  const c = document.createElement('canvas');
+  c.width = 9; c.height = 8;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  const W = carte.width, H = carte.height;
+  ctx.drawImage(carte, W*ZONE_ILLUSTRATION.x, H*ZONE_ILLUSTRATION.y,
+                       W*ZONE_ILLUSTRATION.w, H*ZONE_ILLUSTRATION.h, 0, 0, 9, 8);
+  return dHashFromCanvas(ctx, 9, 8);
+}
+
 // Anti-doublon "carte fantôme" : retirer une carte de devant la caméra prend un peu de
 // temps (la main la retire progressivement), et le verrou de stabilité pré-tentative a
 // été retiré (§4.20/§4.22) pour capturer plus vite — une lecture peut donc se déclencher
@@ -3224,6 +3247,14 @@ const SAME_PHOTO_MATCH_DIST = 10;
 // précédent ET que la carte n'a jamais été confirmée absente entre-temps, la capture est
 // écartée même si l'image ne ressemblait pas assez à la précédente pour le premier test.
 let cardConfirmedAbsentSinceCapture = true;
+// Absence exigée SOUTENUE, et non validée sur une seule image. Retour terrain : 11 doublons
+// sur 36 captures (31 %), la plupart 1,6 à 4,7 s après l'originale, en retirant la carte.
+// Cause : pendant le retrait, la détection décroche brièvement — une image suffisait à
+// déclarer la carte « partie », si bien qu'une lecture tardive de la MÊME carte était
+// ensuite acceptée comme nouvelle. Exiger plusieurs images consécutives distingue un vrai
+// retrait d'un décrochage passager, sans rien coûter : c'est une condition, pas un délai.
+let absenceStreak = 0;
+const ABSENCE_STREAK_REQUISE = 4;
 
 // Complète le signal ci-dessus : retour utilisateur — sur une carte tenue à la main,
 // parfaitement immobile en apparence, plusieurs captures du MÊME numéro se sont quand
@@ -3850,14 +3881,16 @@ async function detectLoop(){
       // depuis le début : la cause la plus concrète du délai ressenti de 1-2s.
       lowScoreStreak++;
       if(lowScoreStreak >= LOW_SCORE_RESET_STREAK) prevCorners = null;
-      // Signal volontairement immédiat, pas soumis au compteur ci-dessus : sert
-      // uniquement à écarter une "carte fantôme" (voir la déclaration de la variable),
-      // pas à juger si la carte est vraiment partie pour l'affichage — être trop
-      // prudent ici ne coûte rien (seule une capture PORTANT LE MÊME NUMÉRO que la
-      // précédente est concernée), autant l'être.
-      cardConfirmedAbsentSinceCapture = true;
+      // Absence SOUTENUE exigée (voir absenceStreak) : une seule image sous le seuil ne
+      // prouve pas que la carte est partie — pendant un retrait la détection décroche
+      // brièvement, et cette validation immédiate faisait ensuite accepter une lecture
+      // tardive de la même carte comme si c'était une nouvelle. Mesuré : 31 % des captures
+      // étaient des doublons.
+      absenceStreak++;
+      if(absenceStreak >= ABSENCE_STREAK_REQUISE) cardConfirmedAbsentSinceCapture = true;
     } else {
       lowScoreStreak = 0;
+      absenceStreak = 0;
       setOverlayTarget('lecture', d.corners);
       // Carte localisée : on oriente la mise au point vers la bande du numéro plutôt que
       // de laisser l'autofocus viser le centre du cadre (voir viserMiseAuPoint).
@@ -4045,11 +4078,7 @@ async function attemptRead(corners, score){
     // les distances mesurées veuillent dire quelque chose.
     let liveHash = null;
     try{
-      const small = document.createElement('canvas');
-      small.width = 9; small.height = 8;
-      const sctx = small.getContext('2d', {willReadFrequently:true});
-      sctx.drawImage(sourceForRead, 0, 0, 9, 8);
-      liveHash = dHashFromCanvas(sctx, 9, 8);
+      liveHash = hashIllustration(sourceForRead);
     }catch(e){ /* pas de raccourci possible cette fois, l'OCR normal prend le relais */ }
 
     let hashShortcut = null, bestHashDist = null;
@@ -4143,7 +4172,18 @@ async function attemptRead(corners, score){
     // faire varier le texte reconnu même sans mouvement réel).
     const visuallyDuplicate = lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4;
     const netMoveSinceCapture = lastCaptureCorners ? maxCornerShift(lastCaptureCorners, corners) : Infinity;
-    const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture || netMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD;
+    // L'ABSENCE SOUTENUE est désormais la seule preuve qu'une carte a été remplacée. Le
+    // déplacement des coins ne peut plus valider seul une nouvelle carte : retirer une
+    // carte et en présenter une autre déplacent tous deux les coins bien au-delà du seuil,
+    // ces deux situations sont donc indistinguables par le mouvement. C'était la porte de
+    // sortie par laquelle passaient les doublons — mesuré à 31 % des captures.
+    //
+    // Un vrai changement de carte comporte forcément un moment SANS carte dans le cadre,
+    // ce que le mouvement seul ne garantit jamais. Le déplacement reste exigé en plus de
+    // l'absence : une carte reposée exactement au même endroit reste écartée, ce qui est le
+    // comportement voulu quand on ne fait que trembler sur place.
+    const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture
+      && netMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD * 0.5;
     const sameNumberNeverConfirmedNew = lastCaptureNumber
       && finalNumber === lastCaptureNumber.number && finalDenominator === lastCaptureNumber.denominator
       && !cardConfirmedNewSinceCapture;
