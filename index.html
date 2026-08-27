@@ -620,6 +620,7 @@
       <div class="hint diag-controls" style="margin-top:8px;">
         <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
         <button class="btn-ghost btn-sm" id="btn-diag-share" style="margin-left:6px; display:none;">📤 Partager</button>
+        <button class="btn-ghost btn-sm" id="btn-diag-test" style="margin-left:6px;">🔌 Tester le relais</button>
         <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
         <span id="diag-count" style="margin-left:8px;"></span>
         <label style="margin-left:10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
@@ -2874,6 +2875,52 @@ $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
 $('btn-capture-frame').addEventListener('click', ()=> captureFrame());
 $('btn-diag-copy').addEventListener('click', copyDiagReport);
+
+// Test du relais en un appui, avec la réponse serveur COMPLÈTE affichée. Motif : « ça ne
+// marche pas » recouvre des causes qui appellent des corrections opposées — jeton expiré,
+// droit manquant, identifiant de gist erroné, ou limite de taux temporaire (qui se lève
+// seule, et pour laquelle il ne faut surtout RIEN changer). Sans le message exact, on
+// corrige au hasard. Une seule observation envoyée : tester ne doit pas re-flooder ce
+// qu'on soupçonne justement d'avoir été saturé.
+$('btn-diag-test').addEventListener('click', async ()=>{
+  const el = $('diag-view');
+  el.style.display = 'block';
+  el.textContent = '🔌 Test en cours…';
+  try{
+    const res = await fetch('/api/log', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({entries:[{k:'err', t:Date.now(), device:getDiagDeviceId(), msg:'test de relais'}]})
+    });
+    const texte = await res.text();
+    const lignes = [
+      'Test du relais de diagnostic',
+      'statut HTTP : ' + res.status + (res.ok ? ' ✅' : ' ⚠️'),
+      'réponse     : ' + texte.slice(0, 600),
+      ''
+    ];
+    if(res.ok){
+      lignes.push('✅ Le relais fonctionne. Coche « envoyer en direct » et scanne :');
+      lignes.push('   les observations partent par lots, plus besoin de copier-coller.');
+    } else if(/rate limit|secondary|abuse/i.test(texte)){
+      lignes.push('⏳ Limite de taux GitHub — TEMPORAIRE, elle se lève seule.');
+      lignes.push('   Ne recrée rien : la limite porte sur le jeton, pas sur le gist.');
+      lignes.push('   L\'envoi groupé livré aujourd\'hui supprime la cause (une requête');
+      lignes.push('   par lot au lieu d\'une par observation). Réessaie dans ~1 h.');
+    } else if(/bad credentials|401|unauthorized/i.test(texte)){
+      lignes.push('🔑 Jeton refusé : il est expiré, révoqué, ou n\'a pas le droit « gist ».');
+      lignes.push('   À renouveler dans les variables d\'environnement Vercel (GIST_TOKEN).');
+    } else if(/not found|404/i.test(texte)){
+      lignes.push('🔍 Gist introuvable : GIST_ID pointe vers un gist supprimé ou inaccessible');
+      lignes.push('   au jeton. C\'est le seul cas où en recréer un est la bonne réponse.');
+    } else if(/non configur/i.test(texte)){
+      lignes.push('⚙️ GIST_TOKEN / GIST_ID absents côté serveur : à définir dans Vercel.');
+    }
+    el.textContent = lignes.join('\n');
+  }catch(e){
+    el.textContent = 'Test du relais\n⚠️ Requête impossible : ' + e.message +
+      '\n(page ouverte hors du déploiement Vercel ? la route /api/log n\'existe qu\'là-bas)';
+  }
+});
 
 // Partage natif : sur téléphone, un appui envoie le diagnostic par le moyen qu'on veut
 // (messagerie, courriel, notes) sans passer par un presse-papier qu'il faut ensuite coller
