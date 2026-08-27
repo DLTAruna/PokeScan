@@ -400,7 +400,7 @@
        de volume, bien avant l'amplitude de rotation. À 1100 px l'œil est si loin que la
        carte pivote presque sans raccourci — elle a l'air d'une image qui tourne. À 680 px
        le bord qui s'éloigne rétrécit visiblement et l'écart entre les couches se creuse,
-       donc TOUT le reste (relief, diorama, tranche) gagne en même temps. */
+       donc TOUT le reste (relief du sujet, tranche) gagne en même temps. */
     perspective:680px; perspective-origin:50% 45%;
     touch-action:none; overscroll-behavior:contain;
   }
@@ -412,6 +412,15 @@
     max-width:100%; max-height:100%;
   }
   .cv-stage.settling{transition:transform .35s cubic-bezier(.2,.8,.3,1);}
+  /* Le groupe qui contient l'image et TOUS les calques en mode de fusion. `isolation`
+     confine la composition à ce groupe : les calques holo se mélangent à l'image de la
+     carte comme avant, mais leur besoin d'arrière-plan n'aplatit plus la scène 3D qui
+     l'entoure. `position:relative` sans dimensions : le groupe prend la taille de
+     l'image, et .cv-stage prend la sienne — les calques positionnés en pourcentage
+     gardent donc exactement les mêmes repères qu'avant. */
+  .cv-surface{
+    position:relative; isolation:isolate; display:block;
+  }
   .cv-stage img{
     display:block; max-width:min(93vw, 500px); max-height:78vh; width:auto; height:auto;
     border-radius:14px; background:#0a0a0a;
@@ -433,6 +442,11 @@
     font-size:10px; line-height:1.3; border-radius:6px; border:1px dashed var(--border);
   }
   .card-thumb.sans-image{cursor:default;}
+  /* Placée AVANT .cv-surface dans le document et repoussée en Z négatif : les dalles sont
+     donc cachées derrière l'image opaque, sauf sur le bord qui se découvre à l'inclinaison
+     — c'est précisément l'épaisseur qu'on veut voir. Quand la scène était aplatie, ces
+     mêmes dalles opaques se peignaient PAR-DESSUS dans l'ordre du document, d'où les
+     rectangles noirs constatés en test. */
   .cv-tranche{
     position:absolute; inset:0; pointer-events:none; transform-style:preserve-3d;
   }
@@ -575,21 +589,14 @@
     background:rgba(0,0,0,.75); color:var(--muted); font-size:10px;
     padding:2px 9px; border-radius:9px; white-space:nowrap; pointer-events:none;
   }
-  /* Diorama : la fenêtre d'illustration est légèrement ENFONCÉE par rapport au cadre et au
-     texte, ce qui donne un effet de fenêtre ouverte sur une scène. Contrairement à la
-     découpe du sujet, ça ne demande aucun modèle, aucune attente, et ça ne peut pas rater —
-     donc c'est actif sur TOUTES les cartes, immédiatement. La découpe du sujet vient
-     s'ajouter par-dessus quand elle est disponible, au lieu d'être la seule source d'effet. */
-  .cv-diorama{
-    position:absolute; pointer-events:none; opacity:0;
-    transition:opacity .35s ease; overflow:hidden;
-    box-shadow:inset 0 0 40px rgba(0,0,0,.72);
-    /* Enfoncement porté de 26 à 52 px : avec la perspective raccourcie, c'est l'écart
-       entre cette couche et le sujet en avant qui fabrique la profondeur perçue. */
-    transform:translateZ(-52px);
-  }
-  .cv-stage.diorama .cv-diorama{opacity:1;}
-  .cv-diorama canvas{width:100%; height:100%; display:block;}
+  /* Le « diorama » (fenêtre d'illustration enfoncée) a été retiré. Il ne pouvait pas
+     fonctionner tel quel : placé en Z négatif, il est par construction CACHÉ derrière
+     l'image opaque de la carte — pour voir un plan enfoncé il faudrait percer un trou dans
+     la carte, ce qui priverait justement l'illustration de l'effet holo. S'il paraissait
+     agir, c'était par accident : la scène étant aplatie, il se peignait simplement
+     par-dessus l'image dans l'ordre du document, et redessinait donc l'illustration
+     à l'identique. Le relief vient maintenant du sujet détouré, qui lui est sur un vrai
+     plan en avant, et de la tranche sur de vrais plans en arrière. */
   .cv-badge-holo{
     position:absolute; top:-9px; left:50%; transform:translateX(-50%);
     background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a;
@@ -1085,20 +1092,32 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 <div class="card-viewer" id="card-viewer">
   <div class="cv-title" id="cv-title">—</div>
   <button class="cv-close" id="cv-close" aria-label="Fermer">✕</button>
+  <!-- TROIS PLANS DE PROFONDEUR, et un seul d'entre eux contient des mix-blend-mode.
+       C'est la contrainte structurante de toute la visionneuse : un calque en mode de
+       fusion a besoin de son ARRIÈRE-PLAN pour se composer, ce qui oblige le navigateur à
+       rasteriser le groupe parent — et donc à APLATIR son preserve-3d. Tant que les
+       calques holo étaient des enfants directs de .cv-stage, aucun translateZ de la scène
+       n'avait le moindre effet : le sujet « en relief » était en réalité un calque plat,
+       et seule son ombre portée donnait le change (vérifié en poussant le sujet à
+       translateZ(300px) : il ne bougeait pas d'un pixel).
+       Les calques de fusion sont donc enfermés dans .cv-surface, qui s'isole lui-même :
+       ils continuent de se composer avec l'image de la carte (c'est bien ce qu'on veut,
+       une surface de carte EST plate), mais l'aplatissement s'arrête à ce groupe et
+       .cv-stage garde une vraie profondeur pour la tranche et le sujet. -->
   <div class="cv-stage" id="cv-stage">
-    <img id="cv-img" src="" alt="">
-    <!-- Fenêtre d'illustration enfoncée (diorama), puis décor rebouché : tous deux
-         au-dessus de l'image mais SOUS les calques holographiques, sinon ils les
-         masqueraient dans toute la zone d'illustration. -->
-    <div class="cv-diorama" id="cv-diorama"><canvas id="cv-diorama-canvas"></canvas></div>
-    <canvas class="cv-backplate" id="cv-backplate"></canvas>
     <div class="cv-tranche" id="cv-tranche"></div>
-    <div class="cv-foil" id="cv-foil"></div>
-    <div class="cv-holo" id="cv-holo"></div>
-    <div class="cv-sparkle" id="cv-sparkle"></div>
-    <div class="cv-shine" id="cv-shine"></div>
-    <div class="cv-glare" id="cv-glare"></div>
-    <div class="cv-bevel"></div>
+    <div class="cv-surface" id="cv-surface">
+      <img id="cv-img" src="" alt="">
+      <!-- Décor rebouché : au-dessus de l'image mais SOUS les calques holographiques,
+           sinon il les masquerait dans toute la zone d'illustration. -->
+      <canvas class="cv-backplate" id="cv-backplate"></canvas>
+      <div class="cv-foil" id="cv-foil"></div>
+      <div class="cv-holo" id="cv-holo"></div>
+      <div class="cv-sparkle" id="cv-sparkle"></div>
+      <div class="cv-shine" id="cv-shine"></div>
+      <div class="cv-glare" id="cv-glare"></div>
+      <div class="cv-bevel"></div>
+    </div>
     <canvas class="cv-subject" id="cv-subject"></canvas>
     <div class="cv-badge-holo" id="cv-badge-holo">✨ holographique</div>
     <div class="cv-relief-etat" id="cv-relief-etat" style="display:none;"></div>
@@ -5500,8 +5519,6 @@ function cvApplyTransform(){
 // de rotation. Limite : au-delà, le décor rebouché se découvre trop autour du sujet aux
 // angles vifs, et les défauts de découpe deviennent visibles.
 const CV_RELIEF_Z = 92;     // px de hauteur au-dessus de la carte
-// L'enfoncement de la fenêtre d'illustration (diorama) est défini côté CSS, dans
-// `.cv-diorama` : une seule source de vérité, pas une constante JS qui divergerait.
 // Choisit le candidat final parmi ceux extraits par l'OCR. Préfère un dénominateur qui
 // existe réellement au catalogue ; à défaut, retombe sur le premier lu plutôt que de ne
 // rien proposer — la version « stricte » (ne rien renvoyer si aucun dénominateur ne colle)
@@ -5630,26 +5647,6 @@ function cvMajEtatRelief(texte){
 //  - masque déjà en cache  -> appliqué immédiatement, coût nul ;
 //  - masque absent         -> calcul lancé en arrière-plan, la carte reste affichée à plat
 //                             et bascule en relief à l'arrivée. Jamais d'attente bloquante.
-// Prépare le diorama : recopie la fenêtre d'illustration dans un calque enfoncé. Immédiat,
-// sans modèle, et applicable à toute carte — c'est le socle d'effet qui ne dépend de rien.
-async function cvPreparerDiorama(imageBase, monSeq){
-  const stage = $('cv-stage');
-  stage.classList.remove('diorama');
-  if(!cvReliefEnabled) return;
-  try{
-    const { illus } = await segExtraireIllustration(imageBase);
-    if(monSeq !== cvSeqCarte) return;
-    const w = $('cv-diorama');
-    const c = $('cv-diorama-canvas');
-    c.width = illus.width; c.height = illus.height;
-    c.getContext('2d').drawImage(illus, 0, 0);
-    w.style.left   = (SEG_FENETRE.fx*100) + '%';
-    w.style.top    = (SEG_FENETRE.fy*100) + '%';
-    w.style.width  = (SEG_FENETRE.fw*100) + '%';
-    w.style.height = (SEG_FENETRE.fh*100) + '%';
-    stage.classList.add('diorama');
-  }catch(e){ /* pas de diorama : la carte reste affichée normalement */ }
-}
 
 async function cvPreparerRelief(imageBase, cardId, monSeq){
   cvReliefPret = false;
@@ -5803,7 +5800,6 @@ function openCardViewer(imageBase, label, cardId){
   // Le relief est préparé en parallèle, sans jamais retarder l'affichage de la carte.
   cvCardIdCourant = cardId || null;
   const monSeq = ++cvSeqCarte;
-  cvPreparerDiorama(imageBase, monSeq);   // immédiat, sur toutes les cartes
   cvPreparerRelief(imageBase, cardId, monSeq); // découpe du sujet, quand elle arrive
   if(cardId){
     getCardDetailCached(cardId).then(card=>{
@@ -5830,7 +5826,7 @@ function closeCardViewer(){
   // prochaine carte ouverte.
   cvSeqCarte++;
   cvReliefPret = false; cvCardIdCourant = null;
-  $('cv-stage').classList.remove('relief', 'diorama');
+  $('cv-stage').classList.remove('relief');
   cvMajEtatRelief('');
 }
 
@@ -5851,13 +5847,11 @@ $('cv-relief-toggle').addEventListener('click', ()=>{
   const base = $('cv-img').src.replace(/\/high\.webp.*$/, '');
   if(!cvReliefEnabled){
     cvReliefPret = false;
-    $('cv-stage').classList.remove('relief', 'diorama');
+    $('cv-stage').classList.remove('relief');
     cvMajEtatRelief('');
   } else {
-    // Réactivation : on relance les deux préparations pour la carte affichée (le diorama
-    // est immédiat, la découpe l'est aussi si le masque est déjà en cache).
+    // Réactivation : la découpe est immédiate si le masque est déjà en cache.
     const seq = ++cvSeqCarte;
-    cvPreparerDiorama(base, seq);
     cvPreparerRelief(base, cvCardIdCourant, seq);
   }
 });
