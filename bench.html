@@ -138,6 +138,15 @@
       <label>Adaptation toutes les N cartes</label>
       <input type="number" id="cfg-interval" value="10" min="5" max="100" step="5">
     </div>
+    <div>
+      <label>Époque des cartes</label>
+      <select id="cfg-era">
+        <option value="0">Toutes les époques</option>
+        <option value="2011" selected>2011+ (Noir &amp; Blanc → aujourd'hui)</option>
+        <option value="2017">2017+ (Soleil et Lune → aujourd'hui)</option>
+        <option value="2020">2020+ (Épée et Bouclier → aujourd'hui)</option>
+      </select>
+    </div>
   </div>
   <div class="row" style="margin-top:12px;">
     <button class="btn-gold" id="btn-start">▶️ Lancer le banc</button>
@@ -245,10 +254,33 @@ const VARIANTS = [
 // à la 10e carte). L'adaptation reste « continue » ensuite, à l'intervalle demandé.
 const MIN_SAMPLE_TO_ADAPT = 40;
 
+// Dénominateurs réellement existants (tous les cardCount.official du catalogue). Sert à
+// départager les candidats : « 1/149 » a un dénominateur qui existe, « 2/17 » — issu d'un
+// « ©2017 » mal interprété — n'en a pas. Voir POLITIQUES ci-dessous.
+let validDenominators = new Set();
+
+// Trois politiques de choix du candidat final, évaluées EN PARALLÈLE sur les mêmes
+// lectures OCR — donc comparables au candidat près, sans relancer un seul recognize().
+//
+// `premier` est ce que fait l'app aujourd'hui : le worker ne renvoie que cands[0], sans
+// que rien ne départage les candidats. `classé` et `strict` exploitent la table des
+// dénominateurs déjà en cache local. La différence entre les trois EST la mesure du gain.
+const POLITIQUES = {
+  // Ce que fait l'application actuellement.
+  premier: (cands) => cands[0] || null,
+  // Préfère un candidat dont le dénominateur existe ; à défaut, retombe sur le premier.
+  classé:  (cands) => cands.find(c => validDenominators.has(c.denominator)) || cands[0] || null,
+  // N'accepte QUE les dénominateurs existants : si aucun ne colle, on préfère ne rien
+  // proposer plutôt que risquer une carte fausse. Plus sûr, mais peut perdre des lectures
+  // où c'est le dénominateur lui-même qui a été mal lu — d'où la mesure côte à côte.
+  strict:  (cands) => cands.find(c => validDenominators.has(c.denominator)) || null,
+};
+const NOMS_POLITIQUES = Object.keys(POLITIQUES);
+
 let running = false, stopRequested = false;
 let activeVariant = 0;
 let stats = [];   // par variante : {ok, total}
-let tested = 0, ocrMsTotal = 0, ocrCalls = 0;
+let tested = 0, ocrMsTotal = 0, ocrCalls = 0, ignorees = 0;
 let seriesStats = {};   // serieName -> {ok, total} (sur la variante active)
 let failures = [];
 let parsingSrc = null;
@@ -369,47 +401,67 @@ async function idbGet(db, store, key){
   });
 }
 
-// Renvoie [{cardId, localId, image, setId, setName, serieName, official}]
-async function buildCardPool(){
-  let setMeta = {};  // setId -> {name, official, serieName}
-  let lists = [];
+// Renvoie [{cardId, localId, image, setId, setName, serieName, serieYear, official}]
+//
+// `minYear` filtre par année de sortie de la SÉRIE. Motif : mesurer sur tout le catalogue
+// donne un chiffre qui ne veut rien dire pour un usage réel donné — quelqu'un qui ne
+// revend que du récent n'a que faire du taux sur les cartes Wizards, et inversement. Or
+// c'est exactement ce qui départage les fenêtres de recadrage (le numéro est à gauche sur
+// le moderne, à droite sur l'ancien) : mesurer sur la mauvaise population mène tout droit
+// à retenir la mauvaise fenêtre.
+async function buildCardPool(minYear){
+  const setMeta = {};  // setId -> {name, official, serieName, serieYear}
 
+  // Les années viennent toujours de l'API (le cache de l'app ne les stocke pas) : ~20
+  // requêtes, négligeable devant le run lui-même.
+  $('status').textContent = '🔎 Récupération des séries (dates de sortie)…';
+  const series = await (await fetch('https://api.tcgdex.net/v2/fr/series')).json();
+  await Promise.all(series.map(async s=>{
+    try{
+      const d = await (await fetch('https://api.tcgdex.net/v2/fr/series/' + s.id)).json();
+      const year = d.releaseDate ? parseInt(String(d.releaseDate).slice(0,4), 10) : null;
+      for(const st of (d.sets || []))
+        setMeta[st.id] = {name: st.name, official: st.cardCount?.official, serieName: d.name, serieYear: year};
+    }catch(e){ /* série ignorée */ }
+  }));
+
+  let lists = [];
   try{
     const db = await openIdb();
-    const idx = await idbGet(db, 'meta', 'seriesIndex');
-    if(idx && idx.series){
-      for(const serie of idx.series)
-        for(const st of serie.sets)
-          setMeta[st.id] = {name: st.name, official: st.official, serieName: serie.name};
-    }
     lists = await idbGetAll(db, 'cardLists');
   }catch(e){
-    log('ℹ️ Cache local indisponible (' + e.message + ') — récupération directe depuis TCGdex.');
+    log('ℹ️ Cache local de cartes indisponible (' + e.message + ').');
   }
 
-  if(!lists.length || !Object.keys(setMeta).length){
-    $('status').textContent = '🔎 Récupération du catalogue depuis TCGdex…';
-    const sres = await fetch('https://api.tcgdex.net/v2/fr/series');
-    const series = await sres.json();
-    for(const s of series){
-      const d = await (await fetch('https://api.tcgdex.net/v2/fr/series/' + s.id)).json();
-      for(const st of (d.sets || []))
-        setMeta[st.id] = {name: st.name, official: st.cardCount?.official, serieName: d.name};
-    }
-    // Sans cache de listes, on tire au sort parmi les sets et on charge leurs cartes.
-    const ids = Object.keys(setMeta).sort(()=> Math.random()-0.5).slice(0, 40);
-    for(const id of ids){
+  // Sets retenus après filtre d'époque, pour ne charger que ce qui sera réellement testé.
+  const eligibles = Object.keys(setMeta).filter(id=>{
+    const m = setMeta[id];
+    return m.official && (!minYear || (m.serieYear && m.serieYear >= minYear));
+  });
+
+  const dejaEnCache = new Set(lists.map(l=>l.setId));
+  const manquants = eligibles.filter(id => !dejaEnCache.has(id));
+  if(manquants.length){
+    const aCharger = manquants.sort(()=> Math.random()-0.5).slice(0, 60);
+    $('status').textContent = `🔎 Chargement de ${aCharger.length} set(s) depuis TCGdex…`;
+    await Promise.all(aCharger.map(async id=>{
       try{
         const d = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + id)).json();
         lists.push({setId:id, list:(d.cards||[]).filter(c=>c.image).map(c=>({id:c.id, localId:c.localId, image:c.image}))});
       }catch(e){ /* set ignoré */ }
-    }
+    }));
   }
 
   const pool = [];
+  let ecartesEpoque = 0, ecartesPocket = 0;
   for(const entry of lists){
     const meta = setMeta[entry.setId];
     if(!meta || !meta.official) continue;             // sans dénominateur, pas de vérité terrain
+    // « Pokémon Pocket » : cartes du JEU MOBILE, sans existence physique. Elles ne seront
+    // jamais scannées ni revendues, et sortaient à 0 % (mise en page d'écran, pas de carte
+    // imprimée) — les garder tirait le taux global vers le bas sans rien représenter.
+    if(/pocket/i.test(meta.serieName || '')){ ecartesPocket += entry.list.length; continue; }
+    if(minYear && (!meta.serieYear || meta.serieYear < minYear)){ ecartesEpoque += entry.list.length; continue; }
     for(const c of entry.list){
       // Seules les cartes au numéro purement numérique ont un « XXX/XXX » imprimé
       // comparable. Les promos (SWSH001, XY01…) sont écartées : les inclure ferait
@@ -417,9 +469,18 @@ async function buildCardPool(){
       if(!/^\d+$/.test(String(c.localId || ''))) continue;
       pool.push({cardId:c.id, localId:String(parseInt(c.localId,10)), image:c.image,
                  setId:entry.setId, setName:meta.name, serieName:meta.serieName,
-                 official:String(meta.official)});
+                 serieYear: meta.serieYear, official:String(meta.official)});
     }
   }
+  if(ecartesEpoque) log(`🗓️ ${ecartesEpoque} carte(s) écartées : série antérieure à ${minYear}.`);
+  if(ecartesPocket) log(`📱 ${ecartesPocket} carte(s) « Pocket » écartées : jeu mobile, sans carte physique.`);
+
+  // Table des dénominateurs valides — construite sur TOUT le catalogue, pas seulement sur
+  // les sets filtrés : l'app dispose elle aussi de la table complète, restreindre ici
+  // fausserait la mesure en la rendant artificiellement discriminante.
+  validDenominators = new Set(Object.values(setMeta).map(m => String(m.official)).filter(Boolean));
+  log(`🔢 ${validDenominators.size} dénominateurs distincts connus (table de départage).`);
+
   return pool;
 }
 
@@ -430,7 +491,16 @@ function loadImage(url){
   return new Promise((resolve, reject)=>{
     const img = new Image();
     img.crossOrigin = 'anonymous';
-    img.onload = ()=> resolve(img);
+    img.onload = ()=>{
+      // Une image « chargée » mais vide ou minuscule n'est PAS une image utilisable : elle
+      // serait testée comme n'importe quelle autre et comptée comme un échec de lecture,
+      // faisant chuter le taux pour une raison qui n'a rien à voir avec l'OCR. Constaté en
+      // vrai : l'onglet passé en arrière-plan, Chrome suspend les entrées/sorties réseau
+      // (ERR_NETWORK_IO_SUSPENDED) et un run entier s'est retrouvé faussé sans le moindre
+      // signal — 259 cartes traitées pour 163 comptées, et une série tombée de 80 % à 11 %.
+      if(!img.naturalWidth || img.naturalWidth < 100) reject(new Error('image vide ou tronquée'));
+      else resolve(img);
+    };
     img.onerror = ()=> reject(new Error('image indisponible'));
     img.src = url;
   });
@@ -507,17 +577,39 @@ function cropVariant(card, v){
 // ---------------------------------------------------------------------------
 function pct(ok, total){ return total ? (ok/total*100) : 0; }
 
+// Politique servant de référence partout (classement des variantes, adaptation, stats par
+// série) : « classé », c'est-à-dire la politique proposée. Un seul point de définition,
+// pour que tous les affichages parlent bien de la même chose.
+const POLITIQUE_REF = 'classé';
+function tauxRef(i){ const s = stats[i]; return s ? pct(s.pol[POLITIQUE_REF].ok, s.total) : 0; }
+function fpRef(i){ const s = stats[i]; return s ? pct(s.pol[POLITIQUE_REF].fp, s.total) : 0; }
+function estJuste(cands, card){
+  const c = POLITIQUES[POLITIQUE_REF](cands);
+  return !!(c && c.number === card.localId && c.denominator === card.official);
+}
+
 function renderVariants(){
   $('variants-box').innerHTML = VARIANTS.map((v,i)=>{
-    const s = stats[i] || {ok:0,total:0,ms:0,fp:0};
-    const p = pct(s.ok, s.total);
-    const fp = pct(s.fp, s.total);
+    const s = stats[i];
+    if(!s) return '';
     const ms = s.total ? Math.round(s.ms/s.total) : 0;
-    return `<div class="bar-row">
-      <div class="name ${i===activeVariant?'variant-active':''}">${i===activeVariant?'★ ':''}${v.name}</div>
-      <div class="track"><div class="bar" style="width:${p.toFixed(1)}%"></div></div>
-      <div class="val">${p.toFixed(1)} % · <span style="color:${fp>0?'var(--bad)':'var(--muted)'}">${fp.toFixed(0)} % FP</span> · ${ms} ms</div>
-    </div>`;
+    const barre = pct(s.pol['classé'].ok, s.total);
+    // Une ligne par politique : c'est la comparaison qui porte l'information, pas un
+    // chiffre unique. « présent » est le plafond (le bon numéro est dans la liste, un
+    // départage parfait l'atteindrait).
+    const detail = NOMS_POLITIQUES.map(n=>{
+      const p = s.pol[n];
+      const ok = pct(p.ok, s.total), fp = pct(p.fp, s.total);
+      return `<div style="font-size:11px;color:var(--muted);padding-left:14px">
+        ${n.padEnd(8)} : <b style="color:var(--text)">${ok.toFixed(1)} %</b> juste ·
+        <span style="color:${fp>15?'var(--bad)':(fp>5?'var(--warn)':'var(--good)')}">${fp.toFixed(1)} % faux</span></div>`;
+    }).join('');
+    return `<div style="margin-bottom:9px">
+      <div class="bar-row">
+        <div class="name ${i===activeVariant?'variant-active':''}">${i===activeVariant?'★ ':''}${v.name}</div>
+        <div class="track"><div class="bar" style="width:${barre.toFixed(1)}%"></div></div>
+        <div class="val">${ms} ms · plafond ${pct(s.okAny,s.total).toFixed(0)} %</div>
+      </div>${detail}</div>`;
   }).join('');
 }
 
@@ -537,11 +629,13 @@ function renderSeries(){
 }
 
 function renderStats(){
-  const s = stats[activeVariant] || {ok:0,total:0};
+  const s = stats[activeVariant];
+  const ok = s ? s.pol[POLITIQUE_REF].ok : 0;
+  const total = s ? s.total : 0;
   $('s-tested').textContent = tested;
-  $('s-ok').textContent = s.ok;
-  $('s-ko').textContent = s.total - s.ok;
-  $('s-rate').textContent = s.total ? pct(s.ok,s.total).toFixed(1)+' %' : '—';
+  $('s-ok').textContent = ok;
+  $('s-ko').textContent = total - ok;
+  $('s-rate').textContent = total ? pct(ok,total).toFixed(1)+' %' : '—';
   $('s-ms').textContent = ocrCalls ? Math.round(ocrMsTotal/ocrCalls)+' ms' : '—';
   renderVariants();
   renderSeries();
@@ -563,8 +657,9 @@ function renderFailures(){
 async function run(){
   running = true; stopRequested = false;
   $('btn-start').disabled = true; $('btn-stop').disabled = false;
-  failures = []; tested = 0; ocrMsTotal = 0; ocrCalls = 0; seriesStats = {}; activeVariant = 0;
-  stats = VARIANTS.map(()=>({ok:0,total:0,ms:0,fp:0}));
+  failures = []; tested = 0; ocrMsTotal = 0; ocrCalls = 0; seriesStats = {}; activeVariant = 0; ignorees = 0;
+  stats = VARIANTS.map(()=>({okAny:0, total:0, ms:0,
+    pol: Object.fromEntries(NOMS_POLITIQUES.map(n=>[n,{ok:0,fp:0}]))}));
   renderStats();
 
   try{
@@ -572,10 +667,11 @@ async function run(){
     parsingSrc = await loadParsingSource();
     log('✅ Logique de parsing extraite de index.html (' + parsingSrc.length + ' caractères) — le banc teste le vrai code, pas une copie.');
 
-    $('status').textContent = '🔎 Construction de l\'échantillon…';
-    const pool = await buildCardPool();
+    const minYear = parseInt($('cfg-era').value, 10) || 0;
+    const pool = await buildCardPool(minYear);
     if(!pool.length) throw new Error('aucune carte exploitable trouvée');
-    log('📚 Réservoir : ' + pool.length + ' cartes au numéro numérique, vérité terrain disponible.');
+    log('📚 Réservoir : ' + pool.length + ' cartes au numéro numérique, vérité terrain disponible' +
+        (minYear ? ` (séries ${minYear}+ uniquement)` : ' (toutes époques)') + '.');
 
     startWorker();
     $('status').textContent = '⏳ Initialisation du moteur OCR…';
@@ -599,7 +695,19 @@ async function run(){
       try{
         const img = await loadImage(card.image + '/high.webp');
         rendered = await renderCard(img, degrade);
-      }catch(e){ continue; } // image indisponible : la carte est simplement ignorée
+      }catch(e){
+        // Ignorer en silence a déjà faussé un run entier (voir loadImage) : on compte, et
+        // on alerte dès que le taux d'échec de chargement devient anormal — au-delà de
+        // quelques pour cent, ce n'est plus un aléa réseau mais un problème systématique
+        // qui invalide la mesure en cours.
+        ignorees++;
+        if(ignorees === 10 || ignorees % 50 === 0){
+          log(`⚠️ ${ignorees} carte(s) ignorées faute d'image (${Math.round(ignorees/(i+1)*100)} % des tirages).` +
+              ` Dernière cause : ${e.message}.` +
+              (ignorees/(i+1) > 0.05 ? ' ⛔ Taux anormal — garde l\'onglet au premier plan, Chrome suspend le réseau en arrière-plan.' : ''));
+        }
+        continue;
+      }
 
       // Toutes les variantes sont lues sur LA MÊME image dégradée : la comparaison entre
       // elles est donc à conditions strictement identiques (même flou, même angle, même
@@ -613,22 +721,35 @@ async function run(){
       const expected = card.localId + '/' + card.official;
       out.out.forEach((r, vi)=>{
         ocrMsTotal += r.ms; ocrCalls++;
-        const hit = r.cands.some(c => c.number === card.localId && c.denominator === card.official);
         stats[vi].total++; stats[vi].ms += r.ms;
-        if(hit) stats[vi].ok++;
-        // FAUX POSITIF : un numéro a été lu, il est plausible (il passe tous les filtres
-        // de extractNumbers), mais il est FAUX. C'est le cas le plus grave — bien pire
-        // qu'un échec franc : la carte part au lot sans que rien ne signale l'erreur.
-        // Historique concret : « 198/165 » lu « 98/63 » désignait un Salamèche
-        // d'Expedition, présenté comme certain. Un taux de réussite seul masque
-        // complètement ce risque, et optimiser dessus peut l'aggraver.
-        else if(r.cands.length) stats[vi].fp++;
+
+        // Le bon numéro est-il présent QUELQUE PART dans les candidats ? Ce n'est pas ce
+        // que fait l'app (elle ne regarde que le premier) : c'est le plafond atteignable
+        // par un meilleur départage, donc la marge de progression disponible.
+        if(r.cands.some(c => c.number === card.localId && c.denominator === card.official)) stats[vi].okAny++;
+
+        // Chaque politique est évaluée sur les MÊMES candidats : aucun recognize()
+        // supplémentaire, et la comparaison ne porte que sur le choix final.
+        for(const nom of NOMS_POLITIQUES){
+          const choisi = POLITIQUES[nom](r.cands);
+          const p = stats[vi].pol[nom];
+          if(choisi && choisi.number === card.localId && choisi.denominator === card.official) p.ok++;
+          // FAUX POSITIF : un numéro a été retenu, plausible, mais FAUX. Plus grave qu'un
+          // échec franc — la carte part au lot sans que rien ne signale l'erreur
+          // (historique : « 198/165 » lu « 98/63 », Salamèche d'Expedition présenté comme
+          // certain). Un taux de réussite seul masque ce risque, et optimiser dessus peut
+          // l'aggraver : d'où le suivi séparé pour chaque politique.
+          else if(choisi) p.fp++;
+        }
         if(vi === activeVariant){
+          const juste = estJuste(r.cands, card);
           const ss = seriesStats[card.serieName] = seriesStats[card.serieName] || {ok:0,total:0};
-          ss.total++; if(hit) ss.ok++;
-          if(!hit) failures.push({image:card.image, setName:card.setName, expected,
-                                  got: r.cands[0] ? r.cands[0].number+'/'+r.cands[0].denominator : null,
-                                  text: r.text});
+          ss.total++; if(juste) ss.ok++;
+          if(!juste){
+            const c = POLITIQUES[POLITIQUE_REF](r.cands);
+            failures.push({image:card.image, setName:card.setName, expected,
+                           got: c ? c.number+'/'+c.denominator : null, text: r.text});
+          }
         }
       });
 
@@ -647,22 +768,21 @@ async function run(){
       if(tested % interval === 0 && tested >= MIN_SAMPLE_TO_ADAPT){
         let best = activeVariant;
         for(let v=0; v<VARIANTS.length; v++){
-          const pv = pct(stats[v].ok, stats[v].total) / 100;
-          const pb = pct(stats[best].ok, stats[best].total) / 100;
+          const pv = tauxRef(v) / 100;
           const n = Math.max(1, stats[v].total);
           const marge = 2 * Math.sqrt(Math.max(pv*(1-pv), 0.01) / n) * 100; // ~2 écarts-types
-          if(pct(stats[v].ok, stats[v].total) > pct(stats[best].ok, stats[best].total) + marge) best = v;
+          if(tauxRef(v) > tauxRef(best) + marge) best = v;
         }
         if(best !== activeVariant){
           log(`🔄 ${tested} cartes — variante retenue : « ${VARIANTS[best].name} » ` +
-              `(${pct(stats[best].ok,stats[best].total).toFixed(1)} %) remplace « ${VARIANTS[activeVariant].name} » ` +
-              `(${pct(stats[activeVariant].ok,stats[activeVariant].total).toFixed(1)} %)`);
+              `(${tauxRef(best).toFixed(1)} %) remplace « ${VARIANTS[activeVariant].name} » ` +
+              `(${tauxRef(activeVariant).toFixed(1)} %)`);
           activeVariant = best;
           // Les stats par série portaient sur l'ancienne variante : les repartir à zéro
           // évite de mélanger deux régimes dans un même pourcentage.
           seriesStats = {}; failures = [];
         } else if(tested % (interval*5) === 0){
-          log(`… ${tested} cartes — « ${VARIANTS[activeVariant].name} » reste en tête (${pct(stats[activeVariant].ok,stats[activeVariant].total).toFixed(1)} %)`);
+          log(`… ${tested} cartes — « ${VARIANTS[activeVariant].name} » reste en tête (${tauxRef(activeVariant).toFixed(1)} %)`);
         }
       }
 
@@ -672,16 +792,34 @@ async function run(){
 
     renderStats(); renderFailures();
     log('');
-    log('🏁 Terminé — ' + tested + ' cartes testées.');
+    log('🏁 Terminé — ' + tested + ' cartes testées' +
+        (ignorees ? `, ${ignorees} ignorées faute d'image (${Math.round(ignorees/(tested+ignorees)*100)} %)` : '') + '.');
+    if(ignorees/(tested+ignorees) > 0.05){
+      log('⛔ Plus de 5 % de cartes non chargées : ces résultats sont à considérer comme');
+      log('   NON FIABLES. Relance avec l\'onglet au premier plan.');
+    }
     const ranked = VARIANTS.map((v,i)=>({
-      name:v.name, p:pct(stats[i].ok,stats[i].total), fp:pct(stats[i].fp,stats[i].total),
+      name:v.name, p:tauxRef(i), fp:fpRef(i),
       ms: stats[i].total ? Math.round(stats[i].ms/stats[i].total) : 0
     })).sort((a,b)=>b.p-a.p);
-    log('Classement final (taux juste · faux positifs · coût OCR moyen) :');
-    ranked.forEach((r,i)=> log(`  ${i+1}. ${r.name} — ${r.p.toFixed(1)} % · ${r.fp.toFixed(1)} % FP · ${r.ms} ms`));
+    log(`Classement final (politique « ${POLITIQUE_REF} ») :`);
+    ranked.forEach((r,i)=> log(`  ${i+1}. ${r.name} — ${r.p.toFixed(1)} % juste · ${r.fp.toFixed(1)} % faux · ${r.ms} ms`));
     log('');
-    log('« FP » = numéro lu, plausible, mais FAUX : plus grave qu\'un échec (la carte part');
-    log('   au lot sans alerte). À surveiller autant que le taux de réussite.');
+    log('Comparaison des politiques de départage des candidats (même échantillon,');
+    log('mêmes lectures OCR — seul le choix du candidat final change) :');
+    for(let i=0;i<VARIANTS.length;i++){
+      log(`  ${VARIANTS[i].name} — plafond ${pct(stats[i].okAny, stats[i].total).toFixed(1)} % :`);
+      for(const n of NOMS_POLITIQUES){
+        const p = stats[i].pol[n];
+        log(`      ${n.padEnd(8)} ${pct(p.ok,stats[i].total).toFixed(1).padStart(5)} % juste · ${pct(p.fp,stats[i].total).toFixed(1).padStart(5)} % faux`);
+      }
+    }
+    log('');
+    log('« premier » = ce que fait l\'app aujourd\'hui (cands[0], aucun départage).');
+    log('« faux »    = numéro retenu, plausible, mais FAUX — plus grave qu\'un échec :');
+    log('              la carte part au lot sans qu\'aucun signal n\'alerte.');
+    log('« plafond » = le bon numéro était présent dans les candidats : marge atteignable');
+    log('              par un meilleur départage, sans toucher à l\'OCR.');
     $('status').textContent = '✅ Terminé.';
   }catch(err){
     log('❌ ' + err.message);
@@ -701,9 +839,14 @@ $('btn-export').addEventListener('click', async ()=>{
     'date       : ' + new Date().toISOString(),
     'cartes     : ' + tested,
     'dégradation: ' + $('cfg-degrade').value,
+    'époque     : ' + ($('cfg-era').value === '0' ? 'toutes' : $('cfg-era').value + '+'),
     '',
-    'Fenêtres de recadrage :',
-    ...VARIANTS.map((v,i)=> `  ${i===activeVariant?'★':' '} ${v.name} — ${pct(stats[i]?.ok||0, stats[i]?.total||0).toFixed(1)} % (${stats[i]?.ok||0}/${stats[i]?.total||0})`),
+    `Fenêtres de recadrage (politique « ${POLITIQUE_REF} ») :`,
+    ...VARIANTS.map((v,i)=> `  ${i===activeVariant?'★':' '} ${v.name} — ${tauxRef(i).toFixed(1)} % juste · ${fpRef(i).toFixed(1)} % faux`),
+    '',
+    'Politiques de départage :',
+    ...VARIANTS.flatMap((v,i)=> [`  ${v.name} (plafond ${pct(stats[i]?.okAny||0, stats[i]?.total||0).toFixed(1)} %) :`,
+      ...NOMS_POLITIQUES.map(n=> `      ${n.padEnd(8)} ${pct(stats[i]?.pol[n].ok||0, stats[i]?.total||0).toFixed(1)} % juste · ${pct(stats[i]?.pol[n].fp||0, stats[i]?.total||0).toFixed(1)} % faux`)]),
     '',
     'Par série (variante retenue) :',
     ...Object.entries(seriesStats).sort((a,b)=>pct(a[1].ok,a[1].total)-pct(b[1].ok,b[1].total))

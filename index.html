@@ -406,7 +406,7 @@
      comme sur une vraie carte brillante inclinée sous une lampe. */
   .cv-shine{
     position:absolute; inset:0; border-radius:14px; pointer-events:none;
-    mix-blend-mode:overlay; opacity:.75;
+    mix-blend-mode:overlay; opacity:.5;
     background:linear-gradient(105deg, transparent 30%, rgba(255,255,255,.55) 48%, transparent 62%);
     background-size:260% 260%;
   }
@@ -415,6 +415,62 @@
     mix-blend-mode:color-dodge; opacity:.35;
     background:radial-gradient(circle at 50% 50%, rgba(120,190,255,.55), transparent 55%);
   }
+
+  /* ---- effet holographique (cartes ex / full art / illustration rare) ----
+     Trois couches superposées qui se déplacent à des VITESSES DIFFÉRENTES avec
+     l'inclinaison : c'est ce décalage entre couches qui crée la sensation de relief, plus
+     que chaque couche prise isolément. Toutes en blend mode, donc elles réagissent aux
+     couleurs de la carte au lieu de la recouvrir d'un calque uniforme.
+     Masquées par défaut : activées seulement si la carte est repérée comme spéciale
+     (voir CARTE_SPECIALE) et si l'utilisateur n'a pas coupé l'effet. */
+  .cv-holo, .cv-sparkle, .cv-bevel{display:none;}
+  .cv-stage.holo .cv-holo, .cv-stage.holo .cv-sparkle, .cv-stage.holo .cv-bevel{display:block;}
+  /* Sur une carte holo, la nappe prismatique fait déjà le travail du reflet blanc : les
+     cumuler blanchit l'image. On atténue donc celui-ci plutôt que d'empiler. */
+  .cv-stage.holo .cv-shine{opacity:.22;}
+  .cv-stage.holo .cv-glare{opacity:.2;}
+
+  /* Nappe prismatique : la teinte défile avec l'angle, comme le film holographique réel. */
+  /* Opacités volontairement basses : à pleine intensité (0,42 / 0,55 testés), les trois
+     couches s'additionnent et DÉLAVENT l'illustration — la carte devient un aplat brillant
+     illisible. L'effet doit rester un reflet qui passe sur la carte, pas un calque qui la
+     recouvre. La brillance vient du mouvement, pas de l'opacité. */
+  .cv-holo{
+    position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    mix-blend-mode:color-dodge; opacity:.22;
+    background:linear-gradient(115deg,
+      transparent 12%, rgba(255,80,120,.55) 24%, rgba(255,220,60,.5) 33%,
+      rgba(60,255,180,.5) 42%, rgba(80,170,255,.55) 51%, rgba(200,90,255,.5) 60%,
+      transparent 72%);
+    background-size:320% 320%;
+  }
+  /* Paillettes : motif fin qui se déplace À CONTRE-SENS de la nappe — le décalage entre
+     les deux est ce qui donne l'impression que le scintillement est SOUS la surface. */
+  .cv-sparkle{
+    position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    mix-blend-mode:overlay; opacity:.3;
+    background-image:
+      radial-gradient(circle at 18% 22%, rgba(255,255,255,.9) 0 1px, transparent 2px),
+      radial-gradient(circle at 62% 41%, rgba(255,255,255,.75) 0 1.2px, transparent 2px),
+      radial-gradient(circle at 37% 74%, rgba(255,255,255,.85) 0 1px, transparent 2px),
+      radial-gradient(circle at 84% 66%, rgba(255,255,255,.7) 0 1.4px, transparent 2px),
+      radial-gradient(circle at 8% 88%, rgba(255,255,255,.8) 0 1px, transparent 2px);
+    background-size:52px 52px, 71px 71px, 43px 43px, 88px 88px, 63px 63px;
+  }
+  /* Biseau : liseré lumineux sur les bords, qui bascule d'un côté à l'autre selon
+     l'inclinaison — donne l'épaisseur de la carte. */
+  .cv-bevel{
+    position:absolute; inset:0; border-radius:14px; pointer-events:none;
+    mix-blend-mode:screen; opacity:.5;
+    box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.35);
+  }
+  .cv-badge-holo{
+    position:absolute; top:-9px; left:50%; transform:translateX(-50%);
+    background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a;
+    font-size:10px; font-weight:800; padding:2px 9px; border-radius:9px;
+    white-space:nowrap; pointer-events:none; box-shadow:0 2px 8px rgba(0,0,0,.5);
+  }
+  .cv-stage:not(.holo) .cv-badge-holo{display:none;}
   .cv-bar{
     display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap;
     margin-top:14px; flex-shrink:0;
@@ -434,6 +490,16 @@
     font-size:13px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
   }
   .cv-hint{font-size:11px; color:var(--muted); margin-top:6px; text-align:center; flex-shrink:0;}
+
+  .warn-box-bench{
+    background:rgba(224,161,42,.1); border:1px solid rgba(224,161,42,.4); border-radius:10px;
+    padding:11px 13px; font-size:12.5px; line-height:1.6; color:#f0dcb0; margin-bottom:14px;
+  }
+  .warn-box-bench b{color:var(--warn);}
+  #bench-frame-wrap iframe{
+    width:100%; height:78vh; border:1px solid var(--border); border-radius:10px;
+    margin-top:14px; background:var(--bg); display:block;
+  }
 
   .pkb-footer{
     max-width:900px; margin:8px auto 0; padding:18px 16px 30px; text-align:center;
@@ -460,6 +526,7 @@
     <button class="tab-btn" data-tab="sets">🗂️ Sets</button>
     <button class="tab-btn" data-tab="export">⬇️ Export</button>
     <button class="tab-btn" data-tab="settings">⚙️ Réglages</button>
+    <button class="tab-btn" data-tab="bench">🧪 Banc</button>
     <button class="tab-btn" data-tab="guide">📖 Guide</button>
   </div>
 </header>
@@ -769,6 +836,26 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
     </div>
   </section>
 
+  <!-- BENCH TAB -->
+  <section class="section" id="section-bench">
+    <div class="panel">
+      <h2>🧪 Banc d'essai OCR</h2>
+      <p class="sub">Mesure le taux de lecture du numéro sur un échantillon aléatoire du catalogue. La bonne réponse est connue pour chaque carte (<code>localId</code> + total du set), donc la mesure est objective sur des centaines de cartes sans rien annoter à la main. Sert à comparer des fenêtres de recadrage et des politiques de décision <b>avant</b> de toucher au code de l'app.</p>
+      <div class="warn-box-bench">
+        ⚠️ <b>Garde cet onglet au premier plan pendant un run.</b> En arrière-plan, le navigateur
+        suspend les accès réseau : les images ne se chargent plus et les résultats deviennent
+        silencieusement faux (déjà constaté — un run entier perdu). Le banc alerte désormais
+        au-delà de 5 % de cartes non chargées, mais mieux vaut ne pas y arriver.
+      </div>
+      <div class="capture-btns">
+        <button class="btn-gold" id="btn-open-bench">🧪 Ouvrir le banc ici</button>
+        <button class="btn-ghost" id="btn-bench-newtab">↗️ Ouvrir dans un onglet séparé</button>
+      </div>
+      <p class="hint">Un onglet séparé est préférable pour un run long : tu peux continuer à scanner ici pendant ce temps sans interrompre la mesure.</p>
+      <div id="bench-frame-wrap"></div>
+    </div>
+  </section>
+
   <!-- GUIDE TAB -->
   <section class="section guide" id="section-guide">
     <div class="panel">
@@ -839,14 +926,19 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
   <button class="cv-close" id="cv-close" aria-label="Fermer">✕</button>
   <div class="cv-stage" id="cv-stage">
     <img id="cv-img" src="" alt="">
+    <div class="cv-holo" id="cv-holo"></div>
+    <div class="cv-sparkle" id="cv-sparkle"></div>
     <div class="cv-shine" id="cv-shine"></div>
     <div class="cv-glare" id="cv-glare"></div>
+    <div class="cv-bevel"></div>
+    <div class="cv-badge-holo" id="cv-badge-holo">✨ holographique</div>
   </div>
   <div class="cv-bar">
     <button id="cv-zoom-out">−</button>
     <button id="cv-zoom-level">100 %</button>
     <button id="cv-zoom-in">+</button>
     <button id="cv-tilt" class="on">📱 Parallaxe</button>
+    <button id="cv-holo-toggle" class="on">✨ Holo</button>
   </div>
   <div class="cv-hint" id="cv-hint">Incline le téléphone pour faire jouer la lumière · pince pour zoomer</div>
 </div>
@@ -4354,12 +4446,12 @@ async function openSetDetail(setId){
       return String(a.localId).localeCompare(String(b.localId));
     });
     grid.innerHTML = sorted.map(c => `
-      <div class="card-thumb" data-image="${esc(c.image)}" data-label="${esc((meta?.name || setId) + ' · #' + c.localId)}">
+      <div class="card-thumb" data-image="${esc(c.image)}" data-card-id="${esc(c.id)}" data-label="${esc((meta?.name || setId) + ' · #' + c.localId)}">
         <img src="${esc(c.image)}/low.webp" alt="" loading="lazy">
         <div class="card-num">#${esc(c.localId)}</div>
       </div>`).join('');
     grid.querySelectorAll('.card-thumb').forEach(el=>{
-      el.addEventListener('click', ()=> openCardViewer(el.dataset.image, el.dataset.label));
+      el.addEventListener('click', ()=> openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId));
     });
     $('set-detail-status').textContent = `${sorted.length} carte(s)` +
       (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.') +
@@ -4368,6 +4460,24 @@ async function openSetDetail(setId){
     $('set-detail-status').textContent = '⚠️ Impossible de charger les cartes : ' + err.message;
   }
 }
+
+// ---------------- ONGLET BANC ----------------
+// Le banc reste un fichier séparé (bench.html) plutôt qu'un onglet réimplémenté ici :
+// il charge son propre moteur OCR et son propre échantillon, et le dupliquer garantirait
+// qu'il finisse par mesurer autre chose que ce que l'app exécute. L'iframe n'est créée
+// qu'au clic — sans ça, ouvrir l'onglet suffirait à télécharger les modèles OCR une
+// seconde fois à chaque chargement de page.
+$('btn-open-bench').addEventListener('click', ()=>{
+  const wrap = $('bench-frame-wrap');
+  if(wrap.querySelector('iframe')){ wrap.innerHTML = ''; $('btn-open-bench').textContent = '🧪 Ouvrir le banc ici'; return; }
+  const f = document.createElement('iframe');
+  f.src = 'bench.html';
+  f.title = 'Banc d’essai OCR';
+  wrap.appendChild(f);
+  $('btn-open-bench').textContent = '✕ Fermer le banc';
+});
+
+$('btn-bench-newtab').addEventListener('click', ()=> window.open('bench.html', '_blank'));
 
 $('btn-sets-back').addEventListener('click', ()=>{
   $('set-detail').style.display = 'none';
@@ -4387,6 +4497,26 @@ const CV_MAX_TILT = 18;      // degrés de rotation à l'inclinaison maximale pr
 const CV_SENSOR_RANGE = 26;  // amplitude d'inclinaison réelle (deg) correspondant au max
 let cvZoom = 1, cvPanX = 0, cvPanY = 0;
 let cvTiltEnabled = true;
+// Préférence conservée : l'effet peut gêner (lisibilité, sensibilité au mouvement, ou
+// simple goût), et le redemander à chaque ouverture serait pénible.
+let cvHoloEnabled = localStorage.getItem('cvHolo') !== '0';
+let cvCardIsSpecial = false;
+
+// Une carte « spéciale » (ex, full art, illustration rare, secrète…) a un fini
+// holographique dans la réalité ; une commune est mate. Appliquer l'effet à tout
+// donnerait un rendu faux et un peu criard. On se fie à la rareté renvoyée par TCGdex
+// plutôt qu'à une analyse d'image : c'est l'information exacte, et elle est déjà en cache.
+// Les libellés varient selon les époques et les langues, d'où la reconnaissance par
+// motifs plutôt qu'une liste fermée qui vieillirait mal.
+const CARTE_SPECIALE = /holo|ultra|secr|illustration|double rare|hyper|chromatique|arc-en-ciel|rainbow|shiny|prisme|full ?art|alt|amazing|radiant|legend/i;
+
+function cvEstSpeciale(card){
+  if(!card) return false;
+  if(CARTE_SPECIALE.test(card.rarity || '')) return true;
+  // Repli sur le nom quand la rareté est absente ou inhabituelle : les suffixes de forme
+  // (ex, V, VMAX, VSTAR, GX) désignent presque toujours une carte à fini brillant.
+  return /\b(ex|gx|v|vmax|vstar)\b/i.test(card.name || '');
+}
 let cvOrientationHandler = null;
 let cvNeutral = null;        // {beta, gamma} de référence, pris à l'ouverture
 let cvRaf = null, cvTargetRX = 0, cvTargetRY = 0, cvCurRX = 0, cvCurRY = 0;
@@ -4409,6 +4539,45 @@ function cvApplyTransform(){
     const gx = 50 + (cvCurRY / CV_MAX_TILT) * 35;
     const gy = 50 - (cvCurRX / CV_MAX_TILT) * 35;
     glare.style.background = `radial-gradient(circle at ${gx}% ${gy}%, rgba(120,190,255,.55), transparent 55%)`;
+  }
+
+  // Couches holographiques : chacune se déplace à une vitesse DIFFÉRENTE, et les
+  // paillettes vont à contre-sens de la nappe. C'est ce décalage qui donne le relief —
+  // des couches synchronisées produiraient juste un calque coloré qui glisse, sans
+  // profondeur. Facteurs (2.2 / 0.9) choisis pour que l'écart reste perceptible sans que
+  // l'ensemble parte en vibration.
+  if(cvCardIsSpecial && cvHoloEnabled){
+    const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
+    const holo = $('cv-holo');
+    if(holo) holo.style.backgroundPosition = `${50 - nx*2.2*50}% ${50 + ny*2.2*50}%`;
+    const sparkle = $('cv-sparkle');
+    if(sparkle){
+      sparkle.style.backgroundPosition =
+        `${50 + nx*0.9*50}% ${50 - ny*0.9*50}%, ${50 + nx*1.3*50}% ${50 - ny*1.3*50}%, ` +
+        `${50 + nx*0.6*50}% ${50 - ny*0.6*50}%, ${50 + nx*1.6*50}% ${50 - ny*1.6*50}%, ` +
+        `${50 + nx*1.0*50}% ${50 - ny*1.0*50}%`;
+    }
+    // Le liseré de bord bascule du côté opposé à l'inclinaison : la tranche éclairée
+    // change de côté quand on penche la carte, comme un objet réel.
+    const bevel = document.querySelector('.cv-bevel');
+    if(bevel){
+      const dx = -nx * 3, dy = ny * 3;
+      bevel.style.boxShadow = `inset ${dx.toFixed(1)}px ${dy.toFixed(1)}px 6px rgba(255,255,255,.28), inset 0 0 0 1.5px rgba(255,255,255,.3)`;
+    }
+  }
+}
+
+function cvMajHolo(){
+  const stage = $('cv-stage');
+  if(!stage) return;
+  stage.classList.toggle('holo', cvCardIsSpecial && cvHoloEnabled);
+  const btn = $('cv-holo-toggle');
+  if(btn){
+    btn.classList.toggle('on', cvHoloEnabled);
+    // Un bouton actif sur une carte mate laisserait croire à une panne : on dit
+    // explicitement pourquoi il ne se passe rien.
+    btn.style.opacity = cvCardIsSpecial ? '1' : '.45';
+    btn.title = cvCardIsSpecial ? '' : 'Cette carte n’a pas de fini holographique';
   }
 }
 
@@ -4490,7 +4659,7 @@ function cvSetZoom(z){
   cvApplyTransform();
 }
 
-function openCardViewer(imageBase, label){
+function openCardViewer(imageBase, label, cardId){
   if(!imageBase) return;
   const v = $('card-viewer');
   $('cv-img').src = imageBase + '/high.webp';
@@ -4500,6 +4669,22 @@ function openCardViewer(imageBase, label){
   $('cv-zoom-level').textContent = '100 %';
   $('cv-hint').textContent = 'Incline le téléphone pour faire jouer la lumière · pince pour zoomer';
   v.classList.add('open');
+
+  // Effet neutralisé le temps de connaître la rareté : mieux vaut l'activer avec un léger
+  // retard que le montrer puis le retirer sous les yeux de l'utilisateur.
+  cvCardIsSpecial = false;
+  cvMajHolo();
+  if(cardId){
+    getCardDetailCached(cardId).then(card=>{
+      // La fiche arrive après coup : ne rien appliquer si l'utilisateur a déjà ouvert une
+      // autre carte entre-temps.
+      if(!v.classList.contains('open') || $('cv-img').src.indexOf(imageBase) < 0) return;
+      cvCardIsSpecial = cvEstSpeciale(card);
+      cvMajHolo();
+      if(cvCardIsSpecial && card?.rarity) $('cv-badge-holo').textContent = '✨ ' + card.rarity;
+    }).catch(()=>{ /* pas de rareté connue : la carte reste mate, sans conséquence */ });
+  }
+
   cvApplyTransform();
   if(!cvRaf) cvRaf = requestAnimationFrame(cvTick);
   if(cvTiltEnabled) cvStartSensor();
@@ -4515,6 +4700,12 @@ function closeCardViewer(){
 $('cv-close').addEventListener('click', closeCardViewer);
 $('card-viewer').addEventListener('click', (e)=>{ if(e.target.id === 'card-viewer') closeCardViewer(); });
 document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && $('card-viewer').classList.contains('open')) closeCardViewer(); });
+
+$('cv-holo-toggle').addEventListener('click', ()=>{
+  cvHoloEnabled = !cvHoloEnabled;
+  localStorage.setItem('cvHolo', cvHoloEnabled ? '1' : '0');
+  cvMajHolo();
+});
 
 $('cv-zoom-in').addEventListener('click', ()=> cvSetZoom(cvZoom + 0.5));
 $('cv-zoom-out').addEventListener('click', ()=> cvSetZoom(cvZoom - 0.5));

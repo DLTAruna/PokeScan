@@ -1229,6 +1229,78 @@ différentes). `performance.memory` est propre à Chrome — exactement le navig
 relevés terrain ; ailleurs la ligne mémoire est remplacée par une mention explicite plutôt
 qu'une valeur inventée. Vérifié dans les deux cas.
 
+### 4.45 Le classement des candidats ne sert à rien — mesuré, abandonné
+Idée testée : plutôt que de prendre `cands[0]` sans rien départager, préférer un candidat
+dont le dénominateur existe réellement (table déjà en cache). Trois politiques évaluées en
+parallèle **sur les mêmes lectures OCR**, sans un seul `recognize()` supplémentaire :
+`premier` (comportement actuel), `classé` (préfère un dénominateur connu), `strict`
+(n'accepte que ceux-là).
+
+Résultat sans appel : **`premier` = `classé` = plafond, sur les cinq variantes**. Quand le
+bon numéro est dans la liste, il est déjà en tête — il n'y a rien à récupérer par un tri.
+C'est structurel, pas statistique : `extractNumbers` fait `if(out.length) return out;`
+après la boucle sur les `/`, donc le repli qui produit l'année de copyright ne s'exécute
+que si AUCUNE paire `/` n'a été trouvée. Les deux ne coexistent jamais, et le scénario
+« l'année écrase le vrai numéro » était faux.
+
+**Ce qui tient en revanche : la politique stricte.** À taux de réussite strictement
+identique, refuser les candidats au dénominateur inexistant supprime un tiers à la moitié
+des cartes fausses (production 13,7 % → 7,8 % ; pleine largeur 7,8 % → 3,9 % ; bande
+droite 3,9 % → 0 %). Gain sans contrepartie — l'inverse de ce que j'anticipais (je
+prévoyais de perdre en réussite).
+
+Ajouté au banc : une colonne **plafond** (le bon numéro était-il présent dans les
+candidats). Elle dit immédiatement si un écart vient de la lecture ou du tri — ici, tout
+vient de la lecture.
+
+### 4.46 Un run entier perdu : l'onglet en arrière-plan
+Symptômes qui ressemblaient à des résultats : 259 cartes traitées pour 163 comptées, une
+série tombée de 80 % à 11 %, temps OCR gonflés de 800 à 1311 ms. Cause réelle :
+l'onglet du banc était passé en arrière-plan, et Chrome y suspend les entrées/sorties
+réseau (`ERR_NETWORK_IO_SUSPENDED`). Les images ne se chargeaient plus, et les cartes
+concernées étaient **ignorées en silence** (`catch(e){ continue; }`).
+
+Trois garde-fous, parce que le silence est le vrai défaut ici :
+- une image « chargée » mais vide ou tronquée (`naturalWidth < 100`) est rejetée au lieu
+  d'être testée comme une vraie carte — c'est elle qui produisait de faux échecs ;
+- les cartes ignorées sont comptées et signalées, avec alerte explicite au-delà de 5 % ;
+- le bilan final marque les résultats **NON FIABLES** si le seuil est franchi.
+
+Également écartées du réservoir : les **475 cartes « Pokémon Pocket »** (jeu mobile, sans
+carte physique, sortaient à 0 %) — invendables, elles tiraient le taux global vers le bas
+sans rien représenter.
+
+Sur base saine (post-2011, Pocket exclues, dégradation légère, onglet au premier plan) :
+**90 % pour la pleine largeur contre 76 % pour la production**. Bien au-dessus des 75 %/33 %
+du run contaminé — de quoi mesurer l'ampleur du biais introduit.
+
+### 4.47 Onglet Banc + effet holographique sur les cartes spéciales
+**Onglet Banc** : le banc reste un fichier séparé chargé en iframe (créée seulement au
+clic, sinon ouvrir l'onglet suffirait à retélécharger les modèles OCR). Le réimplémenter
+dans l'app garantirait qu'il finisse par mesurer autre chose que ce qui tourne. Un bouton
+ouvre aussi le banc dans un onglet à part — préférable pour un run long, et l'avertissement
+sur le premier plan (§4.46) y est rappelé.
+
+**Effet holographique** (demande utilisateur, façon Pokémon Pocket) : trois couches
+superposées qui se déplacent à des vitesses DIFFÉRENTES avec l'inclinaison — nappe
+prismatique, paillettes à contre-sens, liseré de tranche. C'est le décalage entre couches
+qui crée le relief ; synchronisées, elles ne donneraient qu'un calque coloré qui glisse.
+
+Réservé aux cartes réellement brillantes, d'après la rareté TCGdex (déjà en cache) plutôt
+qu'une analyse d'image : reconnaissance par motifs (`holo|ultra|secr|illustration|double
+rare|hyper|chromatique|full art|alt`…) et non liste fermée, les libellés variant selon les
+époques. Repli sur les suffixes de forme du nom (ex, V, VMAX, GX) si la rareté manque.
+
+Premier rendu **délavait complètement l'illustration** (opacités 0,42 / 0,55 / 0,75 : les
+couches s'additionnent). Ramené à 0,22 / 0,3, et le reflet blanc existant atténué à 0,22
+sur les cartes holo puisque la nappe fait déjà ce travail. La brillance doit venir du
+mouvement, pas de l'opacité.
+
+Bouton « ✨ Holo » pour couper l'effet, préférence conservée. Sur une carte mate le bouton
+est estompé avec une infobulle explicite — un bouton actif sans effet visible passerait
+pour une panne. Vérifié : détection correcte sur « Double rare », « Illustration spéciale
+rare », « Holo Rare V » (actif) et « Rare » (inactif), bascule et persistance fonctionnelles.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

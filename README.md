@@ -44,9 +44,14 @@ réellement les scans suivants.
 
 Toucher une carte l'ouvre en grand : zoom jusqu'à 400 % (pincement, molette ou boutons)
 et **inclinaison suivie à l'accéléromètre** — bouger le téléphone fait pivoter la carte
-en 3D et balayer un reflet holographique sur sa surface, comme en inclinant une vraie
-carte brillante. Sur ordinateur, l'effet suit la souris. Le bouton « 📱 Parallaxe »
-désactive le suivi si besoin.
+en 3D. Sur ordinateur, l'effet suit la souris. Le bouton « 📱 Parallaxe » désactive le
+suivi si besoin.
+
+Les cartes réellement brillantes (ex, full art, illustration rare, secrètes…) reçoivent en
+plus un **effet holographique** : nappe prismatique, paillettes et liseré de tranche qui se
+déplacent à des vitesses différentes selon l'angle — ce décalage entre couches donne la
+sensation de relief. Les cartes communes restent mates, comme dans la réalité. Bouton
+« ✨ Holo » pour couper l'effet (préférence conservée).
 
 ## Notes techniques
 
