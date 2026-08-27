@@ -299,6 +299,75 @@
   }
   .confirm-overlay.show{opacity:1;}
   .confirm-check{font-size:56px; color:var(--good); animation:checkPop .5s ease;}
+
+  /* ---- Compteur du Lot ---- */
+  /* Le badge se gonfle brièvement à chaque ajout. Sans ça, le nombre changeait sans que
+     rien ne l'annonce, et comme il ne se mettait de toute façon à jour qu'au changement
+     d'onglet, l'ajout n'avait aucune confirmation visible hors de l'onglet Identifier. */
+  @keyframes lotBump{
+    0%{transform:scale(1);}
+    35%{transform:scale(1.55); color:#1a1206; background:var(--accent); border-radius:6px;}
+    100%{transform:scale(1);}
+  }
+  #tab-count{display:inline-block; min-width:1ch; font-variant-numeric:tabular-nums;}
+  #tab-count.bump{animation:lotBump .5s cubic-bezier(.2,1.4,.35,1);}
+  /* L'onglet lui-même réagit, pour être vu même quand le regard est resté sur la photo. */
+  @keyframes ongletHalo{
+    0%{box-shadow:0 0 0 0 rgba(212,175,55,.65);}
+    100%{box-shadow:0 0 0 14px rgba(212,175,55,0);}
+  }
+  .tab-btn.recu{animation:ongletHalo .6s ease-out;}
+
+  /* ---- Carte qui s'envole vers le Lot ---- */
+  /* La confirmation existante (une coche en plein écran) dit qu'un ajout a eu lieu mais pas
+     OÙ la carte est partie. En la faisant voler jusqu'à l'onglet Lot, le geste explique
+     l'organisation de l'app en même temps qu'il confirme l'action — et c'est le moment le
+     plus répété de toute l'application, celui qui mérite le plus d'être agréable. */
+  .carte-volante{
+    position:fixed; z-index:400; pointer-events:none; border-radius:8px;
+    box-shadow:0 12px 40px rgba(0,0,0,.6); object-fit:cover;
+    transition:transform .62s cubic-bezier(.55,-0.15,.35,1), opacity .62s ease-in;
+    will-change:transform, opacity;
+  }
+
+  /* ---- En-têtes de set dans le lot ---- */
+  .set-group td{
+    background:linear-gradient(90deg, rgba(212,175,55,.16), rgba(212,175,55,.03) 60%, transparent);
+    border-top:2px solid rgba(212,175,55,.45); border-bottom:none;
+    padding:10px 12px 8px;
+    /* Collant : en défilant dans un lot de plusieurs centaines de lignes, on sait
+       toujours à quelle extension appartient la ligne qu'on est en train de modifier. */
+    position:sticky; top:0; z-index:2;
+    backdrop-filter:blur(6px);
+  }
+  .set-group-inner{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
+  .set-group-logo{height:34px; width:auto; max-width:150px; object-fit:contain;
+    filter:drop-shadow(0 2px 5px rgba(0,0,0,.55));}
+  .set-group-nom{font-weight:800; font-size:14px; letter-spacing:.2px;}
+  .set-group-meta{font-size:11.5px; color:var(--muted);}
+  /* Le contenu de l'en-tete reste colle au bord gauche visible : la cellule fait la
+     largeur du tableau, bien plus large que l'ecran, et tout ce qui etait aligne a droite
+     se retrouvait hors champ des que le tableau defilait horizontalement. */
+  .set-group-inner{position:sticky; left:0; max-width:100vw;}
+
+  /* ---- Apparition en cascade des lignes ---- */
+  /* Décalage plafonné dans le JS : au-delà d'une vingtaine de lignes, la cascade cesse
+     d'être élégante et devient une attente. */
+  @keyframes ligneEntre{from{opacity:0; transform:translateY(9px);} to{opacity:1; transform:none;}}
+  .batch-row, .set-group{animation:ligneEntre .34s ease-out backwards;}
+  .vignette-repli{opacity:.92; outline:1.5px dashed rgba(212,175,55,.55); outline-offset:-1.5px;}
+
+  /* ---- Bascule d'onglet ---- */
+  @keyframes ongletEntre{from{opacity:0; transform:translateY(7px);} to{opacity:1; transform:none;}}
+  section.section.active{animation:ongletEntre .26s ease-out;}
+
+  /* Respect du réglage système : ces animations sont du confort, jamais de l'information —
+     tout reste lisible et utilisable sans elles. */
+  @media (prefers-reduced-motion: reduce){
+    #tab-count.bump, .tab-btn.recu, .batch-row, .set-group,
+    section.section.active{animation:none;}
+    .carte-volante{transition:none;}
+  }
   @keyframes checkPop{0%{transform:scale(.3); opacity:0;} 55%{transform:scale(1.18); opacity:1;} 100%{transform:scale(1); opacity:1;}}
   .search-results{max-height:320px; overflow-y:auto; margin-top:8px; display:flex; flex-direction:column; gap:6px;}
   .result-item{
@@ -395,14 +464,8 @@
     position:fixed; inset:0; z-index:300; background:rgba(6,8,14,.94);
     display:none; flex-direction:column; align-items:center; justify-content:center;
     padding:calc(12px + env(safe-area-inset-top)) 12px calc(12px + env(safe-area-inset-bottom));
-    /* La scène 3D : sans perspective, rotateX/rotateY resteraient un simple cisaillement.
-       Distance ramenée de 1100 à 680 px : c'est le réglage qui change le PLUS la sensation
-       de volume, bien avant l'amplitude de rotation. À 1100 px l'œil est si loin que la
-       carte pivote presque sans raccourci — elle a l'air d'une image qui tourne. À 680 px
-       le bord qui s'éloigne rétrécit visiblement et l'écart entre les couches se creuse,
-       donc TOUT le reste (relief du sujet, tranche) gagne en même temps. */
-    perspective:680px; perspective-origin:50% 45%;
-    touch-action:none; overscroll-behavior:contain;
+    /* La scène 3D : sans perspective, rotateX/rotateY resteraient un simple cisaillement. */
+    perspective:1100px; touch-action:none; overscroll-behavior:contain;
   }
   .card-viewer.open{display:flex;}
   .cv-stage{
@@ -412,52 +475,9 @@
     max-width:100%; max-height:100%;
   }
   .cv-stage.settling{transition:transform .35s cubic-bezier(.2,.8,.3,1);}
-  /* Le groupe qui contient l'image et TOUS les calques en mode de fusion. `isolation`
-     confine la composition à ce groupe : les calques holo se mélangent à l'image de la
-     carte comme avant, mais leur besoin d'arrière-plan n'aplatit plus la scène 3D qui
-     l'entoure. `position:relative` sans dimensions : le groupe prend la taille de
-     l'image, et .cv-stage prend la sienne — les calques positionnés en pourcentage
-     gardent donc exactement les mêmes repères qu'avant. */
-  .cv-surface{
-    position:relative; isolation:isolate; display:block;
-  }
   .cv-stage img{
-    display:block; max-width:min(93vw, 500px); max-height:78vh; width:auto; height:auto;
-    border-radius:14px; background:#0a0a0a;
-    /* L'ombre est pilotée en JS (cvApplyTransform) et non figée ici : une ombre fixe sous
-       une carte qui s'incline la recolle visuellement à l'écran. C'est en la faisant fuir
-       du côté opposé à l'inclinaison qu'on obtient une carte qui DÉCOLLE du fond. */
-    box-shadow:0 24px 60px rgba(0,0,0,.75);
-  }
-
-  /* ---- Tranche de la carte ----
-     Un vrai bord épais, pas un liseré peint : une pile de fines dalles empilées en
-     profondeur derrière l'image. Aux angles vifs, on voit réellement le côté de la carte
-     dépasser, comme sur un objet physique. C'est ce détail qui fait basculer la lecture de
-     « image qui pivote » à « objet qui pivote », et aucun effet de lumière ne le remplace :
-     un box-shadow inset reste plat par construction, il ne peut pas se décaler en Z. */
-  .result-noimg{
-    display:flex; align-items:center; justify-content:center; text-align:center;
-    width:40px; min-width:40px; height:56px; background:#15151c; color:var(--muted);
-    font-size:9px; line-height:1.2; border-radius:4px; border:1px dashed var(--border);
-  }
-  .thumb-vide{
-    display:flex; align-items:center; justify-content:center; text-align:center;
-    width:100%; aspect-ratio:63/88; background:#15151c; color:var(--muted);
-    font-size:10px; line-height:1.3; border-radius:6px; border:1px dashed var(--border);
-  }
-  .card-thumb.sans-image{cursor:default;}
-  /* Placée AVANT .cv-surface dans le document et repoussée en Z négatif : les dalles sont
-     donc cachées derrière l'image opaque, sauf sur le bord qui se découvre à l'inclinaison
-     — c'est précisément l'épaisseur qu'on veut voir. Quand la scène était aplatie, ces
-     mêmes dalles opaques se peignaient PAR-DESSUS dans l'ordre du document, d'où les
-     rectangles noirs constatés en test. */
-  .cv-tranche{
-    position:absolute; inset:0; pointer-events:none; transform-style:preserve-3d;
-  }
-  .cv-tranche i{
-    position:absolute; inset:0; border-radius:14px; display:block;
-    background:linear-gradient(160deg, #4a4a52, #16161a 45%, #0c0c10);
+    display:block; max-width:min(88vw, 460px); max-height:74vh; width:auto; height:auto;
+    border-radius:14px; box-shadow:0 24px 60px rgba(0,0,0,.75); background:#0a0a0a;
   }
   /* Reflet holographique : une bande lumineuse qui balaie la carte selon l'inclinaison,
      comme sur une vraie carte brillante inclinée sous une lampe. */
@@ -480,83 +500,46 @@
      couleurs de la carte au lieu de la recouvrir d'un calque uniforme.
      Masquées par défaut : activées seulement si la carte est repérée comme spéciale
      (voir CARTE_SPECIALE) et si l'utilisateur n'a pas coupé l'effet. */
-  .cv-holo, .cv-sparkle, .cv-bevel, .cv-foil{display:none;}
-  .cv-stage.holo .cv-holo, .cv-stage.holo .cv-sparkle,
-  .cv-stage.holo .cv-bevel, .cv-stage.holo .cv-foil{display:block;}
+  .cv-holo, .cv-sparkle, .cv-bevel{display:none;}
+  .cv-stage.holo .cv-holo, .cv-stage.holo .cv-sparkle, .cv-stage.holo .cv-bevel{display:block;}
   /* Sur une carte holo, la nappe prismatique fait déjà le travail du reflet blanc : les
      cumuler blanchit l'image. On atténue donc celui-ci plutôt que d'empiler. */
-  .cv-stage.holo .cv-shine{opacity:.18;}
-  .cv-stage.holo .cv-glare{opacity:.16;}
-
-  /* ---- Trame de diffraction ----
-     Ce qui manquait à la première version, et qui la faisait lire comme « un dégradé
-     coloré posé sur la carte » plutôt que comme du vernis holographique : le FILM RÉEL
-     est un réseau de micro-rainures. C'est ce réseau, et non la couleur, qui produit
-     l'irisation — et surtout qui produit le CHATOIEMENT, ce fourmillement fin qui change
-     à la moindre inclinaison. Un dégradé large, si joli soit-il, glisse mollement ; une
-     trame fine à période de 4 px scintille dès qu'on bouge d'un degré.
-     C'est la couche qui coûte le moins cher et qui change le plus le rendu. */
-  /* En `overlay`, PAS en `color-dodge`. Testé côte à côte sur la même carte au même
-     angle : le dodge fait blanchir toutes les zones claires de l'illustration (ciel,
-     nuages, texte) et la carte entière vire au voilé — exactement le reproche fait à la
-     première version. L'overlay assombrit les tons sombres autant qu'il éclaircit les
-     clairs : le contraste de l'illustration est préservé et la trame se lit comme une
-     irisation POSÉE SUR l'image plutôt que comme un voile qui la remplace. */
-  .cv-foil{
-    position:absolute; inset:0; border-radius:14px; pointer-events:none;
-    mix-blend-mode:overlay; opacity:.55;
-    background-image:repeating-linear-gradient(102deg,
-      rgba(0,0,0,.10)       0px,
-      rgba(255,120,170,.55) 1.2px,
-      rgba(255,225,110,.50) 2.4px,
-      rgba(110,255,205,.50) 3.6px,
-      rgba(120,180,255,.55) 4.8px,
-      rgba(210,120,255,.50) 6px,
-      rgba(0,0,0,.10)       7.2px);
-    background-size:200% 200%;
-  }
+  .cv-stage.holo .cv-shine{opacity:.22;}
+  .cv-stage.holo .cv-glare{opacity:.2;}
 
   /* Nappe prismatique : la teinte défile avec l'angle, comme le film holographique réel. */
   /* Opacités volontairement basses : à pleine intensité (0,42 / 0,55 testés), les trois
      couches s'additionnent et DÉLAVENT l'illustration — la carte devient un aplat brillant
      illisible. L'effet doit rester un reflet qui passe sur la carte, pas un calque qui la
      recouvre. La brillance vient du mouvement, pas de l'opacité. */
-  /* La nappe passe en `soft-light` là où elle était en `color-dodge`. Le dodge sature et
-     part au blanc dès qu'il rencontre une zone claire — c'est lui qui délavait
-     l'illustration et obligeait à descendre l'opacité à 0,22, donc à un effet fade. Le
-     soft-light teinte sans brûler : on peut monter à 0,62 en gardant l'illustration
-     parfaitement lisible. Le mordant vient maintenant de la trame et des paillettes, qui
-     restent en dodge mais sur des surfaces minuscules — là où il excelle. */
   .cv-holo{
     position:absolute; inset:0; border-radius:14px; pointer-events:none;
-    mix-blend-mode:soft-light; opacity:.5;
+    mix-blend-mode:color-dodge; opacity:.22;
     background:linear-gradient(115deg,
-      transparent 6%, rgba(255,60,110,.85) 18%, rgba(255,215,50,.8) 29%,
-      rgba(40,255,175,.8) 40%, rgba(60,160,255,.85) 51%, rgba(205,70,255,.8) 62%,
-      rgba(255,120,60,.7) 72%, transparent 84%);
-    background-size:340% 340%;
+      transparent 12%, rgba(255,80,120,.55) 24%, rgba(255,220,60,.5) 33%,
+      rgba(60,255,180,.5) 42%, rgba(80,170,255,.55) 51%, rgba(200,90,255,.5) 60%,
+      transparent 72%);
+    background-size:320% 320%;
   }
   /* Paillettes : motif fin qui se déplace À CONTRE-SENS de la nappe — le décalage entre
      les deux est ce qui donne l'impression que le scintillement est SOUS la surface. */
-  /* Paillettes : la texture est GÉNÉRÉE (voir cvTextureGlitter) au lieu d'être cinq
-     dégradés radiaux répétés. Cinq points sur une grille régulière se lisent comme un
-     motif de papier peint dès qu'on les regarde deux secondes — c'était le défaut le plus
-     visible de la version précédente. La texture générée pose des centaines d'éclats de
-     taille, de teinte et de position aléatoires : aucune répétition perceptible.
-     En color-dodge : sur des points de 1 à 2 px, la brûlure du dodge est exactement ce
-     qu'on veut — un éclat franc, pas un halo laiteux. */
   .cv-sparkle{
     position:absolute; inset:0; border-radius:14px; pointer-events:none;
-    mix-blend-mode:color-dodge; opacity:.55;
-    background-repeat:repeat;
-    background-size:190px 190px, 260px 260px;
+    mix-blend-mode:overlay; opacity:.3;
+    background-image:
+      radial-gradient(circle at 18% 22%, rgba(255,255,255,.9) 0 1px, transparent 2px),
+      radial-gradient(circle at 62% 41%, rgba(255,255,255,.75) 0 1.2px, transparent 2px),
+      radial-gradient(circle at 37% 74%, rgba(255,255,255,.85) 0 1px, transparent 2px),
+      radial-gradient(circle at 84% 66%, rgba(255,255,255,.7) 0 1.4px, transparent 2px),
+      radial-gradient(circle at 8% 88%, rgba(255,255,255,.8) 0 1px, transparent 2px);
+    background-size:52px 52px, 71px 71px, 43px 43px, 88px 88px, 63px 63px;
   }
   /* Biseau : liseré lumineux sur les bords, qui bascule d'un côté à l'autre selon
      l'inclinaison — donne l'épaisseur de la carte. */
   .cv-bevel{
     position:absolute; inset:0; border-radius:14px; pointer-events:none;
-    mix-blend-mode:screen; opacity:.75;
-    box-shadow:inset 0 0 0 2px rgba(255,255,255,.45);
+    mix-blend-mode:screen; opacity:.5;
+    box-shadow:inset 0 0 0 1.5px rgba(255,255,255,.35);
   }
   /* Couche « sujet » : le Pokémon détouré, superposé exactement sur l'illustration
      d'origine et décalé plus fort qu'elle. C'est l'écart entre les deux qui fait le
@@ -594,14 +577,19 @@
     background:rgba(0,0,0,.75); color:var(--muted); font-size:10px;
     padding:2px 9px; border-radius:9px; white-space:nowrap; pointer-events:none;
   }
-  /* Le « diorama » (fenêtre d'illustration enfoncée) a été retiré. Il ne pouvait pas
-     fonctionner tel quel : placé en Z négatif, il est par construction CACHÉ derrière
-     l'image opaque de la carte — pour voir un plan enfoncé il faudrait percer un trou dans
-     la carte, ce qui priverait justement l'illustration de l'effet holo. S'il paraissait
-     agir, c'était par accident : la scène étant aplatie, il se peignait simplement
-     par-dessus l'image dans l'ordre du document, et redessinait donc l'illustration
-     à l'identique. Le relief vient maintenant du sujet détouré, qui lui est sur un vrai
-     plan en avant, et de la tranche sur de vrais plans en arrière. */
+  /* Diorama : la fenêtre d'illustration est légèrement ENFONCÉE par rapport au cadre et au
+     texte, ce qui donne un effet de fenêtre ouverte sur une scène. Contrairement à la
+     découpe du sujet, ça ne demande aucun modèle, aucune attente, et ça ne peut pas rater —
+     donc c'est actif sur TOUTES les cartes, immédiatement. La découpe du sujet vient
+     s'ajouter par-dessus quand elle est disponible, au lieu d'être la seule source d'effet. */
+  .cv-diorama{
+    position:absolute; pointer-events:none; opacity:0;
+    transition:opacity .35s ease; overflow:hidden;
+    box-shadow:inset 0 0 30px rgba(0,0,0,.6);
+    transform:translateZ(-26px);
+  }
+  .cv-stage.diorama .cv-diorama{opacity:1;}
+  .cv-diorama canvas{width:100%; height:100%; display:block;}
   .cv-badge-holo{
     position:absolute; top:-9px; left:50%; transform:translateX(-50%);
     background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a;
@@ -1108,32 +1096,18 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 <div class="card-viewer" id="card-viewer">
   <div class="cv-title" id="cv-title">—</div>
   <button class="cv-close" id="cv-close" aria-label="Fermer">✕</button>
-  <!-- TROIS PLANS DE PROFONDEUR, et un seul d'entre eux contient des mix-blend-mode.
-       C'est la contrainte structurante de toute la visionneuse : un calque en mode de
-       fusion a besoin de son ARRIÈRE-PLAN pour se composer, ce qui oblige le navigateur à
-       rasteriser le groupe parent — et donc à APLATIR son preserve-3d. Tant que les
-       calques holo étaient des enfants directs de .cv-stage, aucun translateZ de la scène
-       n'avait le moindre effet : le sujet « en relief » était en réalité un calque plat,
-       et seule son ombre portée donnait le change (vérifié en poussant le sujet à
-       translateZ(300px) : il ne bougeait pas d'un pixel).
-       Les calques de fusion sont donc enfermés dans .cv-surface, qui s'isole lui-même :
-       ils continuent de se composer avec l'image de la carte (c'est bien ce qu'on veut,
-       une surface de carte EST plate), mais l'aplatissement s'arrête à ce groupe et
-       .cv-stage garde une vraie profondeur pour la tranche et le sujet. -->
   <div class="cv-stage" id="cv-stage">
-    <div class="cv-tranche" id="cv-tranche"></div>
-    <div class="cv-surface" id="cv-surface">
-      <img id="cv-img" src="" alt="">
-      <!-- Décor rebouché : au-dessus de l'image mais SOUS les calques holographiques,
-           sinon il les masquerait dans toute la zone d'illustration. -->
-      <canvas class="cv-backplate" id="cv-backplate"></canvas>
-      <div class="cv-foil" id="cv-foil"></div>
-      <div class="cv-holo" id="cv-holo"></div>
-      <div class="cv-sparkle" id="cv-sparkle"></div>
-      <div class="cv-shine" id="cv-shine"></div>
-      <div class="cv-glare" id="cv-glare"></div>
-      <div class="cv-bevel"></div>
-    </div>
+    <img id="cv-img" src="" alt="">
+    <!-- Fenêtre d'illustration enfoncée (diorama), puis décor rebouché : tous deux
+         au-dessus de l'image mais SOUS les calques holographiques, sinon ils les
+         masqueraient dans toute la zone d'illustration. -->
+    <div class="cv-diorama" id="cv-diorama"><canvas id="cv-diorama-canvas"></canvas></div>
+    <canvas class="cv-backplate" id="cv-backplate"></canvas>
+    <div class="cv-holo" id="cv-holo"></div>
+    <div class="cv-sparkle" id="cv-sparkle"></div>
+    <div class="cv-shine" id="cv-shine"></div>
+    <div class="cv-glare" id="cv-glare"></div>
+    <div class="cv-bevel"></div>
     <canvas class="cv-subject" id="cv-subject"></canvas>
     <div class="cv-badge-holo" id="cv-badge-holo">✨ holographique</div>
     <div class="cv-relief-etat" id="cv-relief-etat" style="display:none;"></div>
@@ -5329,9 +5303,8 @@ async function segCalculerMasque(cardId, imageBase, onProgres){
 // Amplitude portée de 18 à 26° : retour de test, « j'aimerais que ça ressorte encore plus ».
 // Au-delà, la carte se déforme trop en perspective et le décor rebouché commence à se voir
 // sur les bords du sujet.
-const CV_MAX_TILT = 32;      // degrés de rotation à l'inclinaison maximale prise en compte
+const CV_MAX_TILT = 26;      // degrés de rotation à l'inclinaison maximale prise en compte
 const CV_SENSOR_RANGE = 26;  // amplitude d'inclinaison réelle (deg) correspondant au max
-const CV_EPAISSEUR = 9;      // px d'épaisseur de la carte (nombre de dalles x 1,5 px)
 
 // Inclinaison au doigt, en plus du capteur. Le capteur ne couvre qu'une petite plage autour
 // de la position de tenue (on ne retourne pas son téléphone pour regarder une carte), alors
@@ -5371,99 +5344,11 @@ let cvOrientationHandler = null;
 let cvNeutral = null;        // {beta, gamma} de référence, pris à l'ouverture
 let cvRaf = null, cvTargetRX = 0, cvTargetRY = 0, cvCurRX = 0, cvCurRY = 0;
 
-
-// ---------------- TEXTURES ET GÉOMÉTRIE DE LA VISIONNEUSE ----------------
-
-// Texture de paillettes générée une fois puis réutilisée. Les cinq dégradés radiaux de la
-// version précédente se répétaient sur une grille régulière : à l'œil, ça se lit comme un
-// papier peint, pas comme du vernis. Ici les éclats sont posés au hasard, avec des tailles
-// et des teintes variées, sur une tuile assez grande (256 px) pour que la répétition ne
-// saute pas aux yeux à la taille d'affichage.
-//
-// Générée en canvas et non en CSS : plusieurs centaines de radial-gradient dans une
-// propriété background feraient ramer le compositeur à chaque image, alors qu'une image
-// bitmap est posée une fois pour toutes par le GPU.
-let cvGlitterCache = null;
-function cvTextureGlitter(){
-  if(cvGlitterCache) return cvGlitterCache;
-  const T = 256;
-  const fabrique = (nb, tailleMax, alphaBase)=>{
-    const c = document.createElement('canvas');
-    c.width = T; c.height = T;
-    const ctx = c.getContext('2d');
-    for(let i = 0; i < nb; i++){
-      const x = Math.random() * T, y = Math.random() * T;
-      const r = 0.5 + Math.random() * tailleMax;
-      const a = alphaBase * (0.35 + Math.random() * 0.65);
-      // Teintes tirées dans tout le spectre : un vernis holographique renvoie des couleurs
-      // différentes selon l'orientation de chaque micro-facette, pas un blanc uniforme.
-      const teinte = Math.floor(Math.random() * 360);
-      const g = ctx.createRadialGradient(x, y, 0, x, y, r);
-      g.addColorStop(0, `hsla(${teinte}, 100%, 92%, ${a})`);
-      g.addColorStop(0.45, `hsla(${teinte}, 100%, 70%, ${a * 0.55})`);
-      g.addColorStop(1, `hsla(${teinte}, 100%, 60%, 0)`);
-      ctx.fillStyle = g;
-      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
-    }
-    // Les éclats posés près d'un bord sont recopiés sur le bord opposé : sans ça, la tuile
-    // présenterait une couture visible en se répétant.
-    const bord = ctx.getImageData(0, 0, T, T);
-    ctx.putImageData(bord, T, 0); ctx.putImageData(bord, -T, 0);
-    ctx.putImageData(bord, 0, T); ctx.putImageData(bord, 0, -T);
-    return c.toDataURL('image/png');
-  };
-  // Deux tuiles : une de gros éclats francs, une de poussière fine. Elles défilent à des
-  // vitesses opposées (voir cvApplyTransform), ce qui donne la profondeur.
-  cvGlitterCache = [fabrique(120, 2.6, 0.95), fabrique(420, 1.1, 0.7)];
-  return cvGlitterCache;
-}
-
-// Construit la tranche : des dalles empilées en profondeur derrière la carte. Le nombre
-// est volontairement modeste (6) — au-delà, on ne distingue plus rien de plus et chaque
-// dalle est un élément composé de plus à chaque image.
-function cvConstruireTranche(){
-  const t = $('cv-tranche');
-  if(!t || t.childElementCount) return;
-  const N = 6, pas = CV_EPAISSEUR / N;
-  for(let i = 1; i <= N; i++){
-    const d = document.createElement('i');
-    d.style.transform = `translateZ(${(-i * pas).toFixed(2)}px)`;
-    // Les dalles du fond sont plus sombres : la lumière pénètre moins profondément dans
-    // la tranche, et ce dégradé est ce qui la fait lire comme une épaisseur et non comme
-    // un halo noir décalé.
-    d.style.filter = `brightness(${(1 - i / N * 0.55).toFixed(2)})`;
-    t.appendChild(d);
-  }
-}
-
-// Applique les textures générées à la couche paillettes. Appelé à l'ouverture de la
-// visionneuse plutôt qu'au chargement de la page : inutile de fabriquer deux canvas pour
-// quelqu'un qui n'ouvre jamais une carte.
-function cvPreparerCouches(){
-  cvConstruireTranche();
-  const sparkle = $('cv-sparkle');
-  if(sparkle && !sparkle.style.backgroundImage){
-    const [gros, fin] = cvTextureGlitter();
-    sparkle.style.backgroundImage = `url(${gros}), url(${fin})`;
-  }
-}
-
 function cvApplyTransform(){
   const stage = $('cv-stage');
   if(!stage) return;
   stage.style.transform =
     `translate(${cvPanX}px, ${cvPanY}px) rotateX(${cvCurRX.toFixed(2)}deg) rotateY(${cvCurRY.toFixed(2)}deg) scale(${cvZoom})`;
-  // Ombre portée de la carte elle-même : elle fuit du côté opposé à l'inclinaison et
-  // s'étale quand la carte se redresse. Une ombre FIXE recolle la carte à l'écran — c'est
-  // le détail qui manquait pour qu'elle paraisse flotter devant le fond plutôt que
-  // dessinée dessus. Coût nul : une seule propriété mise à jour dans la boucle existante.
-  const img = $('cv-img');
-  if(img){
-    const sx = (-cvCurRY / CV_MAX_TILT) * 40;
-    const sy = 24 + (cvCurRX / CV_MAX_TILT) * 28;
-    img.style.boxShadow = `${sx.toFixed(0)}px ${sy.toFixed(0)}px 64px rgba(0,0,0,.8)`;
-  }
-
   // Le reflet se déplace à l'inverse de l'inclinaison : la lumière semble fixe dans la
   // pièce pendant que la carte bouge, ce qui est la sensation recherchée.
   const shine = $('cv-shine');
@@ -5487,31 +5372,13 @@ function cvApplyTransform(){
   if(cvCardIsSpecial && cvHoloEnabled){
     const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
     const holo = $('cv-holo');
-    if(holo) holo.style.backgroundPosition = `${50 - nx*2.6*50}% ${50 + ny*2.6*50}%`;
-
-    // La trame de diffraction se déplace BEAUCOUP plus vite que tout le reste (x9). C'est
-    // volontaire et c'est le cœur du nouvel effet : sur du vrai vernis holographique, un
-    // degré d'inclinaison suffit à faire défiler plusieurs franges d'irisation. Un
-    // déplacement lent, à la vitesse des autres couches, donnerait à nouveau un calque qui
-    // glisse. Sa teinte tourne aussi avec l'angle, sinon l'irisation resterait figée.
-    const foil = $('cv-foil');
-    if(foil){
-      foil.style.backgroundPosition = `${50 - nx*9*50}% ${50 + ny*9*50}%`;
-      foil.style.filter = `hue-rotate(${(nx*150).toFixed(0)}deg) saturate(1.5)`;
-      // La trame s'éteint quand la carte est de face : un film holographique vu à la
-      // perpendiculaire ne diffracte quasiment pas, il s'allume en s'inclinant.
-      const angle = Math.min(1, Math.hypot(nx, ny));
-      foil.style.opacity = (0.16 + angle * 0.5).toFixed(3);
-    }
-
+    if(holo) holo.style.backgroundPosition = `${50 - nx*2.2*50}% ${50 + ny*2.2*50}%`;
     const sparkle = $('cv-sparkle');
     if(sparkle){
-      // Deux couches de paillettes à vitesses opposées : c'est leur croisement qui fait
-      // paraître le scintillement SOUS la surface plutôt que posé dessus.
       sparkle.style.backgroundPosition =
-        `${50 + nx*2.4*50}% ${50 - ny*2.4*50}%, ${50 - nx*1.1*50}% ${50 + ny*1.1*50}%`;
-      const angle = Math.min(1, Math.hypot(nx, ny));
-      sparkle.style.opacity = (0.22 + angle * 0.5).toFixed(3);
+        `${50 + nx*0.9*50}% ${50 - ny*0.9*50}%, ${50 + nx*1.3*50}% ${50 - ny*1.3*50}%, ` +
+        `${50 + nx*0.6*50}% ${50 - ny*0.6*50}%, ${50 + nx*1.6*50}% ${50 - ny*1.6*50}%, ` +
+        `${50 + nx*1.0*50}% ${50 - ny*1.0*50}%`;
     }
     // Le liseré de bord bascule du côté opposé à l'inclinaison : la tranche éclairée
     // change de côté quand on penche la carte, comme un objet réel.
@@ -5534,16 +5401,9 @@ function cvApplyTransform(){
 // plus »). C'est le réglage qui pèse le plus sur l'intensité perçue, bien avant l'amplitude
 // de rotation. Limite : au-delà, le décor rebouché se découvre trop autour du sujet aux
 // angles vifs, et les défauts de découpe deviennent visibles.
-// Hauteur ramenée de 92 à 48 px. 92 avait été choisi du temps où la scène était aplatie
-// et où le translateZ ne produisait AUCUN déplacement : il fallait pousser la valeur pour
-// espérer voir quelque chose. Maintenant que le plan est réel, le déplacement est bien
-// celui d'un objet à cette hauteur — et 92 px projetaient le sujet si loin de son fond que
-// le remplissage se découvrait largement. 48 px donne un relief net sans décoller le sujet
-// de la scène dont il est issu.
-const CV_RELIEF_Z = 48;     // px de hauteur au-dessus de la carte
-// Doit rester égal à la valeur `perspective` de .card-viewer en CSS : la compensation
-// d'échelle du sujet en dépend directement.
-const CV_PERSPECTIVE = 680;
+const CV_RELIEF_Z = 62;     // px de hauteur au-dessus de la carte
+// L'enfoncement de la fenêtre d'illustration (diorama) est défini côté CSS, dans
+// `.cv-diorama` : une seule source de vérité, pas une constante JS qui divergerait.
 // Choisit le candidat final parmi ceux extraits par l'OCR. Préfère un dénominateur qui
 // existe réellement au catalogue ; à défaut, retombe sur le premier lu plutôt que de ne
 // rien proposer — la version « stricte » (ne rien renvoyer si aucun dénominateur ne colle)
@@ -5573,34 +5433,21 @@ function choisirCandidat(cands, numDefaut, denomDefaut){
   return cands[0] || repli;
 }
 
-// Compensation de l'agrandissement dû à la perspective. Un calque placé à Z devant la
-// surface paraît P/(P-Z) fois plus grand : à 92 px, +15,6 %. Le sujet ne coïncidait donc
-// plus du tout avec le trou dont il est découpé — un Pokémon nettement plus gros que son
-// propre fond, ça ne se lit pas comme de la profondeur mais comme un défaut d'affichage.
-// En annulant cet agrandissement, le sujet garde exactement sa taille d'origine et ne fait
-// plus que GLISSER avec l'inclinaison : c'est le seul signal de relief qu'on veut, et le
-// seul qui ne puisse pas paraître cassé.
-const CV_RELIEF_ECHELLE = (CV_PERSPECTIVE - CV_RELIEF_Z) / CV_PERSPECTIVE * 1.03;
-
 function cvMajRelief(){
   const sub = $('cv-subject');
   if(!sub || !cvReliefPret) return;
   const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
-  // Le facteur 1,03 laissé dans CV_RELIEF_ECHELLE couvre les bords : la découpe n'est
-  // jamais parfaite au pixel près, et un sujet très légèrement plus grand cache le liseré
-  // de remplissage au lieu de le souligner.
-  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(${CV_RELIEF_ECHELLE.toFixed(4)})`;
+  // Le léger agrandissement compense la perspective (un objet plus proche paraît plus
+  // grand) et évite qu'un bord de la carte apparaisse derrière le sujet aux angles vifs.
+  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(1.04)`;
 
   // Ombre portée du sujet SUR la carte, décalée à l'opposé de l'inclinaison : c'est elle
   // qui indique la hauteur. Sans ombre, le sujet flotte sans distance lisible — c'est le
   // détail qui fait basculer la perception de « calque décalé » à « objet devant ».
-  // Décalage indexé sur la hauteur réelle, pour qu'ils ne puissent plus diverger.
-  const amp = CV_RELIEF_Z * 0.42;
-  const ox = (-nx * amp).toFixed(1), oy = (ny * amp).toFixed(1);
-  // Plus de blur() : sur un calque de cette taille, chaque passe de filtre est recalculée
-  // à chaque image, et empiler flou + ombre portée est précisément le genre de charge qui
-  // produit des artefacts de rastérisation sur téléphone. L'ombre seule suffit.
-  sub.style.filter = `drop-shadow(${ox}px ${oy}px ${(CV_RELIEF_Z*0.3).toFixed(0)}px rgba(0,0,0,.55))`;
+  // Décalage et étalement suivent la hauteur : une ombre trop serrée pour l'élévation
+  // affichée trahirait immédiatement l'illusion.
+  const ox = (-nx * 26).toFixed(1), oy = (ny * 26).toFixed(1);
+  sub.style.filter = `blur(0.4px) drop-shadow(${ox}px ${oy}px 18px rgba(0,0,0,.6))`;
 }
 
 // Rebouche la zone du sujet dans le décor. INDISPENSABLE : sans ça le Pokémon reste visible
@@ -5686,9 +5533,30 @@ function cvMajEtatRelief(texte){
 //  - masque absent         -> calcul lancé en arrière-plan, la carte reste affichée à plat
 //                             et bascule en relief à l'arrivée. Jamais d'attente bloquante.
 
+// Prépare le diorama : recopie la fenêtre d'illustration dans un calque enfoncé. Immédiat,
+// sans modèle, et applicable à toute carte — c'est le socle d'effet qui ne dépend de rien.
+async function cvPreparerDiorama(imageBase, monSeq){
+  const stage = $('cv-stage');
+  stage.classList.remove('diorama');
+  if(!cvReliefEnabled) return;
+  try{
+    const { illus } = await segExtraireIllustration(imageBase);
+    if(monSeq !== cvSeqCarte) return;
+    const w = $('cv-diorama');
+    const c = $('cv-diorama-canvas');
+    c.width = illus.width; c.height = illus.height;
+    c.getContext('2d').drawImage(illus, 0, 0);
+    w.style.left   = (SEG_FENETRE.fx*100) + '%';
+    w.style.top    = (SEG_FENETRE.fy*100) + '%';
+    w.style.width  = (SEG_FENETRE.fw*100) + '%';
+    w.style.height = (SEG_FENETRE.fh*100) + '%';
+    stage.classList.add('diorama');
+  }catch(e){ /* pas de diorama : la carte reste affichée normalement */ }
+}
+
 async function cvPreparerRelief(imageBase, cardId, monSeq){
   cvReliefPret = false;
-  $('cv-stage').classList.remove('relief');
+  $('cv-stage').classList.remove('relief', 'diorama');
   cvMajEtatRelief('');
   if(!cardId || !cvReliefEnabled) return;
 
@@ -5828,7 +5696,6 @@ function openCardViewer(imageBase, label, cardId){
   $('cv-zoom-level').textContent = '100 %';
   $('cv-hint').textContent = 'Fais glisser un doigt pour incliner · incline le téléphone · pince pour zoomer';
   v.classList.add('open');
-  cvPreparerCouches();   // textures de paillettes + dalles de tranche, une fois pour toutes
 
   // Effet neutralisé le temps de connaître la rareté : mieux vaut l'activer avec un léger
   // retard que le montrer puis le retirer sous les yeux de l'utilisateur.
@@ -5838,6 +5705,7 @@ function openCardViewer(imageBase, label, cardId){
   // Le relief est préparé en parallèle, sans jamais retarder l'affichage de la carte.
   cvCardIdCourant = cardId || null;
   const monSeq = ++cvSeqCarte;
+  cvPreparerDiorama(imageBase, monSeq);   // immédiat, sur toutes les cartes
   cvPreparerRelief(imageBase, cardId, monSeq); // découpe du sujet, quand elle arrive
   if(cardId){
     getCardDetailCached(cardId).then(card=>{
@@ -5885,11 +5753,13 @@ $('cv-relief-toggle').addEventListener('click', ()=>{
   const base = $('cv-img').src.replace(/\/high\.webp.*$/, '');
   if(!cvReliefEnabled){
     cvReliefPret = false;
-    $('cv-stage').classList.remove('relief');
+    $('cv-stage').classList.remove('relief', 'diorama');
     cvMajEtatRelief('');
   } else {
-    // Réactivation : la découpe est immédiate si le masque est déjà en cache.
+    // Réactivation : on relance les deux préparations pour la carte affichée (le diorama
+    // est immédiat, la découpe l'est aussi si le masque est déjà en cache).
     const seq = ++cvSeqCarte;
+    cvPreparerDiorama(base, seq);
     cvPreparerRelief(base, cvCardIdCourant, seq);
   }
 });
@@ -6451,6 +6321,12 @@ function quickAdd(card){
     title: fill(tmpl).slice(0,80),
     description: fill(descTmpl),
     sku: `PKMN-${(card.set?.id||'set')}-${card.number}-${Date.now().toString().slice(-5)}`,
+    // Conservés pour l'affichage du lot : l'identifiant de set sert au regroupement, et
+    // l'illustration officielle sert de vignette quand aucune photo n'a été prise (ajout
+    // au clavier, photo sautée…). Auparavant la cellule affichait juste « — », ce qui
+    // rendait une ligne sans photo impossible à identifier d'un coup d'œil.
+    setId: card.set?.id || '',
+    cardImage: card.images?.small || '',
     imageUrl: '',
     categoryId: $('category-id-input').value
   };
@@ -6461,11 +6337,62 @@ function quickAdd(card){
   lastAdd = { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
   showUndoBar(`✅ ${entry.cardName} ajouté(e)`);
   playConfirmAnimation();
+  // Le compteur du Lot ne se rafraîchissait qu'au changement d'onglet (renderBatch n'est
+  // appelé que là) : on pouvait ajouter cinquante cartes en voyant « Lot (0) ».
+  // renderBatchStatsOnly met à jour les compteurs sans reconstruire le tableau, donc sans
+  // coût perceptible dans la boucle d'identification.
+  renderBatchStatsOnly();
+  animerVersLeLot(entry);
 
   updateQueueBadges();
   renderQueueStrip();
 
   setTimeout(()=>{ renderIdentify(); }, 480);
+}
+
+
+// Fait voler une vignette de la carte ajoutée jusqu'à l'onglet Lot, puis fait réagir le
+// compteur. Purement décoratif : si un élément manque, on sort sans rien casser.
+function animerVersLeLot(entry){
+  const onglet = document.querySelector('[data-tab="batch"]');
+  const badge = $('tab-count');
+  if(badge){
+    badge.classList.remove('bump');
+    void badge.offsetWidth;   // force le redémarrage de l'animation sur deux ajouts rapprochés
+    badge.classList.add('bump');
+  }
+  if(onglet){
+    onglet.classList.remove('recu');
+    void onglet.offsetWidth;
+    onglet.classList.add('recu');
+  }
+
+  const src = entry.photo || entry.cardImage;
+  const depart = $('identify-photo');
+  if(!src || !onglet || !depart || getComputedStyle(depart).display === 'none') return;
+  if(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+  const d = depart.getBoundingClientRect();
+  const a = onglet.getBoundingClientRect();
+  const vol = document.createElement('img');
+  vol.className = 'carte-volante';
+  vol.src = src;
+  vol.style.left = d.left + 'px';
+  vol.style.top = d.top + 'px';
+  vol.style.width = d.width + 'px';
+  vol.style.height = d.height + 'px';
+  document.body.appendChild(vol);
+
+  // Deux images d'attente avant de poser la transformation d'arrivée : sans ça, le
+  // navigateur peut regrouper les deux styles et la transition ne démarre jamais.
+  requestAnimationFrame(()=> requestAnimationFrame(()=>{
+    const dx = (a.left + a.width/2) - (d.left + d.width/2);
+    const dy = (a.top + a.height/2) - (d.top + d.height/2);
+    const ratio = Math.max(0.08, Math.min(a.width / d.width, 0.3));
+    vol.style.transform = `translate(${dx}px, ${dy}px) scale(${ratio}) rotate(-8deg)`;
+    vol.style.opacity = '0.15';
+  }));
+  setTimeout(()=> vol.remove(), 700);
 }
 
 function playConfirmAnimation(){
@@ -6509,10 +6436,47 @@ function renderBatch(){
   tbody.innerHTML = '';
   $('batch-empty').style.display = batch.length ? 'none' : 'block';
 
+  // Regroupement par extension. Sur un lot de plusieurs centaines de cartes dépouillées
+  // classeur par classeur, une liste plate ne dit plus rien : les cartes d'un même set
+  // arrivent groupées dans le temps mais rien ne le montrait à l'écran, et vérifier
+  // « ai-je bien fait tout mon 151 ? » demandait de relire ligne à ligne.
+  //
+  // La clé est l'identifiant de set quand il est là, le nom sinon : les entrées créées
+  // avant l'ajout de setId restent groupées correctement au lieu de tomber dans un lot
+  // « sans set ».
+  const groupes = new Map();
   batch.forEach((entry, idx)=>{
+    const cle = entry.setId || entry.setName || '?';
+    if(!groupes.has(cle)) groupes.set(cle, {nom: entry.setName || 'Set inconnu', entries: []});
+    groupes.get(cle).entries.push({entry, idx});
+  });
+
+  let rang = 0;
+  for(const [cle, groupe] of groupes){
+    const valeur = groupe.entries.reduce((s, {entry})=>
+      s + (parseFloat(entry.price)||0) * (parseInt(entry.qty)||1), 0);
+    const logo = logoDeSet(cle, groupe.entries[0].entry);
+
+    const trTitre = document.createElement('tr');
+    trTitre.className = 'set-group';
+    trTitre.style.animationDelay = (rang++ * 28) + 'ms';
+    trTitre.innerHTML = `
+      <td colspan="9">
+        <div class="set-group-inner">
+          ${logo ? `<img class="set-group-logo" src="${logo}" alt="" loading="lazy"
+                       onerror="this.style.display='none'">` : ''}
+          <span class="set-group-nom">${escapeHtml(groupe.nom)}</span>
+          <span class="set-group-meta">${groupe.entries.length} carte(s) · ${valeur.toFixed(2)} €</span>
+        </div>
+      </td>`;
+    tbody.appendChild(trTitre);
+
+    for(const {entry, idx} of groupe.entries){
     const tr = document.createElement('tr');
+    tr.className = 'batch-row';
+    tr.style.animationDelay = (Math.min(rang++, 24) * 28) + 'ms';
     tr.innerHTML = `
-      <td class="thumb-cell">${entry.photo ? `<img src="${entry.photo}">` : '—'}</td>
+      <td class="thumb-cell">${vignetteDuLot(entry)}</td>
       <td><input type="text" data-field="sku" value="${escapeHtml(entry.sku)}" style="width:120px;"></td>
       <td><input type="text" data-field="title" value="${escapeHtml(entry.title)}" style="width:220px;"></td>
       <td>
@@ -6540,10 +6504,36 @@ function renderBatch(){
     });
     tr.querySelector('[data-action="delete"]').addEventListener('click', ()=>{
       batch.splice(idx,1);
+      planifierSauvegardeSession();
       renderBatch();
     });
     tbody.appendChild(tr);
-  });
+    }
+  }
+}
+
+// Logo de l'extension. Déduit en priorité de l'URL de l'illustration déjà stockée sur la
+// carte : « …/fr/sv/sv03.5/199/low.webp » donne « …/fr/sv/sv03.5/logo.webp ». C'est gratuit
+// et disponible hors ligne, là où passer par l'index des séries suppose qu'il soit chargé.
+function logoDeSet(cle, entryTemoin){
+  const img = entryTemoin && entryTemoin.cardImage;
+  if(img){
+    const m = img.match(/^(.*)\/[^/]+\/[a-z]+\.webp$/);
+    if(m) return m[1] + '/logo.webp';
+  }
+  const meta = (typeof findSetMeta === 'function') ? findSetMeta(cle) : null;
+  return meta && meta.logo ? meta.logo + '.webp' : '';
+}
+
+// Vignette d'une ligne du lot : la photo prise si elle existe, sinon l'illustration
+// officielle. Une ligne sans photo affichait « — », donc rien qui permette de reconnaître
+// la carte — alors que son visuel est déjà connu au moment de l'ajout.
+// L'illustration de repli est marquée d'un liseré, pour qu'on ne la confonde jamais avec
+// une vraie photo de l'exemplaire à vendre (l'état d'une carte ne se juge que sur la photo).
+function vignetteDuLot(entry){
+  if(entry.photo) return `<img src="${entry.photo}">`;
+  if(entry.cardImage) return `<img class="vignette-repli" src="${entry.cardImage}" alt="" title="Illustration officielle — aucune photo prise pour cette carte" onerror="this.replaceWith(document.createTextNode('—'))">`;
+  return '—';
 }
 
 function renderBatchStatsOnly(){
