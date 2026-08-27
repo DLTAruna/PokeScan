@@ -3245,7 +3245,22 @@ function getScanic(){
 // btn-diag-copy) ; le relais réseau ci-dessous n'est activé que si la case "envoyer en
 // direct" est cochée, choix explicite conservé dans localStorage.
 const diagLog = [];
-const DIAG_MAX = 60;
+// Porté de 60 à 250 : à ~3 tentatives par carte, 60 entrées ne couvraient qu'une vingtaine
+// de cartes. Sur une session de scan normale le DÉBUT du relevé disparaissait donc, sans
+// que rien ne le signale — et c'est justement le début qui manquait pour analyser la
+// dégradation (voir seriesDegradation, qui compare première et seconde moitié de session).
+const DIAG_MAX = 250;
+// Nombre d'observations effacées faute de place, remonté dans le rapport : une troncature
+// silencieuse fausse toute lecture des chiffres sans qu'on puisse s'en douter.
+let diagTronquees = 0;
+
+// Série compacte réservée à l'analyse de dégradation : uniquement l'instant dans la session,
+// la durée de recognize() et l'état mémoire. Trois nombres par tentative, donc on peut en
+// garder beaucoup plus que les entrées détaillées (qui embarquent le texte OCR brut).
+// Séparée volontairement du journal : même si celui-ci finit par se tronquer sur une très
+// longue session, la mesure de dégradation reste, elle, complète depuis le début.
+const serieDegradation = [];
+const SERIE_MAX = 3000;
 let diagRemoteEnabled = localStorage.getItem('diagRemoteEnabled') === '1';
 
 function getDiagDeviceId(){
@@ -3310,9 +3325,14 @@ function diagPush(kind, data){
     entry.heapMb = heapMb();
     entry.queueLen = pendingQueue.length;
     entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
+    // Série compacte, conservée même quand le journal détaillé se tronque : c'est elle qui
+    // porte la mesure de dégradation, et elle doit couvrir la session DEPUIS LE DÉBUT.
+    if(entry.tRecognize != null && entry.sessionS != null && serieDegradation.length < SERIE_MAX){
+      serieDegradation.push({s: entry.sessionS, ms: entry.tRecognize, tas: entry.heapMb, file: entry.queueLen});
+    }
   }
   diagLog.push(entry);
-  if(diagLog.length > DIAG_MAX) diagLog.shift();
+  if(diagLog.length > DIAG_MAX){ diagLog.shift(); diagTronquees++; }
   sendDiagRemote(entry);
 }
 
@@ -3345,28 +3365,40 @@ function buildDiagReport(){
   // regard. Sans ce résumé il fallait recalculer ces moyennes à la main sur chaque relevé,
   // ce qui est exactement ce qui a conduit à une conclusion fausse en comparant deux
   // sessions de durées différentes (§4.38).
-  const reco = diagLog.filter(e => e.k === 'try' && e.tRecognize != null && e.sessionS != null);
+  // Calculé sur la série compacte et NON sur le journal : celui-ci se tronque par le début
+  // sur une longue session, or c'est exactement le début qu'il faut pour comparer les deux
+  // moitiés. L'analyse portait donc jusqu'ici sur la seule fin de session — elle
+  // sous-estimait forcément la dégradation.
+  const reco = serieDegradation;
   if(reco.length >= 6){
     const moy = a => Math.round(a.reduce((x,y)=>x+y,0) / a.length);
     const mid = Math.floor(reco.length/2);
-    const t1 = moy(reco.slice(0,mid).map(e=>e.tRecognize));
-    const t2 = moy(reco.slice(mid).map(e=>e.tRecognize));
-    const h1 = reco.slice(0,mid).filter(e=>e.heapMb!=null).map(e=>e.heapMb);
-    const h2 = reco.slice(mid).filter(e=>e.heapMb!=null).map(e=>e.heapMb);
+    const t1 = moy(reco.slice(0,mid).map(e=>e.ms));
+    const t2 = moy(reco.slice(mid).map(e=>e.ms));
+    const h1 = reco.slice(0,mid).filter(e=>e.tas!=null).map(e=>e.tas);
+    const h2 = reco.slice(mid).filter(e=>e.tas!=null).map(e=>e.tas);
     l.push('');
-    l.push('dégradation : recognize ' + t1 + 'ms (1re moitié, ~' + reco[0].sessionS + 's) -> ' +
-           t2 + 'ms (2e moitié, ~' + reco[reco.length-1].sessionS + 's)  = x' + (t2/Math.max(t1,1)).toFixed(2));
+    l.push('dégradation : ' + reco.length + ' lectures sur ' + reco[reco.length-1].s + 's de session');
+    l.push('              recognize ' + t1 + 'ms (1re moitié, dès ' + reco[0].s + 's) -> ' +
+           t2 + 'ms (2e moitié)  = x' + (t2/Math.max(t1,1)).toFixed(2));
     if(h1.length && h2.length){
       l.push('              tas ' + moy(h1) + 'Mo -> ' + moy(h2) + 'Mo  (file ' +
-             reco[0].queueLen + ' -> ' + reco[reco.length-1].queueLen + ' cartes)');
+             reco[0].file + ' -> ' + reco[reco.length-1].file + ' cartes)');
       l.push('              → tas stable + temps qui monte = thermique ; les deux montent ensemble = mémoire');
     } else {
       l.push('              (mesure mémoire indisponible sur ce navigateur)');
     }
+    // Détail brut : permet de refaire le calcul autrement (par quart, par carte…) sans
+    // dépendre du découpage choisi ici.
+    l.push('              série (s:ms) ' + reco.map(e => e.s + ':' + e.ms).join(' '));
   }
 
   l.push('');
-  l.push('--- ' + diagLog.length + ' dernières observations (la plus récente en bas) ---');
+  // Troncature annoncée : sans ça, un relevé amputé du début se lit exactement comme un
+  // relevé complet — et toute conclusion tirée de son début serait fausse.
+  l.push('--- ' + diagLog.length + ' observations affichées' +
+         (diagTronquees ? `, ${diagTronquees} plus anciennes effacées (limite ${DIAG_MAX})` : ' (aucune perte)') +
+         ' — la plus récente en bas ---');
   const t0 = diagLog.length ? diagLog[0].t : 0;
   for(const e of diagLog){
     const dt = String(e.t - t0).padStart(6);
