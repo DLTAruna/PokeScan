@@ -210,10 +210,18 @@
     position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
   }
+  /* Valeur cumulée des cartes identifiées depuis le démarrage de la caméra : sur une
+     session de plusieurs centaines de cartes, c'est l'information qui dit s'il vaut la
+     peine de continuer, et la chercher dans l'onglet Lot casse le rythme du scan. */
+  .cam-total{
+    position:absolute; top:38px; right:10px; background:rgba(212,175,55,.92); color:#1a1206;
+    padding:4px 10px; border-radius:14px; font-size:13px; font-weight:700;
+    box-shadow:0 2px 8px rgba(0,0,0,.4);
+  }
   /* Masqué par défaut, affiché seulement si l'appareil expose plusieurs objectifs
      distincts (voir startCamera) — pas de bouton qui ne ferait rien. */
   .lens-switch{
-    position:absolute; top:44px; right:10px; background:rgba(0,0,0,.6); color:#fff;
+    position:absolute; top:74px; right:10px; background:rgba(0,0,0,.6); color:#fff;
     border:1px solid var(--border); border-radius:14px; padding:4px 10px; font-size:12px;
   }
   /* Rappel de prise en main : les doigts posés sur les bords gênent la détection du
@@ -596,6 +604,7 @@
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
         <div class="flash" id="flash"></div>
         <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
+        <div class="cam-total" id="cam-total" style="display:none"></div>
         <div class="score-readout" id="score-readout">score —</div>
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Objectif</button>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
@@ -688,6 +697,8 @@
         <button class="link-btn" id="btn-review-skipped">↩️ Cartes passées (<span id="skipped-count">0</span>) — les revoir</button>
         &nbsp;·&nbsp;
         <button class="link-btn" id="btn-toggle-ocr-debug">🔬 Debug OCR</button>
+        &nbsp;·&nbsp;
+        <button class="link-btn" id="btn-vider-file" style="color:var(--danger,#e5484d)">🗑️ Tout effacer</button>
       </div>
 
       <div class="hint" id="queue-overview-summary" style="margin-top:8px;"></div>
@@ -807,6 +818,7 @@
       <div class="row">
         <button class="btn-gold" id="btn-export-csv">⬇️ Export CSV (données)</button>
         <button class="btn-ghost" id="btn-export-zip">🗂️ Export photos (.zip)</button>
+        <button class="btn-ghost" id="btn-vider-lot" style="color:var(--danger,#e5484d)">🗑️ Tout effacer le lot</button>
       </div>
       <p class="hint">Le CSV n'inclut pas les images en pièce jointe (eBay a besoin d'URLs publiques). Renseigne la colonne "URL image" dans l'onglet Lot après avoir hébergé tes photos — voir Guide.</p>
     </div>
@@ -2858,9 +2870,56 @@ function pushToQueue(dataUrl, sourceBlob){
   updateQueueBadges();
   renderQueueStrip();
   renderQueueOverview();
+  planifierSauvegardeSession();
   updateCaptureProgress();  // l'analyse pouvant être suspendue, c'est ici que le compteur avance
   processQueueAnalysis();
   return item; // exploité par attemptRead pour le panneau de résultat live (voir resolveLiveResult)
+}
+
+// ---------------- PERSISTANCE AUTOMATIQUE DE LA SESSION ----------------
+// Un rechargement de page (ou un onglet tué par le système sur téléphone, ce qui arrive
+// pendant un scan long) faisait perdre TOUT le travail : file d'attente et lot. Sur une
+// session de plusieurs dizaines de cartes c'est inacceptable, et la sauvegarde manuelle en
+// .json ne protège que ceux qui y pensent AVANT l'incident.
+//
+// IndexedDB et non localStorage : les photos sont des dataURL, on dépasse très vite les
+// ~5 Mo de localStorage — et un quota dépassé y échoue silencieusement.
+//
+// Le blob d'origine (`sourceBlob`) n'est PAS conservé : il ne sert que le temps de
+// l'analyse et pèse plusieurs Mo par carte. Une entrée restaurée sans lui reste analysable
+// à partir de sa photo.
+let sauvegardeTimer = null;
+function planifierSauvegardeSession(){
+  clearTimeout(sauvegardeTimer);
+  // Regroupé : pendant une rafale, chaque capture déclencherait sinon une écriture
+  // complète de la file, ce qui ralentirait le scan au moment où il doit être fluide.
+  sauvegardeTimer = setTimeout(sauvegarderSession, 1200);
+}
+
+async function sauvegarderSession(){
+  try{
+    await idbSet('meta', {
+      key: 'session',
+      at: Date.now(),
+      pendingQueue: pendingQueue.map(q => ({id:q.id, photo:q.photo, _analysis:q._analysis})),
+      batch,
+      skippedQueue: skippedQueue.map(q => ({id:q.id, photo:q.photo, _analysis:q._analysis}))
+    });
+  }catch(e){ /* sauvegarde best-effort : ne doit jamais interrompre un scan */ }
+}
+
+async function restaurerSession(){
+  try{
+    const s = await idbGet('meta', 'session');
+    if(!s || (!s.pendingQueue?.length && !s.batch?.length)) return;
+    pendingQueue = s.pendingQueue || [];
+    skippedQueue = s.skippedQueue || [];
+    batch = s.batch || [];
+    updateQueueBadges(); renderQueueStrip(); renderQueueOverview(); renderBatch();
+    const quand = new Date(s.at).toLocaleString();
+    toast(`↩️ Session restaurée : ${batch.length} carte(s) au lot, ${pendingQueue.length} en attente`);
+    diagPush('err', {msg:`session restaurée (${batch.length} lot, ${pendingQueue.length} file) sauvegardée le ${quand}`});
+  }catch(e){ /* pas de session à restaurer */ }
 }
 
 function renderQueueStrip(){
@@ -3135,6 +3194,7 @@ async function startCamera(){
     document.documentElement.style.overflow = 'hidden';
     showLiveResultWaiting();
     capturedThisSession = 0;
+    resetTotalSession();
     renderQueueStrip();
     startAimLoop();
   } catch(err){
@@ -4229,6 +4289,7 @@ async function attemptRead(corners, score){
           rawText: '', number: finalNumber, denominator: finalDenominator
         };
         showLiveResultDone(hashShortcut.card, 'high');
+        ajouterAuTotalSession(hashShortcut.card);
       } else {
         resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp, liveHash);
       }
@@ -4289,6 +4350,44 @@ function showLiveResultPending(dataUrl, number, denominator){
   $('live-result-badge').title = '';
 }
 
+// Valeur cumulée des cartes identifiées depuis le démarrage de la caméra. Comptée par
+// devise et non convertie : TCGdex donne du Cardmarket en EUR et du TCGplayer en USD,
+// et additionner les deux avec un taux inventé donnerait un total faux avec l'air d'être
+// juste. Les cartes sans prix connu sont comptées à part, pour que le total ne se lise
+// pas comme exhaustif quand il ne l'est pas.
+let totalSession = { EUR: 0, USD: 0, valorisees: 0, sansPrix: 0 };
+
+function resetTotalSession(){
+  totalSession = { EUR: 0, USD: 0, valorisees: 0, sansPrix: 0 };
+  renderTotalSession();
+}
+
+function ajouterAuTotalSession(card){
+  const price = getBestPrice(card);
+  if(price.market && price.currency){
+    totalSession[price.currency] = (totalSession[price.currency] || 0) + price.market;
+    totalSession.valorisees++;
+  } else {
+    totalSession.sansPrix++;
+  }
+  renderTotalSession();
+}
+
+function renderTotalSession(){
+  const el = $('cam-total');
+  if(!el) return;
+  const bouts = [];
+  if(totalSession.EUR > 0) bouts.push(totalSession.EUR.toFixed(2) + ' €');
+  if(totalSession.USD > 0) bouts.push('$' + totalSession.USD.toFixed(2));
+  if(!bouts.length){ el.style.display = 'none'; return; }
+  el.style.display = '';
+  el.textContent = '💰 ' + bouts.join(' + ');
+  // Le détail va dans l'infobulle plutôt que dans le badge : sur un écran de téléphone
+  // en mode scan, le badge doit rester lisible d'un coup d'œil.
+  el.title = totalSession.sansPrix
+    ? totalSession.valorisees + ' carte(s) valorisée(s), ' + totalSession.sansPrix + ' sans prix connu'
+    : totalSession.valorisees + ' carte(s) valorisée(s)';
+}
 function showLiveResultDone(card, confidence){
   const price = getBestPrice(card);
   $('live-result-name').textContent = card.name;
@@ -4339,6 +4438,7 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
     if(result.card){
       registerSessionCardHash(result.card, liveHash); // alimente le raccourci visuel pour les prochains doublons
       showLiveResultDone(result.card, result.confidence);
+      ajouterAuTotalSession(result.card);
       // La confirmation par le nom n'a pas pu être tentée ici : le texte OCR utilisé
       // vient de la bande du bas (numéro), qui ne contient jamais le nom (haut de
       // carte). On la tente maintenant, en arrière-plan, sans bloquer l'affichage déjà
@@ -4625,6 +4725,7 @@ $('btn-review-skipped').addEventListener('click', ()=>{
 $('btn-skip-card').addEventListener('click', ()=>{
   if(!pendingQueue.length){ toast('File vide.'); return; }
   skippedQueue.push(pendingQueue.shift());
+  planifierSauvegardeSession();
   renderIdentify();
 });
 
@@ -4687,6 +4788,9 @@ $('btn-download-catalogue').addEventListener('click', async ()=>{
 
 $('btn-clear-catalogue').addEventListener('click', async ()=>{
   await idbClearAll();
+  // idbClearAll vide le store 'meta', où est aussi rangée la session de travail : sans ça,
+  // vider le cache du catalogue détruirait silencieusement le lot en cours. On la réécrit.
+  await sauvegarderSession();
   setAbbrMap = null;
   setDenominatorMap = null;
   toast('🗑️ Cache local vidé.');
@@ -5812,6 +5916,7 @@ function quickAdd(card){
     categoryId: $('category-id-input').value
   };
   batch.push(entry);
+  planifierSauvegardeSession();
   if(hadPhoto) pendingQueue.shift();
 
   lastAdd = { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
@@ -6015,6 +6120,37 @@ function downloadBlob(blob, filename){
 
 updateQueueBadges();
 renderQueueStrip();
+
+// Restaure la session laissée par le précédent chargement (voir sauvegarderSession).
+// Placé au démarrage : si l'utilisateur rouvre l'app pour continuer un scan, il doit
+// retrouver son lot immédiatement, pas après le préchauffage des workers.
+restaurerSession();
+
+// --- Effacements explicites (la sauvegarde automatique n'est annulable que comme ça) ---
+$('btn-vider-file').addEventListener('click', async ()=>{
+  if(!pendingQueue.length && !skippedQueue.length){ toast('La file est déjà vide.'); return; }
+  if(!confirm(`Effacer les ${pendingQueue.length + skippedQueue.length} photo(s) en attente ? Le lot déjà constitué n'est pas touché.`)) return;
+  pendingQueue = []; skippedQueue = [];
+  updateQueueBadges(); renderQueueStrip(); renderQueueOverview();
+  await sauvegarderSession();
+  toast("File d'attente vidée.");
+});
+
+$('btn-vider-lot').addEventListener('click', async ()=>{
+  if(!batch.length){ toast('Le lot est déjà vide.'); return; }
+  if(!confirm(`Effacer les ${batch.length} carte(s) du lot ? Action irréversible — pense à exporter le CSV avant.`)) return;
+  batch = [];
+  renderBatch();
+  await sauvegarderSession();
+  toast('Lot vidé.');
+});
+
+// Dernier filet de sécurité : si l'onglet est fermé pendant le délai de regroupement de
+// 1,2 s, la sauvegarde différée n'a jamais lieu. On la force ici — visibilitychange est
+// le seul événement fiable sur mobile, beforeunload n'y étant pas garanti.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'hidden'){ clearTimeout(sauvegardeTimer); sauvegarderSession(); }
+});
 
 // Précharge la table des sets dès l'ouverture de la page plutôt que d'attendre la
 // première carte scannée en direct : resolveLiveResult() la charge sinon à la volée
