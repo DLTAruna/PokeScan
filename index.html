@@ -468,9 +468,29 @@
      d'origine et décalé plus fort qu'elle. C'est l'écart entre les deux qui fait le
      relief. Positionnée en fractions de la carte (voir SEG_FENETRE), donc elle suit
      l'image quelle que soit sa taille affichée. */
+  /* Couche décor : l'illustration dont la zone du sujet a été rebouchée. Placée SOUS la
+     couche sujet et sous les calques holo, elle recouvre l'image d'origine à cet endroit —
+     sans elle, le Pokémon resterait visible dans le fond et apparaîtrait en double. */
+  .cv-backplate{
+    position:absolute; pointer-events:none; opacity:0;
+    transition:opacity .5s ease;
+  }
+  .cv-stage.relief .cv-backplate{opacity:1;}
+
+  /* Couche sujet : déplacée en translateZ, PAS en translate 2D. La différence est
+     essentielle — un décalage 2D fait glisser une copie sur la carte (effet de vision
+     double, constaté en test) tandis qu'un décalage en profondeur place réellement le
+     sujet devant la surface : le parallaxe découle alors de la rotation, comme pour un
+     objet physique, et le sujet paraît sortir de la carte.
+     Pas d'overflow:hidden sur la scène : c'est ce débordement qui donne l'impression que
+     le Pokémon dépasse du cadre. */
   .cv-subject{
     position:absolute; pointer-events:none; opacity:0;
     transition:opacity .5s ease; will-change:transform;
+    transform-style:preserve-3d;
+    /* Ombre portée sur la carte : c'est elle qui « vend » la profondeur, davantage que le
+       décalage lui-même — sans ombre, le sujet flotte sans qu'on sache à quelle distance. */
+    filter:drop-shadow(0 0 0 rgba(0,0,0,0));
   }
   .cv-stage.relief .cv-subject{opacity:1;}
   /* Sans le masque, la carte reste affichée normalement : le relief est un supplément,
@@ -480,6 +500,19 @@
     background:rgba(0,0,0,.75); color:var(--muted); font-size:10px;
     padding:2px 9px; border-radius:9px; white-space:nowrap; pointer-events:none;
   }
+  /* Diorama : la fenêtre d'illustration est légèrement ENFONCÉE par rapport au cadre et au
+     texte, ce qui donne un effet de fenêtre ouverte sur une scène. Contrairement à la
+     découpe du sujet, ça ne demande aucun modèle, aucune attente, et ça ne peut pas rater —
+     donc c'est actif sur TOUTES les cartes, immédiatement. La découpe du sujet vient
+     s'ajouter par-dessus quand elle est disponible, au lieu d'être la seule source d'effet. */
+  .cv-diorama{
+    position:absolute; pointer-events:none; opacity:0;
+    transition:opacity .35s ease; overflow:hidden;
+    box-shadow:inset 0 0 22px rgba(0,0,0,.55);
+    transform:translateZ(-16px);
+  }
+  .cv-stage.diorama .cv-diorama{opacity:1;}
+  .cv-diorama canvas{width:100%; height:100%; display:block;}
   .cv-badge-holo{
     position:absolute; top:-9px; left:50%; transform:translateX(-50%);
     background:linear-gradient(135deg,#ffe066,var(--accent)); color:#1a1a1a;
@@ -942,6 +975,11 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
   <button class="cv-close" id="cv-close" aria-label="Fermer">✕</button>
   <div class="cv-stage" id="cv-stage">
     <img id="cv-img" src="" alt="">
+    <!-- Fenêtre d'illustration enfoncée (diorama), puis décor rebouché : tous deux
+         au-dessus de l'image mais SOUS les calques holographiques, sinon ils les
+         masqueraient dans toute la zone d'illustration. -->
+    <div class="cv-diorama" id="cv-diorama"><canvas id="cv-diorama-canvas"></canvas></div>
+    <canvas class="cv-backplate" id="cv-backplate"></canvas>
     <div class="cv-holo" id="cv-holo"></div>
     <div class="cv-sparkle" id="cv-sparkle"></div>
     <div class="cv-shine" id="cv-shine"></div>
@@ -4729,22 +4767,72 @@ function cvApplyTransform(){
   cvMajRelief();
 }
 
-// Déplace la couche « sujet » PLUS que la carte elle-même. Tout le relief tient dans cet
-// écart : à déplacement égal, on ne verrait qu'un calque collé à l'image.
+// Élève le sujet AU-DESSUS de la surface de la carte, dans la même scène 3D. Le parallaxe
+// n'est alors pas simulé : il découle de la rotation, exactement comme pour un objet réel
+// posé devant la carte. C'est la correction du défaut constaté en test — un translate 2D
+// faisait glisser une copie sur l'image, ce qui donne une impression de vision double au
+// lieu d'une impression de relief.
+const CV_RELIEF_Z = 34;   // px de hauteur au-dessus de la carte
 function cvMajRelief(){
   const sub = $('cv-subject');
   if(!sub || !cvReliefPret) return;
   const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
-  // Amplitude en % de la largeur du sujet : rester en unités relatives garde l'effet
-  // identique que la carte soit affichée en grand ou en petit.
-  sub.style.transform = `translate(${(nx*3.2).toFixed(2)}%, ${(-ny*3.2).toFixed(2)}%) scale(1.045)`;
+  // Le léger agrandissement compense la perspective (un objet plus proche paraît plus
+  // grand) et évite qu'un bord de la carte apparaisse derrière le sujet aux angles vifs.
+  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(1.03)`;
+
+  // Ombre portée du sujet SUR la carte, décalée à l'opposé de l'inclinaison : c'est elle
+  // qui indique la hauteur. Sans ombre, le sujet flotte sans distance lisible — c'est le
+  // détail qui fait basculer la perception de « calque décalé » à « objet devant ».
+  const ox = (-nx * 16).toFixed(1), oy = (ny * 16).toFixed(1);
+  sub.style.filter = `blur(0.4px) drop-shadow(${ox}px ${oy}px 12px rgba(0,0,0,.55))`;
 }
 
-// Recompose la couche « sujet » à partir du masque : l'illustration, rendue transparente
-// partout sauf sur le sujet. Le masque est adouci d'un pixel — une frontière dure ferait
-// ressortir chaque défaut de découpe, et ils sont fréquents sur de l'illustration.
+// Rebouche la zone du sujet dans le décor. INDISPENSABLE : sans ça le Pokémon reste visible
+// dans le fond ET dans la couche décalée, donc on le voit DEUX FOIS — ce qui donne
+// exactement l'impression de loucher, constatée en test réel. Aucun réglage de parallaxe
+// ne peut compenser ça, c'est le fond qu'il faut corriger.
+//
+// Remplissage par étirement du décor voisin, pas un vrai inpainting : le sujet ne se
+// décale que de quelques pour cent, donc seule une frange étroite se découvre réellement.
+// Une version très floue de l'illustration, dont le sujet a été « dilué » par un
+// agrandissement, suffit à la couvrir sans qu'on distingue quoi que ce soit.
+function cvBoucherFond(illus, masque, mw, mh){
+  const fond = document.createElement('canvas');
+  fond.width = mw; fond.height = mh;
+  const fctx = fond.getContext('2d');
+
+  // 1) Base : l'illustration agrandie et fortement floutée. L'agrandissement fait sortir
+  //    le sujet du cadre par les bords, si bien que le centre est majoritairement nourri
+  //    de décor plutôt que du Pokémon lui-même.
+  fctx.filter = 'blur(14px)';
+  const z = 1.35;
+  fctx.drawImage(illus, -mw*(z-1)/2, -mh*(z-1)/2, mw*z, mh*z);
+  fctx.filter = 'none';
+
+  // 2) Par-dessus, le décor d'origine là où il n'y a PAS de sujet : tout ce qui est
+  //    réellement du fond reste net, seule la zone du sujet garde le remplissage flou.
+  const net = document.createElement('canvas');
+  net.width = mw; net.height = mh;
+  const nctx = net.getContext('2d');
+  nctx.drawImage(illus, 0, 0, mw, mh);
+  const px = nctx.getImageData(0, 0, mw, mh);
+  // Transition douce plutôt que binaire : un bord franc entre zone nette et zone floue
+  // dessinerait la silhouette du sujet en négatif dans le décor.
+  for(let i=0;i<masque.length;i++) px.data[i*4+3] = 255 - masque[i];
+  nctx.putImageData(px, 0, 0);
+  fctx.drawImage(net, 0, 0);
+
+  return fond;
+}
+
+// Recompose les DEUX couches à partir du masque : le décor rebouché, et le sujet détouré.
+// Le masque est adouci — une frontière dure ferait ressortir chaque défaut de découpe, et
+// ils sont fréquents sur de l'illustration.
 async function cvAppliquerMasque(imageBase, masque, mw, mh){
   const { illus } = await segExtraireIllustration(imageBase);
+
+  // --- couche sujet ---
   const c = $('cv-subject');
   c.width = mw; c.height = mh;
   const ctx = c.getContext('2d');
@@ -4752,13 +4840,23 @@ async function cvAppliquerMasque(imageBase, masque, mw, mh){
   const px = ctx.getImageData(0, 0, mw, mh);
   for(let i=0;i<masque.length;i++) px.data[i*4+3] = masque[i];
   ctx.putImageData(px, 0, 0);
-  // Positionnement en pourcentages de la carte : identique à la fenêtre utilisée pour la
-  // découpe, donc le sujet retombe pile sur son emplacement d'origine.
-  c.style.left   = (SEG_FENETRE.fx*100) + '%';
-  c.style.top    = (SEG_FENETRE.fy*100) + '%';
-  c.style.width  = (SEG_FENETRE.fw*100) + '%';
-  c.style.height = (SEG_FENETRE.fh*100) + '%';
-  c.style.filter = 'blur(0.4px)';
+
+  // --- couche décor, sujet effacé ---
+  const b = $('cv-backplate');
+  const fond = cvBoucherFond(illus, masque, mw, mh);
+  b.width = mw; b.height = mh;
+  b.getContext('2d').drawImage(fond, 0, 0);
+
+  // Positionnement identique pour les deux, en pourcentages de la carte : c'est la fenêtre
+  // utilisée pour la découpe, donc chaque couche retombe pile sur son emplacement d'origine.
+  for(const el of [c, b]){
+    el.style.left   = (SEG_FENETRE.fx*100) + '%';
+    el.style.top    = (SEG_FENETRE.fy*100) + '%';
+    el.style.width  = (SEG_FENETRE.fw*100) + '%';
+    el.style.height = (SEG_FENETRE.fh*100) + '%';
+  }
+  // Le filtre définitif (flou + ombre portée) est posé par cvMajRelief, qui le réajuste à
+  // chaque frame selon l'inclinaison.
 }
 
 function cvMajEtatRelief(texte){
@@ -4772,6 +4870,27 @@ function cvMajEtatRelief(texte){
 //  - masque déjà en cache  -> appliqué immédiatement, coût nul ;
 //  - masque absent         -> calcul lancé en arrière-plan, la carte reste affichée à plat
 //                             et bascule en relief à l'arrivée. Jamais d'attente bloquante.
+// Prépare le diorama : recopie la fenêtre d'illustration dans un calque enfoncé. Immédiat,
+// sans modèle, et applicable à toute carte — c'est le socle d'effet qui ne dépend de rien.
+async function cvPreparerDiorama(imageBase, monSeq){
+  const stage = $('cv-stage');
+  stage.classList.remove('diorama');
+  if(!cvReliefEnabled) return;
+  try{
+    const { illus } = await segExtraireIllustration(imageBase);
+    if(monSeq !== cvSeqCarte) return;
+    const w = $('cv-diorama');
+    const c = $('cv-diorama-canvas');
+    c.width = illus.width; c.height = illus.height;
+    c.getContext('2d').drawImage(illus, 0, 0);
+    w.style.left   = (SEG_FENETRE.fx*100) + '%';
+    w.style.top    = (SEG_FENETRE.fy*100) + '%';
+    w.style.width  = (SEG_FENETRE.fw*100) + '%';
+    w.style.height = (SEG_FENETRE.fh*100) + '%';
+    stage.classList.add('diorama');
+  }catch(e){ /* pas de diorama : la carte reste affichée normalement */ }
+}
+
 async function cvPreparerRelief(imageBase, cardId, monSeq){
   cvReliefPret = false;
   $('cv-stage').classList.remove('relief');
@@ -4918,7 +5037,9 @@ function openCardViewer(imageBase, label, cardId){
 
   // Le relief est préparé en parallèle, sans jamais retarder l'affichage de la carte.
   cvCardIdCourant = cardId || null;
-  cvPreparerRelief(imageBase, cardId, ++cvSeqCarte);
+  const monSeq = ++cvSeqCarte;
+  cvPreparerDiorama(imageBase, monSeq);   // immédiat, sur toutes les cartes
+  cvPreparerRelief(imageBase, cardId, monSeq); // découpe du sujet, quand elle arrive
   if(cardId){
     getCardDetailCached(cardId).then(card=>{
       // La fiche arrive après coup : ne rien appliquer si l'utilisateur a déjà ouvert une
@@ -4944,7 +5065,7 @@ function closeCardViewer(){
   // prochaine carte ouverte.
   cvSeqCarte++;
   cvReliefPret = false; cvCardIdCourant = null;
-  $('cv-stage').classList.remove('relief');
+  $('cv-stage').classList.remove('relief', 'diorama');
   cvMajEtatRelief('');
 }
 
@@ -4962,14 +5083,17 @@ $('cv-relief-toggle').addEventListener('click', ()=>{
   cvReliefEnabled = !cvReliefEnabled;
   localStorage.setItem('cvRelief', cvReliefEnabled ? '1' : '0');
   $('cv-relief-toggle').classList.toggle('on', cvReliefEnabled);
+  const base = $('cv-img').src.replace(/\/high\.webp.*$/, '');
   if(!cvReliefEnabled){
     cvReliefPret = false;
-    $('cv-stage').classList.remove('relief');
+    $('cv-stage').classList.remove('relief', 'diorama');
     cvMajEtatRelief('');
   } else {
-    // Réactivation : on relance la préparation pour la carte affichée (immédiate si le
-    // masque est déjà en cache).
-    cvPreparerRelief($('cv-img').src.replace(/\/high\.webp.*$/, ''), cvCardIdCourant, ++cvSeqCarte);
+    // Réactivation : on relance les deux préparations pour la carte affichée (le diorama
+    // est immédiat, la découpe l'est aussi si le masque est déjà en cache).
+    const seq = ++cvSeqCarte;
+    cvPreparerDiorama(base, seq);
+    cvPreparerRelief(base, cvCardIdCourant, seq);
   }
 });
 

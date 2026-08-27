@@ -1355,6 +1355,39 @@ pour un usage personnel, à remplacer par U²-Netp (Apache 2.0, 4,7 Mo, entrée 
 qui sert à vendre. *Qualité* : une découpe sur sept était vraiment propre — attendre des
 ratés, d'où l'interrupteur et le repli silencieux sur l'affichage plat.
 
+### 4.49 Relief : correction du dédoublement et passage en vraie 3D
+Retour de test sur téléphone : « on dirait juste qu'on louche et qu'on voit le Pokémon en
+double », et 45 s de calcul. Diagnostic exact, et c'était un **défaut de l'implémentation**,
+pas une limite de l'approche.
+
+**1. Le sujet était affiché deux fois.** La couche découpée était superposée à
+l'illustration **d'origine intacte** — le Pokémon restait donc visible dans le fond ET dans
+la couche décalée. Littéralement une image double, qu'aucun réglage de parallaxe ne pouvait
+corriger. Ajout d'une couche « décor rebouché » : l'illustration agrandie et fortement
+floutée sert de remplissage dans la zone du sujet, recouverte du décor net partout ailleurs,
+avec une transition douce (un bord franc dessinerait la silhouette du sujet en négatif). Ce
+n'est pas un vrai inpainting, mais le sujet ne se décalant que de quelques pour cent, seule
+une frange étroite se découvre réellement.
+
+**2. `translate` 2D remplacé par `translateZ`.** Un décalage 2D fait *glisser une copie sur*
+la carte — d'où la vision double. Un décalage en profondeur place le sujet **devant** la
+surface dans la même scène 3D : le parallaxe découle alors de la rotation, comme pour un
+objet physique, et le sujet paraît sortir de la carte. Ajouté avec : une **ombre portée**
+décalée à l'opposé de l'inclinaison (c'est elle qui rend la hauteur lisible — sans ombre le
+sujet flotte sans distance perceptible), et pas d'`overflow:hidden` sur la scène, ce qui
+laisse le sujet déborder du cadre.
+
+**3. Socle « diorama », indépendant de tout modèle.** La fenêtre d'illustration est
+légèrement enfoncée (`translateZ(-16px)`) par rapport au cadre et au texte. Effet de
+profondeur immédiat, sur **toutes** les cartes, sans attente et sans échec possible. La
+découpe du sujet devient un supplément qui s'ajoute quand le masque arrive, au lieu d'être
+la seule source d'effet — donc l'écran n'est plus plat pendant les 45 s d'attente.
+
+Reste à traiter : les 45 s. Piste retenue, non encore mesurée — **U²-Netp** (4,7 Mo contre
+45, entrée native 320×320 donc ~10× moins de calcul, licence Apache 2.0 qui règle en prime
+la question commerciale). À comparer côte à côte avec RMBG avant de basculer : un masque
+inutilisable en 4 s ne vaut pas mieux qu'un bon masque en 45.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
