@@ -436,6 +436,11 @@
      dépasser, comme sur un objet physique. C'est ce détail qui fait basculer la lecture de
      « image qui pivote » à « objet qui pivote », et aucun effet de lumière ne le remplace :
      un box-shadow inset reste plat par construction, il ne peut pas se décaler en Z. */
+  .result-noimg{
+    display:flex; align-items:center; justify-content:center; text-align:center;
+    width:40px; min-width:40px; height:56px; background:#15151c; color:var(--muted);
+    font-size:9px; line-height:1.2; border-radius:4px; border:1px dashed var(--border);
+  }
   .thumb-vide{
     display:flex; align-items:center; justify-content:center; text-align:center;
     width:100%; aspect-ratio:63/88; background:#15151c; color:var(--muted);
@@ -839,6 +844,17 @@
             <label>Set / édition</label>
             <input type="text" id="search-set" placeholder="ex : 151, sv03.5, Obsidienne" autocomplete="off">
           </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Trier par</label>
+            <select id="search-tri">
+              <option value="pertinence">Pertinence (ordre du catalogue)</option>
+              <option value="recentes">Cartes les plus récentes</option>
+              <option value="popularite">Popularité (valeur marché)</option>
+            </select>
+          </div>
+          <div></div>
         </div>
         <div class="flexend" style="margin-top:8px;">
           <button class="link-btn" id="btn-reset-filtres">Réinitialiser les filtres</button>
@@ -5518,7 +5534,16 @@ function cvApplyTransform(){
 // plus »). C'est le réglage qui pèse le plus sur l'intensité perçue, bien avant l'amplitude
 // de rotation. Limite : au-delà, le décor rebouché se découvre trop autour du sujet aux
 // angles vifs, et les défauts de découpe deviennent visibles.
-const CV_RELIEF_Z = 92;     // px de hauteur au-dessus de la carte
+// Hauteur ramenée de 92 à 48 px. 92 avait été choisi du temps où la scène était aplatie
+// et où le translateZ ne produisait AUCUN déplacement : il fallait pousser la valeur pour
+// espérer voir quelque chose. Maintenant que le plan est réel, le déplacement est bien
+// celui d'un objet à cette hauteur — et 92 px projetaient le sujet si loin de son fond que
+// le remplissage se découvrait largement. 48 px donne un relief net sans décoller le sujet
+// de la scène dont il est issu.
+const CV_RELIEF_Z = 48;     // px de hauteur au-dessus de la carte
+// Doit rester égal à la valeur `perspective` de .card-viewer en CSS : la compensation
+// d'échelle du sujet en dépend directement.
+const CV_PERSPECTIVE = 680;
 // Choisit le candidat final parmi ceux extraits par l'OCR. Préfère un dénominateur qui
 // existe réellement au catalogue ; à défaut, retombe sur le premier lu plutôt que de ne
 // rien proposer — la version « stricte » (ne rien renvoyer si aucun dénominateur ne colle)
@@ -5548,21 +5573,34 @@ function choisirCandidat(cands, numDefaut, denomDefaut){
   return cands[0] || repli;
 }
 
+// Compensation de l'agrandissement dû à la perspective. Un calque placé à Z devant la
+// surface paraît P/(P-Z) fois plus grand : à 92 px, +15,6 %. Le sujet ne coïncidait donc
+// plus du tout avec le trou dont il est découpé — un Pokémon nettement plus gros que son
+// propre fond, ça ne se lit pas comme de la profondeur mais comme un défaut d'affichage.
+// En annulant cet agrandissement, le sujet garde exactement sa taille d'origine et ne fait
+// plus que GLISSER avec l'inclinaison : c'est le seul signal de relief qu'on veut, et le
+// seul qui ne puisse pas paraître cassé.
+const CV_RELIEF_ECHELLE = (CV_PERSPECTIVE - CV_RELIEF_Z) / CV_PERSPECTIVE * 1.03;
+
 function cvMajRelief(){
   const sub = $('cv-subject');
   if(!sub || !cvReliefPret) return;
   const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
-  // Le léger agrandissement compense la perspective (un objet plus proche paraît plus
-  // grand) et évite qu'un bord de la carte apparaisse derrière le sujet aux angles vifs.
-  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(1.04)`;
+  // Le facteur 1,03 laissé dans CV_RELIEF_ECHELLE couvre les bords : la découpe n'est
+  // jamais parfaite au pixel près, et un sujet très légèrement plus grand cache le liseré
+  // de remplissage au lieu de le souligner.
+  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(${CV_RELIEF_ECHELLE.toFixed(4)})`;
 
   // Ombre portée du sujet SUR la carte, décalée à l'opposé de l'inclinaison : c'est elle
   // qui indique la hauteur. Sans ombre, le sujet flotte sans distance lisible — c'est le
   // détail qui fait basculer la perception de « calque décalé » à « objet devant ».
-  // Décalage et étalement suivent la hauteur : une ombre trop serrée pour l'élévation
-  // affichée trahirait immédiatement l'illusion.
-  const ox = (-nx * 26).toFixed(1), oy = (ny * 26).toFixed(1);
-  sub.style.filter = `blur(0.4px) drop-shadow(${ox}px ${oy}px 18px rgba(0,0,0,.6))`;
+  // Décalage indexé sur la hauteur réelle, pour qu'ils ne puissent plus diverger.
+  const amp = CV_RELIEF_Z * 0.42;
+  const ox = (-nx * amp).toFixed(1), oy = (ny * amp).toFixed(1);
+  // Plus de blur() : sur un calque de cette taille, chaque passe de filtre est recalculée
+  // à chaque image, et empiler flou + ombre portée est précisément le genre de charge qui
+  // produit des artefacts de rastérisation sur téléphone. L'ombre seule suffit.
+  sub.style.filter = `drop-shadow(${ox}px ${oy}px ${(CV_RELIEF_Z*0.3).toFixed(0)}px rgba(0,0,0,.55))`;
 }
 
 // Rebouche la zone du sujet dans le décor. INDISPENSABLE : sans ça le Pokémon reste visible
@@ -5967,7 +6005,7 @@ $('search-set').addEventListener('input', ()=>{
 
 // Les listes déroulantes relancent la recherche immédiatement : contrairement à une
 // saisie au clavier, un choix dans un menu est définitif, attendre 400 ms n'apporte rien.
-for(const id of ['search-serie','search-annee','search-rarete']){
+for(const id of ['search-serie','search-annee','search-rarete','search-tri']){
   $(id).addEventListener('change', ()=>{ clearTimeout(searchDebounce); doSearch(); });
 }
 
@@ -5983,6 +6021,7 @@ $('btn-toggle-filtres').addEventListener('click', ()=>{
 $('btn-reset-filtres').addEventListener('click', ()=>{
   $('search-serie').value = ''; $('search-annee').value = '';
   $('search-rarete').value = ''; $('search-set').value = '';
+  $('search-tri').value = 'pertinence';
   majResumeFiltres();
   doSearch();
 });
@@ -6122,6 +6161,8 @@ function majResumeFiltres(){
   if(f.annee) bouts.push(f.annee + '+');
   if(f.rarete) bouts.push(f.rarete);
   if(f.set) bouts.push('set « ' + $('search-set').value.trim() + ' »');
+  const tri = $('search-tri');
+  if(tri && tri.value !== 'pertinence') bouts.push('tri : ' + tri.selectedOptions[0].textContent);
   const el = $('filtres-resume');
   if(el) el.textContent = bouts.length ? ' · ' + bouts.join(' · ') : '';
 }
@@ -6133,6 +6174,59 @@ function majResumeFiltres(){
 // précédente qui coupait à 8 AVANT d'appliquer le filtre de set : le filtre ne pouvait
 // alors quasiment jamais trouver quoi que ce soit, d'où l'impression que la plupart des
 // cartes étaient absentes du catalogue.
+
+// Ordonne les résultats avant pagination. Deux règles indépendantes.
+//
+// 1) Les cartes SANS illustration passent toujours en dernier, quel que soit le tri.
+//    Elles représentent 19 % des résultats sur « Dracaufeu » (21 sur 112) et l'ordre
+//    naturel de l'API en plaçait justement plusieurs en tête : la première page était
+//    donc en partie occupée par des vignettes vides, alors que ce sont précisément les
+//    cartes qu'on ne peut ni reconnaître ni mettre en vente avec une photo.
+//
+// 2) Le tri demandé, appliqué aux seules cartes illustrées.
+async function trierResultats(briefs, tri, meta, myToken, status){
+  const sansImage = briefs.filter(b => !b.image);
+  const avecImage = briefs.filter(b => b.image);
+
+  if(tri === 'recentes'){
+    // L'année vient de la série (déjà en cache local, aucun appel réseau). C'est une
+    // granularité grossière — toutes les extensions d'une même série partagent l'année —
+    // mais suffisante pour séparer le moderne de l'ancien, qui est ce qu'on cherche.
+    const annee = (b)=>{
+      const setId = setDepuisIdCarte(b.id, meta);
+      const m = setId ? meta[setId] : null;
+      return (m && m.annee) || 0;
+    };
+    avecImage.sort((a,b)=> annee(b) - annee(a) || String(b.id).localeCompare(String(a.id)));
+
+  } else if(tri === 'popularite'){
+    // TCGdex n'expose aucune mesure de popularité. Dans un contexte de revente, le
+    // meilleur indicateur disponible est la valeur marché : une carte recherchée est une
+    // carte chère, et c'est de toute façon l'information utile ici. D'où le libellé, qui
+    // annonce la métrique réellement utilisée plutôt que de laisser croire à un
+    // classement d'audience.
+    //
+    // Seul tri qui exige les fiches détaillées (le prix n'est pas dans la liste courte) :
+    // on les charge toutes d'un coup, avec une progression affichée. Elles vont ensuite
+    // en cache IndexedDB, donc c'est un coût unique par carte, pas par recherche.
+    status.textContent = `Chargement des prix (${avecImage.length} carte(s))…`;
+    const details = await pLimit(avecImage, 8, b => getCardDetailCached(b.id).catch(()=> null));
+    if(myToken !== searchToken) return [];
+    const valeur = new Map();
+    avecImage.forEach((b, i)=>{
+      const d = details[i];
+      // EUR (Cardmarket) et USD (TCGplayer) sont comparés sans conversion : introduire un
+      // taux figé dans le code vieillirait mal pour un simple ordre d'affichage, et l'écart
+      // entre les deux devises est sans commune mesure avec celui entre une commune et une
+      // secrète — ce que ce tri sert à faire ressortir.
+      valeur.set(b.id, d ? (getBestPrice(d).market || 0) : 0);
+    });
+    avecImage.sort((a, b)=> valeur.get(b.id) - valeur.get(a.id));
+  }
+
+  return avecImage.concat(sansImage);
+}
+
 const PAGE_RESULTATS = 24;
 let restantsRecherche = [];
 
@@ -6200,8 +6294,11 @@ async function doSearch(){
       return;
     }
 
+    status.textContent = `${briefs.length} carte(s) trouvée(s) — tri...`;
+    briefs = await trierResultats(briefs, $('search-tri')?.value || 'pertinence', meta, myToken, status);
+    if(myToken !== searchToken) return;
+
     restantsRecherche = briefs;
-    status.textContent = `${briefs.length} carte(s) trouvée(s) — chargement...`;
     await afficherPageResultats(myToken, totalBrut);
   } catch(err){
     if(myToken !== searchToken) return;
@@ -6238,8 +6335,11 @@ async function afficherPageResultats(myToken, totalBrut){
     const div = document.createElement('div');
     div.className = 'result-item';
     const price = getBestPrice(card);
+    // Vignette de repli plutôt qu'un <img src=""> : sur les cartes sans illustration
+    // (19 % des résultats sur « Dracaufeu »), le navigateur affichait une icône d'image
+    // cassée, ce qui se lit comme une erreur de l'app et non comme une donnée manquante.
     div.innerHTML = `
-      <img src="${card.images?.small || ''}" loading="lazy">
+      ${card.images?.small ? `<img src="${card.images.small}" loading="lazy">` : '<div class="result-noimg">sans<br>visuel</div>'}
       <div class="result-info">
         <b>${esc(card.name)}</b><br>
         ${esc(card.set?.name || '')} · #${esc(card.number)} · ${esc(card.rarity || '?')}
