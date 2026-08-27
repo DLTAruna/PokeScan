@@ -57,7 +57,7 @@
   }
   .warn-box b{color:var(--warn);}
   label{display:block; font-size:12px; color:var(--muted); margin:10px 0 4px; font-weight:700;}
-  select, input[type=number]{
+  select, input[type=number], input[type=text]{
     width:100%; background:var(--panel2); border:1px solid var(--border); color:var(--text);
     padding:9px; border-radius:9px; font-size:14px; font-family:inherit;
   }
@@ -161,7 +161,12 @@
       <select id="cfg-mode">
         <option value="crop">Illustration recadrée (rapide)</option>
         <option value="photo">Photo simulée — pipeline complet</option>
+        <option value="zip">Mes photos (.zip exporté par l'app)</option>
       </select>
+    </div>
+    <div>
+      <label>Set précis (optionnel)</label>
+      <input type="text" id="cfg-set" placeholder="ex : 151, sv03.5, Célébrations…" autocomplete="off">
     </div>
     <div>
       <label>Époque des cartes</label>
@@ -172,6 +177,16 @@
         <option value="2020">2020+ (Épée et Bouclier → aujourd'hui)</option>
       </select>
     </div>
+  </div>
+  <div id="zip-zone" style="display:none; margin-top:12px;">
+    <label>Archive de photos</label>
+    <input type="file" id="cfg-zip" accept=".zip">
+    <p class="sub" style="margin-top:6px;">
+      Onglet <b>Export → « Export photos (.zip) »</b> de l'app. Chaque fichier y est nommé
+      <code>PKMN-{set}-{numéro}-…</code> : la bonne réponse est donc <b>déjà dans le nom</b>,
+      aucun étiquetage à faire. Ce sont tes vraies photos, à la résolution de ton téléphone —
+      c'est le seul mode qui donne un taux de lecture <b>absolu</b> crédible.
+    </p>
   </div>
   <div class="row" style="margin-top:12px;">
     <button class="btn-gold" id="btn-start">▶️ Lancer le banc</button>
@@ -223,6 +238,7 @@
 
 </main>
 
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script type="module">
 // =============================================================================
 // BANC D'ESSAI — mesure du taux de lecture du numéro sur le catalogue TCGdex.
@@ -447,11 +463,13 @@ async function idbGet(db, store, key){
 // c'est exactement ce qui départage les fenêtres de recadrage (le numéro est à gauche sur
 // le moderne, à droite sur l'ancien) : mesurer sur la mauvaise population mène tout droit
 // à retenir la mauvaise fenêtre.
-async function buildCardPool(minYear){
-  const setMeta = {};  // setId -> {name, official, serieName, serieYear}
-
-  // Les années viennent toujours de l'API (le cache de l'app ne les stocke pas) : ~20
-  // requêtes, négligeable devant le run lui-même.
+// Métadonnées de tous les sets : nom, total officiel (le dénominateur imprimé), série et
+// année. Extrait de buildCardPool pour être réutilisable par le mode « mes photos », qui a
+// besoin du dénominateur sans avoir besoin de construire un réservoir.
+let metaSetsCache = null;
+async function chargerMetaSets(){
+  if(metaSetsCache) return metaSetsCache;
+  const setMeta = {};
   $('status').textContent = '🔎 Récupération des séries (dates de sortie)…';
   const series = await (await fetch('https://api.tcgdex.net/v2/fr/series')).json();
   await Promise.all(series.map(async s=>{
@@ -462,6 +480,14 @@ async function buildCardPool(minYear){
         setMeta[st.id] = {name: st.name, official: st.cardCount?.official, serieName: d.name, serieYear: year};
     }catch(e){ /* série ignorée */ }
   }));
+  // Table de départage des candidats, construite sur TOUT le catalogue.
+  validDenominators = new Set(Object.values(setMeta).map(m => String(m.official)).filter(Boolean));
+  metaSetsCache = setMeta;
+  return setMeta;
+}
+
+async function buildCardPool(minYear, setVoulu){
+  const setMeta = await chargerMetaSets();
 
   let lists = [];
   try{
@@ -471,11 +497,26 @@ async function buildCardPool(minYear){
     log('ℹ️ Cache local de cartes indisponible (' + e.message + ').');
   }
 
-  // Sets retenus après filtre d'époque, pour ne charger que ce qui sera réellement testé.
+  // Ciblage d'un set précis : par identifiant exact (« sv03.5 ») ou par nom approchant
+  // (« 151 »). Utile pour vérifier un set qu'on possède réellement plutôt qu'un tirage
+  // dispersé sur tout le catalogue — un taux global peut masquer un set entier qui échoue.
+  const q = (setVoulu || '').trim().toLowerCase();
+  const correspond = (id)=>{
+    if(!q) return true;
+    const m = setMeta[id];
+    return id.toLowerCase() === q || (m.name || '').toLowerCase().includes(q);
+  };
+
+  // Sets retenus après filtres, pour ne charger que ce qui sera réellement testé.
   const eligibles = Object.keys(setMeta).filter(id=>{
     const m = setMeta[id];
-    return m.official && (!minYear || (m.serieYear && m.serieYear >= minYear));
+    if(!correspond(id)) return false;
+    // Le filtre d'époque ne s'applique PAS quand un set est explicitement demandé :
+    // l'utilisateur sait ce qu'il veut tester, l'écarter sur un critère annexe serait
+    // déroutant (et donnerait un réservoir vide sans explication).
+    return m.official && (q || !minYear || (m.serieYear && m.serieYear >= minYear));
   });
+  if(q) log(`🎯 Set ciblé « ${setVoulu} » : ${eligibles.length} set(s) correspondant(s).`);
 
   const dejaEnCache = new Set(lists.map(l=>l.setId));
   const manquants = eligibles.filter(id => !dejaEnCache.has(id));
@@ -495,11 +536,12 @@ async function buildCardPool(minYear){
   for(const entry of lists){
     const meta = setMeta[entry.setId];
     if(!meta || !meta.official) continue;             // sans dénominateur, pas de vérité terrain
+    if(!correspond(entry.setId)) continue;
     // « Pokémon Pocket » : cartes du JEU MOBILE, sans existence physique. Elles ne seront
     // jamais scannées ni revendues, et sortaient à 0 % (mise en page d'écran, pas de carte
     // imprimée) — les garder tirait le taux global vers le bas sans rien représenter.
-    if(/pocket/i.test(meta.serieName || '')){ ecartesPocket += entry.list.length; continue; }
-    if(minYear && (!meta.serieYear || meta.serieYear < minYear)){ ecartesEpoque += entry.list.length; continue; }
+    if(!q && /pocket/i.test(meta.serieName || '')){ ecartesPocket += entry.list.length; continue; }
+    if(!q && minYear && (!meta.serieYear || meta.serieYear < minYear)){ ecartesEpoque += entry.list.length; continue; }
     for(const c of entry.list){
       // Seules les cartes au numéro purement numérique ont un « XXX/XXX » imprimé
       // comparable. Les promos (SWSH001, XY01…) sont écartées : les inclure ferait
@@ -513,10 +555,9 @@ async function buildCardPool(minYear){
   if(ecartesEpoque) log(`🗓️ ${ecartesEpoque} carte(s) écartées : série antérieure à ${minYear}.`);
   if(ecartesPocket) log(`📱 ${ecartesPocket} carte(s) « Pocket » écartées : jeu mobile, sans carte physique.`);
 
-  // Table des dénominateurs valides — construite sur TOUT le catalogue, pas seulement sur
-  // les sets filtrés : l'app dispose elle aussi de la table complète, restreindre ici
-  // fausserait la mesure en la rendant artificiellement discriminante.
-  validDenominators = new Set(Object.values(setMeta).map(m => String(m.official)).filter(Boolean));
+  // La table des dénominateurs est construite par chargerMetaSets, sur TOUT le catalogue :
+  // la restreindre aux sets filtrés la rendrait artificiellement discriminante, alors que
+  // l'app dispose bien de la table complète.
   log(`🔢 ${validDenominators.size} dénominateurs distincts connus (table de départage).`);
 
   return pool;
@@ -799,6 +840,45 @@ async function pipelineDetection(photo){
   return {carte: norm, score: res.score};
 }
 
+// =============================================================================
+// MODE « MES PHOTOS » — les vraies photos de l'utilisateur, vérité terrain automatique
+//
+// C'est le seul mode qui donne un taux ABSOLU crédible. Les deux autres partent des
+// illustrations officielles, limitées à 600 px de large : dans une photo simulée la carte
+// n'occupe qu'environ 560 px, alors qu'un capteur 1440×1920 en capture ~1150 — deux fois
+// plus de pixels sur les chiffres. Le banc synthétique est donc structurellement pessimiste,
+// et aucun réglage ne corrige ça puisque la source elle-même manque de définition.
+//
+// L'app nomme déjà chaque photo exportée « PKMN-{setId}-{numéro}-{horodatage}.jpg » : la
+// bonne réponse est dans le nom de fichier. Aucun étiquetage manuel, donc la mesure tient
+// à l'échelle — contrairement à des photos glanées ailleurs, qu'il faudrait annoter une par
+// une (sans parler des conditions d'utilisation des sites concernés).
+// =============================================================================
+async function lireZipPhotos(fichier, setMeta){
+  if(typeof JSZip === 'undefined') throw new Error('JSZip indisponible (pas de connexion ?)');
+  const zip = await JSZip.loadAsync(fichier);
+  const entrees = [];
+  const ignores = [];
+  for(const nom of Object.keys(zip.files)){
+    const f = zip.files[nom];
+    if(f.dir || !/\.(jpe?g|png|webp)$/i.test(nom)) continue;
+    // « PKMN-sv03.5-199-12345.jpg » : le set peut contenir des points, le numéro est le
+    // dernier champ avant l'horodatage — d'où la capture non gourmande sur le set.
+    const m = nom.replace(/^.*\//, '').match(/^PKMN-(.+?)-([0-9]+)-[0-9]+\./i);
+    if(!m){ ignores.push(nom); continue; }
+    const [, setId, numero] = m;
+    const meta = setMeta[setId];
+    if(!meta || !meta.official){ ignores.push(nom + ' (set inconnu : ' + setId + ')'); continue; }
+    entrees.push({
+      cardId: setId + '-' + numero, localId: String(parseInt(numero,10)),
+      official: String(meta.official), setId, setName: meta.name,
+      serieName: meta.serieName, serieYear: meta.serieYear,
+      blob: await f.async('blob'), fichier: nom
+    });
+  }
+  return {entrees, ignores};
+}
+
 let apercusMontres = 0;
 
 // Affiche la photo simulée, la carte redressée et la bande réellement lue. C'est le seul
@@ -822,16 +902,46 @@ function montrerApercu(card, photo, r){
     box.appendChild(sh);
   };
 
-  ajouter('photo simulée', photo, null);
+  if(photo) ajouter('photo simulée', photo, null);
   if(r.echec){
     ajouter('redressement', null, '❌ ' + r.echec);
   } else {
-    ajouter('carte redressée', r.carte, `score ${r.score != null ? r.score.toFixed(2) : '?'}`);
+    ajouter('carte redressée', r.carte,
+      r.via ? `${r.via}${r.taille ? ' · ' + r.taille : ''}` :
+              `score ${r.score != null ? r.score.toFixed(2) : '?'}`);
     // La bande de production, telle qu'elle sera réellement envoyée à l'OCR : c'est là
     // qu'on voit si le numéro y est, décentré, ou carrément absent.
     ajouter('bande lue (production)', cropVariant(r.carte, VARIANTS[0]), null);
   }
   $('apercus').appendChild(box);
+}
+
+// Prépare une photo réelle pour la lecture. Les photos exportées peuvent être de deux
+// natures : celles issues de la caméra en direct sont DÉJÀ redressées (l'app enregistre la
+// carte extraite, pas la vue brute), celles de l'import en masse sont des photos entières.
+// On tente donc la détection, et on retombe sur « l'image EST déjà la carte » si elle
+// échoue — plutôt que de compter un échec qui n'en est pas un.
+async function preparerPhotoReelle(blob){
+  const img = await new Promise((res, rej)=>{
+    const i = new Image();
+    i.onload = ()=> res(i);
+    i.onerror = ()=> rej(new Error('image illisible'));
+    i.src = URL.createObjectURL(blob);
+  });
+
+  const r = await pipelineDetection(img).catch(()=>({echec:'exception'}));
+  if(!r.echec) return {carte: r.carte, via: 'détectée', score: r.score};
+
+  // Repli : l'image est traitée comme une carte déjà redressée. On vérifie quand même son
+  // rapport de forme — une image qui ne ressemble pas du tout à une carte n'a rien à faire
+  // ici, et l'accepter fausserait le taux à la baisse pour une raison sans rapport.
+  const ratio = img.naturalHeight / img.naturalWidth, R = 88/63;
+  if(Math.abs(ratio - R)/R > 0.30) return {echec: 'ni carte détectée, ni proportion de carte'};
+  const W = 600, H = Math.round(W*R);
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  c.getContext('2d').drawImage(img, 0, 0, W, H);
+  return {carte: c, via: 'déjà redressée', taille: img.naturalWidth + '×' + img.naturalHeight};
 }
 
 function cropVariant(card, v){
@@ -956,7 +1066,21 @@ async function run(){
 
     const mode = $('cfg-mode').value;
     const minYear = parseInt($('cfg-era').value, 10) || 0;
-    const pool = await buildCardPool(minYear);
+    let pool;
+    if(mode === 'zip'){
+      const fichier = $('cfg-zip').files[0];
+      if(!fichier) throw new Error('choisis d\'abord une archive .zip exportée par l\'app');
+      // Les métadonnées de sets restent nécessaires : le nom de fichier donne le set et le
+      // numérateur, mais le DÉNOMINATEUR (total du set) vient du catalogue.
+      const setMeta = await chargerMetaSets();
+      $('status').textContent = '🔎 Lecture de l\'archive…';
+      const {entrees, ignores} = await lireZipPhotos(fichier, setMeta);
+      if(ignores.length) log(`⚠️ ${ignores.length} fichier(s) ignoré(s) (nom non reconnu) — ex : ${ignores[0]}`);
+      pool = entrees;
+      log(`📷 ${pool.length} photo(s) réelle(s) avec vérité terrain lue dans le nom de fichier.`);
+    } else {
+      pool = await buildCardPool(minYear, $('cfg-set').value);
+    }
     if(!pool.length) throw new Error('aucune carte exploitable trouvée');
     log('📚 Réservoir : ' + pool.length + ' cartes au numéro numérique, vérité terrain disponible' +
         (minYear ? ` (séries ${minYear}+ uniquement)` : ' (toutes époques)') + '.');
@@ -970,9 +1094,19 @@ async function run(){
     const interval = parseInt($('cfg-interval').value,10) || 10;
     const degrade = $('cfg-degrade').value;
     const sample = pool.sort(()=> Math.random()-0.5).slice(0, N);
-    log('🎲 Échantillon de ' + N + ' cartes tirées au hasard · mode « ' +
-        (mode === 'photo' ? 'photo simulée, pipeline complet' : 'illustration recadrée') +
-        ' » · dégradation « ' + degrade + ' » · adaptation toutes les ' + interval + ' cartes.');
+    // Cartes dont le numéro dépasse le total imprimé (166/165, 199/165…) : ce sont les
+    // illustrations rares, full arts et secrètes. Elles méritent d'être comptées à part —
+    // leur mise en page diffère (numéro sur fond illustré, pas sur bandeau uni) et c'est
+    // exactement le cas où l'on doute que la lecture tienne.
+    const horsNumerotation = sample.filter(c => parseInt(c.localId,10) > parseInt(c.official,10)).length;
+    if(horsNumerotation) log(`✨ ${horsNumerotation} carte(s) hors numérotation dans l'échantillon (full art, illustration rare, secrète).`);
+    const nomMode = {crop:'illustration recadrée', photo:'photo simulée, pipeline complet',
+                     zip:'mes photos réelles'}[mode] || mode;
+    log('🎲 Échantillon de ' + N + ' carte(s) · mode « ' + nomMode + ' »' +
+        // La dégradation ne s'applique pas à de vraies photos : elles portent déjà leurs
+        // propres défauts. L'afficher laisserait croire qu'on les abîme en plus.
+        (mode === 'zip' ? '' : ' · dégradation « ' + degrade + ' »') +
+        ' · adaptation toutes les ' + interval + ' cartes.');
     if(mode === 'photo'){
       log('   La carte est composée sur un fond avec perspective, éclairage et reflet, puis');
       log('   détectée et redressée comme en usage réel. Les échecs de DÉTECTION sont comptés');
@@ -988,7 +1122,18 @@ async function run(){
 
       let rendered;
       try{
-        if(mode === 'photo'){
+        if(mode === 'zip'){
+          const r = await preparerPhotoReelle(card.blob);
+          if(apercusMontres < 4){
+            apercusMontres++;
+            try{ montrerApercu(card, null, r); }catch(e){ log('⚠️ aperçu : ' + e.message); }
+          }
+          if(r.echec){
+            echecsDetection[r.echec] = (echecsDetection[r.echec] || 0) + 1;
+            continue;
+          }
+          rendered = r.carte;
+        } else if(mode === 'photo'){
           // Pipeline complet : photo simulée -> détection -> redressement. Un échec ici est
           // compté SÉPARÉMENT des échecs de lecture : ne pas trouver la carte et ne pas
           // lire son numéro sont deux problèmes distincts, qui appellent des correctifs
@@ -1163,6 +1308,20 @@ async function run(){
     if(worker){ worker.terminate(); worker = null; }
   }
 }
+
+// Le mode « mes photos » n'utilise ni tirage aléatoire, ni filtre d'époque, ni set ciblé,
+// ni dégradation : l'échantillon EST l'archive. Masquer ces réglages évite de laisser
+// croire qu'ils s'appliquent.
+function majFormulaireMode(){
+  const zip = $('cfg-mode').value === 'zip';
+  $('zip-zone').style.display = zip ? 'block' : 'none';
+  for(const id of ['cfg-degrade','cfg-era','cfg-set','cfg-count']){
+    const champ = $(id);
+    if(champ && champ.parentElement) champ.parentElement.style.opacity = zip ? '.4' : '1';
+  }
+}
+$('cfg-mode').addEventListener('change', majFormulaireMode);
+majFormulaireMode();
 
 $('btn-start').addEventListener('click', ()=>{ if(!running) run(); });
 $('btn-stop').addEventListener('click', ()=>{ stopRequested = true; });

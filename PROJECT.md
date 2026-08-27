@@ -1433,6 +1433,50 @@ entre deux passages, sans changement de code — c'est le modèle déjà en cach
 45 s constatées sur téléphone incluaient donc le téléchargement des 45 Mo. Avec U²-Netp à
 4,7 Mo, ce poste devient négligeable en plus du gain sur le calcul.
 
+### 4.51 Banc : pipeline complet, ciblage par set, et photos réelles
+Trois modes désormais, qui ne mesurent pas la même chose :
+
+- **illustration recadrée** — découpe à fractions fixes, suppose un redressement parfait.
+  Ne teste que la seconde moitié du pipeline (OCR + parsing). Rapide.
+- **photo simulée** — la carte est composée sur un fond texturé avec perspective, éclairage
+  inégal, reflet et ombre portée, puis la chaîne réelle tourne : détection Scanic →
+  `extractDocument` → découpe → OCR. Seul mode testant l'étape où se logeait l'hypothèse du
+  rognage par le bas.
+- **mes photos (.zip)** — les vraies photos de l'utilisateur, exportées par l'app.
+
+**Ciblage par set** (identifiant exact ou nom approchant) : un taux global peut masquer un
+set entier qui échoue. Le filtre d'époque est neutralisé quand un set est nommé — l'écarter
+sur un critère annexe donnerait un réservoir vide sans explication.
+
+**Cartes hors numérotation comptées à part** (numéro > total imprimé : `199/165`) : ce sont
+les full arts et illustrations rares, dont le numéro est sur fond illustré et non sur
+bandeau uni.
+
+**Résultat sur 96 cartes du set 151, pipeline complet** : détection 4 % d'échecs seulement.
+Lecture — production (gauche) **54,2 %**, pleine largeur 36-37 %. La bande gauche l'emporte
+nettement sur ce set de 2023, ce qui confirme que la pleine largeur **n'est pas meilleure en
+soi** : elle ne gagnait sur les échantillons mixtes que grâce aux cartes d'avant 2017.
+Échecs : 62 % sur les cartes hors numérotation contre 39 % sur les ordinaires.
+
+**Limite structurelle du banc synthétique, quantifiée** : l'illustration source TCGdex fait
+600×825 px ; dans une photo simulée la carte occupe ~560 px de large, alors qu'un capteur
+1440×1920 en capture ~1150 — **deux fois plus de pixels sur les chiffres**. Les textes OCR
+des échecs le confirment (vides ou charabia : `A 0X2`, `es Vou Supe`). Aucun réglage ne
+corrige ça, la source manque de définition. **Les valeurs absolues du banc synthétique sont
+donc un plancher, pas une prévision** ; seules les comparaisons entre variantes valent, la
+source étant identique pour toutes.
+
+**D'où le mode « mes photos »**, seul à donner un taux absolu crédible. L'app nomme déjà
+chaque photo exportée `PKMN-{setId}-{numéro}-{horodatage}.jpg` : **la vérité terrain est
+dans le nom de fichier**, donc aucun étiquetage manuel et la mesure tient à l'échelle.
+Écarté au passage : moissonner des annonces en ligne (conditions d'utilisation, photos
+appartenant aux vendeurs, et surtout un autre appareil que celui de l'utilisateur — donc un
+taux qui ne dirait rien de son usage réel). Double chemin géré : les photos de la caméra en
+direct sont déjà redressées (l'app enregistre la carte extraite), celles de l'import en
+masse sont des photos entières — la détection est tentée, avec repli sur « l'image est déjà
+la carte » plutôt qu'un échec qui n'en est pas un. Vérifié de bout en bout sur une archive
+au format réel.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
