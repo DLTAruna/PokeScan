@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PokéScan — empreinte perceptuelle vs embedding CNN</title>
+<style>
+  :root{
+    --bg:#0b0d13; --panel:#141821; --border:#242b3a; --text:#e6e9f0;
+    --muted:#8e97a9; --accent:#d4af37; --ok:#4ec27e; --ko:#e5484d; --info:#7fb2ef;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; padding:18px; background:var(--bg); color:var(--text);
+       font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:14px; line-height:1.5;}
+  h1{font-size:19px; margin:0 0 4px;}
+  h2{font-size:15px; margin:22px 0 8px;}
+  .sub{color:var(--muted); font-size:13px; margin:0 0 16px; max-width:820px;}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:12px;
+         padding:14px 16px; margin-bottom:14px;}
+  label{display:block; font-size:12px; color:var(--muted); margin-bottom:4px;}
+  select,input{background:#0e1119; color:var(--text); border:1px solid var(--border);
+               border-radius:8px; padding:7px 9px; font:inherit; width:100%;}
+  .row{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px;}
+  button{background:var(--accent); color:#1a1206; border:0; border-radius:9px;
+         padding:9px 15px; font:inherit; font-weight:700; cursor:pointer;}
+  button.ghost{background:transparent; color:var(--text); border:1px solid var(--border); font-weight:500;}
+  button:disabled{opacity:.5; cursor:default;}
+  #status{margin:12px 0; font-size:13px; color:var(--info); min-height:20px;}
+  pre#log{background:#080a0f; border:1px solid var(--border); border-radius:9px; padding:11px;
+          max-height:270px; overflow:auto; font-size:11.5px; white-space:pre-wrap; margin:0;}
+  table{width:100%; border-collapse:collapse; font-size:12.5px;}
+  th,td{text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:middle;}
+  th{color:var(--muted); font-weight:600; font-size:11.5px; text-transform:uppercase; letter-spacing:.4px;}
+  .ok{color:var(--ok);} .ko{color:var(--ko);} .mut{color:var(--muted);}
+  .score{display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px; margin-bottom:6px;}
+  .card{background:#0e1119; border:1px solid var(--border); border-radius:10px; padding:12px;}
+  .card .n{font-size:26px; font-weight:800; color:var(--accent); line-height:1.1;}
+  .card .l{font-size:11.5px; color:var(--muted); margin-top:3px;}
+  .vign{width:38px; height:53px; object-fit:cover; border-radius:4px; background:#000; display:block;}
+  .paire{display:flex; gap:5px; align-items:center;}
+  code{background:#0b0e14; padding:1px 5px; border-radius:4px; font-size:11.5px;}
+</style>
+</head>
+<body>
+
+<h1>Empreinte perceptuelle (dHash) vs embedding CNN</h1>
+<p class="sub">
+  Mesure sur les <b>photos réelles</b> de <code>photos-test/</code>, dont le nom porte la bonne
+  réponse (<code>PKMN-{set}-{numéro}-…</code>). Chaque photo passe par le pipeline de
+  l'application (détection Scanic → redressement → découpe de l'illustration), puis on cherche
+  la carte correspondante dans le set de référence par deux méthodes : l'empreinte
+  perceptuelle 64 bits utilisée aujourd'hui, et un embedding calculé par un réseau de neurones.
+  On compare le <b>rang 1</b> (la bonne carte est-elle la plus proche ?) et la <b>marge</b>
+  entre la bonne réponse et la meilleure des mauvaises — c'est la marge, plus que le taux
+  brut, qui dit si un seuil de décision est possible.
+</p>
+
+<div class="panel">
+  <div class="row">
+    <div>
+      <label>Modèle d'embedding</label>
+      <select id="cfg-modele">
+        <option value="Xenova/mobileclip_s0">MobileCLIP s0 — 11,3 Mo (conçu pour la recherche d'images)</option>
+        <option value="onnx-community/mobilenetv4_conv_small.e2400_r224_in1k">MobileNetV4 small — 3,7 Mo (logits de classification, pas un embedding)</option>
+        <option value="Xenova/mobilevit-small">MobileViT small — 6,0 Mo</option>
+        <option value="onnx-community/dinov2-small">DINOv2 small — 23,3 Mo (le plus lourd)</option>
+      </select>
+    </div>
+    <div>
+      <label>Set de référence</label>
+      <input type="text" id="cfg-set" value="sv03.5">
+    </div>
+    <div>
+      <label>Zone comparée</label>
+      <select id="cfg-zone">
+        <option value="illustration">Illustration seule (comme l'app)</option>
+        <option value="entiere">Carte entière</option>
+      </select>
+    </div>
+  </div>
+  <div style="margin-top:12px; display:flex; gap:9px; flex-wrap:wrap;">
+    <button id="btn-run">▶ Lancer la comparaison</button>
+    <button class="ghost" id="btn-stop" disabled>■ Arrêter</button>
+  </div>
+  <div id="status"></div>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0;">Résultats</h2>
+  <div class="score" id="scores"></div>
+  <p class="sub" id="verdict" style="margin:8px 0 0;"></p>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0;">Détail par photo</h2>
+  <table>
+    <thead><tr><th>Photo</th><th>Attendu</th><th>dHash</th><th>Écart</th><th>CNN</th><th>Similarité</th></tr></thead>
+    <tbody id="detail"></tbody>
+  </table>
+</div>
+
+<div class="panel">
+  <h2 style="margin-top:0;">Journal</h2>
+  <pre id="log"></pre>
+</div>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const log = m => { const el = $('log'); el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
+const statut = m => { $('status').textContent = m; };
+
+// Constantes reprises telles quelles de l'application : la comparaison n'a de sens que si
+// la zone découpée et l'empreinte sont EXACTEMENT celles du code en production.
+const ZONE_ILLUSTRATION = {x:0.07, y:0.11, w:0.86, h:0.43};
+const EXTRACT_LONG_EDGE = 1200;
+const CARD_RATIO = 88/63;
+const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+const TRANSFORMERS = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+
+let stop = false;
+
+// ---------------- Empreinte perceptuelle (identique à l'app) ----------------
+function dHashDepuisContexte(ctx, w, h){
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const gris = [];
+  for(let i = 0; i < w*h; i++) gris.push(0.299*d[i*4] + 0.587*d[i*4+1] + 0.114*d[i*4+2]);
+  let bits = 0n;
+  for(let y = 0; y < h; y++){
+    for(let x = 0; x < w-1; x++){
+      bits = (bits << 1n) | (gris[y*w+x] > gris[y*w+x+1] ? 1n : 0n);
+    }
+  }
+  return bits;
+}
+function hamming(a, b){
+  let x = a ^ b, n = 0;
+  while(x){ n += Number(x & 1n); x >>= 1n; }
+  return n;
+}
+function empreinte(source, zone){
+  const c = document.createElement('canvas');
+  c.width = 9; c.height = 8;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  const W = source.width, H = source.height;
+  if(zone) ctx.drawImage(source, W*zone.x, H*zone.y, W*zone.w, H*zone.h, 0, 0, 9, 8);
+  else ctx.drawImage(source, 0, 0, 9, 8);
+  return dHashDepuisContexte(ctx, 9, 8);
+}
+
+// ---------------- Embedding CNN ----------------
+// Le modèle tourne dans un worker : l'inférence WASM occupe le fil sur lequel elle tourne,
+// et bloquer l'interface pendant plusieurs centaines d'inférences la rendrait inutilisable
+// (impossible d'arrêter le test en cours de route, notamment).
+let embWorker = null, embSeq = 0;
+const embEnAttente = new Map();
+
+function demarrerWorkerEmbedding(modele){
+  if(embWorker){ embWorker.terminate(); embWorker = null; embEnAttente.clear(); }
+  const src = `
+    import { pipeline, env } from ${JSON.stringify(TRANSFORMERS)};
+    env.allowLocalModels = false;
+    let extracteur = null, pret = null;
+    async function ensure(){
+      if(pret) return pret;
+      // On laisse transformers.js choisir la variante quantifiée : c'est elle qui rend le
+      // téléchargement supportable sur téléphone, et la perte de précision est sans
+      // conséquence pour une comparaison par similarité.
+      pret = pipeline('image-feature-extraction', ${JSON.stringify(modele)}, { dtype: 'q8' })
+        .then(p => { extracteur = p; });
+      return pret;
+    }
+    self.onmessage = async (e)=>{
+      const { id, dataUrl } = e.data;
+      try{
+        const t0 = performance.now();
+        await ensure();
+        // pooling 'mean' + normalisation : deux vecteurs normalisés se comparent par simple
+        // produit scalaire, qui EST alors le cosinus — pas de division à refaire ensuite.
+        const sortie = await extracteur(dataUrl, { pool: true });
+        // Normalisation faite ICI et non via une option du pipeline : mesure a l'appui,
+        // les options passees a image-feature-extraction sont ignorees (norme relevee
+        // ~1200 au lieu de 1, produits scalaires a 1,5 million). Normaliser soi-meme
+        // supprime toute dependance au nom exact de l'option, et rend le produit scalaire
+        // egal au cosinus par construction.
+        let v = Float32Array.from(sortie.data);
+        // Certains modeles renvoient une carte de caracteristiques non reduite
+        // ([1, N, D]) : on la moyenne sur les jetons pour obtenir un vecteur unique.
+        const dims = sortie.dims || [];
+        if(dims.length === 3 && dims[1] > 1){
+          const [, n, d] = dims;
+          const moy = new Float32Array(d);
+          for(let t=0;t<n;t++) for(let k=0;k<d;k++) moy[k] += v[t*d+k];
+          for(let k=0;k<d;k++) moy[k] /= n;
+          v = moy;
+        }
+        let norme = 0;
+        for(let i=0;i<v.length;i++) norme += v[i]*v[i];
+        norme = Math.sqrt(norme) || 1;
+        for(let i=0;i<v.length;i++) v[i] /= norme;
+        postMessage({ id, ok:true, v, ms: Math.round(performance.now()-t0) }, [v.buffer]);
+      }catch(err){ postMessage({ id, ok:false, error:(err && err.message) || String(err) }); }
+    };
+  `;
+  embWorker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+  embWorker.onmessage = (e)=>{
+    const p = embEnAttente.get(e.data.id);
+    if(!p) return;
+    embEnAttente.delete(e.data.id);
+    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+  };
+  embWorker.onerror = (e)=>{
+    for(const p of embEnAttente.values()) p.reject(new Error('worker embedding : ' + (e.message||'chargement impossible')));
+    embEnAttente.clear();
+  };
+}
+
+function embedding(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const id = ++embSeq;
+    embEnAttente.set(id, {resolve, reject});
+    embWorker.postMessage({ id, dataUrl });
+  });
+}
+
+function cosinus(a, b){
+  let s = 0;
+  for(let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+}
+
+// ---------------- Découpe ----------------
+function versDataUrl(source, zone){
+  const c = document.createElement('canvas');
+  const W = source.width, H = source.height;
+  if(zone){
+    c.width = Math.round(W*zone.w); c.height = Math.round(H*zone.h);
+    c.getContext('2d').drawImage(source, W*zone.x, H*zone.y, W*zone.w, H*zone.h, 0, 0, c.width, c.height);
+  } else {
+    c.width = W; c.height = H;
+    c.getContext('2d').drawImage(source, 0, 0);
+  }
+  return c.toDataURL('image/jpeg', 0.9);
+}
+
+function chargerImage(src){
+  return new Promise((resolve, reject)=>{
+    const i = new Image();
+    i.crossOrigin = 'anonymous';
+    i.onload = ()=> resolve(i);
+    i.onerror = ()=> reject(new Error('image non chargée : ' + src.slice(0, 70)));
+    i.src = src;
+  });
+}
+
+// ---------------- Pipeline de l'app : détection + redressement ----------------
+let scanicMod = null, scanner = null;
+async function getScanner(){
+  if(scanner) return scanner;
+  if(!scanicMod) scanicMod = await import(SCANIC_MODULE);
+  const sc = new scanicMod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+  await sc.initialize();
+  scanner = sc;
+  return sc;
+}
+
+const DETECT_LONG_EDGE = 512;
+const MIN_SCORE = 0.35;
+
+async function redresser(photo){
+  const sc = await getScanner();
+
+  // Detection sur une reduction a 512 px, comme l'app : c'est la taille sur laquelle le
+  // modele a ete entraine, et lui donner la pleine resolution capteur ne l'ameliore pas.
+  // scanic.scan attend un ImageData, pas un element image.
+  const d = Math.min(1, DETECT_LONG_EDGE / Math.max(photo.width, photo.height));
+  const dw = Math.round(photo.width*d), dh = Math.round(photo.height*d);
+  const petit = document.createElement('canvas');
+  petit.width = dw; petit.height = dh;
+  const pctx = petit.getContext('2d', {willReadFrequently:true});
+  pctx.drawImage(photo, 0, 0, dw, dh);
+
+  let res = null;
+  try{ res = await sc.scan(pctx.getImageData(0, 0, dw, dh), { mode:'detect', detector:'ml' }); }catch(e){ return null; }
+  if(!res || !res.corners) return null;
+  if(res.score != null && res.score < MIN_SCORE) return null;
+
+  const c = res.corners;
+  const coins = {
+    tl:[c.topLeft.x/dw, c.topLeft.y/dh], tr:[c.topRight.x/dw, c.topRight.y/dh],
+    br:[c.bottomRight.x/dw, c.bottomRight.y/dh], bl:[c.bottomLeft.x/dw, c.bottomLeft.y/dh]
+  };
+
+  const MARGE = 0.04;
+  const mx = (coins.tl[0]+coins.tr[0]+coins.br[0]+coins.bl[0])/4;
+  const my = (coins.tl[1]+coins.tr[1]+coins.br[1]+coins.bl[1])/4;
+  const e = Math.min(1, EXTRACT_LONG_EDGE / Math.max(photo.width, photo.height));
+  const vw = Math.round(photo.width*e), vh = Math.round(photo.height*e);
+  const grow = (p)=>({x:(mx+(p[0]-mx)*(1+MARGE))*vw, y:(my+(p[1]-my)*(1+MARGE))*vh});
+
+  const frame = document.createElement('canvas');
+  frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(photo, 0, 0, vw, vh);
+
+  const ex = await scanicMod.extractDocument(frame, {
+    topLeft:grow(coins.tl), topRight:grow(coins.tr),
+    bottomRight:grow(coins.br), bottomLeft:grow(coins.bl)
+  }, {output:'canvas'});
+  if(!ex || !ex.success || !ex.output) return null;
+
+  const ratio = ex.output.height / ex.output.width;
+  const portrait = Math.abs(ratio - CARD_RATIO)/CARD_RATIO <= 0.25;
+  const paysage  = Math.abs(ratio - 1/CARD_RATIO)*CARD_RATIO <= 0.25;
+  if(!portrait && !paysage) return null;
+
+  if(paysage && !portrait){
+    const r = document.createElement('canvas');
+    r.width = ex.output.height; r.height = ex.output.width;
+    const c = r.getContext('2d');
+    c.translate(r.width/2, r.height/2); c.rotate(-Math.PI/2);
+    c.drawImage(ex.output, -ex.output.width/2, -ex.output.height/2);
+    return r;
+  }
+  return ex.output;
+}
+
+// ---------------- Liste des photos de test ----------------
+// Le serveur statique local expose l'index du dossier : on le lit plutôt que de coder en dur
+// une liste qui se périmerait au premier ajout de photo.
+async function listerPhotos(){
+  const res = await fetch('photos-test/');
+  if(!res.ok) throw new Error('dossier photos-test/ inaccessible (HTTP ' + res.status + ')');
+  const html = await res.text();
+  const noms = [...html.matchAll(/href="([^"]*PKMN-[^"]+\.(?:jpg|jpeg|png))"/gi)]
+    .map(m => decodeURIComponent(m[1].split('/').pop()));
+  return [...new Set(noms)];
+}
+
+function veriteTerrain(nom){
+  const m = nom.match(/^PKMN-([^-]+)-(\w+)-/i);
+  return m ? {set: m[1], numero: String(parseInt(m[2], 10))} : null;
+}
+
+// ---------------- Comparaison ----------------
+async function lancer(){
+  stop = false;
+  $('btn-run').disabled = true; $('btn-stop').disabled = false;
+  $('log').textContent = ''; $('detail').innerHTML = ''; $('scores').innerHTML = '';
+  $('verdict').textContent = '';
+
+  const modele = $('cfg-modele').value;
+  const setId = $('cfg-set').value.trim();
+  const zone = $('cfg-zone').value === 'illustration' ? ZONE_ILLUSTRATION : null;
+
+  try{
+    log('Modèle : ' + modele);
+    log('Set de référence : ' + setId + ' · zone comparée : ' + $('cfg-zone').value);
+
+    // --- Références ---
+    statut('Chargement de la liste des cartes du set…');
+    const setData = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId)).json();
+    const refs = (setData.cards || []).filter(c => c.image);
+    log(`Set « ${setData.name} » : ${refs.length} carte(s) avec illustration.`);
+    if(!refs.length) throw new Error('aucune carte illustrée dans ce set');
+
+    demarrerWorkerEmbedding(modele);
+
+    statut('Calcul des références (première inférence = téléchargement du modèle)…');
+    const base = [];
+    for(let i = 0; i < refs.length; i++){
+      if(stop) throw new Error('arrêté');
+      const r = refs[i];
+      try{
+        const img = await chargerImage(r.image + '/high.webp');
+        const url = versDataUrl(img, zone);
+        const e = await embedding(url);
+        base.push({numero: String(parseInt(r.localId, 10)), localId: r.localId, image: r.image,
+                   hash: empreinte(img, zone), vec: e.v});
+        if(i === 0) log(`Première inférence : ${e.ms} ms (modèle téléchargé et initialisé).`);
+      }catch(err){ log(`  ⚠️ référence #${r.localId} ignorée : ${err.message}`); }
+      if(i % 10 === 0) statut(`Références : ${i+1}/${refs.length}…`);
+    }
+    log(`${base.length} référence(s) indexée(s).`);
+
+    // --- Photos de test ---
+    statut('Lecture des photos de test…');
+    const noms = await listerPhotos();
+    log(`${noms.length} photo(s) réelle(s) trouvée(s).`);
+    if(!noms.length) throw new Error('aucune photo dans photos-test/');
+
+    let okHash = 0, okCnn = 0, traitees = 0, echecs = 0;
+    const margesHash = [], margesCnn = [];
+
+    for(const nom of noms){
+      if(stop) break;
+      const vt = veriteTerrain(nom);
+      if(!vt){ log(`  ⚠️ ${nom} : nom non exploitable`); continue; }
+      statut(`Photo ${traitees+1}/${noms.length} — ${nom}`);
+
+      let carte = null;
+      try{
+        const photo = await chargerImage('photos-test/' + encodeURIComponent(nom));
+        carte = await redresser(photo);
+      }catch(err){ log(`  ⚠️ ${nom} : ${err.message}`); }
+      if(!carte){ echecs++; log(`  ⚠️ ${nom} : carte non détectée/redressée`); continue; }
+
+      const h = empreinte(carte, zone);
+      const v = (await embedding(versDataUrl(carte, zone))).v;
+
+      // Classement par les deux méthodes
+      const parHash = base.map(b => ({b, d: hamming(h, b.hash)})).sort((x,y)=> x.d - y.d);
+      const parCnn  = base.map(b => ({b, s: cosinus(v, b.vec)})).sort((x,y)=> y.s - x.s);
+
+      const bonHash = parHash[0].b.numero === vt.numero;
+      const bonCnn  = parCnn[0].b.numero === vt.numero;
+      if(bonHash) okHash++;
+      if(bonCnn) okCnn++;
+      traitees++;
+
+      // Marge : écart entre la bonne carte et la meilleure des AUTRES. C'est elle qui
+      // détermine si un seuil de décision automatique est possible — un bon taux de rang 1
+      // avec une marge nulle reste inexploitable en production.
+      const vraiH = parHash.find(x => x.b.numero === vt.numero);
+      const autreH = parHash.find(x => x.b.numero !== vt.numero);
+      if(vraiH && autreH) margesHash.push(autreH.d - vraiH.d);
+      const vraiC = parCnn.find(x => x.b.numero === vt.numero);
+      const autreC = parCnn.find(x => x.b.numero !== vt.numero);
+      if(vraiC && autreC) margesCnn.push(vraiC.s - autreC.s);
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="mut">${nom.replace(/^PKMN-/, '').replace(/\.(jpg|jpeg|png)$/i, '')}</td>
+        <td><code>#${vt.numero}</code></td>
+        <td class="${bonHash?'ok':'ko'}">${bonHash?'✓':'✗'} #${parHash[0].b.numero}</td>
+        <td class="mut">${parHash[0].d} bits${vraiH?` <span class="mut">(vraie : ${vraiH.d})</span>`:''}</td>
+        <td class="${bonCnn?'ok':'ko'}">${bonCnn?'✓':'✗'} #${parCnn[0].b.numero}</td>
+        <td class="mut">${parCnn[0].s.toFixed(3)}${vraiC?` <span class="mut">(vraie : ${vraiC.s.toFixed(3)})</span>`:''}</td>`;
+      $('detail').appendChild(tr);
+      rendreScores(okHash, okCnn, traitees, echecs, margesHash, margesCnn);
+    }
+
+    rendreScores(okHash, okCnn, traitees, echecs, margesHash, margesCnn, true);
+    statut(`Terminé — ${traitees} photo(s) comparée(s)${echecs?`, ${echecs} non exploitable(s)`:''}.`);
+    log('Terminé.');
+  }catch(err){
+    statut('⚠️ ' + err.message);
+    log('ERREUR : ' + err.message);
+  }finally{
+    $('btn-run').disabled = false; $('btn-stop').disabled = true;
+  }
+}
+
+function mediane(a){
+  if(!a.length) return 0;
+  const t = a.slice().sort((x,y)=> x-y);
+  return t[Math.floor(t.length/2)];
+}
+
+function rendreScores(okHash, okCnn, n, echecs, mh, mc, fini){
+  if(!n) return;
+  const pctH = (100*okHash/n).toFixed(1), pctC = (100*okCnn/n).toFixed(1);
+  $('scores').innerHTML = `
+    <div class="card"><div class="n">${pctH} %</div><div class="l">dHash — rang 1 (${okHash}/${n})</div></div>
+    <div class="card"><div class="n">${pctC} %</div><div class="l">CNN — rang 1 (${okCnn}/${n})</div></div>
+    <div class="card"><div class="n">${mediane(mh)}</div><div class="l">dHash — marge médiane (bits, plus haut = mieux)</div></div>
+    <div class="card"><div class="n">${mediane(mc).toFixed(3)}</div><div class="l">CNN — marge médiane (cosinus, plus haut = mieux)</div></div>
+    <div class="card"><div class="n">${echecs}</div><div class="l">Photos non exploitables</div></div>`;
+
+  if(!fini) return;
+  const ecart = okCnn - okHash;
+  let verdict;
+  if(ecart > 0){
+    verdict = `Le CNN identifie <b>${ecart} carte(s) de plus</b> sur ${n}. `;
+  } else if(ecart < 0){
+    verdict = `Le CNN identifie <b>${-ecart} carte(s) de moins</b> que l'empreinte actuelle. `;
+  } else {
+    verdict = `Les deux méthodes identifient le même nombre de cartes. `;
+  }
+  verdict += `Regarde surtout les marges : une marge médiane faible signifie que les deux
+    meilleures réponses sont presque à égalité, donc qu'aucun seuil ne permettra de décider
+    automatiquement — c'est exactement ce qui bloquait l'empreinte 64 bits (distributions
+    correctes 11–33 bits et fausses 30–33 bits, qui se chevauchent). Un gain net demande à
+    la fois plus de rang 1 ET une marge nettement plus large.`;
+  $('verdict').innerHTML = verdict;
+}
+
+$('btn-run').addEventListener('click', lancer);
+$('btn-stop').addEventListener('click', ()=>{ stop = true; statut('Arrêt demandé…'); });
+</script>
+</body>
+</html>
