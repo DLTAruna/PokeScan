@@ -1477,6 +1477,54 @@ masse sont des photos entières — la détection est tentée, avec repli sur «
 la carte » plutôt qu'un échec qui n'en est pas un. Vérifié de bout en bout sur une archive
 au format réel.
 
+### 4.52 Photos réelles : deux bugs que trois campagnes synthétiques n'avaient pas vus
+31 photos prises au téléphone (4080×3072, set 151, dont 21 cartes hors numérotation),
+collectées via `capture-server.js`. Elles ont révélé deux défauts du parsing invisibles
+jusque-là — et une hypothèse fausse de ma part.
+
+**Hypothèse invalidée** : j'attribuais le faible taux du banc synthétique à la résolution
+(source TCGdex à 600 px contre ~1150 px sur capteur réel). Les vraies photos, bien plus
+définies, ont donné **le même taux** (51,6 % contre 54,2 %). La résolution n'était pas la
+cause.
+
+**Bug 1 — les cartes secrètes étaient systématiquement rejetées.** Le repli exigeait
+`numérateur <= dénominateur`, or les full arts et illustrations rares sont numérotées
+au-delà du total imprimé (`206/165`, `199/165`). Dès que l'OCR perdait le « / » — fréquent —
+elles étaient écartées alors que le numéro était CORRECTEMENT lu (`206165`, `173165`
+présents dans le texte). D'où 12 échecs sur 21 cartes hors numérotation contre 3 sur 10
+ordinaires. Ce sont précisément les cartes qui ont de la valeur à la revente. Plafond porté
+à 1,5× le dénominateur : au-delà ce n'est plus une carte secrète mais un découpage
+arbitraire.
+
+**Bug 2 — un bloc de 6 chiffres EST le numéro** (idée de l'utilisateur, étendue). Le format
+imprimé est fixe : trois chiffres de chaque côté, zéros compris. Le découpage par longueur
+rejetait en bloc les runs de 7-8 chiffres (`1830165` pour 183/165 : « 4+3 » et « 5+2 » sont
+tous deux hors format, donc aucune combinaison retenue). Prendre les **trois premiers et les
+trois derniers** récupère ces cas, l'OCR insérant son bruit au milieu. Placé AVANT le
+découpage générique pour arriver en tête des candidats — l'app ne retient que le premier.
+
+**Résultat mesuré sur les mêmes 31 photos :**
+
+| | avant | après |
+|---|---|---|
+| taux de lecture | 51,6 % | **71,0 %** |
+| échecs sur full arts | 12/21 | **6/21** |
+| faux positifs | 12,9 % | 9,7 % |
+
+Les 9 échecs restants se répartissent en deux familles : l'OCR ne lit rien d'exploitable
+(6 cas — prise de vue, pas parsing) et un chiffre est perdu (3 cas : `194/165` lu `19/16S`),
+ces derniers produisant des faux positifs plausibles, le cas le plus grave.
+
+**Défaut du banc découvert au passage, et le plus dangereux de la série** : deux runs
+post-correctif ont donné des chiffres RIGOUREUSEMENT identiques à ceux d'avant, alors que le
+correctif était vérifié en isolation. Le banc lisait une copie de `index.html` **mise en
+cache par le navigateur** — journal annonçant 4862 caractères de parsing là où le fichier en
+contient 6967. Toute la logique d'extraction (« tester le vrai code, pas une copie ») était
+annulée en silence. Pas d'erreur, pas d'alerte, juste des chiffres plausibles et faux : sans
+le détail des textes OCR, qui montraient `206165` toujours non lu — impossible après le
+correctif — j'aurais conclu que mes corrections ne servaient à rien. Corrigé par
+`?nocache=` + `cache:'no-store'`.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées

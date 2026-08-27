@@ -348,7 +348,12 @@ function log(msg){
 // Récupération de la logique de parsing réelle depuis index.html
 // ---------------------------------------------------------------------------
 async function loadParsingSource(){
-  const res = await fetch('index.html');
+  // Anti-cache OBLIGATOIRE, pas une précaution : sans ça le navigateur ressert la copie
+  // qu'il a en mémoire, et le banc mesure une version périmée du parsing — exactement ce
+  // que l'extraction depuis index.html était censée empêcher. Constaté en vrai : deux runs
+  // rigoureusement identiques après une correction pourtant vérifiée en isolation, le
+  // journal annonçant 4862 caractères là où le fichier en contenait 6967.
+  const res = await fetch('index.html?nocache=' + Date.now(), {cache:'no-store'});
   if(!res.ok) throw new Error('index.html introuvable (HTTP '+res.status+')');
   const html = await res.text();
   const a = html.indexOf('const LOOKALIKES =');
@@ -866,9 +871,19 @@ async function lireZipPhotos(fichier, setMeta){
     // dernier champ avant l'horodatage — d'où la capture non gourmande sur le set.
     const m = nom.replace(/^.*\//, '').match(/^PKMN-(.+?)-([0-9]+)-[0-9]+\./i);
     if(!m){ ignores.push(nom); continue; }
-    const [, setId, numero] = m;
-    const meta = setMeta[setId];
-    if(!meta || !meta.official){ ignores.push(nom + ' (set inconnu : ' + setId + ')'); continue; }
+    const [, setSaisi, numero] = m;
+    // Le champ « set » de la page de capture accepte aussi bien l'identifiant TCGdex
+    // (« sv03.5 ») que le NOM du set (« 151 ») — c'est ce dernier qu'on lit sur la carte,
+    // donc c'est celui qu'on saisit naturellement. On résout les deux, sinon toutes les
+    // photos partiraient en « set inconnu » pour une raison purement cosmétique.
+    let setId = setMeta[setSaisi] ? setSaisi : null;
+    if(!setId){
+      const q = setSaisi.toLowerCase();
+      setId = Object.keys(setMeta).find(id => (setMeta[id].name || '').toLowerCase() === q)
+           || Object.keys(setMeta).find(id => (setMeta[id].name || '').toLowerCase().includes(q));
+    }
+    const meta = setId ? setMeta[setId] : null;
+    if(!meta || !meta.official){ ignores.push(nom + ' (set inconnu : ' + setSaisi + ')'); continue; }
     entrees.push({
       cardId: setId + '-' + numero, localId: String(parseInt(numero,10)),
       official: String(meta.official), setId, setName: meta.name,

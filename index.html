@@ -1245,12 +1245,40 @@ function getVisionWorker(){
             // ressemble pas à une année, et un numéro imprimé en quatre chiffres collés
             // commençant par 19 ou 20 n'existe pas dans le format XXX/XXX.
             if(/^(19|20)\\d\\d$/.test(run)) continue;
+
+            // Format imprimé FIXE : trois chiffres de chaque côté, zéros de tête compris
+            // (« 007/165 », « 206/165 »). Un bloc de 6 chiffres dans cette bande est donc
+            // presque certainement le numéro, séparateur perdu — et pour 7 ou 8 chiffres,
+            // l'OCR a inséré du bruit AU MILIEU (constaté sur photo réelle : « 1830165 »
+            // pour 183/165). Prendre les trois premiers et les trois derniers récupère ces
+            // cas, que le découpage par longueur rejetait en bloc : « 4+3 » et « 5+2 » sont
+            // tous deux hors format, donc aucune combinaison n'était retenue.
+            // Placé AVANT le découpage générique pour que cette lecture, la plus fiable,
+            // arrive en tête des candidats.
+            if(run.length >= 6 && run.length <= 8){
+              const number = run.slice(0, 3).replace(/^0+(?=\\d)/,'');
+              const denominator = run.slice(-3).replace(/^0+(?=\\d)/,'');
+              if(Number(denominator) >= 10 && Number(number) > 0) out.push({number, denominator});
+            }
+
             for(const denomLen of [3,2]){
               const numLen = run.length - denomLen;
               if(numLen < 1 || numLen > 3) continue;
               const number = run.slice(0, numLen).replace(/^0+(?=\\d)/,'');
               const denominator = run.slice(numLen).replace(/^0+(?=\\d)/,'');
-              if(Number(denominator) >= 10 && Number(number) > 0 && Number(number) <= Number(denominator)){
+              // Le numérateur PEUT dépasser le dénominateur : les cartes secrètes, full
+              // arts et illustrations rares sont numérotées au-delà du total imprimé
+              // (206/165, 199/165). L'ancienne règle « numérateur <= dénominateur » les
+              // rejetait donc systématiquement dès que l'OCR perdait le « / » — mesuré sur
+              // 31 photos réelles : 12 échecs sur 21 cartes hors numérotation contre 3 sur
+              // 10 ordinaires, alors que le numéro était CORRECTEMENT lu (« 206165 »,
+              // « 173165 » présents dans le texte OCR mais écartés).
+              // Ce sont précisément les cartes qui ont de la valeur à la revente.
+              // Plafond à 1,5x plutôt qu'aucune borne : au-delà, ce n'est plus une carte
+              // secrète mais un découpage arbitraire de chiffres. Les années de copyright,
+              // elles, sont déjà écartées en amont par leur motif.
+              if(Number(denominator) >= 10 && Number(number) > 0 &&
+                 Number(number) <= Number(denominator) * 1.5){
                 out.push({number, denominator});
               }
             }
