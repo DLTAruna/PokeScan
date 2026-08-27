@@ -619,6 +619,7 @@
       <div class="hint" id="capture-progress"></div>
       <div class="hint diag-controls" style="margin-top:8px;">
         <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
+        <button class="btn-ghost btn-sm" id="btn-diag-share" style="margin-left:6px; display:none;">📤 Partager</button>
         <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
         <span id="diag-count" style="margin-left:8px;"></span>
         <label style="margin-left:10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
@@ -2873,6 +2874,23 @@ $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
 $('btn-capture-frame').addEventListener('click', ()=> captureFrame());
 $('btn-diag-copy').addEventListener('click', copyDiagReport);
+
+// Partage natif : sur téléphone, un appui envoie le diagnostic par le moyen qu'on veut
+// (messagerie, courriel, notes) sans passer par un presse-papier qu'il faut ensuite coller
+// ailleurs — et sans dépendre du relais réseau, qui peut être en panne précisément quand on
+// a besoin du diagnostic. Le bouton n'apparaît que si l'appareil sait partager du texte.
+if(navigator.share){
+  $('btn-diag-share').style.display = 'inline-block';
+  $('btn-diag-share').addEventListener('click', async ()=>{
+    try{
+      await navigator.share({title:'Diagnostic PokéScan', text: buildDiagReport()});
+    }catch(e){
+      // Un partage annulé par l'utilisateur lève aussi : on ne le signale pas comme une
+      // panne, seulement une vraie erreur.
+      if(e && e.name !== 'AbortError') toast('⚠️ Partage impossible : ' + e.message);
+    }
+  });
+}
 $('btn-diag-show').addEventListener('click', ()=>{
   const v = $('diag-view');
   if(v.style.display === 'none'){ v.textContent = buildDiagReport(); v.style.display = 'block'; }
@@ -3277,22 +3295,60 @@ function getDiagDeviceId(){
 // qui échouerait pour la même raison probable, qui rappellerait diagPush... boucle
 // infinie) : l'entrée d'échec est ajoutée directement à diagLog, et un indicateur
 // s'affiche juste à côté de la case, visible sans même ouvrir le diagnostic.
+// Envoi GROUPÉ, pas une requête par observation. L'ancienne version postait à chaque
+// tentative : sur une session de 30 cartes, plus de cent requêtes, dont chacune fait lire
+// PUIS réécrire le gist entier côté serveur. C'est lent, ça se télescope (deux écritures
+// concurrentes se perdent mutuellement), et c'est la cause la plus probable des HTTP 502
+// constatés en usage réel.
+const diagEnAttente = [];
+let diagFlushTimer = null;
+const DIAG_FLUSH_MS = 4000;     // fenêtre de regroupement
+const DIAG_FLUSH_TAILLE = 25;   // ou dès que le lot est plein
+
 function sendDiagRemote(entry){
   if(!diagRemoteEnabled) return;
-  const statusEl = $('diag-remote-status');
-  fetch('/api/log', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({device: getDiagDeviceId(), ...entry})
-  }).then(res => {
-    if(!res.ok) throw new Error('HTTP ' + res.status);
-    if(statusEl) statusEl.textContent = '✅ envoyé ' + new Date().toLocaleTimeString();
-  }).catch(err => {
-    if(statusEl) statusEl.textContent = '⚠️ échec d\'envoi (' + err.message + ')';
-    diagLog.push({k:'err', t:Date.now(), msg:'diagnostic distant : échec envoi (' + err.message + ')'});
-    if(diagLog.length > DIAG_MAX) diagLog.shift();
-  });
+  diagEnAttente.push({device: getDiagDeviceId(), ...entry});
+  if(diagEnAttente.length >= DIAG_FLUSH_TAILLE){ viderFileDiag(); return; }
+  if(!diagFlushTimer) diagFlushTimer = setTimeout(viderFileDiag, DIAG_FLUSH_MS);
 }
+
+async function viderFileDiag(){
+  clearTimeout(diagFlushTimer); diagFlushTimer = null;
+  if(!diagEnAttente.length) return;
+  const lot = diagEnAttente.splice(0, diagEnAttente.length);
+  const statusEl = $('diag-remote-status');
+  try{
+    const res = await fetch('/api/log', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({entries: lot})
+    });
+    // Le corps porte la cause RÉELLE (message GitHub renvoyé par api/log.js). L'ancienne
+    // version ne gardait que le code HTTP : un « 502 » ne dit pas si le jeton est invalide,
+    // expiré, sans le bon droit, si l'identifiant de gist est faux, ou si c'est une limite
+    // de taux — donc la panne restait indiagnosticable, ce qui est précisément arrivé.
+    if(!res.ok){
+      let detail = '';
+      try{
+        const d = await res.json();
+        detail = [d.error, d.github && String(d.github).slice(0,200)].filter(Boolean).join(' — ');
+      }catch(e){ detail = await res.text().catch(()=>''); }
+      throw new Error('HTTP ' + res.status + (detail ? ' : ' + detail : ''));
+    }
+    if(statusEl) statusEl.textContent = `✅ ${lot.length} envoyée(s) ${new Date().toLocaleTimeString()}`;
+  }catch(err){
+    if(statusEl) statusEl.textContent = '⚠️ ' + err.message;
+    // Consigné en local UNIQUEMENT (jamais via diagPush, qui rappellerait sendDiagRemote et
+    // boucherait indéfiniment si la panne est persistante).
+    diagLog.push({k:'err', t:Date.now(), msg:'diagnostic distant : ' + err.message});
+    if(diagLog.length > DIAG_MAX){ diagLog.shift(); diagTronquees++; }
+  }
+}
+
+// Reste du lot envoyé quand on quitte ou masque la page : sans ça, les dernières
+// observations d'une session — souvent les plus intéressantes — seraient perdues.
+document.addEventListener('visibilitychange', ()=>{ if(document.hidden) viderFileDiag(); });
+window.addEventListener('pagehide', viderFileDiag);
 
 // Instant du démarrage caméra, pour dater chaque tentative DANS la session plutôt qu'en
 // absolu — voir camSessionInstrumentation ci-dessous.

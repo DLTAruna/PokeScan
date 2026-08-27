@@ -30,13 +30,21 @@ export default async function handler(req, res) {
       if (typeof body === 'string') {
         try { body = JSON.parse(body); } catch { body = { raw: body }; }
       }
-      const entry = { at: new Date().toISOString(), ...body };
+      // Lot d'observations, ou observation unique (ancien format, conservé pour ne pas
+      // casser un client non rechargé). Le regroupement côté client existe parce qu'une
+      // requête par observation faisait lire PUIS réécrire le gist entier à chaque fois :
+      // plus de cent allers-retours par session de scan, avec écritures concurrentes qui se
+      // perdaient mutuellement — la cause la plus probable des HTTP 502 observés.
+      const at = new Date().toISOString();
+      const entries = Array.isArray(body && body.entries)
+        ? body.entries.map((e) => ({ at, ...e }))
+        : [{ at, ...body }];
 
       const getRes = await fetch(`https://api.github.com/gists/${GIST_ID}`, { headers: ghHeaders });
       if (!getRes.ok) { res.status(502).json({ error: 'lecture gist échouée', status: getRes.status, github: await getRes.text() }); return; }
       const gist = await getRes.json();
       const prev = (gist.files && gist.files[FILENAME] && gist.files[FILENAME].content) || '';
-      const lines = (prev ? prev.split('\n') : []).concat(JSON.stringify(entry));
+      const lines = (prev ? prev.split('\n') : []).concat(entries.map((e) => JSON.stringify(e)));
       const trimmed = lines.slice(-MAX_LINES).join('\n');
 
       const patchRes = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
@@ -50,7 +58,7 @@ export default async function handler(req, res) {
       // invérifiable sans ça, comme ça vient d'arriver.
       if (!patchRes.ok) { res.status(502).json({ error: 'écriture gist échouée', status: patchRes.status, github: await patchRes.text() }); return; }
 
-      res.status(200).json({ ok: true });
+      res.status(200).json({ ok: true, recues: entries.length });
       return;
     }
 
