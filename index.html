@@ -508,8 +508,8 @@
   .cv-diorama{
     position:absolute; pointer-events:none; opacity:0;
     transition:opacity .35s ease; overflow:hidden;
-    box-shadow:inset 0 0 22px rgba(0,0,0,.55);
-    transform:translateZ(-16px);
+    box-shadow:inset 0 0 30px rgba(0,0,0,.6);
+    transform:translateZ(-26px);
   }
   .cv-stage.diorama .cv-diorama{opacity:1;}
   .cv-diorama canvas{width:100%; height:100%; display:block;}
@@ -4685,8 +4685,18 @@ async function segCalculerMasque(cardId, imageBase, onProgres){
 // sensation d'incliner une vraie carte brillante sous une lampe. Sur un appareil sans
 // capteur (ordinateur), le même effet suit la souris : le code de rendu est commun, seule
 // la source de l'angle change.
-const CV_MAX_TILT = 18;      // degrés de rotation à l'inclinaison maximale prise en compte
+// Amplitude portée de 18 à 26° : retour de test, « j'aimerais que ça ressorte encore plus ».
+// Au-delà, la carte se déforme trop en perspective et le décor rebouché commence à se voir
+// sur les bords du sujet.
+const CV_MAX_TILT = 26;      // degrés de rotation à l'inclinaison maximale prise en compte
 const CV_SENSOR_RANGE = 26;  // amplitude d'inclinaison réelle (deg) correspondant au max
+
+// Inclinaison au doigt, en plus du capteur. Le capteur ne couvre qu'une petite plage autour
+// de la position de tenue (on ne retourne pas son téléphone pour regarder une carte), alors
+// que le doigt permet d'aller jusqu'aux angles vifs — là où le relief est le plus lisible.
+// Les deux se COMBINENT : le doigt fixe une base, le capteur travaille en écart autour.
+let cvBaseRX = 0, cvBaseRY = 0;
+let cvTiltDrag = null;
 let cvZoom = 1, cvPanX = 0, cvPanY = 0;
 let cvTiltEnabled = true;
 // Préférence conservée : l'effet peut gêner (lisibilité, sensibilité au mouvement, ou
@@ -4772,20 +4782,28 @@ function cvApplyTransform(){
 // posé devant la carte. C'est la correction du défaut constaté en test — un translate 2D
 // faisait glisser une copie sur l'image, ce qui donne une impression de vision double au
 // lieu d'une impression de relief.
-const CV_RELIEF_Z = 34;   // px de hauteur au-dessus de la carte
+// Hauteur portée de 34 à 62 px sur retour de test (« j'aimerais que ça ressorte encore
+// plus »). C'est le réglage qui pèse le plus sur l'intensité perçue, bien avant l'amplitude
+// de rotation. Limite : au-delà, le décor rebouché se découvre trop autour du sujet aux
+// angles vifs, et les défauts de découpe deviennent visibles.
+const CV_RELIEF_Z = 62;     // px de hauteur au-dessus de la carte
+// L'enfoncement de la fenêtre d'illustration (diorama) est défini côté CSS, dans
+// `.cv-diorama` : une seule source de vérité, pas une constante JS qui divergerait.
 function cvMajRelief(){
   const sub = $('cv-subject');
   if(!sub || !cvReliefPret) return;
   const nx = cvCurRY / CV_MAX_TILT, ny = cvCurRX / CV_MAX_TILT;
   // Le léger agrandissement compense la perspective (un objet plus proche paraît plus
   // grand) et évite qu'un bord de la carte apparaisse derrière le sujet aux angles vifs.
-  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(1.03)`;
+  sub.style.transform = `translateZ(${CV_RELIEF_Z}px) scale(1.04)`;
 
   // Ombre portée du sujet SUR la carte, décalée à l'opposé de l'inclinaison : c'est elle
   // qui indique la hauteur. Sans ombre, le sujet flotte sans distance lisible — c'est le
   // détail qui fait basculer la perception de « calque décalé » à « objet devant ».
-  const ox = (-nx * 16).toFixed(1), oy = (ny * 16).toFixed(1);
-  sub.style.filter = `blur(0.4px) drop-shadow(${ox}px ${oy}px 12px rgba(0,0,0,.55))`;
+  // Décalage et étalement suivent la hauteur : une ombre trop serrée pour l'élévation
+  // affichée trahirait immédiatement l'illusion.
+  const ox = (-nx * 26).toFixed(1), oy = (ny * 26).toFixed(1);
+  sub.style.filter = `blur(0.4px) drop-shadow(${ox}px ${oy}px 18px rgba(0,0,0,.6))`;
 }
 
 // Rebouche la zone du sujet dans le décor. INDISPENSABLE : sans ça le Pokémon reste visible
@@ -4959,13 +4977,16 @@ function cvHandleOrientation(e){
   if(!cvNeutral) cvNeutral = {beta: e.beta, gamma: e.gamma};
   const dBeta  = e.beta  - cvNeutral.beta;
   const dGamma = e.gamma - cvNeutral.gamma;
-  cvTargetRX = cvClampTilt(-(dBeta  / CV_SENSOR_RANGE) * CV_MAX_TILT);
-  cvTargetRY = cvClampTilt( (dGamma / CV_SENSOR_RANGE) * CV_MAX_TILT);
+  // Le capteur travaille EN ÉCART autour de la base posée au doigt : les deux modes se
+  // complètent au lieu de se disputer la commande.
+  cvTargetRX = cvClampTilt(cvBaseRX - (dBeta  / CV_SENSOR_RANGE) * CV_MAX_TILT);
+  cvTargetRY = cvClampTilt(cvBaseRY + (dGamma / CV_SENSOR_RANGE) * CV_MAX_TILT);
 }
 
-// Repli ordinateur : même rendu, angle dérivé de la position du curseur.
+// Repli ordinateur : même rendu, angle dérivé de la position du curseur. Suspendu pendant
+// un glissé, sinon les deux commandes se disputeraient l'angle à chaque mouvement.
 function cvHandlePointer(e){
-  if(!cvTiltEnabled) return;
+  if(!cvTiltEnabled || cvTiltDrag) return;
   const nx = (e.clientX / window.innerWidth  - 0.5) * 2;
   const ny = (e.clientY / window.innerHeight - 0.5) * 2;
   cvTargetRY = cvClampTilt(nx * CV_MAX_TILT);
@@ -5026,8 +5047,9 @@ function openCardViewer(imageBase, label, cardId){
   $('cv-title').textContent = label || '';
   cvZoom = 1; cvPanX = 0; cvPanY = 0;
   cvTargetRX = cvTargetRY = cvCurRX = cvCurRY = 0;
+  cvBaseRX = cvBaseRY = 0; cvTiltDrag = null;
   $('cv-zoom-level').textContent = '100 %';
-  $('cv-hint').textContent = 'Incline le téléphone pour faire jouer la lumière · pince pour zoomer';
+  $('cv-hint').textContent = 'Fais glisser un doigt pour incliner · incline le téléphone · pince pour zoomer';
   v.classList.add('open');
 
   // Effet neutralisé le temps de connaître la rareté : mieux vaut l'activer avec un léger
@@ -5121,14 +5143,37 @@ $('card-viewer').addEventListener('wheel', (e)=>{
   cvSetZoom(cvZoom + (e.deltaY < 0 ? 0.25 : -0.25));
 }, {passive:false});
 
+// Répartition des gestes, sans ambiguïté possible :
+//   2 doigts            -> zoom au pincement
+//   1 doigt, zoomé      -> déplacement dans l'image (sinon on ne pourrait pas explorer un
+//                          zoom, ce qui est l'usage attendu à ce moment-là)
+//   1 doigt, non zoomé  -> INCLINAISON de la carte (nouveau)
 let cvPinchStart = null, cvDragStart = null;
+
+// Un glissé sur toute la largeur de l'écran couvre l'amplitude complète : le geste reste
+// court et l'angle maximal est atteignable au pouce, sans reprise.
+function cvTiltDepuisGeste(dx, dy){
+  const ampX = window.innerWidth * 0.55;
+  const ampY = window.innerHeight * 0.55;
+  cvBaseRY = cvClampTilt(cvTiltDrag.baseRY + (dx / ampX) * CV_MAX_TILT * 2);
+  cvBaseRX = cvClampTilt(cvTiltDrag.baseRX - (dy / ampY) * CV_MAX_TILT * 2);
+  cvTargetRY = cvBaseRY;
+  cvTargetRX = cvBaseRX;
+}
+
 $('card-viewer').addEventListener('touchstart', (e)=>{
   if(e.touches.length === 2){
     const [a,b] = e.touches;
     cvPinchStart = {dist: Math.hypot(a.clientX-b.clientX, a.clientY-b.clientY), zoom: cvZoom};
-    cvDragStart = null;
+    cvDragStart = null; cvTiltDrag = null;
   } else if(e.touches.length === 1 && cvZoom > 1){
     cvDragStart = {x: e.touches[0].clientX - cvPanX, y: e.touches[0].clientY - cvPanY};
+  } else if(e.touches.length === 1){
+    cvTiltDrag = {x: e.touches[0].clientX, y: e.touches[0].clientY, baseRX: cvBaseRX, baseRY: cvBaseRY};
+    // Recalibrage du capteur à la position actuelle du téléphone : sans ça, le premier
+    // événement d'orientation après le geste ferait sauter la carte à la position dictée
+    // par l'ancien neutre.
+    cvNeutral = null;
   }
 }, {passive:true});
 
@@ -5143,13 +5188,34 @@ $('card-viewer').addEventListener('touchmove', (e)=>{
     cvPanX = e.touches[0].clientX - cvDragStart.x;
     cvPanY = e.touches[0].clientY - cvDragStart.y;
     cvApplyTransform();
+  } else if(e.touches.length === 1 && cvTiltDrag){
+    e.preventDefault();
+    cvTiltDepuisGeste(e.touches[0].clientX - cvTiltDrag.x, e.touches[0].clientY - cvTiltDrag.y);
   }
 }, {passive:false});
 
 $('card-viewer').addEventListener('touchend', (e)=>{
   if(e.touches.length < 2) cvPinchStart = null;
-  if(e.touches.length === 0) cvDragStart = null;
+  if(e.touches.length === 0){
+    cvDragStart = null;
+    // La base reste où le doigt l'a laissée : la carte ne revient pas brutalement à plat,
+    // et le capteur reprend la main en écart autour de cette nouvelle position.
+    cvTiltDrag = null;
+    cvNeutral = null;
+  }
 }, {passive:true});
+
+// Même geste à la souris, pour l'ordinateur : sans ça le suivi du curseur reste la seule
+// commande, et on ne peut pas figer un angle pour observer le relief.
+$('card-viewer').addEventListener('pointerdown', (e)=>{
+  if(e.pointerType === 'touch' || cvZoom > 1) return;
+  cvTiltDrag = {x: e.clientX, y: e.clientY, baseRX: cvBaseRX, baseRY: cvBaseRY, souris:true};
+});
+window.addEventListener('pointermove', (e)=>{
+  if(!cvTiltDrag || !cvTiltDrag.souris) return;
+  cvTiltDepuisGeste(e.clientX - cvTiltDrag.x, e.clientY - cvTiltDrag.y);
+});
+window.addEventListener('pointerup', ()=>{ if(cvTiltDrag && cvTiltDrag.souris) cvTiltDrag = null; });
 
 // ---------------- CARD SEARCH ----------------
 let searchToken = 0;
