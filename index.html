@@ -368,6 +368,34 @@
     section.section.active{animation:none;}
     .carte-volante{transition:none;}
   }
+  /* Barre de repositionnement des prix. Placee sous les statistiques du lot : c'est en
+     lisant la valeur totale qu'on decide de bouger les prix, les deux vont ensemble. */
+  /* Le badge de quantité est posé sur la vignette et non dans la colonne Qté : c'est en
+     parcourant les photos qu'on repère un doublon, pas en lisant une colonne de chiffres
+     à l'autre bout de la ligne. */
+  .thumb-cell{position:relative;}
+  .badge-qte{
+    position:absolute; right:2px; bottom:2px;
+    background:var(--accent); color:#1a1206; font-size:10px; font-weight:800;
+    padding:1px 5px; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.6);
+  }
+  .repricing-bar{
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+    margin:10px 0 4px; padding:10px 12px; font-size:13px;
+    background:rgba(212,175,55,.08); border:1px solid rgba(212,175,55,.28); border-radius:10px;
+  }
+  .repricing-bar input{width:72px;}
+  .repricing-bar .hint{margin:0; flex-basis:100%;}
+  .cell-marche{white-space:nowrap; font-size:12px;}
+  .marche-ref{color:var(--muted);}
+  .marche-pct{margin-left:6px; padding:1px 6px; border-radius:8px; font-weight:700; font-size:11px;}
+  /* Trois etats seulement : au-dessus du marche, dans la zone habituelle de revente,
+     ou tres en dessous. Un degrade continu donnerait une precision que la donnee n'a pas. */
+  .marche-ok{background:rgba(80,200,120,.18); color:#7fdca0;}
+  .marche-haut{background:rgba(229,72,77,.18); color:#f08a8d;}
+  .marche-bas{background:rgba(120,170,255,.18); color:#9dbcf5;}
+  .marche-inconnu{color:var(--muted);}
+  .reprice-groupe{margin-left:10px;}
   @keyframes checkPop{0%{transform:scale(.3); opacity:0;} 55%{transform:scale(1.18); opacity:1;} 100%{transform:scale(1); opacity:1;}}
   .search-results{max-height:320px; overflow-y:auto; margin-top:8px; display:flex; flex-direction:column; gap:6px;}
   .result-item{
@@ -664,6 +692,17 @@
     <div class="panel">
       <h2>📹 Caméra en direct (rafale)</h2>
       <p class="sub">Place la carte dans le cadre : la capture se déclenche <b>toute seule</b> dès qu'il passe au vert. Enchaîne les cartes sans rien toucher — l'analyse tourne en arrière-plan pendant que tu continues. Le bouton 📸 reste disponible pour forcer une prise.</p>
+      <div style="margin:10px 0 12px;">
+        <label for="capture-set">Choix du set</label>
+        <select id="capture-set">
+          <option value="">Auto — détecter le set à chaque carte</option>
+        </select>
+        <p class="hint" id="capture-set-hint" style="margin-top:6px;">
+          Laisse sur « Auto » si tu scannes des cartes mélangées. Si tu dépouilles un
+          classeur d'une seule extension, choisis-la : le numéro suffit alors à identifier
+          la carte, sans avoir à deviner le set.
+        </p>
+      </div>
       <div class="capture-btns" id="cam-start-row">
         <button class="btn-gold" id="btn-start-cam">📹 Démarrer la caméra</button>
       </div>
@@ -866,11 +905,18 @@
         <div class="stat"><div class="num" id="stat-value">0 €</div><div class="lbl">Valeur totale estimée</div></div>
         <div class="stat"><div class="num" id="stat-noimg">0</div><div class="lbl">Sans URL image</div></div>
       </div>
+      <div class="repricing-bar">
+        <span>Repositionner les prix à</span>
+        <input type="number" id="reprice-pct" value="80" min="1" max="300" step="5"> %
+        <span>du prix marché</span>
+        <button class="btn-ghost btn-sm" id="btn-reprice-all">Appliquer à tout le lot</button>
+        <span class="hint" id="reprice-status"></span>
+      </div>
       <div class="table-wrap">
         <table id="batch-table">
           <thead>
             <tr>
-              <th>Photo</th><th>SKU</th><th>Titre</th><th>État</th><th>Prix</th><th>Devise</th><th>Qté</th><th>URL image (pour eBay)</th><th></th>
+              <th>Photo</th><th>SKU</th><th>Titre</th><th>État</th><th>Prix</th><th>Marché</th><th>Devise</th><th>Qté</th><th>URL image (pour eBay)</th><th></th>
             </tr>
           </thead>
           <tbody id="batch-tbody"></tbody>
@@ -2581,7 +2627,12 @@ async function resolveCardByName(ocrText, number, photoDataUrl){
 
 async function resolveCardBestEffort(codeCandidates, number, denominator, photoDataUrl, ocrText){
   const codeSets = codeCandidates.map(c=>setAbbrMap?.[c.toUpperCase()]).filter(Boolean);
-  const denomSets = denominator ? (setDenominatorMap?.[denominator] || []) : [];
+  let denomSets = denominator ? (setDenominatorMap?.[denominator] || []) : [];
+
+  // Set verrouillé : il passe DEVANT tout le reste, y compris devant le dénominateur lu.
+  // C'est tout l'intérêt du mode — quand l'utilisateur affirme dépouiller un classeur de
+  // 151, un « /165 » mal lu en « /65 » ne doit plus pouvoir l'emmener ailleurs.
+  if(setVerrouilleId) denomSets = [setVerrouilleId, ...denomSets.filter(id => id !== setVerrouilleId)];
 
   if(number){
     // Le dénominateur (lu de façon fiable) passe avant le code lettré (souvent mal lu
@@ -4102,6 +4153,95 @@ async function detectLoop(){
 // Redressement (fil principal) + lecture OCR (worker OCR) d'une détection prometteuse.
 // Appelée sans await par detectLoop : toute erreur doit donc être interceptée ICI, une
 // exception qui s'en échapperait deviendrait un rejet de promesse non attrapé.
+
+// ---------------- DOUBLE LECTURE : GARDER L'IMAGE LA PLUS NETTE ----------------
+// Le flou de bougé est la cause dominante des lectures ratées : l'image est prise à
+// l'instant où le détecteur valide la géométrie, sans aucune considération pour la netteté,
+// et il suffit d'un micro-tremblement à ce moment-là pour perdre la carte — alors que
+// l'image d'après est souvent bonne. Jusqu'ici, cet échec coûtait un cycle complet
+// (~400 ms) avant de pouvoir réessayer.
+//
+// On prend donc DEUX images consécutives et on ne garde que la plus nette. Le surcoût est
+// tenu bas par deux choix :
+//  - l'attente utilise requestVideoFrameCallback, qui rend la main dès que la caméra a
+//    décodé l'image suivante — soit le minimum absolu (~1 intervalle, ~33 ms à 30 i/s), là
+//    où un setTimeout fixe attendrait un délai deviné, forcément trop long ou trop court ;
+//  - la mesure de netteté se fait sur une vignette de 128 px de large limitée à la carte,
+//    soit quelques milliers de pixels : ~1 ms, à comparer aux ~1700 ms d'un recognize().
+// Le pipeline lourd (redressement, worker, OCR) ne tourne ensuite qu'UNE fois, sur
+// l'image retenue.
+let toileNettete = null;
+
+// Variance du laplacien sur une vignette en niveaux de gris : même mesure que celle du
+// worker, en beaucoup plus petit. On ne cherche pas une valeur absolue comparable, juste à
+// départager deux images de la même scène prise à 33 ms d'écart — un simple ordre suffit.
+function netteteRapide(source, corners, vw, vh){
+  if(!toileNettete){
+    toileNettete = document.createElement('canvas');
+    toileNettete.width = 128; toileNettete.height = 128;
+  }
+  const ctx = toileNettete.getContext('2d', {willReadFrequently:true});
+  // Restreint à la boîte englobante de la carte : mesurer sur toute l'image ferait
+  // dépendre le résultat du décor (un fond de bureau texturé donnerait un score élevé
+  // même avec une carte parfaitement floue).
+  const xs = [corners.tl[0], corners.tr[0], corners.br[0], corners.bl[0]];
+  const ys = [corners.tl[1], corners.tr[1], corners.br[1], corners.bl[1]];
+  const x0 = Math.max(0, Math.min(...xs) * vw), x1 = Math.min(vw, Math.max(...xs) * vw);
+  const y0 = Math.max(0, Math.min(...ys) * vh), y1 = Math.min(vh, Math.max(...ys) * vh);
+  const w = x1 - x0, h = y1 - y0;
+  if(w < 8 || h < 8) return 0;
+  ctx.drawImage(source, x0, y0, w, h, 0, 0, 128, 128);
+  const d = ctx.getImageData(0, 0, 128, 128).data;
+
+  const gris = new Float32Array(128 * 128);
+  for(let i = 0; i < gris.length; i++){
+    gris[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
+  }
+  let somme = 0, sommeCarres = 0, n = 0;
+  for(let y = 1; y < 127; y++){
+    for(let x = 1; x < 127; x++){
+      const i = y * 128 + x;
+      const lap = 4*gris[i] - gris[i-1] - gris[i+1] - gris[i-128] - gris[i+128];
+      somme += lap; sommeCarres += lap * lap; n++;
+    }
+  }
+  const moy = somme / n;
+  return sommeCarres / n - moy * moy;
+}
+
+// Rend la main dès que la caméra a livré une nouvelle image. Le plafond de 60 ms évite de
+// bloquer indéfiniment si le flux se fige (onglet en arrière-plan, caméra occupée) : dans
+// ce cas on repart avec la seule image déjà en main plutôt que de faire attendre.
+function prochaineImageVideo(video){
+  return new Promise(resolve=>{
+    let fini = false;
+    const stop = (ok)=>{ if(!fini){ fini = true; resolve(ok); } };
+    const secours = setTimeout(()=> stop(false), 60);
+    if(typeof video.requestVideoFrameCallback === 'function'){
+      video.requestVideoFrameCallback(()=>{ clearTimeout(secours); stop(true); });
+    } else {
+      // Repli pour les navigateurs sans rVFC : un délai d'une image à 30 i/s.
+      setTimeout(()=>{ clearTimeout(secours); stop(true); }, 34);
+    }
+  });
+}
+
+// Renvoie la plus nette de deux images consécutives, déjà redimensionnées.
+async function meilleureDeDeuxImages(video, vw, vh, corners){
+  const prise = ()=> createImageBitmap(video, {resizeWidth: vw, resizeHeight: vh, resizeQuality:'medium'});
+  const a = await prise();
+  const na = netteteRapide(a, corners, vw, vh);
+
+  const eu = await prochaineImageVideo(video);
+  if(!eu || !video.videoWidth) return {bmp: a, nettete: na, choisie: 'A', ecart: 0};
+
+  const b = await prise();
+  const nb = netteteRapide(b, corners, vw, vh);
+  if(nb > na){ a.close(); return {bmp: b, nettete: nb, choisie: 'B', ecart: +(nb - na).toFixed(1)}; }
+  b.close();
+  return {bmp: a, nettete: na, choisie: 'A', ecart: +(na - nb).toFixed(1)};
+}
+
 async function attemptRead(corners, score){
   if(readInFlight) return;
   readInFlight = true;
@@ -4162,11 +4302,13 @@ async function attemptRead(corners, score){
     const extractScale = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
     const vw = Math.max(1, Math.round(video.videoWidth * extractScale));
     const vh = Math.max(1, Math.round(video.videoHeight * extractScale));
-    const frameBmp = await createImageBitmap(video, {resizeWidth: vw, resizeHeight: vh, resizeQuality:'medium'});
+    const tChoix0 = performance.now();
+    const choix = await meilleureDeDeuxImages(video, vw, vh, corners);
+    const tChoix = Math.round(performance.now() - tChoix0);
     const frame = document.createElement('canvas');
     frame.width = vw; frame.height = vh;
-    frame.getContext('2d').drawImage(frameBmp, 0, 0);
-    frameBmp.close();
+    frame.getContext('2d').drawImage(choix.bmp, 0, 0);
+    choix.bmp.close();
     // Marge de sécurité autour du quadrilatère détecté, AVANT redressement (voir §4.36).
     // Diagnostic : sur les échecs « numéro illisible », le texte OCR contient la ligne
     // Faiblesse/Résistance ET celle de l'illustrateur ("Hus,Scay" = "Illus. Sacay"),
@@ -4286,7 +4428,8 @@ async function attemptRead(corners, score){
     //  - r.tSharp    : calcul de netteté dans le Worker
     //  - r.tEnsure   : ré-initialisation du service OCR (0 sauf 1er appel jamais réussi)
     //  - r.tRecognize: l'appel recognize() lui-même — le vrai plancher du moteur OCR
-    const timing = {tExtract, tCardBmp, tWorker, tPrep:r.tPrep, tSharp:r.tSharp, tEnsure:r.tEnsure, tRecognize:r.tRecognize};
+    const timing = {tExtract, tCardBmp, tWorker, tPrep:r.tPrep, tSharp:r.tSharp, tEnsure:r.tEnsure, tRecognize:r.tRecognize,
+                    tChoix, imgChoisie: choix.choisie, ecartNettete: choix.ecart};
 
     if(r.reason === 'flou'){
       setAimHint('Stabilise — image floue');
@@ -4753,6 +4896,68 @@ $('sticky-qty').addEventListener('input', ()=> stickyQty = parseInt($('sticky-qt
 // aucun set candidat à comparer visuellement. En pratique on scanne souvent une même
 // boîte/set à la suite : cet indice, posé une fois, reste candidat pour le matching
 // visuel même quand l'OCR ne trouve rien — ça comble le trou constaté en test.
+
+// ---------------- MODE « TRI PAR SET » ----------------
+// Quand on dépouille un classeur, toutes les cartes viennent de la même extension. La
+// résolution automatique, elle, doit à chaque carte deviner le set à partir du
+// dénominateur lu (« /165 »), qui est justement la partie la plus fragile de la lecture :
+// un dénominateur mal lu envoie vers un set entièrement différent, et c'est la source
+// principale des cartes fausses (9,7 % mesurés).
+//
+// En verrouillant le set, ce risque disparaît : le numéro seul suffit, et il est lu bien
+// plus fiablement que le dénominateur. C'est un choix explicite de l'utilisateur, donc on
+// lui fait confiance — mais on reste sur « Auto » par défaut, parce qu'un set verrouillé
+// oublié sur un lot mélangé produirait des erreurs silencieuses.
+let setVerrouilleId = null;
+let setVerrouilleNom = '';
+
+async function remplirListeSets(){
+  const sel = $('capture-set');
+  if(!sel || sel.options.length > 1) return;
+  try{
+    const series = await loadSeriesIndex(()=>{});
+    seriesIndex = series;
+    // Séries les plus récentes en tête : c'est là que se trouve l'essentiel de ce qui se
+    // revend, et ça évite de faire défiler vingt ans de catalogue à chaque session.
+    const triees = series.slice().sort((a,b)=> String(b.releaseDate||'').localeCompare(String(a.releaseDate||'')));
+    for(const serie of triees){
+      if(!serie.sets || !serie.sets.length) continue;
+      const grp = document.createElement('optgroup');
+      grp.label = serie.name;
+      for(const st of serie.sets){
+        const o = document.createElement('option');
+        o.value = st.id;
+        // Le total officiel est affiché : c'est le nombre imprimé au dénominateur, donc
+        // le repère que l'utilisateur a littéralement sous les yeux sur la carte.
+        o.textContent = st.name + (st.official ? ` (${st.official} cartes)` : '');
+        grp.appendChild(o);
+      }
+      sel.appendChild(grp);
+    }
+  }catch(e){
+    $('capture-set-hint').textContent = '⚠️ Liste des sets indisponible (hors ligne ?) — le mode Auto reste utilisable.';
+  }
+}
+
+function appliquerSetVerrouille(){
+  const sel = $('capture-set');
+  setVerrouilleId = sel.value || null;
+  setVerrouilleNom = sel.value ? sel.selectedOptions[0].textContent : '';
+  // currentSetHintId est l'ancre déjà utilisée par toute la chaîne de résolution : on
+  // s'y branche plutôt que d'ajouter un second mécanisme parallèle qui pourrait en
+  // diverger.
+  currentSetHintId = setVerrouilleId;
+  const hint = $('capture-set-hint');
+  if(setVerrouilleId){
+    hint.innerHTML = `🔒 Set verrouillé : <b>${escapeHtml(setVerrouilleNom)}</b>. Les cartes seront cherchées dans cette extension en priorité. Repasse sur « Auto » pour un lot mélangé.`;
+    // Précharge la liste du set : la résolution par numéro devient alors purement locale.
+    getSetCardList(setVerrouilleId).catch(()=>{});
+  } else {
+    hint.textContent = 'Auto — le set est détecté à chaque carte à partir du numéro et du dénominateur lus.';
+  }
+  if($('current-set-hint')) $('current-set-hint').value = setVerrouilleId ? setVerrouilleNom : '';
+}
+
 let currentSetHintId = null;
 let allSetsListCache = null;
 async function resolveSetHint(query){
@@ -4789,6 +4994,14 @@ async function resolveSetHint(query){
   }
 }
 let setHintDebounce = null;
+$('btn-reprice-all').addEventListener('click', ()=> repositionnerPrix(null));
+
+$('capture-set').addEventListener('change', appliquerSetVerrouille);
+// Liste remplie au premier déploiement plutôt qu'au chargement de la page : elle suppose
+// l'index des séries, inutile de le payer pour quelqu'un qui reste en Auto.
+$('capture-set').addEventListener('mousedown', remplirListeSets, {once:true});
+$('capture-set').addEventListener('focus', remplirListeSets, {once:true});
+
 $('current-set-hint').addEventListener('input', ()=>{
   clearTimeout(setHintDebounce);
   setHintDebounce = setTimeout(()=> resolveSetHint($('current-set-hint').value), 500);
@@ -6327,15 +6540,50 @@ function quickAdd(card){
     // rendait une ligne sans photo impossible à identifier d'un coup d'œil.
     setId: card.set?.id || '',
     cardImage: card.images?.small || '',
+    // Prix marché conservé tel quel, à côté du prix de vente calculé. Sans lui, une fois
+    // la carte au lot on ne pouvait plus savoir à quel pourcentage du marché on la
+    // vendait, ni recalculer un prix sans repasser par l'API carte par carte.
+    cardId: card.id || '',
+    marketPrice: price.market || null,
+    marketCurrency: price.currency || '',
     imageUrl: '',
     categoryId: $('category-id-input').value
   };
-  batch.push(entry);
+  // Détection des doublons. Sur un stock de plusieurs centaines de cartes, tomber deux
+  // fois sur le même exemplaire est certain — et jusqu'ici ça produisait deux lignes
+  // distinctes qu'il fallait repérer et fusionner à la main avant l'export.
+  //
+  // Fusion sur l'identifiant de carte ET l'état : deux exemplaires du même Dracaufeu,
+  // l'un Near Mint et l'autre abîmé, ne se vendent pas au même prix et doivent rester
+  // deux annonces. Même carte et même état, en revanche, c'est une seule annonce en
+  // quantité 2 — c'est la pratique normale sur eBay.
+  //
+  // Rien n'est écrasé : la première photo est conservée (elle sert déjà de visuel
+  // d'annonce), et le prix déjà fixé reste celui de la ligne. Seule la quantité change.
+  const jumelle = entry.cardId
+    ? batch.find(e => e.cardId === entry.cardId && e.condition === entry.condition)
+    : batch.find(e => e.setId === entry.setId && e.number === entry.number && e.condition === entry.condition);
+
+  let fusionnee = false;
+  if(jumelle){
+    jumelle.qty = (parseInt(jumelle.qty) || 1) + (parseInt(entry.qty) || 1);
+    // La photo du second exemplaire n'est gardée que si la première ligne n'en avait pas :
+    // sinon on remplacerait une photo déjà validée par une plus récente sans que rien ne
+    // le demande.
+    if(!jumelle.photo && entry.photo) jumelle.photo = entry.photo;
+    fusionnee = true;
+  } else {
+    batch.push(entry);
+  }
   planifierSauvegardeSession();
   if(hadPhoto) pendingQueue.shift();
 
-  lastAdd = { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
-  showUndoBar(`✅ ${entry.cardName} ajouté(e)`);
+  lastAdd = fusionnee
+    ? { fusionAvec: jumelle.id, requeuedPhoto: hadPhoto ? photo : null }
+    : { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
+  showUndoBar(fusionnee
+    ? `🔁 ${entry.cardName} — doublon, quantité portée à ${jumelle.qty}`
+    : `✅ ${entry.cardName} ajouté(e)`);
   playConfirmAnimation();
   // Le compteur du Lot ne se rafraîchissait qu'au changement d'onglet (renderBatch n'est
   // appelé que là) : on pouvait ajouter cinquante cartes en voyant « Lot (0) ».
@@ -6410,9 +6658,16 @@ function showUndoBar(msg){
 
 $('btn-undo').addEventListener('click', ()=>{
   if(!lastAdd) return;
-  if(batch[lastAdd.batchIndex]){
+  if(lastAdd.fusionAvec){
+    // L'ajout avait été fusionné dans une ligne existante : annuler, c'est décrémenter la
+    // quantité, surtout pas supprimer la ligne — elle contient au moins un exemplaire
+    // ajouté avant celui qu'on annule.
+    const cible = batch.find(e => e.id === lastAdd.fusionAvec);
+    if(cible) cible.qty = Math.max(1, (parseInt(cible.qty) || 1) - 1);
+  } else if(batch[lastAdd.batchIndex]){
     batch.splice(lastAdd.batchIndex,1);
   }
+  planifierSauvegardeSession();
   if(lastAdd.requeuedPhoto){
     pendingQueue.unshift({id:'q'+Date.now(), photo: lastAdd.requeuedPhoto});
   }
@@ -6461,12 +6716,14 @@ function renderBatch(){
     trTitre.className = 'set-group';
     trTitre.style.animationDelay = (rang++ * 28) + 'ms';
     trTitre.innerHTML = `
-      <td colspan="9">
+      <td colspan="10">
         <div class="set-group-inner">
           ${logo ? `<img class="set-group-logo" src="${logo}" alt="" loading="lazy"
                        onerror="this.style.display='none'">` : ''}
           <span class="set-group-nom">${escapeHtml(groupe.nom)}</span>
           <span class="set-group-meta">${groupe.entries.length} carte(s) · ${valeur.toFixed(2)} €</span>
+          <button class="btn-ghost btn-sm reprice-groupe" data-cle="${escapeHtml(cle)}"
+                  title="Applique le pourcentage de la barre du haut aux seules cartes de cette extension">↻ Prix du groupe</button>
         </div>
       </td>`;
     tbody.appendChild(trTitre);
@@ -6476,7 +6733,7 @@ function renderBatch(){
     tr.className = 'batch-row';
     tr.style.animationDelay = (Math.min(rang++, 24) * 28) + 'ms';
     tr.innerHTML = `
-      <td class="thumb-cell">${vignetteDuLot(entry)}</td>
+      <td class="thumb-cell">${vignetteDuLot(entry)}${(parseInt(entry.qty)||1) > 1 ? `<span class="badge-qte" title="${entry.qty} exemplaires de cette carte dans le même état">×${entry.qty}</span>` : ''}</td>
       <td><input type="text" data-field="sku" value="${escapeHtml(entry.sku)}" style="width:120px;"></td>
       <td><input type="text" data-field="title" value="${escapeHtml(entry.title)}" style="width:220px;"></td>
       <td>
@@ -6485,6 +6742,7 @@ function renderBatch(){
         </select>
       </td>
       <td><input type="number" data-field="price" value="${entry.price}" style="width:70px;" step="0.01"></td>
+      <td class="cell-marche">${positionMarche(entry)}</td>
       <td>
         <select data-field="priceCurrency">
           ${['EUR','USD','GBP'].map(c=>`<option value="${c}" ${(entry.priceCurrency||'EUR')===c?'selected':''}>${c}</option>`).join('')}
@@ -6510,6 +6768,10 @@ function renderBatch(){
     tbody.appendChild(tr);
     }
   }
+
+  tbody.querySelectorAll('.reprice-groupe').forEach(b=>{
+    b.addEventListener('click', ()=> repositionnerPrix(b.dataset.cle));
+  });
 }
 
 // Logo de l'extension. Déduit en priorité de l'URL de l'illustration déjà stockée sur la
@@ -6534,6 +6796,51 @@ function vignetteDuLot(entry){
   if(entry.photo) return `<img src="${entry.photo}">`;
   if(entry.cardImage) return `<img class="vignette-repli" src="${entry.cardImage}" alt="" title="Illustration officielle — aucune photo prise pour cette carte" onerror="this.replaceWith(document.createTextNode('—'))">`;
   return '—';
+}
+
+// Position du prix de vente par rapport au marché, pour une ligne. C'est l'information
+// qui manquait pour décider quoi ajuster : un prix isolé ne dit pas s'il est agressif ou
+// trop haut, seul le rapport au marché le dit.
+//
+// Le code couleur ne juge pas à la place de l'utilisateur, il signale seulement les
+// écarts qui méritent un regard : au-dessus du marché (on risque de ne pas vendre) et
+// très en dessous (on laisse de l'argent sur la table).
+function positionMarche(entry){
+  const m = parseFloat(entry.marketPrice);
+  if(!m || !isFinite(m)) return '<span class="marche-inconnu" title="Prix marché non enregistré pour cette carte (ajoutée avant cette fonction, ou absent de TCGdex)">—</span>';
+  const p = parseFloat(entry.price);
+  const dev = entry.marketCurrency === 'USD' ? '$' : '€';
+  if(!p || !isFinite(p)) return `<span class="marche-ref">${m.toFixed(2)} ${dev}</span>`;
+  const pct = Math.round(p / m * 100);
+  const classe = pct > 105 ? 'marche-haut' : (pct < 55 ? 'marche-bas' : 'marche-ok');
+  return `<span class="marche-ref">${m.toFixed(2)} ${dev}</span><span class="marche-pct ${classe}">${pct} %</span>`;
+}
+
+// Recalcule les prix à un pourcentage du marché. `cle` limite l'opération à une
+// extension ; sans elle, tout le lot est traité.
+//
+// Les cartes sans prix marché connu sont laissées telles quelles et comptées à part : les
+// écraser avec une valeur vide effacerait un prix éventuellement saisi à la main, ce qui
+// serait une perte silencieuse sur exactement les cartes qui ont demandé le plus de
+// travail.
+function repositionnerPrix(cle){
+  const pct = parseFloat($('reprice-pct').value);
+  if(!pct || pct <= 0){ $('reprice-status').textContent = '⚠️ Pourcentage invalide.'; return; }
+
+  let modifiees = 0, ignorees = 0;
+  for(const entry of batch){
+    if(cle && (entry.setId || entry.setName || '?') !== cle) continue;
+    const m = parseFloat(entry.marketPrice);
+    if(!m || !isFinite(m)){ ignorees++; continue; }
+    entry.price = (m * pct / 100).toFixed(2);
+    modifiees++;
+  }
+
+  planifierSauvegardeSession();
+  renderBatch();
+  const portee = cle ? 'dans cette extension' : 'dans le lot';
+  $('reprice-status').textContent = `${modifiees} prix recalculé(s) à ${pct} % du marché ${portee}` +
+    (ignorees ? ` · ${ignorees} sans prix marché connu, laissée(s) inchangée(s)` : '');
 }
 
 function renderBatchStatsOnly(){
