@@ -1189,9 +1189,22 @@ function getVisionWorker(){
           const t = txt || '', out = [];
           for(let i=0;i<t.length;i++){
             if(t[i] !== '/') continue;
-            const left  = normDigits(t.slice(Math.max(0,i-3), i)).replace(/\\D/g,'');
-            const right = normDigits(t.slice(i+1, i+4)).replace(/\\D/g,'');
-            if(left.length>=2 && right.length>=2){
+            const brutG = t.slice(Math.max(0,i-3), i), brutD = t.slice(i+1, i+4);
+            const left  = normDigits(brutG).replace(/\\D/g,'');
+            const right = normDigits(brutD).replace(/\\D/g,'');
+            // Numérateur accepté dès UN chiffre (au lieu de deux) : les sets qui n'impriment
+            // pas de zéros de tête écrivent « 1/149 », et l'exigence de deux chiffres
+            // rejetait donc toutes les cartes n° 1 à 9 de ces sets — vérifié sur le vrai
+            // code, « Illus. Kanako Eo 1/149 ©2017 » ne renvoyait rien du tout, et l'année
+            // de copyright venait combler le vide avec un faux numéro.
+            //
+            // MAIS ce relâchement seul rouvre une faille, constatée immédiatement en test :
+            // « Creatures/GAME FREAK » donnait « 5/64 », parce que la table des sosies
+            // convertit les lettres (s→5, G→6, A→4). On exige donc au moins un VRAI chiffre
+            // de chaque côté — un numéro imprimé en contient forcément, un mot jamais.
+            const vraisG = (brutG.match(/\\d/g)||[]).length;
+            const vraisD = (brutD.match(/\\d/g)||[]).length;
+            if(left.length>=1 && right.length>=2 && vraisG>=1 && vraisD>=1){
               out.push({ number:left.replace(/^0+(?=\\d)/,''), denominator:right.replace(/^0+(?=\\d)/,'') });
             }
           }
@@ -1222,6 +1235,16 @@ function getVisionWorker(){
           }
           flush();
           for(const run of runs){
+            // Une ANNÉE de copyright n'est pas un numéro de carte. « ©2014 Pokémon » produit
+            // le bloc « 2014 », découpé en « 2/14 » — plausible en apparence, et c'était la
+            // principale source de fausses lectures (mesuré au banc : jusqu'à 53 % de faux
+            // positifs sur la bande gauche, qui contient justement la ligne de copyright).
+            // Le filtrage par dénominateur existant ne suffit pas : « 2/17 » passe, parce
+            // qu'un set fait réellement 17 cartes. On écarte donc le motif à la source.
+            // Sans risque pour un vrai numéro : « 7165 » (7/165 sans séparateur) ne
+            // ressemble pas à une année, et un numéro imprimé en quatre chiffres collés
+            // commençant par 19 ou 20 n'existe pas dans le format XXX/XXX.
+            if(/^(19|20)\\d\\d$/.test(run)) continue;
             for(const denomLen of [3,2]){
               const numLen = run.length - denomLen;
               if(numLen < 1 || numLen > 3) continue;
@@ -1324,18 +1347,24 @@ function getVisionWorker(){
               // 0-45 % × 84-99 % laisse donc à peu près le double de marge dans chaque
               // direction, de quoi absorber les défauts de coupe et de centrage.
               //
-              // NE PAS élargir cette bande : essayé (0.80-0.99 au lieu de 0.84-0.99) sur
-              // l'hypothèse que la bande tombait au-dessus du numéro, MESURÉ sur deux
-              // relevés réels comparables, et clairement contre-productif :
-              //   - recognize() : 944 ms de moyenne (n=21) -> 1869 ms (n=28), soit x2 ;
-              //   - « numéro illisible » : 58 % (14/24) -> 56 % (18/32), donc INCHANGÉ.
-              // Mécanisme : PaddleOCR détecte les zones de texte PUIS reconnaît chacune —
-              // une bande plus haute attrape plus de lignes (texte d'attaque, Faiblesse/
-              // Résistance) et paie une passe de reconnaissance par ligne. Le coût est
-              // proportionnel au TEXTE contenu, pas seulement aux pixels. Corollaire utile :
-              // la hauteur de bande n'influe pas sur le taux d'échec, la cause est ailleurs
-              // (voir §4.36 — coins détectés à l'intérieur du bord réel de la carte).
-              const serree = crop(0, 0.84, 0.45, 0.15, 2);
+              // NE PAS élargir cette bande en HAUTEUR : essayé (0.80-0.99 au lieu de
+              // 0.84-0.99), mesuré sur deux relevés réels, et contre-productif — le coût
+              // suit le TEXTE contenu (PaddleOCR reconnaît zone par zone), et le taux
+              // d'échec n'a pas bougé (58 % -> 56 %).
+              //
+              // Zoom ramené de 2 à 1.5 : balayage de ×1.5 à ×4 sur 120 cartes, écart total
+              // de 2,5 points pour une marge de bruit de ±7,8 — aucun effet mesurable sur
+              // la précision, mais ×1.5 coûte 18 % de moins. L'agrandissement sert
+              // seulement à amener les chiffres dans la plage de taille où PaddleOCR
+              // travaille le mieux ; au-delà, on paie des pixels pour rien.
+              const ZOOM_BANDE = 1.5;
+              // Bande GAUCHE puis, si rien n'est lu, bande DROITE. Le numéro a changé de
+              // côté en 2017 (à droite jusqu'à XY, à gauche depuis Soleil-Lune) : une seule
+              // bande rate structurellement toute une moitié du catalogue. La pleine largeur
+              // corrige ça mais double le coût sur CHAQUE carte ; l'enchaînement ne paie la
+              // seconde lecture que sur les cartes où la première a échoué.
+              const serree = crop(0, 0.84, 0.45, 0.15, ZOOM_BANDE);
+              const serreeDroite = crop(0.55, 0.84, 0.45, 0.15, ZOOM_BANDE);
               const tPrep = Math.round(performance.now() - tRead0);
 
               // Netteté mesurée sur la CARTE ENTIÈRE et non sur la bande de lecture.
@@ -1359,7 +1388,7 @@ function getVisionWorker(){
               // numéro/dénominateur n'est de toute façon pas utilisé par l'appelant dans ce
               // cas (il connaît déjà la carte complète) : seules des valeurs vides suffisent
               // ici pour garder la forme de la réponse identique au chemin normal.
-              let text = '', cands, tEnsure = 0, tRecognize = 0;
+              let text = '', cands, tEnsure = 0, tRecognize = 0, via = 'hash-visuel';
               if(skipRecognize){
                 cands = [{number:'', denominator:''}];
               } else {
@@ -1377,19 +1406,32 @@ function getVisionWorker(){
                 // deux images caméra n'étant jamais identiques au bit près.
                 const tRecognize0 = performance.now();
                 const res = await s.recognize(serree, {noCache:true});
-                tRecognize = Math.round(performance.now() - tRecognize0);
                 text = (res && res.text) || '';
                 cands = extractNumbers(text);
+                via = 'serree';
 
-                // Le repli sur une bande large a été RETIRÉ : sur tous les relevés réels
-                // collectés (plusieurs dizaines d'observations, plusieurs sessions), il n'a
-                // trouvé un numéro dans AUCUN cas, mais coûtait de 815 ms à 8,7 s à chaque
-                // déclenchement (attrapant souvent du texte d'attaque au passage). Comme il
-                // se déclenchait précisément sur chaque tentative ratée, c'était lui qui
-                // faisait qu'un échec — le cas le plus fréquent avant qu'une carte soit
-                // parfaitement cadrée — coûtait plusieurs secondes au lieu de quelques
-                // centaines de ms. Objectif : capturer vite sans exiger un cadrage parfait,
-                // donc un échec doit rester bon marché pour qu'on puisse en tenter beaucoup.
+                // Repli sur la bande DROITE, et seulement si la gauche n'a rien donné. Le
+                // numéro est imprimé à droite jusqu'à XY (2016) et à gauche depuis
+                // Soleil-Lune (2017) — vérifié visuellement sur cinq générations. Lire une
+                // seule bande rate donc structurellement toute une moitié du catalogue.
+                //
+                // Enchaînement plutôt que pleine largeur : mesuré au banc, la pleine largeur
+                // gagne en précision mais double le coût sur CHAQUE carte, alors qu'ici la
+                // seconde lecture n'est payée que sur les cartes où la première a échoué.
+                //
+                // À ne pas confondre avec l'ancien « repli large » retiré : celui-ci lisait
+                // une bande PLUS HAUTE (donc plus de texte, jusqu'à 8,7 s) et n'a jamais rien
+                // trouvé. Ici la bande est de taille identique, simplement déplacée à
+                // l'endroit où le numéro se trouve réellement sur les cartes anciennes.
+                if(!cands.length){
+                  const resD = await s.recognize(serreeDroite, {noCache:true});
+                  const textD = (resD && resD.text) || '';
+                  const candsD = extractNumbers(textD);
+                  if(candsD.length){ text = textD; cands = candsD; via = 'droite'; }
+                  else text = text + ' | ' + textD;  // les deux lectures, pour le diagnostic
+                }
+                tRecognize = Math.round(performance.now() - tRecognize0);
+
                 if(!cands.length){ postMessage({id, ok:true, sharp, text, reason:'illisible', tPrep, tSharp, tEnsure, tRecognize}); return; }
               }
 
@@ -1397,8 +1439,12 @@ function getVisionWorker(){
               // Empreinte anti-doublon prise sur la CARTE entière et non sur la bande :
               // deux cartes différentes peuvent avoir des bas de carte proches, alors que
               // l'illustration les sépare nettement.
-              postMessage({id, ok:true, sharp, text, via: skipRecognize ? 'hash-visuel' : 'serree', hash:dHash(card),
-                           number:cands[0].number, denominator:cands[0].denominator,
+              // TOUS les candidats sont renvoyés, pas seulement le premier : c'est le fil
+              // principal qui tranche, en écartant ceux dont le dénominateur n'existe dans
+              // aucun set (voir choisirCandidat). Mesuré au banc : cette politique supprime
+              // un tiers à la moitié des cartes fausses, à taux de réussite identique.
+              postMessage({id, ok:true, sharp, text, via, hash:dHash(card),
+                           number:cands[0].number, denominator:cands[0].denominator, cands,
                            carte, tPrep, tSharp, tEnsure, tRecognize}, [carte]);
               return;
             }
@@ -3823,13 +3869,21 @@ async function attemptRead(corners, score){
                        hashDist: bestHashDist, raw:r.text, rotated, ...timing});
       return;
     }
+    // Départage des candidats : on préfère celui dont le DÉNOMINATEUR correspond à un total
+    // de cartes réellement existant. Un « ©2014 Pokémon » mal découpé produit par exemple
+    // « 2/14 », dont le dénominateur n'existe dans aucun set — alors qu'un vrai numéro a
+    // forcément un dénominateur au catalogue. Mesuré au banc : cette seule règle supprime
+    // un tiers à la moitié des cartes fausses, sans coûter un seul point de réussite.
+    // Le fil principal est le bon endroit : c'est lui qui détient setDenominatorMap.
+    const choisi = choisirCandidat(r.cands, r.number, r.denominator);
+
     // Numéro/dénominateur "finaux" utilisés pour tout le reste de la fonction : ceux lus
     // par l'OCR normalement, ou ceux de la carte trouvée par raccourci visuel — l'id de
     // la carte sert d'équivalent stable au dénominateur pour les comparaisons d'égalité
     // ci-dessous (l'anti-doublon n'a besoin que d'une valeur stable par carte, pas de la
     // vraie fraction imprimée).
-    const finalNumber = hashShortcut ? hashShortcut.card.number : r.number;
-    const finalDenominator = hashShortcut ? hashShortcut.card.id : r.denominator;
+    const finalNumber = hashShortcut ? hashShortcut.card.number : choisi.number;
+    const finalDenominator = hashShortcut ? hashShortcut.card.id : choisi.denominator;
 
     // Anti-doublon "carte fantôme" (voir la déclaration de cardConfirmedAbsentSinceCapture
     // et lastCaptureCorners) : écarté par ressemblance visuelle directe (dHash), OU —
@@ -4841,6 +4895,21 @@ function cvApplyTransform(){
 const CV_RELIEF_Z = 62;     // px de hauteur au-dessus de la carte
 // L'enfoncement de la fenêtre d'illustration (diorama) est défini côté CSS, dans
 // `.cv-diorama` : une seule source de vérité, pas une constante JS qui divergerait.
+// Choisit le candidat final parmi ceux extraits par l'OCR. Préfère un dénominateur qui
+// existe réellement au catalogue ; à défaut, retombe sur le premier lu plutôt que de ne
+// rien proposer — la version « stricte » (ne rien renvoyer si aucun dénominateur ne colle)
+// écarte davantage de fausses cartes, mais la table des sets peut être absente au tout
+// premier scan d'une session, et refuser alors TOUTE lecture serait pire que le mal.
+function choisirCandidat(cands, numDefaut, denomDefaut){
+  const repli = {number: numDefaut, denominator: denomDefaut};
+  if(!Array.isArray(cands) || !cands.length) return repli;
+  if(setDenominatorMap){
+    const plausible = cands.find(c => setDenominatorMap[c.denominator]);
+    if(plausible) return plausible;
+  }
+  return cands[0] || repli;
+}
+
 function cvMajRelief(){
   const sub = $('cv-subject');
   if(!sub || !cvReliefPret) return;
