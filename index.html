@@ -606,9 +606,31 @@
   .navbar{
     position:fixed; left:0; right:0; bottom:0; z-index:200;
     display:grid; grid-template-columns:repeat(5, 1fr); align-items:end;
-    background:rgba(13,16,24,.94); backdrop-filter:blur(14px);
-    border-top:1px solid var(--border);
+    /* Opacité descendue de 0,94 à 0,58 : à 0,94 le flou d'arrière-plan était calculé mais
+       invisible, le fond étant déjà couvert. C'est en laissant passer le contenu qu'on voit
+       qu'il défile SOUS la barre, ce qui situe la barre au-dessus de la page au lieu de la
+       faire lire comme une bande collée en bas.
+       La saturation compense la perte due à la transparence : sans elle, les couleurs vues
+       à travers paraissent délavées. */
+    background:rgba(13,16,24,.58);
+    backdrop-filter:blur(22px) saturate(1.5);
+    -webkit-backdrop-filter:blur(22px) saturate(1.5);
+    border-top:1px solid rgba(255,255,255,.10);
     padding:6px 4px calc(6px + env(safe-area-inset-bottom));
+  }
+  /* Dégradé au-dessus de la barre : le contenu s'y estompe au lieu d'être tranché net par
+     le bord supérieur. Sans lui, une ligne de texte coupée en deux par la bordure reste
+     lisible à moitié et attire l'œil au mauvais endroit. Non cliquable, il ne fait que
+     couvrir. */
+  .navbar::before{
+    content:''; position:absolute; left:0; right:0; bottom:100%; height:26px;
+    pointer-events:none;
+    background:linear-gradient(to top, rgba(10,13,22,.72), transparent);
+  }
+  /* Repli pour les navigateurs sans backdrop-filter : sans lui, la barre y serait
+     simplement translucide sur du texte net, donc illisible. */
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
+    .navbar{background:rgba(13,16,24,.96);}
   }
   .nav-item{
     position:relative; background:none; border:0; cursor:pointer; color:var(--muted);
@@ -634,7 +656,7 @@
     width:52px; height:52px; margin-top:-20px; border-radius:50%; font-size:23px;
     background:linear-gradient(145deg,#ffe066,var(--accent)); color:#1a1206;
     box-shadow:0 6px 18px rgba(212,175,55,.42), 0 2px 6px rgba(0,0,0,.5);
-    border:3px solid rgba(13,16,24,.94); transition:transform .16s ease;
+    border:3px solid rgba(10,13,22,.55); transition:transform .16s ease;
   }
   .nav-item.active .nav-fab{transform:scale(1.06);}
   .nav-badge{
