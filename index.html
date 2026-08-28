@@ -789,6 +789,24 @@
   .bandeau-install b{display:block; font-size:13.5px;}
   .bandeau-install span{font-size:12px; color:var(--muted);}
   .bandeau-actions{margin-left:auto; display:flex; align-items:center; gap:10px;}
+  /* Selecteur d'etat, sous le visuel du resultat. En dessous et non au-dessus : le regard
+     va d'abord a la carte reconnue, l'etat se juge ensuite, en regardant l'exemplaire. */
+  .live-etat{
+    position:absolute; bottom:-11px; left:50%; transform:translateX(-50%);
+    display:flex; gap:3px; z-index:3;
+    background:rgba(10,13,22,.94); border:1px solid var(--border);
+    border-radius:13px; padding:2px 3px; box-shadow:0 3px 10px rgba(0,0,0,.5);
+  }
+  .live-etat button{
+    border:0; background:transparent; color:var(--muted); cursor:pointer;
+    font:inherit; font-size:10.5px; font-weight:800; padding:3px 7px; border-radius:10px;
+  }
+  /* Degrade du vert au rouge selon l'usure : l'ordre se lit sans avoir a connaitre les
+     sigles, et un HP selectionne se remarque, ce qui est exactement le but. */
+  .live-etat button.on[data-e="NM"]{background:#3ba55d; color:#fff;}
+  .live-etat button.on[data-e="LP"]{background:#8bbf3f; color:#12200a;}
+  .live-etat button.on[data-e="MP"]{background:#e0a12a; color:#1a1206;}
+  .live-etat button.on[data-e="HP"]{background:#c0392b; color:#fff;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1255,6 +1273,12 @@
           <div class="lr-row"><span class="lr-lbl">Ensemble</span><span id="live-result-set">—</span></div>
           <div class="lr-row"><span class="lr-lbl">Numéro</span><span id="live-result-num">—</span></div>
           <div class="lr-row"><span class="lr-lbl">Évaluation</span><span id="live-result-price">—</span></div>
+        </div>
+        <div class="live-etat" id="live-etat" style="display:none;">
+          <button data-e="NM" class="on" title="Near Mint — comme neuve">NM</button>
+          <button data-e="LP" title="Lightly Played — usure légère">LP</button>
+          <button data-e="MP" title="Moderately Played — usure visible">MP</button>
+          <button data-e="HP" title="Heavily Played — très usée">HP</button>
         </div>
         <span class="lr-badge" id="live-result-badge"></span>
       </div>
@@ -6151,6 +6175,7 @@ function majQuantiteLive(){
   if(!zone) return;
   if(!derniereEntreeAuto || !batch.includes(derniereEntreeAuto)){
     zone.style.display = 'none';
+    majEtatLive();
     return;
   }
   zone.style.display = '';
@@ -6159,6 +6184,7 @@ function majQuantiteLive(){
   // A une seule unite, le « − » ne se desactive pas : il RETIRE la carte. C'est le seul
   // moyen d'annuler un scan indesirable sans quitter la camera, et le libelle le dit pour
   // qu'on ne le decouvre pas apres coup.
+  majEtatLive();
   $('live-qty-moins').title = q <= 1
     ? 'Retirer cette carte du lot'
     : 'Retirer un exemplaire (quantite ' + q + ')';
@@ -6312,6 +6338,54 @@ if('serviceWorker' in navigator){
       });
     }).catch(()=>{ /* pas de mode hors ligne, l'application marche quand même */ });
   });
+}
+
+
+// Change l'état de la dernière carte ajoutée, et recalcule son prix. Le prix doit suivre :
+// annoncer un état « Heavily Played » tout en gardant le tarif d'une Near Mint reviendrait
+// à déplacer le problème plutôt qu'à le régler.
+//
+// Décotes usuelles du marché francophone. Elles ne prétendent pas à l'exactitude — aucune
+// source ne les publie — mais elles valent mieux que l'absence de décote, qui est le
+// comportement actuel et le seul dont on sait qu'il est faux.
+const DECOTE_ETAT = {NM: 1, LP: 0.85, MP: 0.7, HP: 0.5, DMG: 0.35};
+
+function appliquerEtatLive(code){
+  stickyCondition = code;
+  if($('sticky-condition')) $('sticky-condition').value = code;
+
+  const e = derniereEntreeAuto;
+  // L'etat de la ligne est ecrit AVANT de rafraichir le selecteur : majEtatLive lit
+  // l'etat de l'entree courante, l'appeler d'abord laissait le bouton actif sur le choix
+  // precedent.
+  if(e && batch.includes(e)) e.condition = code;
+  majEtatLive();
+  if(!e || !batch.includes(e)) return;
+  const m = parseFloat(e.marketPrice);
+  if(m){
+    const pct = parseFloat($('price-pct-input').value) || 80;
+    e.price = (m * pct / 100 * DECOTE_ETAT[code]).toFixed(2);
+  }
+  // Le titre porte l'état : le laisser sur « Near Mint » après avoir marqué la carte
+  // abîmée produirait une annonce qui se contredit elle-même.
+  if(e.cardName){
+    const tmpl = $('title-template-input').value;
+    const vars = {name: e.cardName, set: e.setName, number: e.number,
+                  rarity: e.rarity, condition: conditionLabel(code)};
+    e.title = tmpl.replace(/\{(\w+)\}/g, (m2, k) => vars[k] ?? '').slice(0, 80);
+  }
+  planifierSauvegardeSession();
+  renderBatchStatsOnly();
+  toast(`${conditionLabel(code)} — prix ajusté à ${e.price} €`);
+}
+
+function majEtatLive(){
+  const z = $('live-etat');
+  if(!z) return;
+  const visible = derniereEntreeAuto && batch.includes(derniereEntreeAuto);
+  z.style.display = visible ? '' : 'none';
+  const code = visible ? derniereEntreeAuto.condition : stickyCondition;
+  z.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.e === code));
 }
 
 function majCompteurHashes(){
@@ -8684,7 +8758,10 @@ function conditionLabel(code){
 function construireEntree(card, photo){
   const price = getBestPrice(card);
   const pct = parseFloat($('price-pct-input').value)||80;
-  const suggestedPrice = price.market ? (price.market*pct/100).toFixed(2) : '';
+  // La décote d'état est appliquée dès la construction : sans elle, une carte marquée
+  // « MP » avant le scan suivant garderait le tarif d'une Near Mint.
+  const decote = DECOTE_ETAT[stickyCondition] ?? 1;
+  const suggestedPrice = price.market ? (price.market*pct/100*decote).toFixed(2) : '';
 
   const tmpl = $('title-template-input').value;
   const descTmpl = $('desc-template-input').value;
@@ -9158,6 +9235,11 @@ $('chk-validation-auto').checked = validationAuto;
 $('chk-validation-auto').addEventListener('change', (e)=>{
   validationAuto = e.target.checked;
   localStorage.setItem('validationAuto', validationAuto ? '1' : '0');
+});
+
+$('live-etat').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-e]');
+  if(b) appliquerEtatLive(b.dataset.e);
 });
 
 $('btn-install-oui').addEventListener('click', lancerInstall);
