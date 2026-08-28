@@ -372,22 +372,37 @@ async function lancer(){
     demarrerWorkerEmbedding(modele);
 
     statut('Calcul des références (première inférence = téléchargement du modèle)…');
+    // Telechargements PARALLELISES, inferences serialisees.
+    //
+    // Mesure a l'appui : une inference coute 415 ms, mais indexer une reference prenait
+    // ~30 s — les 29,5 s restantes etaient passees a attendre l'image sur le CDN TCGdex,
+    // une par une. Le goulot n'etait pas le modele mais le reseau, et le serialiser
+    // n'apportait rien puisque rien ne l'imposait.
+    //
+    // Les images sont donc recuperees par lots de 8 en parallele pendant que le worker
+    // enchaine les inferences. L'inference, elle, reste sequentielle : le worker est
+    // unique, et lui envoyer plusieurs images a la fois ne ferait que les mettre en file
+    // ailleurs.
     const base = [];
-    for(let i = 0; i < refs.length; i++){
+    const LOT = 8;
+    let premiere = true;
+    for(let d = 0; d < refs.length; d += LOT){
       if(stop) throw new Error('arrêté');
-      const r = refs[i];
-      try{
-        // low.webp et non high.webp : le modele redimensionne son entree a 256 px et
-        // l'empreinte a 9x8, donc la haute definition n'apporte rien — elle ne faisait
-        // qu'allonger le telechargement et le decodage de 207 images.
-        const img = await chargerImage(r.image + '/low.webp');
-        const url = versDataUrl(img, zone);
-        const e = await embedding(url);
-        base.push({numero: String(parseInt(r.localId, 10)), localId: r.localId, image: r.image,
-                   hash: empreinte(img, zone), vec: e.v});
-        if(i === 0) log(`Première inférence : ${e.ms} ms (modèle téléchargé et initialisé).`);
-      }catch(err){ log(`  ⚠️ référence #${r.localId} ignorée : ${err.message}`); }
-      if(i % 10 === 0) statut(`Références : ${i+1}/${refs.length}…`);
+      const tranche = refs.slice(d, d + LOT);
+      // low.webp et non high.webp : le modele redimensionne son entree a 256 px et
+      // l'empreinte a 9x8, donc la haute definition n'apporte rien.
+      const images = await Promise.all(tranche.map(r =>
+        chargerImage(r.image + '/low.webp').then(img => ({r, img})).catch(err => ({r, err}))));
+      for(const {r, img, err} of images){
+        if(err){ log(`  ⚠️ référence #${r.localId} ignorée : ${err.message}`); continue; }
+        try{
+          const e = await embedding(versDataUrl(img, zone));
+          base.push({numero: String(parseInt(r.localId, 10)), localId: r.localId, image: r.image,
+                     hash: empreinte(img, zone), vec: e.v});
+          if(premiere){ premiere = false; log(`Première inférence : ${e.ms} ms (modèle téléchargé et initialisé).`); }
+        }catch(e2){ log(`  ⚠️ référence #${r.localId} ignorée : ${e2.message}`); }
+      }
+      statut(`Références : ${Math.min(d + LOT, refs.length)}/${refs.length}…`);
     }
     log(`${base.length} référence(s) indexée(s).`);
 
