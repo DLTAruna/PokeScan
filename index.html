@@ -518,6 +518,33 @@
   .sc-pv{font-size:11.5px; font-weight:700;}
   .pos, .sc-pv.pos{color:#5fd08a;}
   .neg, .sc-pv.neg{color:#f08a8d;}
+  /* ---- Bandeau de valeur ---- */
+  /* L'application savait ce que valait le lot a vendre, mais pas ce que valait l'ensemble
+     — collection, lot et scelle reunis. C'est pourtant la premiere question qu'on se pose
+     en ouvrant un outil d'inventaire, et la seule qui donne un sens aux trois registres. */
+  .cote-hero{
+    border:1px solid rgba(212,175,55,.4); border-radius:14px; padding:14px 16px; margin-bottom:14px;
+    background:radial-gradient(120% 140% at 0% 0%, rgba(212,175,55,.16), transparent 58%), var(--panel);
+    box-shadow:0 8px 30px rgba(0,0,0,.35);
+  }
+  .cote-tete{display:flex; justify-content:space-between; align-items:center; gap:10px;}
+  /* Petites capitales espacees pour les intitules, gros chiffres pour les valeurs : c'est
+     la hierarchie qui permet de lire un tableau de bord d'un coup d'oeil sans le parcourir. */
+  .cote-kicker{font-size:10px; letter-spacing:1.4px; text-transform:uppercase; color:var(--muted); font-weight:700;}
+  .cote-corps{display:flex; gap:18px; flex-wrap:wrap; margin:12px 0 4px;}
+  .cote-bloc{flex:1; min-width:150px;}
+  .cote-droite{text-align:right;}
+  .cote-lbl{font-size:10px; letter-spacing:1.1px; text-transform:uppercase; color:var(--muted); font-weight:700;}
+  .cote-num{font-size:34px; font-weight:800; line-height:1.15; color:var(--accent); font-variant-numeric:tabular-nums;}
+  .cote-pv{font-size:26px;}
+  .cote-pv.pos{color:#5fd08a;} .cote-pv.neg{color:#f08a8d;}
+  .cote-sub{font-size:11.5px; color:var(--muted); margin-top:2px;}
+  .cote-pieds{display:flex; gap:16px; flex-wrap:wrap; padding-top:11px; margin-top:8px; border-top:1px solid var(--border);}
+  .cote-pied{display:flex; align-items:center; gap:6px; font-size:12px; color:var(--muted);}
+  .cote-pied b{color:var(--text);}
+  .pt{width:8px; height:8px; border-radius:50%; flex:none;}
+  .pt.collection{background:#4bb8e0;} .pt.lot{background:var(--accent);} .pt.scelle{background:#c07ae0;}
+  @media (max-width:560px){ .cote-droite{text-align:left;} .cote-num{font-size:28px;} }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -829,6 +856,30 @@
 
   <!-- CAPTURE TAB -->
   <section class="section active" id="section-capture">
+      <!-- Bandeau de valeur : la question à laquelle l'app ne répondait pas -->
+      <div class="cote-hero" id="cote-hero">
+        <div class="cote-tete">
+          <span class="cote-kicker">Valeur du patrimoine</span>
+          <span class="cote-kicker" id="cote-maj">—</span>
+        </div>
+        <div class="cote-corps">
+          <div class="cote-bloc">
+            <div class="cote-lbl">Total</div>
+            <div class="cote-num" id="cote-total">0 €</div>
+            <div class="cote-sub" id="cote-detail">—</div>
+          </div>
+          <div class="cote-bloc cote-droite">
+            <div class="cote-lbl">Plus-value latente</div>
+            <div class="cote-num cote-pv" id="cote-pv">—</div>
+            <div class="cote-sub" id="cote-pv-sub">coût d'achat non renseigné</div>
+          </div>
+        </div>
+        <div class="cote-pieds">
+          <div class="cote-pied"><span class="pt collection"></span>Collection <b id="cote-p-coll">0 €</b></div>
+          <div class="cote-pied"><span class="pt lot"></span>Lot à vendre <b id="cote-p-lot">0 €</b></div>
+          <div class="cote-pied"><span class="pt scelle"></span>Scellé <b id="cote-p-scelle">0 €</b></div>
+        </div>
+      </div>
     <div class="panel">
       <h2>📹 Caméra en direct (rafale)</h2>
       <p class="sub">Place la carte dans le cadre : la capture se déclenche <b>toute seule</b> dès qu'il passe au vert. Enchaîne les cartes sans rien toucher — l'analyse tourne en arrière-plan pendant que tu continues. Le bouton 📸 reste disponible pour forcer une prise.</p>
@@ -5550,6 +5601,67 @@ $('btn-clear-hashes').addEventListener('click', async ()=>{
 
 // Le compteur rend la mémoire visible : sans lui, l'utilisateur n'aurait aucun moyen de
 // savoir que ce raccourci existe, ni pourquoi ses scans accélèrent au fil des séances.
+
+// ---------------- VALEUR TOTALE DU PATRIMOINE ----------------
+// Trois registres cohabitent désormais — la collection qu'on garde, le lot qu'on vend, le
+// scellé — et aucun écran ne disait ce que l'ensemble représente. C'est pourtant la
+// première question qu'on se pose en ouvrant un inventaire, et la seule qui donne un sens
+// à leur cohabitation.
+//
+// La valeur de la collection suppose de connaître le prix de chaque version possédée, donc
+// les fiches détaillées. On ne les charge PAS pour ça : elles arrivent au fil de la
+// navigation dans les sets, et le montant se complète tout seul. Les cartes dont la fiche
+// manque sont comptées à part et annoncées, plutôt que silencieusement ignorées — un total
+// partiel présenté comme complet serait pire que pas de total du tout.
+function valeurCollection(){
+  let total = 0, connues = 0, inconnues = 0;
+  for(const e of collection.values()){
+    const d = detailsCartes.get(e.cardId);
+    const p = d ? prixVariante(d, e.variante) : null;
+    // Une version au prix ambigu est comptée sur sa borne BASSE : mieux vaut annoncer un
+    // patrimoine prudent qu'un patrimoine flatteur qu'on ne retrouverait pas à la revente.
+    const u = p ? (p.ambigu ? p.min : p.prix) : null;
+    if(u == null){ inconnues += e.qty || 1; continue; }
+    total += u * (e.qty || 1);
+    connues += e.qty || 1;
+  }
+  return {total, connues, inconnues};
+}
+
+function majCoteGlobale(){
+  if(!$('cote-total')) return;
+  const coll = valeurCollection();
+  const lot = batch.reduce((s, e) => s + (parseFloat(e.price) || 0) * (parseInt(e.qty) || 1), 0);
+  const sc  = scelle.reduce((s, p) => s + (parseFloat(p.cote) || 0) * (parseInt(p.qty) || 1), 0);
+  const scCout = scelle.reduce((s, p) => s + (parseFloat(p.achat) || 0) * (parseInt(p.qty) || 1), 0);
+  const total = coll.total + lot + sc;
+
+  $('cote-total').textContent = total.toFixed(2) + ' €';
+  $('cote-p-coll').textContent = coll.total.toFixed(2) + ' €';
+  $('cote-p-lot').textContent = lot.toFixed(2) + ' €';
+  $('cote-p-scelle').textContent = sc.toFixed(2) + ' €';
+  $('cote-maj').textContent = new Date().toLocaleDateString('fr-FR', {day:'2-digit', month:'short'});
+
+  const items = coll.connues + coll.inconnues + batch.length +
+                scelle.reduce((s, p) => s + (parseInt(p.qty) || 1), 0);
+  $('cote-detail').textContent = items + ' article(s)' +
+    (coll.inconnues ? ` · ${coll.inconnues} sans prix connu, non compté(s)` : '');
+
+  // La plus-value ne porte que sur le scellé : c'est le seul registre où un prix d'achat
+  // est saisi. L'annoncer sur l'ensemble laisserait croire à un gain calculé sur tout.
+  const pv = $('cote-pv');
+  if(scCout > 0){
+    const m = sc - scCout;
+    pv.textContent = (m >= 0 ? '+' : '') + m.toFixed(2) + ' €';
+    pv.className = 'cote-num cote-pv ' + (m >= 0 ? 'pos' : 'neg');
+    $('cote-pv-sub').textContent = `sur le scellé, ${scCout.toFixed(2)} € investis`;
+  } else {
+    pv.textContent = '—';
+    pv.className = 'cote-num cote-pv';
+    $('cote-pv-sub').textContent = "renseigne un prix d'achat pour la voir";
+  }
+}
+
 function majCompteurHashes(){
   const el = $('nb-hashes');
   if(el) el.textContent = hashesPersistes.length;
@@ -5835,6 +5947,7 @@ function renderScelle(){
   // identiques sont trois produits en stock, pas un.
   const badge = $('tab-scelle-count');
   if(badge) badge.textContent = nb;
+  majCoteGlobale();
   $('sc-valeur').textContent = total.toFixed(2) + ' €';
   $('sc-cout').textContent = cout.toFixed(2) + ' €';
   // La plus-value n'a de sens que si un coût d'achat a été saisi : sans lui, afficher la
@@ -5975,6 +6088,7 @@ async function majPossession(cardId, setId, localId, delta, variante = 'normal')
     collection.set(cle, e);
     await idbSet(COLLECTION_STORE, e);
   }
+  majCoteGlobale();
   return qty;
 }
 
@@ -7654,6 +7768,7 @@ function renderBatch(){
   const totalValue = batch.reduce((sum,e)=> sum + (parseFloat(e.price)||0) * (parseInt(e.qty)||1), 0);
   $('stat-value').textContent = totalValue.toFixed(2) + ' €';
   $('stat-noimg').textContent = batch.filter(e=>!e.imageUrl).length;
+  majCoteGlobale();
 
   const tbody = $('batch-tbody');
   tbody.innerHTML = '';
@@ -7930,9 +8045,10 @@ renderQueueStrip();
 // retrouver son lot immédiatement, pas après le préchauffage des workers.
 restaurerSession();
 chargerHashesPhotos().then(majCompteurHashes);
-chargerCollection();
 remplirTypesScelle();
-chargerScelle().then(renderScelle);
+// La cote globale ne peut etre calculee qu'une fois les trois registres charges : elle est
+// donc appelee apres, et non a la suite de chacun.
+Promise.all([chargerCollection(), chargerScelle()]).then(()=>{ renderScelle(); majCoteGlobale(); });
 
 $('btn-sc-ajouter').addEventListener('click', ajouterScelle);
 $('sc-nom').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') ajouterScelle(); });
