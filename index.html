@@ -497,6 +497,27 @@
     font-size:10px; font-weight:800; cursor:pointer; line-height:1.5;
   }
   .badge-versions.partiel{background:var(--accent); color:#1a1206; border-color:transparent;}
+  /* Produits scelles */
+  .sc-groupe{margin-bottom:14px;}
+  .sc-groupe-tete{
+    display:flex; align-items:baseline; gap:10px; padding:7px 10px; border-radius:8px;
+    background:linear-gradient(90deg, rgba(212,175,55,.14), transparent 70%);
+    border-left:3px solid var(--accent); margin-bottom:6px; flex-wrap:wrap;
+  }
+  .sc-groupe-tete .hint{margin:0; margin-left:auto;}
+  .sc-item{
+    display:flex; align-items:center; gap:11px; padding:8px 10px;
+    border-bottom:1px solid var(--border);
+  }
+  .sc-photo{width:46px; height:46px; object-fit:cover; border-radius:7px; background:#0a0a0a; flex:none;}
+  .sc-photo-vide{display:flex; align-items:center; justify-content:center; font-size:20px; border:1px dashed var(--border);}
+  .sc-info{display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;}
+  .sc-info .hint{margin:0; font-size:11.5px;}
+  .sc-prix{display:flex; flex-direction:column; align-items:flex-end; gap:2px; white-space:nowrap;}
+  .sc-cote{font-weight:800; color:var(--accent);}
+  .sc-pv{font-size:11.5px; font-weight:700;}
+  .pos, .sc-pv.pos{color:#5fd08a;}
+  .neg, .sc-pv.neg{color:#f08a8d;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -795,7 +816,8 @@
     <button class="tab-btn active" data-tab="capture">📸 Capture (<span class="queue-badge">0</span>)</button>
     <button class="tab-btn" data-tab="identify">⚡ Identifier (<span class="queue-badge">0</span>)</button>
     <button class="tab-btn" data-tab="batch">📋 Lot (<span id="tab-count">0</span>)</button>
-    <button class="tab-btn" data-tab="sets">🗂️ Sets</button>
+    <button class="tab-btn" data-tab="sets">📦 Sets</button>
+    <button class="tab-btn" data-tab="scelle">🎁 Scellé (<span id="tab-scelle-count">0</span>)</button>
     <button class="tab-btn" data-tab="export">⬇️ Export</button>
     <button class="tab-btn" data-tab="settings">⚙️ Réglages</button>
     <button class="tab-btn" data-tab="bench">🧪 Banc</button>
@@ -1092,6 +1114,89 @@
     </div>
   </section>
 
+
+  <!-- SCELLÉ TAB -->
+  <section class="section" id="section-scelle">
+    <div class="panel">
+      <h2>📦 Produits scellés</h2>
+      <p class="sub">
+        Displays, ETB, coffrets, boosters… Saisie manuelle : aucune API publique ne
+        référence le scellé Pokémon avec ses cotes, contrairement aux cartes. Les prix sont
+        donc ceux que <b>tu</b> constates — c'est moins automatique, mais au moins ils ne
+        sont jamais faux à ton insu.
+      </p>
+
+      <div class="stat-row" id="scelle-stats">
+        <div class="stat"><div class="num" id="sc-count">0</div><div class="lbl">Produits</div></div>
+        <div class="stat"><div class="num" id="sc-valeur">0 €</div><div class="lbl">Valeur estimée</div></div>
+        <div class="stat"><div class="num" id="sc-cout">0 €</div><div class="lbl">Coût d'achat</div></div>
+        <div class="stat"><div class="num" id="sc-marge">0 €</div><div class="lbl">Plus-value latente</div></div>
+      </div>
+
+      <div class="divider"></div>
+
+      <h3 style="font-size:14px; margin:0 0 8px;">Ajouter un produit</h3>
+      <div class="row">
+        <div>
+          <label for="sc-type">Type</label>
+          <select id="sc-type"></select>
+        </div>
+        <div>
+          <label for="sc-nom">Nom du produit</label>
+          <input type="text" id="sc-nom" placeholder="ex : Coffret Dracaufeu-ex 151" autocomplete="off">
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="sc-set">Extension (optionnel)</label>
+          <input type="text" id="sc-set" placeholder="ex : 151, Évolutions Prismatiques" autocomplete="off">
+        </div>
+        <div>
+          <label for="sc-langue">Langue</label>
+          <select id="sc-langue">
+            <option value="FR">Français</option>
+            <option value="EN">Anglais</option>
+            <option value="JP">Japonais</option>
+          </select>
+        </div>
+      </div>
+      <div class="row">
+        <div>
+          <label for="sc-qty">Quantité</label>
+          <input type="number" id="sc-qty" value="1" min="1">
+        </div>
+        <div>
+          <label for="sc-achat">Prix d'achat unitaire (€)</label>
+          <input type="number" id="sc-achat" step="0.01" placeholder="0.00">
+        </div>
+        <div>
+          <label for="sc-cote">Cote unitaire actuelle (€)</label>
+          <input type="number" id="sc-cote" step="0.01" placeholder="0.00">
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <div>
+          <label for="sc-photo">Photo (optionnel)</label>
+          <input type="file" id="sc-photo" accept="image/*">
+        </div>
+        <div style="display:flex; align-items:flex-end;">
+          <button class="btn-gold" id="btn-sc-ajouter">➕ Ajouter au scellé</button>
+        </div>
+      </div>
+      <p class="hint" id="sc-form-status"></p>
+
+      <div class="divider"></div>
+
+      <div class="set-vue-row">
+        <div class="seg" id="sc-filtre"><button class="on" data-t="">Tous</button></div>
+      </div>
+      <div id="scelle-liste"></div>
+      <div class="empty-state" id="scelle-vide">
+        <img class="empty-icon" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png" alt="" aria-hidden="true">
+        Aucun produit scellé pour le moment.
+      </div>
+    </div>
+  </section>
   <!-- EXPORT TAB -->
   <section class="section" id="section-export">
     <div class="panel">
@@ -2257,7 +2362,7 @@ const IDB_NAME = 'pokescan_cache_v1';
 // segmentation). Le numéro de version doit augmenter pour qu'onupgradeneeded se déclenche
 // sur les navigateurs ayant déjà la base en v1 — sans ça, le magasin n'existerait jamais
 // chez les utilisateurs existants et toute lecture échouerait silencieusement.
-const IDB_VERSION = 5;
+const IDB_VERSION = 6;
 let idbPromise = null;
 
 function openIdb(){
@@ -2291,6 +2396,8 @@ function openIdb(){
       } else if(!db.objectStoreNames.contains('collection')){
         db.createObjectStore('collection', {keyPath:'cle'});
       }
+      // Produits scellés : saisis à la main, aucune API publique ne les référence.
+      if(!db.objectStoreNames.contains('scelle')) db.createObjectStore('scelle', {keyPath:'id'});
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -5679,6 +5786,161 @@ async function chargerVariantes(cartes, onProgres){
 // deux objets distincts, avec deux valeurs distinctes.
 function cleCollection(cardId, variante){ return cardId + '|' + variante; }
 
+
+// ---------------- PRODUITS SCELLÉS ----------------
+// Le scellé se saisit à la main, et c'est un choix assumé : aucune API publique ne
+// référence les displays, ETB et coffrets Pokémon avec leurs cotes — TCGdex ne connaît
+// que les cartes. Les acteurs qui l'affichent maintiennent leur propre base. Plutôt que
+// d'inventer des prix ou de racler un site, l'outil enregistre ce que l'utilisateur
+// constate : moins automatique, mais jamais faux à son insu.
+//
+// La taxonomie reprend celle observée sur TCG Crew, qui correspond à ce qui se vend
+// réellement — un « coffret » et une « pokébox » ne se revendent ni au même prix ni au
+// même public, les mélanger rendrait l'inventaire inutilisable.
+const TYPES_SCELLE = [
+  'Display', 'ETB', 'Coffret collection', 'Pokébox', 'Mini Tin', 'Tripack',
+  'Blister', 'Bundle', 'UPC', 'Deck', 'Booster à l\'unité', 'Autre scellé'
+];
+
+let scelle = [];
+let filtreScelle = '';
+
+async function chargerScelle(){
+  try{ scelle = await idbGetAll('scelle'); }catch(e){ scelle = []; }
+  scelle.sort((a, b) => (b.at || 0) - (a.at || 0));
+}
+
+function remplirTypesScelle(){
+  const sel = $('sc-type');
+  if(sel.options.length) return;
+  for(const t of TYPES_SCELLE){
+    const o = document.createElement('option');
+    o.value = t; o.textContent = t;
+    sel.appendChild(o);
+  }
+  const f = $('sc-filtre');
+  for(const t of TYPES_SCELLE){
+    const b = document.createElement('button');
+    b.dataset.t = t; b.textContent = t;
+    f.appendChild(b);
+  }
+}
+
+function renderScelle(){
+  const total = scelle.reduce((s, p) => s + (parseFloat(p.cote) || 0) * (parseInt(p.qty) || 1), 0);
+  const cout  = scelle.reduce((s, p) => s + (parseFloat(p.achat) || 0) * (parseInt(p.qty) || 1), 0);
+  const nb    = scelle.reduce((s, p) => s + (parseInt(p.qty) || 1), 0);
+  $('sc-count').textContent = nb;
+  // Le compteur d'onglet suit la quantite totale, pas le nombre de lignes : trois displays
+  // identiques sont trois produits en stock, pas un.
+  const badge = $('tab-scelle-count');
+  if(badge) badge.textContent = nb;
+  $('sc-valeur').textContent = total.toFixed(2) + ' €';
+  $('sc-cout').textContent = cout.toFixed(2) + ' €';
+  // La plus-value n'a de sens que si un coût d'achat a été saisi : sans lui, afficher la
+  // cote entière comme « plus-value » serait un chiffre flatteur et faux.
+  const marge = cout > 0 ? total - cout : null;
+  $('sc-marge').textContent = marge === null ? '—' : (marge >= 0 ? '+' : '') + marge.toFixed(2) + ' €';
+  $('sc-marge').className = 'num' + (marge === null ? '' : marge >= 0 ? ' pos' : ' neg');
+
+  const liste = filtreScelle ? scelle.filter(p => p.type === filtreScelle) : scelle;
+  $('scelle-vide').style.display = liste.length ? 'none' : 'block';
+
+  // Regroupement par type, comme le lot est regroupé par extension : c'est la façon dont
+  // on range et dont on revend le scellé.
+  const groupes = new Map();
+  for(const p of liste){
+    if(!groupes.has(p.type)) groupes.set(p.type, []);
+    groupes.get(p.type).push(p);
+  }
+
+  $('scelle-liste').innerHTML = [...groupes.entries()].map(([type, items])=>{
+    const v = items.reduce((s, p) => s + (parseFloat(p.cote) || 0) * (parseInt(p.qty) || 1), 0);
+    return `
+      <div class="sc-groupe">
+        <div class="sc-groupe-tete"><b>${escapeHtml(type)}</b>
+          <span class="hint">${items.length} référence(s) · ${v.toFixed(2)} €</span></div>
+        ${items.map(p => {
+          const pv = (parseFloat(p.cote) || 0) - (parseFloat(p.achat) || 0);
+          const aCout = parseFloat(p.achat) > 0;
+          return `
+          <div class="sc-item" data-id="${escapeHtml(p.id)}">
+            ${p.photo ? `<img class="sc-photo" src="${p.photo}" alt="">` : '<div class="sc-photo sc-photo-vide">📦</div>'}
+            <div class="sc-info">
+              <b>${escapeHtml(p.nom)}</b>
+              <span class="hint">${[p.set, p.langue, '×' + (p.qty || 1)].filter(Boolean).map(escapeHtml).join(' · ')}</span>
+            </div>
+            <div class="sc-prix">
+              <span class="sc-cote">${(parseFloat(p.cote) || 0).toFixed(2)} €</span>
+              ${aCout ? `<span class="sc-pv ${pv >= 0 ? 'pos' : 'neg'}">${pv >= 0 ? '+' : ''}${pv.toFixed(2)} €</span>` : '<span class="hint">coût non saisi</span>'}
+            </div>
+            <button class="btn-danger btn-sm" data-action="sc-suppr">🗑</button>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }).join('');
+
+  $('scelle-liste').querySelectorAll('[data-action="sc-suppr"]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      const id = b.closest('.sc-item').dataset.id;
+      const p = scelle.find(x => x.id === id);
+      if(!confirm(`Retirer « ${p?.nom || 'ce produit'} » du scellé ?`)) return;
+      scelle = scelle.filter(x => x.id !== id);
+      await idbDelete('scelle', id).catch(()=>{});
+      renderScelle();
+    });
+  });
+}
+
+async function ajouterScelle(){
+  const nom = $('sc-nom').value.trim();
+  if(!nom){ $('sc-form-status').textContent = '⚠️ Donne au moins un nom au produit.'; return; }
+
+  const fichier = $('sc-photo').files[0];
+  let photo = null;
+  if(fichier){
+    // Photo réduite avant stockage : une photo de téléphone pèse plusieurs mégaoctets, et
+    // l'inventaire en contiendrait des dizaines. 420 px suffisent pour reconnaître un
+    // produit dans une liste.
+    photo = await reduireImage(fichier, 420);
+  }
+
+  const p = {
+    id: 'sc' + Date.now() + Math.random().toString(36).slice(2, 6),
+    type: $('sc-type').value, nom, set: $('sc-set').value.trim(),
+    langue: $('sc-langue').value,
+    qty: parseInt($('sc-qty').value) || 1,
+    achat: $('sc-achat').value, cote: $('sc-cote').value,
+    photo, at: Date.now()
+  };
+  await idbSet('scelle', p);
+  scelle.unshift(p);
+  renderScelle();
+
+  // Le type, la langue et l'extension sont conservés : on saisit un lot de produits
+  // similaires à la suite, les remettre à zéro à chaque ajout serait une corvée.
+  $('sc-nom').value = ''; $('sc-achat').value = ''; $('sc-cote').value = '';
+  $('sc-qty').value = '1'; $('sc-photo').value = '';
+  $('sc-form-status').textContent = `✅ « ${nom} » ajouté.`;
+  $('sc-nom').focus();
+}
+
+function reduireImage(fichier, cote){
+  return new Promise((resolve)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      const e = Math.min(1, cote / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * e); c.height = Math.round(img.height * e);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      resolve(c.toDataURL('image/jpeg', 0.82));
+    };
+    img.onerror = ()=> resolve(null);
+    img.src = URL.createObjectURL(fichier);
+  });
+}
+
 const COLLECTION_STORE = 'collection';
 let collection = new Map(); // « cardId|variante » -> {cle, cardId, variante, setId, localId, qty, at}
 
@@ -7669,6 +7931,18 @@ renderQueueStrip();
 restaurerSession();
 chargerHashesPhotos().then(majCompteurHashes);
 chargerCollection();
+remplirTypesScelle();
+chargerScelle().then(renderScelle);
+
+$('btn-sc-ajouter').addEventListener('click', ajouterScelle);
+$('sc-nom').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') ajouterScelle(); });
+$('sc-filtre').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-t]');
+  if(!b) return;
+  filtreScelle = b.dataset.t;
+  $('sc-filtre').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  renderScelle();
+});
 $('btn-mode-vue').textContent = modeClasseur ? '▦ Vue grille' : '📖 Mode classeur';
 $('dispo-classeur').querySelectorAll('button').forEach(x =>
   x.classList.toggle('on', parseInt(x.dataset.c, 10) === capaciteClasseur));
