@@ -379,6 +379,73 @@
     background:var(--accent); color:#1a1206; font-size:10px; font-weight:800;
     padding:1px 5px; border-radius:8px; box-shadow:0 1px 4px rgba(0,0,0,.6);
   }
+  /* ---- Progression d'un set ---- */
+  /* La barre est au-dessus de la grille et non en dessous : quand on ouvre un set, la
+     premiere chose qu'on veut savoir est ou on en est, pas ce que le set contient. */
+  .set-progression{display:flex; align-items:center; gap:10px; margin:10px 0 6px; font-size:12.5px;}
+  .prog-barre{flex:1; height:8px; border-radius:5px; background:#1a1f2b; overflow:hidden; min-width:80px;}
+  .prog-remplie{height:100%; border-radius:5px; transition:width .35s ease; background:var(--accent);}
+  .prog-txt{color:var(--muted); white-space:nowrap;}
+  /* Trois etats de couleur seulement. Un degrade continu suggererait une precision que
+     la donnee n'a pas, et le vert doit rester reserve au set reellement termine. */
+  .set-progression.partiel .prog-remplie{background:linear-gradient(90deg,#e0a63a,#f0c14b);}
+  .set-progression.complet .prog-remplie{background:linear-gradient(90deg,#3fa46a,#5fd08a);}
+  .set-vue-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px;}
+  .set-vue-row .hint{margin:0;}
+
+  /* ---- Marqueur de possession ---- */
+  .btn-possede{
+    position:absolute; top:4px; right:4px; min-width:24px; height:22px; padding:0 6px;
+    border-radius:11px; border:1px solid var(--border); background:rgba(0,0,0,.72);
+    color:#fff; font-size:11px; font-weight:800; cursor:pointer; line-height:1;
+  }
+  .btn-possede.on{background:var(--accent); color:#1a1206; border-color:transparent;}
+  /* Une carte manquante est GRISEE plutot que la possedee mise en valeur : en pointant un
+     classeur, ce qu'on cherche du regard ce sont les trous, pas ce qu'on a deja. */
+  .card-thumb:not(.possedee) img{filter:grayscale(.85) brightness(.62);}
+  .card-thumb.possedee{outline:2px solid var(--accent); outline-offset:-2px;}
+
+  /* ---- Mode classeur ---- */
+  .classeur-pages{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  .classeur-page{
+    display:grid; grid-template-columns:repeat(var(--cols,3), 1fr); gap:6px;
+    padding:10px; border-radius:8px;
+    /* Grain et teinte d'un classeur physique : c'est ce qui fait la difference entre une
+       grille en deux colonnes et la sensation d'une double page. */
+    background:linear-gradient(160deg,#1d2130,#141824);
+    border:1px solid var(--border); box-shadow:inset 0 0 26px rgba(0,0,0,.55);
+  }
+  .classeur-nav{display:flex; align-items:center; justify-content:center; gap:14px; margin-top:12px; flex-wrap:wrap;}
+  .classeur-pos{font-size:12px; color:var(--muted);}
+  @media (max-width:760px){
+    /* Une double page cote a cote sur un ecran de telephone donnerait des vignettes
+       illisibles : les deux pages passent l'une sous l'autre. */
+    .classeur-pages{grid-template-columns:1fr;}
+  }
+  /* Groupe de boutons segmentes — un seul choix actif, comme les bascules de TCG Crew.
+     Preferable a un <select> ici : les options sont peu nombreuses et on veut les compter
+     d'un coup d'oeil (« combien il m'en manque ? ») sans ouvrir un menu. */
+  .seg{display:inline-flex; border:1px solid var(--border); border-radius:9px; overflow:hidden;}
+  .seg button{
+    background:transparent; color:var(--muted); border:0; border-right:1px solid var(--border);
+    padding:5px 10px; font:inherit; font-size:12px; cursor:pointer; white-space:nowrap;
+  }
+  .seg button:last-child{border-right:0;}
+  .seg button.on{background:var(--accent); color:#1a1206; font-weight:700;}
+  .seg button b{margin-left:5px; opacity:.75; font-size:11px;}
+
+  /* Anneaux du classeur : la reliure dessinee sur le bord interieur des deux pages. Un
+     detail purement decoratif, mais c'est lui qui fait basculer la lecture de « deux
+     colonnes de vignettes » a « une double page de classeur ». */
+  .classeur-page{position:relative;}
+  .classeur-page::before{
+    content:''; position:absolute; top:14px; bottom:14px; width:3px;
+    background:repeating-linear-gradient(to bottom, var(--accent) 0 7px, transparent 7px 22px);
+    opacity:.5; border-radius:2px;
+  }
+  .classeur-page:first-child::before{right:4px;}
+  .classeur-page:last-child::before{left:4px;}
+  @media (max-width:760px){ .classeur-page::before{left:4px; right:auto;} }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -950,7 +1017,22 @@
           <p class="sub" id="set-detail-meta">—</p>
         </div>
       </div>
-      <p class="hint" id="set-detail-status"></p>
+      <div class="set-progression vide" id="set-progression"></div>
+      <div class="set-vue-row">
+        <button class="btn-ghost btn-sm" id="btn-mode-vue">📖 Mode classeur</button>
+        <div class="seg" id="filtre-possession">
+          <button class="on" data-f="toutes">Toutes <b id="n-toutes">0</b></button>
+          <button data-f="possedees">Possédées <b id="n-possedees">0</b></button>
+          <button data-f="manquantes">Manquantes <b id="n-manquantes">0</b></button>
+        </div>
+        <div class="seg" id="dispo-classeur" style="display:none;">
+          <button data-c="4">2×2</button>
+          <button class="on" data-c="9">3×3</button>
+          <button data-c="12">3×4</button>
+          <button data-c="16">4×4</button>
+        </div>
+      </div>
+      <span class="hint" id="set-detail-status"></span>
       <div class="cards-grid" id="set-cards-grid"></div>
     </div>
   </section>
@@ -2110,7 +2192,7 @@ const IDB_NAME = 'pokescan_cache_v1';
 // segmentation). Le numéro de version doit augmenter pour qu'onupgradeneeded se déclenche
 // sur les navigateurs ayant déjà la base en v1 — sans ça, le magasin n'existerait jamais
 // chez les utilisateurs existants et toute lecture échouerait silencieusement.
-const IDB_VERSION = 3;
+const IDB_VERSION = 4;
 let idbPromise = null;
 
 function openIdb(){
@@ -2126,6 +2208,8 @@ function openIdb(){
       if(!db.objectStoreNames.contains('cardMasks')) db.createObjectStore('cardMasks', {keyPath:'cardId'});
       // Empreintes des PHOTOS déjà identifiées, conservées d'une session à l'autre.
       if(!db.objectStoreNames.contains('photoHashes')) db.createObjectStore('photoHashes', {keyPath:'cle'});
+      // Collection personnelle : ce qu'on possède et qu'on garde, distinct du lot de vente.
+      if(!db.objectStoreNames.contains('collection')) db.createObjectStore('collection', {keyPath:'cardId'});
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -5213,6 +5297,33 @@ $('btn-download-catalogue').addEventListener('click', async ()=>{
   }
 });
 
+$('filtre-possession').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-f]');
+  if(!b) return;
+  filtrePossession = b.dataset.f;
+  $('filtre-possession').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  pageClasseur = 0;
+  if(cartesSetCourant.length) rendreCartesSet();
+});
+
+$('dispo-classeur').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-c]');
+  if(!b) return;
+  capaciteClasseur = parseInt(b.dataset.c, 10);
+  localStorage.setItem('capaciteClasseur', String(capaciteClasseur));
+  $('dispo-classeur').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  pageClasseur = 0;
+  if(cartesSetCourant.length) rendreCartesSet();
+});
+
+$('btn-mode-vue').addEventListener('click', ()=>{
+  modeClasseur = !modeClasseur;
+  localStorage.setItem('modeClasseur', modeClasseur ? '1' : '0');
+  $('btn-mode-vue').textContent = modeClasseur ? '▦ Vue grille' : '📖 Mode classeur';
+  pageClasseur = 0;
+  if(cartesSetCourant.length) rendreCartesSet();
+});
+
 $('btn-clear-hashes').addEventListener('click', async ()=>{
   if(!hashesPersistes.length){ toast('Aucune empreinte mémorisée.'); return; }
   if(!confirm(`Oublier les ${hashesPersistes.length} empreinte(s) de photos déjà identifiées ? Les prochaines cartes repasseront toutes par l'OCR, plus lent. Le lot et le catalogue ne sont pas touchés.`)) return;
@@ -5370,6 +5481,158 @@ function findSetMeta(setId){
   return null;
 }
 
+
+// ---------------- COLLECTION PERSONNELLE ----------------
+// Jusqu'ici l'application ne connaissait qu'une chose : le LOT, c'est-à-dire les cartes
+// destinées à la vente. Or quand on trie mille cartes, la question « est-ce que je garde
+// celle-ci ? » se pose autant que « à combien je la vends ? », et une carte gardée
+// disparaissait purement et simplement de l'outil.
+//
+// La collection est donc un second registre, indépendant du lot : ce qu'on possède et
+// qu'on garde. Un même identifiant de carte peut exister dans les deux — on peut garder un
+// exemplaire et en vendre un autre — d'où deux magasins séparés plutôt qu'un drapeau.
+const COLLECTION_STORE = 'collection';
+let collection = new Map(); // cardId -> {cardId, setId, localId, qty, at}
+
+async function chargerCollection(){
+  try{
+    const tout = await idbGetAll(COLLECTION_STORE);
+    collection = new Map(tout.map(e => [e.cardId, e]));
+  }catch(e){ collection = new Map(); }
+}
+
+async function majPossession(cardId, setId, localId, delta){
+  const actuel = collection.get(cardId);
+  const qty = Math.max(0, (actuel?.qty || 0) + delta);
+  if(qty === 0){
+    collection.delete(cardId);
+    await idbDelete(COLLECTION_STORE, cardId).catch(()=>{});
+  } else {
+    const e = {cardId, setId, localId, qty, at: actuel?.at || Date.now()};
+    collection.set(cardId, e);
+    await idbSet(COLLECTION_STORE, e);
+  }
+  return qty;
+}
+
+// Progression d'un set : combien de ses cartes sont possédées. Calculée sur la liste
+// réellement chargée et non sur cardCount.official — les deux diffèrent (cartes secrètes
+// au-delà du total imprimé), et afficher « 210/207 » serait absurde.
+function progressionSet(cartes){
+  const possedees = cartes.filter(c => collection.has(c.id)).length;
+  return {possedees, total: cartes.length,
+          pct: cartes.length ? Math.round(100 * possedees / cartes.length) : 0};
+}
+
+// Mode d'affichage du set : grille dense ou classeur. Le classeur reproduit la double page
+// d'un classeur physique — c'est la façon dont on regarde réellement une collection, et ça
+// rend la progression lisible d'un coup d'œil là où une grille continue la noie.
+let modeClasseur = localStorage.getItem('modeClasseur') === '1';
+let pageClasseur = 0;
+let cartesSetCourant = [];
+let setCourantId = null, setCourantMeta = null;
+
+// Disposition du classeur, choisie par l'utilisateur et conservée. Les quatre formats
+// correspondent aux pages de classeur réellement vendues : 2×2 pour les pochettes de
+// protection épaisses, 3×3 le format historique, 3×4 et 4×4 les modernes.
+let capaciteClasseur = parseInt(localStorage.getItem('capaciteClasseur'), 10) || 9;
+function tailleClasseur(){
+  // Sur écran étroit, une double page de 4×4 donnerait des vignettes illisibles : on
+  // redescend à 3×3 quel que soit le choix, sans l'écraser pour autant.
+  return window.innerWidth < 760 ? Math.min(capaciteClasseur, 9) : capaciteClasseur;
+}
+
+
+// Filtre de possession. Emprunté à TCG Crew, et c'est le contrôle le plus utile de tous :
+// quand on pointe une collection, la question n'est jamais « montre-moi tout », c'est
+// « qu'est-ce qu'il me manque ». Les compteurs sont affichés sur les boutons eux-mêmes,
+// pour répondre sans même cliquer.
+let filtrePossession = 'toutes';
+
+function cartesFiltrees(){
+  if(filtrePossession === 'possedees') return cartesSetCourant.filter(c => collection.has(c.id));
+  if(filtrePossession === 'manquantes') return cartesSetCourant.filter(c => !collection.has(c.id));
+  return cartesSetCourant;
+}
+
+function rendreCartesSet(){
+  const grid = $('set-cards-grid');
+  const affichees = cartesFiltrees();
+  const parPage = tailleClasseur();
+  const nbPages = Math.max(1, Math.ceil(affichees.length / (parPage * 2)));
+  pageClasseur = Math.min(Math.max(0, pageClasseur), nbPages - 1);
+
+  // Les compteurs portent toujours sur le SET ENTIER, jamais sur la vue filtrée : sinon
+  // « Manquantes 0 » s'afficherait dès qu'on filtre sur les possédées, ce qui serait faux.
+  const prog = progressionSet(cartesSetCourant);
+  $('n-toutes').textContent = cartesSetCourant.length;
+  $('n-possedees').textContent = prog.possedees;
+  $('n-manquantes').textContent = prog.total - prog.possedees;
+  $('dispo-classeur').style.display = modeClasseur ? '' : 'none';
+  $('set-progression').innerHTML = `
+    <div class="prog-barre"><div class="prog-remplie" style="width:${prog.pct}%"></div></div>
+    <span class="prog-txt">${prog.possedees} / ${prog.total} carte(s) — ${prog.pct} %</span>`;
+  $('set-progression').className = 'set-progression ' +
+    (prog.pct === 100 ? 'complet' : prog.pct > 0 ? 'partiel' : 'vide');
+
+  const tuile = (c)=>{
+    const poss = collection.get(c.id);
+    return `
+      <div class="card-thumb${c.image ? '' : ' sans-image'}${poss ? ' possedee' : ''}"
+           data-image="${esc(c.image || '')}" data-card-id="${esc(c.id)}"
+           data-local-id="${esc(c.localId)}"
+           data-label="${esc((setCourantMeta?.name || setCourantId) + ' · #' + c.localId)}">
+        ${c.image ? `<img src="${esc(c.image)}/low.webp" alt="" loading="lazy">` : '<div class="thumb-vide">illustration<br>indisponible</div>'}
+        <div class="card-num">#${esc(c.localId)}</div>
+        <button class="btn-possede${poss ? ' on' : ''}" data-action="possede"
+                title="${poss ? 'Possédée ×' + poss.qty + ' — clic pour en retirer une' : 'Marquer comme possédée'}">${poss ? '✓ ' + poss.qty : '+'}</button>
+      </div>`;
+  };
+
+  if(modeClasseur){
+    const d = pageClasseur * parPage * 2;
+    const gauche = affichees.slice(d, d + parPage);
+    const droite = affichees.slice(d + parPage, d + parPage * 2);
+    const cols = parPage === 4 ? 2 : (parPage === 12 ? 3 : (parPage === 9 ? 3 : 4));
+    grid.className = 'classeur';
+    grid.innerHTML = `
+      <div class="classeur-pages">
+        <div class="classeur-page" style="--cols:${cols}">${gauche.map(tuile).join('')}</div>
+        <div class="classeur-page" style="--cols:${cols}">${droite.map(tuile).join('')}</div>
+      </div>
+      <div class="classeur-nav">
+        <button class="btn-ghost btn-sm" id="cl-prec" ${pageClasseur === 0 ? 'disabled' : ''}>← Page précédente</button>
+        <span class="classeur-pos">Pages ${pageClasseur*2+1}–${pageClasseur*2+2} sur ${nbPages*2}</span>
+        <button class="btn-ghost btn-sm" id="cl-suiv" ${pageClasseur >= nbPages-1 ? 'disabled' : ''}>Page suivante →</button>
+      </div>`;
+    $('cl-prec')?.addEventListener('click', ()=>{ pageClasseur--; rendreCartesSet(); });
+    $('cl-suiv')?.addEventListener('click', ()=>{ pageClasseur++; rendreCartesSet(); });
+  } else {
+    grid.className = 'cards-grid';
+    grid.innerHTML = affichees.length
+      ? affichees.map(tuile).join('')
+      : '<p class="hint">Aucune carte dans ce filtre.</p>';
+  }
+
+  grid.querySelectorAll('.card-thumb').forEach(el=>{
+    el.addEventListener('click', (ev)=>{
+      // Le bouton de possession ne doit pas ouvrir la visionneuse : c'est le geste le plus
+      // répété du pointage d'un classeur, il doit rester instantané.
+      if(ev.target.closest('[data-action="possede"]')) return;
+      openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId);
+    });
+    const b = el.querySelector('[data-action="possede"]');
+    if(b) b.addEventListener('click', async (ev)=>{
+      ev.stopPropagation();
+      // Clic = +1, clic sur une carte déjà possédée = -1. Deux gestes dans un seul bouton
+      // parce que pointer un classeur se fait carte après carte, sans quitter la grille.
+      const delta = collection.has(el.dataset.cardId) ? -1 : 1;
+      await majPossession(el.dataset.cardId, setCourantId, el.dataset.localId, delta);
+      rendreCartesSet();
+    });
+  });
+}
+
 async function openSetDetail(setId){
   const meta = findSetMeta(setId);
   $('sets-browse').style.display = 'none';
@@ -5401,17 +5664,14 @@ async function openSetDetail(setId){
     // l'URL « undefined/low.webp » : une requête 404 et une tuile cassée par carte.
     // La carte est conservée dans la grille malgré tout — la retirer donnerait un set
     // qui paraît incomplet, ce qui est plus trompeur qu'une vignette sans image.
-    grid.innerHTML = sorted.map(c => `
-      <div class="card-thumb${c.image ? '' : ' sans-image'}" data-image="${esc(c.image || '')}" data-card-id="${esc(c.id)}" data-label="${esc((meta?.name || setId) + ' · #' + c.localId)}">
-        ${c.image ? `<img src="${esc(c.image)}/low.webp" alt="" loading="lazy">` : '<div class="thumb-vide">illustration<br>indisponible</div>'}
-        <div class="card-num">#${esc(c.localId)}</div>
-      </div>`).join('');
-    grid.querySelectorAll('.card-thumb').forEach(el=>{
-      el.addEventListener('click', ()=> openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId));
-    });
+    cartesSetCourant = sorted;
+    setCourantId = setId;
+    setCourantMeta = meta;
+    pageClasseur = 0;
+    rendreCartesSet();
     $('set-detail-status').textContent = `${sorted.length} carte(s)` +
       (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.') +
-      ' Touche une carte pour la voir en grand (zoom + inclinaison).';
+      ' Touche une carte pour la voir en grand, ou le bouton + pour la marquer comme possédée.';
   } catch(err){
     $('set-detail-status').textContent = '⚠️ Impossible de charger les cartes : ' + err.message;
   }
@@ -7080,6 +7340,10 @@ renderQueueStrip();
 // retrouver son lot immédiatement, pas après le préchauffage des workers.
 restaurerSession();
 chargerHashesPhotos().then(majCompteurHashes);
+chargerCollection();
+$('btn-mode-vue').textContent = modeClasseur ? '▦ Vue grille' : '📖 Mode classeur';
+$('dispo-classeur').querySelectorAll('button').forEach(x =>
+  x.classList.toggle('on', parseInt(x.dataset.c, 10) === capaciteClasseur));
 
 // --- Effacements explicites (la sauvegarde automatique n'est annulable que comme ça) ---
 $('btn-vider-file').addEventListener('click', async ()=>{
