@@ -174,9 +174,15 @@ function demarrerWorkerEmbedding(modele){
       try{
         const t0 = performance.now();
         await ensure();
-        // pooling 'mean' + normalisation : deux vecteurs normalisés se comparent par simple
-        // produit scalaire, qui EST alors le cosinus — pas de division à refaire ensuite.
-        const sortie = await extracteur(dataUrl, { pool: true });
+        // Aucune option n'est passee au pipeline. L'option pool:true echoue sur les
+        // modeles sans couche de pooling (« No pooled output was returned » sur
+        // MobileCLIP : les 207 references etaient toutes rejetees), et les options de
+        // normalisation sont de toute facon ignorees. On prend donc la sortie brute et
+        // on la reduit soi-meme juste en dessous.
+        //
+        // Aucun backtick dans ces commentaires : ce bloc est lui-meme un template literal
+        // cote page, et un backtick l'aurait ferme au milieu du code du worker.
+        const sortie = await extracteur(dataUrl);
         // Normalisation faite ICI et non via une option du pipeline : mesure a l'appui,
         // les options passees a image-feature-extraction sont ignorees (norme relevee
         // ~1200 au lieu de 1, produits scalaires a 1,5 million). Normaliser soi-meme
@@ -380,6 +386,39 @@ async function lancer(){
       if(i % 10 === 0) statut(`Références : ${i+1}/${refs.length}…`);
     }
     log(`${base.length} référence(s) indexée(s).`);
+
+    // Controle de degenerescence, avant meme de toucher aux photos. Mesure faite : les
+    // logits de classification de MobileNetV4 donnent un cosinus de 1.000 entre TOUTES
+    // les cartes, correctes comme fausses — toutes les illustrations Pokemon se projettent
+    // sur a peu pres la meme distribution ImageNet, donc tous les vecteurs pointent dans
+    // la meme direction. Le descripteur ne distingue rien, et les quelques bonnes reponses
+    // qu'il produit ne sont que des egalites tranchees au hasard.
+    //
+    // Ce controle coute quelques millisecondes et repond a la seule question qui vaille
+    // avant de lancer 30 minutes de calcul : ce modele separe-t-il quoi que ce soit ?
+    if(base.length > 20){
+      const ech = [];
+      for(let i = 0; i < 20; i++) ech.push(base[Math.floor(i * base.length / 20)]);
+      let mini = 1, maxi = -1, somme = 0, n = 0;
+      for(let i = 0; i < ech.length; i++){
+        for(let j = i+1; j < ech.length; j++){
+          const s = cosinus(ech[i].vec, ech[j].vec);
+          if(s < mini) mini = s;
+          if(s > maxi) maxi = s;
+          somme += s; n++;
+        }
+      }
+      const moy = somme / n;
+      log(`Separation du modele sur 20 cartes DIFFERENTES : cosinus min ${mini.toFixed(4)}, moyen ${moy.toFixed(4)}, max ${maxi.toFixed(4)}.`);
+      if(mini > 0.98){
+        log('  ⛔ DESCRIPTEUR DEGENERE : deux cartes sans rapport sont deja a plus de 0,98 de similarite.');
+        log('     Aucun seuil ne pourra separer la bonne carte des autres. Le test va continuer,');
+        log('     mais ses chiffres ne veulent rien dire pour ce modele.');
+        statut('⛔ Descripteur degenere — voir le journal.');
+      } else if(mini > 0.9){
+        log('  ⚠️ Separation faible : les cartes differentes restent tres proches entre elles.');
+      }
+    }
 
     // --- Photos de test ---
     statut('Lecture des photos de test…');
