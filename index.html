@@ -680,6 +680,55 @@
   .menu-item b{display:block; font-size:13.5px;}
   .menu-item small{color:var(--muted); font-size:11.5px;}
   @media (prefers-reduced-motion: reduce){ .menu-panneau{animation:none;} }
+  /* Reglage de quantite dans le cadre de capture. Place AU-DESSUS du visuel de la carte,
+     la ou le regard est deja pose quand on reconnait un exemplaire deja scanne. */
+  .live-qty{
+    position:absolute; top:-11px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:6px; z-index:3;
+    background:rgba(10,13,22,.94); border:1px solid var(--border);
+    border-radius:14px; padding:2px 4px; box-shadow:0 3px 10px rgba(0,0,0,.5);
+  }
+  .live-qty button{
+    width:24px; height:24px; border-radius:50%; border:0; cursor:pointer;
+    font-size:16px; font-weight:800; line-height:1; color:#fff;
+  }
+  .qty-plus{background:#3ba55d;}
+  .qty-moins{background:#c0392b;}
+  .live-qty button:disabled{opacity:.35; cursor:default;}
+  .qty-val{font-size:12px; font-weight:800; min-width:24px; text-align:center; font-variant-numeric:tabular-nums;}
+
+  /* Marque des lignes ajoutees sans relecture humaine. Discrete mais presente : c'est
+     elle qui rend le mode revue possible, et qui distingue ce qui a ete vu de ce qui ne
+     l'a pas ete. */
+  .badge-auto{
+    display:inline-block; margin-left:6px; padding:0 5px; border-radius:7px;
+    background:rgba(61,125,202,.22); color:#9dbcf5; font-size:9.5px; font-weight:800;
+    vertical-align:middle;
+  }
+  /* Mode revue */
+  .revue{
+    position:fixed; inset:0; z-index:300; display:none; flex-direction:column;
+    background:var(--bg); padding:calc(10px + env(safe-area-inset-top)) 12px calc(10px + env(safe-area-inset-bottom));
+  }
+  .revue.open{display:flex;}
+  .revue-tete{display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;}
+  .revue-pos{font-size:11px; letter-spacing:1.2px; text-transform:uppercase; color:var(--muted); font-weight:700;}
+  /* Cote a cote et non l'une sous l'autre : c'est la COMPARAISON qui est demandee, et
+     l'oeil ne compare pas deux images qu'il doit faire defiler entre elles. */
+  .revue-corps{display:grid; grid-template-columns:1fr 1fr; gap:10px; flex:1; min-height:0;}
+  .revue-cote{display:flex; flex-direction:column; gap:5px; min-height:0;}
+  .revue-lbl{font-size:10px; letter-spacing:1px; text-transform:uppercase; color:var(--muted); font-weight:700; text-align:center;}
+  .revue-cote img{
+    flex:1; min-height:0; width:100%; object-fit:contain; border-radius:10px; background:#0a0a0a;
+  }
+  .revue-info{text-align:center; margin:10px 0 6px;}
+  .revue-info b{display:block; font-size:16px;}
+  .revue-info span{font-size:12.5px; color:var(--muted);}
+  .revue-actions{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .revue-actions button{padding:14px; border:0; border-radius:12px; font:inherit; font-size:14px; font-weight:800; cursor:pointer;}
+  .revue-ok{background:#3ba55d; color:#fff;}
+  .revue-ko{background:#c0392b; color:#fff;}
+  .revue .hint{text-align:center; margin:8px 0 0;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -982,12 +1031,45 @@
 <!-- En bas et non en haut : sur téléphone c'est la seule zone atteignable au pouce, et
      c'est là que se joue tout l'usage réel de cette application — on scanne debout, une
      main tenant la carte. Cinq destinations, l'action principale au centre et surélevée. -->
+
+<!-- MODE REVUE -->
+<!-- La contrepartie de la validation automatique. Sans relecture, les ~10 % de lectures
+     fausses mesurées partiraient en vente sans que rien ne les arrête ; avec un tableau à
+     relire ligne par ligne, personne ne le ferait. Ici, photo et fiche officielle côte à
+     côte, deux touches, et on enchaîne : c'est le seul format où la vérification se fait
+     réellement. -->
+<div class="revue" id="revue">
+  <div class="revue-tete">
+    <span class="revue-pos" id="revue-pos">—</span>
+    <button class="btn-ghost btn-sm" id="revue-fermer">✕ Quitter</button>
+  </div>
+  <div class="revue-corps">
+    <div class="revue-cote">
+      <span class="revue-lbl">Ta photo</span>
+      <img id="revue-photo" alt="">
+    </div>
+    <div class="revue-cote">
+      <span class="revue-lbl">Carte identifiée</span>
+      <img id="revue-officiel" alt="">
+    </div>
+  </div>
+  <div class="revue-info">
+    <b id="revue-nom">—</b>
+    <span id="revue-meta">—</span>
+  </div>
+  <div class="revue-actions">
+    <button class="revue-ko" id="revue-ko">✗ Ce n'est pas ça</button>
+    <button class="revue-ok" id="revue-ok">✓ C'est bien ça</button>
+  </div>
+  <p class="hint" id="revue-aide">Flèches ← → ou touches 1 / 2 · Échap pour quitter</p>
+</div>
+
 <nav class="navbar" id="navbar">
   <button class="nav-item" data-tab="sets">
     <span class="nav-ico">🗂️</span><span class="nav-lbl">Collection</span>
   </button>
   <button class="nav-item" data-tab="identify">
-    <span class="nav-ico">⚡</span><span class="nav-lbl">Identifier</span>
+    <span class="nav-ico">🔎</span><span class="nav-lbl">À vérifier</span>
     <span class="nav-badge queue-badge" data-zero="masquer">0</span>
   </button>
   <button class="nav-item nav-central active" data-tab="capture" aria-label="Capture">
@@ -1050,6 +1132,15 @@
         <select id="capture-set">
           <option value="">Auto — détecter le set à chaque carte</option>
         </select>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:12px; cursor:pointer;">
+          <input type="checkbox" id="chk-validation-auto" checked style="width:auto; margin:0;">
+          <span>Ajouter au lot automatiquement quand la lecture est certaine</span>
+        </label>
+        <p class="hint" style="margin:4px 0 0;">
+          Une lecture « certaine » est une carte dont le NOM a été confirmé par une seconde
+          lecture, indépendante de celle du numéro. Décoche si tu préfères tout valider à la
+          main — les cartes passeront alors toutes par « À vérifier ».
+        </p>
         <p class="hint" id="capture-set-hint" style="margin-top:6px;">
           Laisse sur « Auto » si tu scannes des cartes mélangées. Si tu dépouilles un
           classeur d'une seule extension, choisis-la : le numéro suffit alors à identifier
@@ -1076,6 +1167,11 @@
       </div>
       <div class="zoom-row" id="zoom-row" style="display:none;"></div>
       <div class="live-result" id="live-result" style="display:none;">
+        <div class="live-qty" id="live-qty" style="display:none;">
+          <button class="qty-moins" id="live-qty-moins" title="Retirer un exemplaire">−</button>
+          <span class="qty-val" id="live-qty-val">×1</span>
+          <button class="qty-plus" id="live-qty-plus" title="Ajouter un exemplaire de la même carte">+</button>
+        </div>
         <img id="live-result-img" src="" alt="">
         <div class="live-result-info">
           <div class="lr-row"><span class="lr-lbl">Nom</span><b id="live-result-name">—</b></div>
@@ -1263,6 +1359,7 @@
         <input type="number" id="reprice-pct" value="80" min="1" max="300" step="5"> %
         <span>du prix marché</span>
         <button class="btn-ghost btn-sm" id="btn-reprice-all">Appliquer à tout le lot</button>
+        <button class="btn-gold btn-sm" id="btn-revue">🔍 Relire les ajouts auto (<span id="nb-auto">0</span>)</button>
         <span class="hint" id="reprice-status"></span>
       </div>
       <div class="table-wrap">
@@ -5133,6 +5230,7 @@ async function attemptRead(corners, score){
         };
         showLiveResultDone(hashShortcut.card, 'high');
         ajouterAuTotalSession(hashShortcut.card);
+        if(validationAuto) validerAutomatiquement(hashShortcut.card, item);
       } else {
         resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp, liveHash);
       }
@@ -5356,6 +5454,14 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
       enregistrerHashPhoto(result.card, liveHash, result.confidence); // ...et les sessions suivantes, si l'identification est sûre
       showLiveResultDone(result.card, result.confidence);
       ajouterAuTotalSession(result.card);
+
+      // Certitude : la carte part au lot sans passer par l'écran d'identification.
+      if(validationAuto && result.confidence === 'high'){
+        const r = validerAutomatiquement(result.card, item);
+        setAimHint(r.fusionnee
+          ? `🔁 ${result.card.name} — 2e exemplaire, quantité ${r.cible.qty}`
+          : `✅ ${result.card.name} — ajouté au lot`);
+      }
       // La confirmation par le nom n'a pas pu être tentée ici : le texte OCR utilisé
       // vient de la bande du bas (numéro), qui ne contient jamais le nom (haut de
       // carte). On la tente maintenant, en arrière-plan, sans bloquer l'affichage déjà
@@ -5926,6 +6032,139 @@ function majCoteGlobale(){
     pv.className = 'cote-num cote-pv';
     $('cote-pv-sub').textContent = "renseigne un prix d'achat pour la voir";
   }
+}
+
+
+// ---------------- VALIDATION AUTOMATIQUE ----------------
+// L'écran d'identification demandait de confirmer ce que l'application avait déjà confirmé.
+// Une confiance « high » signifie que le nom de la carte a été VÉRIFIÉ par une seconde
+// lecture OCR, indépendante de celle du numéro : c'est le signal le plus fort dont on
+// dispose, et le faire revalider à la main n'apporte rien qu'une étape.
+//
+// Les cartes concernées partent donc directement au lot. Celles qui restent — les 🤔, les
+// introuvables, les floues — vont dans « À vérifier », dont le compteur devient enfin une
+// information exploitable : ce qui a besoin de l'utilisateur, et rien d'autre.
+let validationAuto = localStorage.getItem('validationAuto') !== '0';
+let derniereEntreeAuto = null;   // dernière ligne ajoutée automatiquement, pour les +/−
+
+function validerAutomatiquement(card, item){
+  const entry = construireEntree(card, item?.photo || null);
+  const {entry: cible, fusionnee} = ajouterAuLot(entry, {auto: true});
+  derniereEntreeAuto = cible;
+
+  // La photo est consommée : elle a servi, la carte est au lot. La laisser dans la file
+  // ferait réapparaître dans « À vérifier » une carte déjà traitée — c'est exactement le
+  // doublon que l'on veut supprimer.
+  const i = pendingQueue.indexOf(item);
+  if(i >= 0) pendingQueue.splice(i, 1);
+
+  renderBatchStatsOnly();
+  updateQueueBadges();
+  renderQueueStrip();
+  majQuantiteLive();
+  return {cible, fusionnee};
+}
+
+// Quantité de la dernière carte ajoutée, pilotée depuis le cadre de capture. Deux raisons :
+// c'est là qu'on s'aperçoit qu'on a scanné deux fois le même exemplaire, et c'est là qu'on
+// a la carte physique en main pour compter. Aller la corriger dans le tableau du lot
+// supposerait de quitter la caméra.
+function majQuantiteLive(){
+  const zone = $('live-qty');
+  if(!zone) return;
+  if(!derniereEntreeAuto || !batch.includes(derniereEntreeAuto)){
+    zone.style.display = 'none';
+    return;
+  }
+  zone.style.display = '';
+  const q = parseInt(derniereEntreeAuto.qty) || 1;
+  $('live-qty-val').textContent = '×' + q;
+  // A une seule unite, le « − » ne se desactive pas : il RETIRE la carte. C'est le seul
+  // moyen d'annuler un scan indesirable sans quitter la camera, et le libelle le dit pour
+  // qu'on ne le decouvre pas apres coup.
+  $('live-qty-moins').title = q <= 1
+    ? 'Retirer cette carte du lot'
+    : 'Retirer un exemplaire (quantite ' + q + ')';
+}
+
+function ajusterQuantiteLive(delta){
+  if(!derniereEntreeAuto) return;
+  const q = (parseInt(derniereEntreeAuto.qty) || 1) + delta;
+  if(q < 1){
+    // Retomber à zéro veut dire « je me suis trompé, retire-la » : on supprime la ligne
+    // plutôt que de laisser une quantité nulle dans l'export.
+    batch.splice(batch.indexOf(derniereEntreeAuto), 1);
+    derniereEntreeAuto = null;
+    toast('↩️ Carte retirée du lot.');
+  } else {
+    derniereEntreeAuto.qty = q;
+  }
+  planifierSauvegardeSession();
+  renderBatchStatsOnly();
+  majQuantiteLive();
+}
+
+
+// ---------------- MODE REVUE ----------------
+// Passe en revue les lignes ajoutées automatiquement, photo contre illustration officielle.
+// Ne propose QUE celles-là : relire des cartes déjà validées à la main serait du travail
+// pour rien, et diluerait l'attention sur les seules qui en ont besoin.
+let revueListe = [];
+let revueIndex = 0;
+
+function ouvrirRevue(){
+  revueListe = batch.filter(e => e.auto);
+  if(!revueListe.length){
+    toast('✅ Rien à relire — aucune carte ajoutée automatiquement.');
+    return;
+  }
+  revueIndex = 0;
+  $('revue').classList.add('open');
+  rendreRevue();
+}
+
+function fermerRevue(){
+  $('revue').classList.remove('open');
+  renderBatch();
+}
+
+function rendreRevue(){
+  const e = revueListe[revueIndex];
+  if(!e){ fermerRevue(); toast('✅ Revue terminée.'); return; }
+  $('revue-pos').textContent = `Carte ${revueIndex + 1} / ${revueListe.length}`;
+  // La photo peut manquer (ajout au clavier) : on montre alors l'illustration des deux
+  // côtés plutôt qu'un cadre vide, la comparaison perd son sens mais la fiche reste lisible.
+  $('revue-photo').src = e.photo || e.cardImage || '';
+  $('revue-officiel').src = e.cardImage || '';
+  $('revue-nom').textContent = e.cardName;
+  $('revue-meta').textContent = [e.setName, '#' + e.number, e.rarity, e.price ? e.price + ' €' : null]
+    .filter(Boolean).join(' · ');
+}
+
+function revueValider(){
+  const e = revueListe[revueIndex];
+  // La marque « auto » disparaît : la ligne a été vue par un humain, elle ne reviendra
+  // plus dans la revue même si on la relance.
+  if(e) e.auto = false;
+  planifierSauvegardeSession();
+  revueIndex++;
+  rendreRevue();
+}
+
+function revueRejeter(){
+  const e = revueListe[revueIndex];
+  if(e){
+    // La carte sort du lot et sa photo retourne dans « À vérifier » : l'identification
+    // était fausse, mais la photo, elle, est bonne — la jeter obligerait à rescanner.
+    const i = batch.indexOf(e);
+    if(i >= 0) batch.splice(i, 1);
+    if(e.photo) pendingQueue.unshift({id: 'q' + Date.now() + Math.random().toString(36).slice(2,5), photo: e.photo});
+    updateQueueBadges();
+    renderQueueStrip();
+  }
+  planifierSauvegardeSession();
+  revueIndex++;
+  rendreRevue();
 }
 
 function majCompteurHashes(){
@@ -8293,7 +8532,9 @@ function conditionLabel(code){
 }
 
 // ---------------- QUICK ADD (with confirmation animation) ----------------
-function quickAdd(card){
+// Construit l'entrée de lot correspondant à une carte. Extrait de quickAdd pour que la
+// capture puisse ajouter au lot directement, sans passer par l'écran d'identification.
+function construireEntree(card, photo){
   const price = getBestPrice(card);
   const pct = parseFloat($('price-pct-input').value)||80;
   const suggestedPrice = price.market ? (price.market*pct/100).toFixed(2) : '';
@@ -8309,12 +8550,9 @@ function quickAdd(card){
   };
   const fill = (str)=> str.replace(/\{(\w+)\}/g, (m,k)=> vars[k] ?? '');
 
-  const hadPhoto = pendingQueue.length > 0;
-  const photo = hadPhoto ? pendingQueue[0].photo : null;
-
-  const entry = {
+  return {
     id: 'c'+Date.now()+Math.random().toString(36).slice(2,7),
-    photo: photo,
+    photo: photo || null,
     cardName: card.name,
     setName: card.set?.name || '',
     number: card.number || '',
@@ -8327,60 +8565,65 @@ function quickAdd(card){
     description: fill(descTmpl),
     sku: `PKMN-${(card.set?.id||'set')}-${card.number}-${Date.now().toString().slice(-5)}`,
     // Conservés pour l'affichage du lot : l'identifiant de set sert au regroupement, et
-    // l'illustration officielle sert de vignette quand aucune photo n'a été prise (ajout
-    // au clavier, photo sautée…). Auparavant la cellule affichait juste « — », ce qui
-    // rendait une ligne sans photo impossible à identifier d'un coup d'œil.
+    // l'illustration officielle sert de vignette quand aucune photo n'a été prise.
     setId: card.set?.id || '',
     cardImage: card.images?.small || '',
-    // Prix marché conservé tel quel, à côté du prix de vente calculé. Sans lui, une fois
-    // la carte au lot on ne pouvait plus savoir à quel pourcentage du marché on la
-    // vendait, ni recalculer un prix sans repasser par l'API carte par carte.
+    // Prix marché conservé tel quel, à côté du prix de vente calculé : sans lui, une fois
+    // la carte au lot on ne peut plus savoir à quel pourcentage du marché on la vend.
     cardId: card.id || '',
     marketPrice: price.market || null,
     marketCurrency: price.currency || '',
     imageUrl: '',
     categoryId: $('category-id-input').value
   };
-  // Détection des doublons. Sur un stock de plusieurs centaines de cartes, tomber deux
-  // fois sur le même exemplaire est certain — et jusqu'ici ça produisait deux lignes
-  // distinctes qu'il fallait repérer et fusionner à la main avant l'export.
-  //
-  // Fusion sur l'identifiant de carte ET l'état : deux exemplaires du même Dracaufeu,
-  // l'un Near Mint et l'autre abîmé, ne se vendent pas au même prix et doivent rester
-  // deux annonces. Même carte et même état, en revanche, c'est une seule annonce en
-  // quantité 2 — c'est la pratique normale sur eBay.
-  //
-  // Rien n'est écrasé : la première photo est conservée (elle sert déjà de visuel
-  // d'annonce), et le prix déjà fixé reste celui de la ligne. Seule la quantité change.
+}
+
+// Ajoute au lot, en fusionnant les doublons. Fusion sur l'identifiant de carte ET l'état :
+// deux exemplaires du même Dracaufeu, l'un Near Mint et l'autre abîmé, ne se vendent pas au
+// même prix et doivent rester deux annonces. Même carte et même état, c'est une seule
+// annonce en quantité 2 — la pratique normale sur eBay.
+//
+// Rien n'est écrasé : la première photo est conservée (elle sert de visuel d'annonce) et le
+// prix déjà fixé reste celui de la ligne. Seule la quantité change.
+function ajouterAuLot(entry, opts = {}){
   const jumelle = entry.cardId
     ? batch.find(e => e.cardId === entry.cardId && e.condition === entry.condition)
     : batch.find(e => e.setId === entry.setId && e.number === entry.number && e.condition === entry.condition);
 
-  let fusionnee = false;
   if(jumelle){
     jumelle.qty = (parseInt(jumelle.qty) || 1) + (parseInt(entry.qty) || 1);
-    // La photo du second exemplaire n'est gardée que si la première ligne n'en avait pas :
-    // sinon on remplacerait une photo déjà validée par une plus récente sans que rien ne
-    // le demande.
     if(!jumelle.photo && entry.photo) jumelle.photo = entry.photo;
-    fusionnee = true;
-  } else {
-    batch.push(entry);
+    // Une ligne validée à la main perd sa marque « auto » : elle a été vue par un humain,
+    // le mode revue n'a plus à la proposer.
+    if(!opts.auto) jumelle.auto = false;
+    planifierSauvegardeSession();
+    return {entry: jumelle, fusionnee: true};
   }
+
+  if(opts.auto) entry.auto = true;
+  batch.push(entry);
   planifierSauvegardeSession();
+  return {entry, fusionnee: false};
+}
+
+function quickAdd(card){
+  const hadPhoto = pendingQueue.length > 0;
+  const photo = hadPhoto ? pendingQueue[0].photo : null;
+  const entry = construireEntree(card, photo);
+  const {entry: cible, fusionnee} = ajouterAuLot(entry);
+
   if(hadPhoto) pendingQueue.shift();
 
   lastAdd = fusionnee
-    ? { fusionAvec: jumelle.id, requeuedPhoto: hadPhoto ? photo : null }
+    ? { fusionAvec: cible.id, requeuedPhoto: hadPhoto ? photo : null }
     : { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
   showUndoBar(fusionnee
-    ? `🔁 ${entry.cardName} — doublon, quantité portée à ${jumelle.qty}`
+    ? `🔁 ${entry.cardName} — doublon, quantité portée à ${cible.qty}`
     : `✅ ${entry.cardName} ajouté(e)`);
   playConfirmAnimation();
-  // Le compteur du Lot ne se rafraîchissait qu'au changement d'onglet (renderBatch n'est
-  // appelé que là) : on pouvait ajouter cinquante cartes en voyant « Lot (0) ».
-  // renderBatchStatsOnly met à jour les compteurs sans reconstruire le tableau, donc sans
-  // coût perceptible dans la boucle d'identification.
+  // Le compteur du Lot ne se rafraîchissait qu'au changement d'onglet : on pouvait ajouter
+  // cinquante cartes en voyant « Lot (0) ». renderBatchStatsOnly met à jour les compteurs
+  // sans reconstruire le tableau, donc sans coût dans la boucle d'identification.
   renderBatchStatsOnly();
   animerVersLeLot(entry);
 
@@ -8389,7 +8632,6 @@ function quickAdd(card){
 
   setTimeout(()=>{ renderIdentify(); }, 480);
 }
-
 
 // Fait voler une vignette de la carte ajoutée jusqu'à l'onglet Lot, puis fait réagir le
 // compteur. Purement décoratif : si un élément manque, on sort sans rien casser.
@@ -8479,6 +8721,9 @@ function renderBatch(){
   const totalValue = batch.reduce((sum,e)=> sum + (parseFloat(e.price)||0) * (parseInt(e.qty)||1), 0);
   $('stat-value').textContent = totalValue.toFixed(2) + ' €';
   $('stat-noimg').textContent = batch.filter(e=>!e.imageUrl).length;
+  const nAuto = batch.filter(e=>e.auto).length;
+  if($('nb-auto')) $('nb-auto').textContent = nAuto;
+  if($('btn-revue')) $('btn-revue').style.display = nAuto ? '' : 'none';
   majCoteGlobale();
   majBadgesNav();
 
@@ -8530,7 +8775,7 @@ function renderBatch(){
     tr.innerHTML = `
       <td class="thumb-cell">${vignetteDuLot(entry)}${(parseInt(entry.qty)||1) > 1 ? `<span class="badge-qte" title="${entry.qty} exemplaires de cette carte dans le même état">×${entry.qty}</span>` : ''}</td>
       <td><input type="text" data-field="sku" value="${escapeHtml(entry.sku)}" style="width:120px;"></td>
-      <td><input type="text" data-field="title" value="${escapeHtml(entry.title)}" style="width:220px;"></td>
+      <td><input type="text" data-field="title" value="${escapeHtml(entry.title)}" style="width:220px;">${entry.auto ? '<span class="badge-auto" title="Ajoutee automatiquement, pas encore relue">AUTO</span>' : ''}</td>
       <td>
         <select data-field="condition">
           ${['NM','LP','MP','HP','DMG'].map(c=>`<option value="${c}" ${entry.condition===c?'selected':''}>${c}</option>`).join('')}
@@ -8761,6 +9006,27 @@ remplirTypesScelle();
 // La cote globale ne peut etre calculee qu'une fois les trois registres charges : elle est
 // donc appelee apres, et non a la suite de chacun.
 Promise.all([chargerCollection(), chargerScelle(), chargerMastersets()]).then(()=>{ renderScelle(); majCoteGlobale(); });
+
+$('chk-validation-auto').checked = validationAuto;
+$('chk-validation-auto').addEventListener('change', (e)=>{
+  validationAuto = e.target.checked;
+  localStorage.setItem('validationAuto', validationAuto ? '1' : '0');
+});
+
+$('btn-revue').addEventListener('click', ouvrirRevue);
+$('revue-fermer').addEventListener('click', fermerRevue);
+$('revue-ok').addEventListener('click', revueValider);
+$('revue-ko').addEventListener('click', revueRejeter);
+// Clavier : la revue se fait au rythme d'une carte par seconde, la souris serait un frein.
+document.addEventListener('keydown', (e)=>{
+  if(!$('revue').classList.contains('open')) return;
+  if(e.key === 'Escape') fermerRevue();
+  else if(e.key === 'ArrowRight' || e.key === '2') revueValider();
+  else if(e.key === 'ArrowLeft' || e.key === '1') revueRejeter();
+});
+
+$('live-qty-plus').addEventListener('click', ()=> ajusterQuantiteLive(1));
+$('live-qty-moins').addEventListener('click', ()=> ajusterQuantiteLive(-1));
 
 $('btn-sc-ajouter').addEventListener('click', ajouterScelle);
 $('sc-nom').addEventListener('keydown', (e)=>{ if(e.key === 'Enter') ajouterScelle(); });
