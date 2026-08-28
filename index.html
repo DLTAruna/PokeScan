@@ -751,14 +751,33 @@
   .revue-ok{background:#3ba55d; color:#fff;}
   .revue-ko{background:#c0392b; color:#fff;}
   .revue .hint{text-align:center; margin:8px 0 0;}
-  /* Icones : taille et couleur pilotees par le contexte, jamais par l'icone elle-meme.
-     C'est ce qui permet au meme fichier de servir dans la barre basse (20 px, couleur
-     d'etat) et dans le menu (22 px, couleur de texte) sans dupliquer les traces. */
-  .ico{width:20px; height:20px; display:block; flex:none;}
-  .nav-item .ico{width:21px; height:21px;}
-  .nav-fab .ico{width:25px; height:25px; stroke-width:1.9;}
-  .menu-item .ico{width:22px; height:22px; color:var(--accent);}
+  /* Duotone : --t1 est le trait, --t2 la surface. Deux variables suffisent parce que les
+     opacites sont portees par le trace lui-meme — un seul jeu de couleurs sert donc a
+     toutes les icones, et l'etat inactif se contente de les desaturer. */
+  .ico{width:20px; height:20px; display:block; flex:none; --t1:currentColor; --t2:currentColor;}
+  .nav-item .ico{width:23px; height:23px;}
+  .nav-fab .ico{width:26px; height:26px;}
+  .menu-item .ico{width:23px; height:23px;}
   .btn-menu .ico{width:19px; height:19px; margin:0 auto;}
+
+  /* Une teinte par section, reprise des pastilles du bandeau de patrimoine : le bleu de la
+     collection, l'or du lot, le violet du scelle. La couleur devient un repere partage
+     entre les ecrans au lieu d'une decoration. */
+  .nav-item[data-tab="sets"] .ico{--t1:#7cc9ea; --t2:#4bb8e0;}
+  .nav-item[data-tab="identify"] .ico{--t1:#f0c14b; --t2:#e0a12a;}
+  .nav-item[data-tab="batch"] .ico{--t1:#ffd75e; --t2:#ffcb05;}
+  .nav-item[data-tab="scelle"] .ico{--t1:#d3a0ec; --t2:#c07ae0;}
+  .nav-fab .ico{--t1:#1a1206; --t2:#1a1206;}
+
+  /* Inactif : la couleur est retenue mais assourdie. Elle reste identifiable — on repere
+     encore la section a sa teinte — sans concurrencer l'onglet actif. */
+  .nav-item:not(.active) .ico{filter:saturate(.45) brightness(.78); opacity:.75;}
+  .nav-item.active .ico{filter:none; opacity:1;}
+
+  .menu-item[data-tab="export"] .ico{--t1:#7cc9ea; --t2:#4bb8e0;}
+  .menu-item[data-tab="settings"] .ico{--t1:#a8b4c8; --t2:#8e9bb0;}
+  .menu-item[data-tab="guide"] .ico{--t1:#ffd75e; --t2:#ffcb05;}
+  .menu-item[data-tab="bench"] .ico{--t1:#8ce0b4; --t2:#3ba55d;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1053,7 +1072,7 @@
     <h1>PokéScan <span style="opacity:.65; font-weight:600;">→</span> eBay Lister</h1>
   </div>
   <p>Capture en rafale ou en masse, identifie à toute vitesse, exporte pour eBay.</p>
-  <button class="btn-menu" id="btn-menu" aria-label="Menu"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+  <button class="btn-menu" id="btn-menu" aria-label="Menu"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="var(--t1)" stroke-width="1.7"/></svg></button>
 </header>
 
 
@@ -1096,21 +1115,21 @@
 
 <nav class="navbar" id="navbar">
   <button class="nav-item" data-tab="sets">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="7" width="11" height="14" rx="1.8"/><path d="M7.5 4h9.7A2.8 2.8 0 0 1 20 6.8V17"/></svg></span><span class="nav-lbl">Collection</span>
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/><path d="M6.4 11.2h5.2M6.4 14.4h3.4" stroke="var(--t1)" stroke-width="1.7" opacity=".7"/></svg></span><span class="nav-lbl">Collection</span>
   </button>
   <button class="nav-item" data-tab="identify">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="3" width="11" height="15" rx="1.8"/><circle cx="15.8" cy="15.2" r="4.3"/><path d="m19 18.4 2.4 2.4"/></svg></span><span class="nav-lbl">À vérifier</span>
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="2.8" width="11.4" height="15" rx="2" stroke="var(--t1)" stroke-width="1.7"/><path d="M6.2 6.6h5.4M6.2 9.6h3.2" stroke="var(--t1)" stroke-width="1.7" opacity=".65"/><circle cx="15.6" cy="15" r="4.6" fill="var(--t2)" opacity=".32"/><circle cx="15.6" cy="15" r="4.6" stroke="var(--t1)" stroke-width="1.7"/><path d="m19 18.4 2.3 2.3" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">À vérifier</span>
     <span class="nav-badge queue-badge" data-zero="masquer">0</span>
   </button>
   <button class="nav-item nav-central active" data-tab="capture" aria-label="Capture">
-    <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h2.6L8 6h8l1.4 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z"/><circle cx="12" cy="14" r="3.6"/></svg></span>
+    <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="var(--t2)" opacity=".22"/><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="12" cy="14" r="3.9" fill="var(--t2)" opacity=".45"/><circle cx="12" cy="14" r="3.9" stroke="var(--t1)" stroke-width="1.7"/><path d="M10.3 12.6a2.4 2.4 0 0 1 1.7-1" stroke="var(--t1)" stroke-width="1.7" opacity=".9"/></svg></span>
   </button>
   <button class="nav-item" data-tab="batch">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 12.5 12 4.1h6.4a1.5 1.5 0 0 1 1.5 1.5V12l-8.4 8.4a1.6 1.6 0 0 1-2.3 0l-5.6-5.6a1.6 1.6 0 0 1 0-2.3Z"/><circle cx="16.2" cy="7.8" r="1.25"/></svg></span><span class="nav-lbl">Lot</span>
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" fill="var(--t2)" opacity=".28"/><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16.3" cy="7.7" r="1.45" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Lot</span>
     <span class="nav-badge" id="nav-lot-badge" data-zero="masquer">0</span>
   </button>
   <button class="nav-item" data-tab="scelle">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8.2 12 3.5l9 4.7v7.6L12 20.5 3 15.8Z"/><path d="m3 8.2 9 4.8 9-4.8M12 13v7.5"/></svg></span><span class="nav-lbl">Scellé</span>
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 21 8v8L12 20.8 3 16V8Z" fill="var(--t2)" opacity=".2"/><path d="M3 8 12 3.2 21 8l-9 4.8Z" fill="var(--t2)" opacity=".42"/><path d="M12 3.2 21 8v8L12 20.8 3 16V8Z" stroke="var(--t1)" stroke-width="1.7"/><path d="m3 8 9 4.8L21 8M12 12.8v8" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Scellé</span>
     <span class="nav-badge" id="nav-scelle-badge" data-zero="masquer">0</span>
   </button>
 </nav>
@@ -1119,10 +1138,10 @@
 <div class="menu-voile" id="menu-voile">
   <div class="menu-panneau">
     <div class="menu-tete"><b>Menu</b><button class="btn-ghost btn-sm" id="btn-menu-fermer">✕</button></div>
-    <button class="menu-item" data-tab="export"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v11"/><path d="m7.5 10 4.5 4 4.5-4"/><path d="M4 16.5V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2.5"/></svg><div><b>Export</b><small>CSV et photos pour eBay</small></div></button>
-    <button class="menu-item" data-tab="settings"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M19 7h1M4 17h3M13 17h7"/><circle cx="16" cy="7" r="2.6"/><circle cx="10" cy="17" r="2.6"/></svg><div><b>Réglages</b><small>Modèles de titre, prix, cache</small></div></button>
-    <button class="menu-item" data-tab="guide"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7.4C10.6 6 8.6 5.2 5.5 5.2A1.5 1.5 0 0 0 4 6.7v11a1.5 1.5 0 0 0 1.5 1.5c3.1 0 5.1.8 6.5 2.3 1.4-1.5 3.4-2.3 6.5-2.3a1.5 1.5 0 0 0 1.5-1.5v-11a1.5 1.5 0 0 0-1.5-1.5c-3.1 0-5.1.8-6.5 2.2Z"/><path d="M12 7.4V21"/></svg><div><b>Guide</b><small>Comment vendre en masse</small></div></button>
-    <button class="menu-item" data-tab="bench"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.6 3v6.3L4.7 18a2 2 0 0 0 1.7 3h11.2a2 2 0 0 0 1.7-3l-4.9-8.7V3"/><path d="M8.4 3h7.2M7.4 14.6h9.2"/></svg><div><b>Banc de test</b><small>Mesurer la précision de lecture</small></div></button>
+    <button class="menu-item" data-tab="export"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5" fill="var(--t2)" opacity=".26"/><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5" stroke="var(--t1)" stroke-width="1.7"/><path d="M12 3v11.5m-4.4-4L12 15l4.4-4.5" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Export</b><small>CSV et photos pour eBay</small></div></button>
+    <button class="menu-item" data-tab="settings"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="16" cy="7.2" r="2.9" fill="var(--t2)" opacity=".3"/><circle cx="9" cy="16.8" r="2.9" fill="var(--t2)" opacity=".3"/><path d="M3.5 7.2h9.6M18.9 7.2h1.6M3.5 16.8h2.6M11.9 16.8h8.6" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16" cy="7.2" r="2.9" stroke="var(--t1)" stroke-width="1.7"/><circle cx="9" cy="16.8" r="2.9" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Réglages</b><small>Modèles de titre, prix, cache</small></div></button>
+    <button class="menu-item" data-tab="guide"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7.3C10.6 5.9 8.6 5.1 5.6 5.1A1.6 1.6 0 0 0 4 6.7v10.9a1.6 1.6 0 0 0 1.6 1.6c3 0 5 .8 6.4 2.2V7.3Z" fill="var(--t2)" opacity=".3"/><path d="M12 7.3C10.6 5.9 8.6 5.1 5.6 5.1A1.6 1.6 0 0 0 4 6.7v10.9a1.6 1.6 0 0 0 1.6 1.6c3 0 5 .8 6.4 2.2 1.4-1.4 3.4-2.2 6.4-2.2a1.6 1.6 0 0 0 1.6-1.6V6.7a1.6 1.6 0 0 0-1.6-1.6c-3 0-5 .8-6.4 2.2Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M12 7.3v14.1" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Guide</b><small>Comment vendre en masse</small></div></button>
+    <button class="menu-item" data-tab="bench"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.7 9.4 5 17.7a1.9 1.9 0 0 0 1.6 2.9h10.8a1.9 1.9 0 0 0 1.6-2.9l-4.7-8.3Z" fill="var(--t2)" opacity=".3"/><path d="M9.7 3.2v6.2L5 17.7a1.9 1.9 0 0 0 1.6 2.9h10.8a1.9 1.9 0 0 0 1.6-2.9l-4.7-8.3V3.2" stroke="var(--t1)" stroke-width="1.7"/><path d="M8.5 3.2h7M7.6 14.6h8.8" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Banc de test</b><small>Mesurer la précision de lecture</small></div></button>
   </div>
 </div>
 
