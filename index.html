@@ -807,6 +807,52 @@
   .live-etat button.on[data-e="LP"]{background:#8bbf3f; color:#12200a;}
   .live-etat button.on[data-e="MP"]{background:#e0a12a; color:#1a1206;}
   .live-etat button.on[data-e="HP"]{background:#c0392b; color:#fff;}
+  /* Bande des derniers ajouts. Le texte d'etat ne montrait que la DERNIERE carte, et il
+     passait : une erreur remontant a trois cartes etait invisible et irrattrapable sans
+     quitter la camera. */
+  .bande-recents{display:flex; gap:7px; overflow-x:auto; padding:8px 0 4px; margin-bottom:6px;}
+  .recent{position:relative; flex:none; width:46px;}
+  .recent img{width:46px; height:64px; object-fit:cover; border-radius:5px; background:#0a0a0a; display:block;}
+  .recent .rq{
+    position:absolute; right:-3px; top:-4px; background:var(--accent); color:#1a1206;
+    font-size:9px; font-weight:800; padding:0 4px; border-radius:7px;
+  }
+  .recent .re{
+    position:absolute; left:0; right:0; bottom:0; font-size:8.5px; font-weight:800;
+    text-align:center; padding:1px 0; border-radius:0 0 5px 5px;
+  }
+  .re-NM{background:rgba(59,165,93,.9); color:#fff;}
+  .re-LP{background:rgba(139,191,63,.9); color:#12200a;}
+  .re-MP{background:rgba(224,161,42,.92); color:#1a1206;}
+  .re-HP{background:rgba(192,57,43,.92); color:#fff;}
+  /* Bouton de retrait au survol/appui long : c'est le geste de rattrapage que la bande
+     rend possible, il doit etre a portee sans encombrer les vignettes. */
+  .recent button{
+    position:absolute; left:0; top:0; width:100%; height:100%; border:0; cursor:pointer;
+    background:rgba(192,57,43,0); color:transparent; border-radius:5px; font-size:15px;
+    transition:background .15s, color .15s;
+  }
+  .recent button:hover{background:rgba(192,57,43,.72); color:#fff;}
+
+  /* Suggestion de verrouillage de set */
+  .suggestion-set{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;
+    padding:9px 12px; border-radius:10px; font-size:12.5px;
+    background:rgba(61,125,202,.12); border:1px solid rgba(61,125,202,.34);
+  }
+  .suggestion-set .actions{margin-left:auto; display:flex; gap:9px; align-items:center;}
+
+  /* Bilan de session */
+  .bilan-session{
+    display:flex; gap:16px; flex-wrap:wrap; align-items:baseline;
+    margin-bottom:12px; padding:10px 13px; border-radius:10px;
+    background:rgba(255,255,255,.035); border:1px solid var(--border); font-size:12.5px;
+  }
+  .bilan-session b{color:var(--accent); font-variant-numeric:tabular-nums;}
+  .bilan-session .sep{color:var(--border);}
+  .lot-filtre{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:10px 0 4px;}
+  .lot-filtre input{flex:1; min-width:180px;}
+  .lot-filtre .hint{margin:0; white-space:nowrap;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1261,6 +1307,9 @@
         <button class="capture-fab" id="btn-capture-frame">📸</button>
       </div>
       <div class="zoom-row" id="zoom-row" style="display:none;"></div>
+      <div class="bande-recents" id="bande-recents" style="display:none;"></div>
+      <div class="suggestion-set" id="suggestion-set" style="display:none;"></div>
+      <div class="bilan-session" id="bilan-session" style="display:none;"></div>
       <div class="live-result" id="live-result" style="display:none;">
         <div class="live-qty" id="live-qty" style="display:none;">
           <button class="qty-moins" id="live-qty-moins" title="Retirer un exemplaire">−</button>
@@ -1464,7 +1513,11 @@
         <span class="hint" id="reprice-status"></span>
       </div>
       <div class="table-wrap">
-        <table id="batch-table">
+      <div class="lot-filtre">
+        <input type="text" id="lot-filtre" placeholder="🔎 Filtrer le lot — nom, set, numéro, SKU…" autocomplete="off">
+        <span class="hint" id="lot-filtre-info"></span>
+      </div>
+      <table id="batch-table">
           <thead>
             <tr>
               <th>Photo</th><th>SKU</th><th>Titre</th><th>État</th><th>Prix</th><th>Marché</th><th>Devise</th><th>Qté</th><th>URL image (pour eBay)</th><th></th>
@@ -1654,10 +1707,18 @@
       <h2>Exporter pour eBay</h2>
       <p class="sub">Génère un CSV avec toutes les colonnes utiles. Colle les données dans le modèle officiel eBay (Seller Hub → Reports → Uploads) — voir le Guide pour la marche à suivre complète.</p>
       <div class="row">
-        <button class="btn-gold" id="btn-export-csv">⬇️ Export CSV (données)</button>
+        <button class="btn-gold" id="btn-export-ebay">⬇️ Export CSV eBay (prêt à téléverser)</button>
+        <button class="btn-ghost" id="btn-export-csv">⬇️ Export CSV brut (colonnes libres)</button>
         <button class="btn-ghost" id="btn-export-zip">🗂️ Export photos (.zip)</button>
         <button class="btn-ghost" id="btn-vider-lot" style="color:var(--danger,#e5484d)">🗑️ Tout effacer le lot</button>
       </div>
+      <p class="hint" style="margin-top:10px;">
+        <b>Le format eBay bouge.</b> Ces en-têtes correspondent au modèle « Trading Cards »
+        en vigueur, mais la seule référence qui fasse foi est le modèle téléchargé depuis
+        <b>ton</b> compte (Seller Hub → Reports → Uploads → Create template). Compare les
+        deux premières lignes avant ton premier import : deux minutes de vérification
+        évitent un refus sur trois cents lignes.
+      </p>
       <p class="hint">Le CSV n'inclut pas les images en pièce jointe (eBay a besoin d'URLs publiques). Renseigne la colonne "URL image" dans l'onglet Lot après avoir hébergé tes photos — voir Guide.</p>
     </div>
   </section>
@@ -6159,6 +6220,10 @@ function validerAutomatiquement(card, item){
   const i = pendingQueue.indexOf(item);
   if(i >= 0) pendingQueue.splice(i, 1);
 
+  noterRecent(cible);
+  noterSetRecent(card.set?.id);
+  noterSession(entry, fusionnee);
+
   renderBatchStatsOnly();
   updateQueueBadges();
   renderQueueStrip();
@@ -6386,6 +6451,139 @@ function majEtatLive(){
   z.style.display = visible ? '' : 'none';
   const code = visible ? derniereEntreeAuto.condition : stickyCondition;
   z.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.e === code));
+}
+
+
+// ---------------- BANDE DES DERNIERS AJOUTS ----------------
+// Le texte d'état ne montrait que la dernière carte, et il passait. Une erreur remontant à
+// trois cartes était donc invisible, et irrattrapable sans quitter la caméra pour aller
+// fouiller le lot. Six vignettes suffisent à couvrir la portée de mémoire réelle pendant
+// un scan en rafale.
+const RECENTS_MAX = 6;
+let recents = [];   // [{entryId, photo, cardImage, nom}]
+
+function noterRecent(entry){
+  recents = recents.filter(r => r.entryId !== entry.id);
+  recents.unshift({entryId: entry.id, photo: entry.photo, cardImage: entry.cardImage, nom: entry.cardName});
+  recents = recents.slice(0, RECENTS_MAX);
+  rendreRecents();
+}
+
+function rendreRecents(){
+  const z = $('bande-recents');
+  if(!z) return;
+  // Une entrée retirée du lot entre-temps disparaît de la bande : afficher une vignette
+  // qui ne correspond plus à rien inviterait à cliquer dans le vide.
+  recents = recents.filter(r => batch.some(e => e.id === r.entryId));
+  if(!recents.length){ z.style.display = 'none'; return; }
+  z.style.display = '';
+  z.innerHTML = recents.map(r => {
+    const e = batch.find(x => x.id === r.entryId);
+    const q = parseInt(e.qty) || 1;
+    return `<div class="recent" title="${escapeHtml(r.nom)} — ${e.price || '?'} €">
+      <img src="${r.photo || r.cardImage || ''}" alt="">
+      ${q > 1 ? `<span class="rq">×${q}</span>` : ''}
+      <span class="re re-${e.condition}">${e.condition}</span>
+      <button data-id="${escapeHtml(r.entryId)}" title="Retirer du lot">✕</button>
+    </div>`;
+  }).join('');
+  z.querySelectorAll('button[data-id]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const i = batch.findIndex(e => e.id === b.dataset.id);
+      if(i < 0) return;
+      const nom = batch[i].cardName;
+      if(batch[i] === derniereEntreeAuto) derniereEntreeAuto = null;
+      batch.splice(i, 1);
+      planifierSauvegardeSession();
+      renderBatchStatsOnly();
+      majQuantiteLive();
+      rendreRecents();
+      toast(`↩️ ${nom} retiré du lot.`);
+    });
+  });
+}
+
+// ---------------- SUGGESTION DE VERROUILLAGE DE SET ----------------
+// Le verrouillage divise les erreurs par deux, mais il faut y penser. L'application, elle,
+// voit très bien que les dernières cartes viennent toutes du même set — autant qu'elle le
+// dise. Proposée et non appliquée : verrouiller à la place de l'utilisateur au milieu d'un
+// lot mélangé produirait exactement les erreurs silencieuses qu'on cherche à éviter.
+const SUGGESTION_SEUIL = 6;
+let setsRecents = [];
+let suggestionRefusee = new Set();
+
+function noterSetRecent(setId){
+  if(!setId) return;
+  setsRecents.unshift(setId);
+  setsRecents = setsRecents.slice(0, SUGGESTION_SEUIL);
+  majSuggestionSet();
+}
+
+function majSuggestionSet(){
+  const z = $('suggestion-set');
+  if(!z) return;
+  const s = setsRecents[0];
+  const unanime = setsRecents.length >= SUGGESTION_SEUIL && setsRecents.every(x => x === s);
+  if(!unanime || setVerrouilleId === s || suggestionRefusee.has(s)){
+    z.style.display = 'none';
+    return;
+  }
+  const nom = (metaSetsRecherche && metaSetsRecherche[s]?.nom) || s;
+  z.style.display = '';
+  z.innerHTML = `<span>🎯 Tes ${SUGGESTION_SEUIL} dernières cartes viennent de <b>${escapeHtml(nom)}</b>.
+    Verrouiller ce set rendra les lectures plus sûres.</span>
+    <span class="actions">
+      <button class="link-btn" id="sug-non">Non</button>
+      <button class="btn-gold btn-sm" id="sug-oui">Verrouiller</button>
+    </span>`;
+  $('sug-oui').addEventListener('click', ()=>{
+    $('capture-set').value = s;
+    // remplirListeSets alimente la liste à la demande : si elle est vide, la valeur ne
+    // « prend » pas et le verrouillage échouerait en silence.
+    //
+    // Le rafraîchissement de la suggestion suit CHAQUE branche et non le corps du
+    // gestionnaire : appelé en dehors, il s'exécutait avant que la branche asynchrone ait
+    // posé setVerrouilleId, et la suggestion restait affichée alors que le set était
+    // verrouillé.
+    if($('capture-set').value !== s){
+      remplirListeSets().then(()=>{
+        $('capture-set').value = s;
+        appliquerSetVerrouille();
+        majSuggestionSet();
+      });
+    } else {
+      appliquerSetVerrouille();
+      majSuggestionSet();
+    }
+  });
+  $('sug-non').addEventListener('click', ()=>{ suggestionRefusee.add(s); majSuggestionSet(); });
+}
+
+// ---------------- BILAN DE SESSION ----------------
+// Sur un chantier de mille cartes étalé sur des semaines, savoir où l'on en est change le
+// rapport à la tâche. Compté depuis l'ouverture de la page et non depuis toujours : c'est
+// « ce que j'ai fait aujourd'hui » qui motive, pas un cumul historique.
+let sessionDebut = Date.now();
+let sessionAjoutees = 0;
+let sessionValeur = 0;
+
+function noterSession(entry, fusionnee){
+  sessionAjoutees++;
+  sessionValeur += (parseFloat(entry.price) || 0) * (fusionnee ? 1 : (parseInt(entry.qty) || 1));
+  majBilanSession();
+}
+
+function majBilanSession(){
+  const z = $('bilan-session');
+  if(!z) return;
+  if(!sessionAjoutees){ z.style.display = 'none'; return; }
+  const min = Math.max(1, Math.round((Date.now() - sessionDebut) / 60000));
+  const cadence = (sessionAjoutees / min).toFixed(1);
+  z.style.display = '';
+  z.innerHTML = `<span>Cette session : <b>${sessionAjoutees}</b> carte(s)</span>
+    <span class="sep">·</span><span><b>${sessionValeur.toFixed(2)} €</b> ajoutés</span>
+    <span class="sep">·</span><span><b>${cadence}</b> carte/min</span>
+    <span class="sep">·</span><span><b>${pendingQueue.length}</b> à vérifier</span>`;
 }
 
 function majCompteurHashes(){
@@ -8963,8 +9161,17 @@ function renderBatch(){
   // La clé est l'identifiant de set quand il est là, le nom sinon : les entrées créées
   // avant l'ajout de setId restent groupées correctement au lieu de tomber dans un lot
   // « sans set ».
+  // Filtre de recherche. A cinq cents lignes, retrouver une carte pour corriger un prix
+  // etait impraticable. Il porte sur le rendu et non sur `batch` : l'index d'origine est
+  // conserve pour chaque ligne, sans quoi une modification ou une suppression pendant un
+  // filtrage toucherait la mauvaise carte.
+  const q = ($('lot-filtre')?.value || '').trim().toLowerCase();
+  const correspond = (e)=> !q || [e.cardName, e.setName, e.number, e.sku, e.title, e.rarity]
+    .some(v => String(v || '').toLowerCase().includes(q));
+
   const groupes = new Map();
   batch.forEach((entry, idx)=>{
+    if(!correspond(entry)) return;
     const cle = entry.setId || entry.setName || '?';
     if(!groupes.has(cle)) groupes.set(cle, {nom: entry.setName || 'Set inconnu', entries: []});
     groupes.get(cle).entries.push({entry, idx});
@@ -9031,6 +9238,14 @@ function renderBatch(){
     });
     tbody.appendChild(tr);
     }
+  }
+
+  // Le compte affiche porte sur ce qui est reellement montre : annoncer « 500 cartes »
+  // au-dessus d'un tableau qui en montre trois se lirait comme un bug.
+  const info = $('lot-filtre-info');
+  if(info){
+    const montrees = [...groupes.values()].reduce((n2, g) => n2 + g.entries.length, 0);
+    info.textContent = q ? `${montrees} / ${batch.length} ligne(s)` : '';
   }
 
   tbody.querySelectorAll('.reprice-groupe').forEach(b=>{
@@ -9171,6 +9386,14 @@ $('load-json-input').addEventListener('change', (e)=>{
 });
 
 // ---------------- EXPORT CSV ----------------
+let lotFiltreTempo = null;
+$('lot-filtre').addEventListener('input', ()=>{
+  clearTimeout(lotFiltreTempo);
+  lotFiltreTempo = setTimeout(renderBatch, 200);
+});
+
+$('btn-export-ebay').addEventListener('click', exporterCsvEbay);
+
 $('btn-export-csv').addEventListener('click', ()=>{
   if(!batch.length){ toast('Le lot est vide.'); return; }
   const headers = ['SKU','Title','Description','CategoryID','ConditionCode','ConditionDescriptorID','Price','Currency','Quantity','ImageURL','Game','CardName','Set','CardNumber','Rarity'];
@@ -9186,6 +9409,70 @@ $('btn-export-csv').addEventListener('click', ()=>{
   downloadBlob(blob, `ebay-export-${new Date().toISOString().slice(0,10)}.csv`);
   toast('⬇️ CSV exporté.');
 });
+
+
+// ---------------- EXPORT AU FORMAT DE TÉLÉVERSEMENT eBAY ----------------
+// Le CSV existant portait des en-têtes maison (SKU, Title, Price…) qu'il fallait ensuite
+// remapper à la main sur le modèle officiel eBay, colonne par colonne, pour des centaines
+// de lignes. C'est la partie la moins résolue de toute la chaîne, et c'est pourtant le but
+// final de l'application.
+//
+// Ce format-ci reprend les en-têtes du modèle « Seller Hub → Reports → Uploads » : les
+// colonnes préfixées d'une étoile sont obligatoires, « *Action(SiteID=France|Country=FR|
+// Currency=EUR|Version=1193) » est la ligne de contrôle qu'eBay attend en première colonne,
+// et « C: » préfixe les caractéristiques d'objet propres à la catégorie.
+//
+// AVERTISSEMENT ASSUMÉ, affiché dans l'interface : eBay fait évoluer ses modèles. Ces
+// en-têtes correspondent au modèle Trading Cards en vigueur, mais la seule référence qui
+// fasse foi est le fichier téléchargé depuis TON compte. La comparaison prend deux minutes
+// et évite un import refusé sur trois cents lignes.
+const ETAT_EBAY = {
+  NM: {code: 'USED_EXCELLENT', libelle: 'Near Mint'},
+  LP: {code: 'USED_VERY_GOOD', libelle: 'Lightly Played'},
+  MP: {code: 'USED_GOOD',      libelle: 'Moderately Played'},
+  HP: {code: 'USED_ACCEPTABLE',libelle: 'Heavily Played'},
+  DMG:{code: 'USED_ACCEPTABLE',libelle: 'Damaged'}
+};
+
+function exporterCsvEbay(){
+  if(!batch.length){ toast('Le lot est vide.'); return; }
+
+  const devise = $('currency-select').value || 'EUR';
+  const categorie = $('category-id-input').value || '183454';
+  const entete = [
+    '*Action(SiteID=France|Country=FR|Currency=' + devise + '|Version=1193)',
+    'CustomLabel', '*Category', '*Title', 'Description', '*ConditionID',
+    'PicURL', '*Format', '*Duration', '*StartPrice', '*Quantity',
+    'C:Game', 'C:Card Name', 'C:Set', 'C:Card Number', 'C:Rarity', 'C:Language',
+    'C:Card Condition', 'C:Graded', 'C:Manufacturer'
+  ];
+
+  const lignes = batch.map(e => {
+    const etat = ETAT_EBAY[e.condition] || ETAT_EBAY.NM;
+    return [
+      'Add', e.sku, categorie, (e.title || '').slice(0, 80),
+      (e.description || '').replace(/\n/g, '<br>'),
+      // 4000 = « Used » pour les cartes ; l'état précis passe par la caractéristique
+      // « Card Condition », qui est ce que les acheteurs filtrent réellement.
+      '4000',
+      e.imageUrl || '',
+      'FixedPrice', 'GTC', e.price || '', e.qty || 1,
+      'Pokémon TCG', e.cardName || '', e.setName || '', e.number || '', e.rarity || '',
+      'Français', etat.libelle, 'Non', 'The Pokémon Company'
+    ];
+  });
+
+  const sansImage = batch.filter(e => !e.imageUrl).length;
+  const csv = [entete, ...lignes].map(r => r.map(csvEscape).join(',')).join('\r\n');
+  // BOM UTF-8 : sans lui, Excel ouvre le fichier en ANSI et transforme « Pokémon » en
+  // « PokÃ©mon » sur toutes les lignes — ce qui part ensuite dans les annonces.
+  const blob = new Blob(['\ufeff' + csv], {type: 'text/csv;charset=utf-8'});
+  downloadBlob(blob, `ebay-upload-${new Date().toISOString().slice(0,10)}.csv`);
+
+  toast(sansImage
+    ? `⬇️ CSV eBay exporté — ⚠️ ${sansImage} ligne(s) sans URL d'image, eBay les refusera.`
+    : '⬇️ CSV eBay exporté.');
+}
 
 function csvEscape(val){
   val = String(val ?? '');
