@@ -560,6 +560,11 @@
     font-variant-numeric:tabular-nums;
   }
   .set-ms-badge span{color:var(--muted); font-weight:500;}
+  /* Barre des raretes : elle peut compter une dizaine de pastilles, elle defile plutot
+     que de passer a la ligne et de repousser la grille vers le bas. */
+  .filtre-rarete{margin:6px 0 8px; overflow-x:auto; -webkit-overflow-scrolling:touch;}
+  .seg-rarete{min-width:min-content;}
+  .seg-rarete button{padding:4px 9px; font-size:11.5px;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1158,6 +1163,7 @@
       </div>
       <div class="set-progression vide" id="set-progression"></div>
       <div class="set-masterset" id="set-masterset"></div>
+      <div class="filtre-rarete" id="filtre-rarete"></div>
       <div class="set-vue-row">
         <button class="btn-ghost btn-sm" id="btn-mode-vue">📖 Mode classeur</button>
         <div class="seg" id="filtre-possession">
@@ -5766,7 +5772,14 @@ function renderSeriesList(){
   const q = ($('sets-filter')?.value || '').trim().toLowerCase();
 
   let shownSets = 0;
-  const html = seriesIndex.map(serie => {
+  // Séries de la plus récente à la plus ancienne : c'est là que se trouve l'essentiel de
+  // ce qui se collectionne et se revend, et ça évite de faire défiler vingt-cinq ans de
+  // catalogue à chaque visite.
+  const ordonnees = seriesIndex.slice()
+    .filter(serieRetenue)
+    .sort((a, b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')));
+
+  const html = ordonnees.map(serie => {
     // Un filtre qui matche le nom de la SÉRIE garde tous ses sets (on cherche
     // "Écarlate" pour voir la série entière, pas pour n'avoir aucun résultat).
     const serieMatches = !q || serie.name.toLowerCase().includes(q);
@@ -5795,9 +5808,25 @@ function renderSeriesList(){
   }).join('');
 
   box.innerHTML = html || '<p class="empty-state">Aucun set ne correspond à ce filtre.</p>';
-  const totalSets = seriesIndex.reduce((n,s)=> n + s.sets.length, 0);
-  $('sets-status').innerHTML = `${seriesIndex.length} série(s), ${totalSets} set(s) — ` +
-    `<b>${cachedSetIds.size}</b> avec leur liste de cartes en cache local` + (q ? ` · ${shownSets} affiché(s)` : '');
+  // Le décompte porte sur ce qui est RÉELLEMENT affiché : annoncer « 200 sets » alors que
+  // la vue en montre 145 laisserait croire à un bug d'affichage.
+  const totalSets = ordonnees.reduce((n,s)=> n + s.sets.length, 0);
+  const ecartees = seriesIndex.filter(s => !serieRetenue(s));
+  const nEcartes = ecartees.reduce((n,s)=> n + s.sets.length, 0);
+  $('sets-status').innerHTML = `${ordonnees.length} série(s), ${totalSets} set(s) — ` +
+    `<b>${cachedSetIds.size}</b> avec leur liste de cartes en cache local` +
+    (q ? ` · ${shownSets} affiché(s)` : '') +
+    (nEcartes
+      ? ` · ${nEcartes} set(s) hors extensions masqué(s) (Pocket, McDonald's, kits, POP)
+         <button class="link-btn" id="btn-hors-serie">afficher quand même</button>`
+      : (afficherHorsSerie ? ` · <button class="link-btn" id="btn-hors-serie">masquer les hors-extensions</button>` : ''));
+
+  const bh = $('btn-hors-serie');
+  if(bh) bh.addEventListener('click', ()=>{
+    afficherHorsSerie = !afficherHorsSerie;
+    localStorage.setItem('afficherHorsSerie', afficherHorsSerie ? '1' : '0');
+    renderSeriesList();
+  });
 
   box.querySelectorAll('.set-card').forEach(el=>{
     el.addEventListener('click', ()=> openSetDetail(el.dataset.setId));
@@ -6344,12 +6373,109 @@ function ouvrirPanneauVersions(cardId, localId){
 
 function fermerPanneauVersions(){ $('versions-modal').classList.remove('open'); }
 
+
+// ---------------- SÉRIES ÉCARTÉES DE LA VUE CATALOGUE ----------------
+// Le catalogue TCGdex mélange les extensions de jeu et des produits qui n'en sont pas.
+// Les parcourir comme des sets à compléter n'a pas de sens :
+//   tcgp  Pokémon TCG Pocket — jeu MOBILE, ces cartes n'existent pas physiquement
+//         (même exclusion que dans le banc de test, voir bench.html) ;
+//   mc    Collection McDonald's — distributions promotionnelles ;
+//   tk    Kits du dresseur — decks d'initiation, pas des extensions ;
+//   pop   POP — promos de jeu organisé ;
+//   misc  Autre — fourre-tout sans cohérence.
+//
+// Elles restent PARFAITEMENT accessibles dans l'onglet Identifier, qui interroge l'API
+// directement : une carte McDonald's se scanne, s'identifie et se vend comme les autres.
+// Ce filtre ne porte que sur la navigation par set, et il est débrayable.
+const SERIES_HORS_CATALOGUE = new Set(['tcgp', 'mc', 'tk', 'pop', 'misc']);
+let afficherHorsSerie = localStorage.getItem('afficherHorsSerie') === '1';
+
+function serieRetenue(serie){
+  return afficherHorsSerie || !SERIES_HORS_CATALOGUE.has(serie.id);
+}
+
+// ---------------- FILTRE PAR RARETÉ ----------------
+// La rareté ne figure pas dans la liste d'un set, seulement sur la fiche détaillée : les
+// pastilles n'apparaissent donc qu'une fois les fiches chargées (par le masterset ou par
+// le mode « toutes versions »). Plutôt que d'afficher un filtre vide ou de déclencher 207
+// requêtes sans prévenir, on propose explicitement de les charger.
+let filtreRarete = '';
+
+function raretesDuSet(){
+  const compte = new Map();
+  for(const c of cartesSetCourant){
+    const d = detailsCartes.get(c.id);
+    if(!d) continue;
+    const r = d.rarity || 'Sans rareté';
+    compte.set(r, (compte.get(r) || 0) + 1);
+  }
+  // Les plus fréquentes d'abord : les communes en tête, les secrètes en fin de barre, ce
+  // qui reproduit l'ordre dans lequel on parcourt un set.
+  return [...compte.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function rendreFiltreRarete(){
+  const zone = $('filtre-rarete');
+  if(!zone) return;
+  const raretes = raretesDuSet();
+  const charge = detailsCartes.size > 0 &&
+                 cartesSetCourant.some(c => detailsCartes.has(c.id));
+
+  if(!charge){
+    zone.innerHTML = '<button class="link-btn" id="btn-charger-raretes">🏅 Charger les raretés</button>';
+    $('btn-charger-raretes')?.addEventListener('click', async ()=>{
+      zone.innerHTML = '<span class="hint">Chargement des raretés…</span>';
+      await chargerVariantes(cartesSetCourant, (f, t)=>{
+        zone.innerHTML = `<span class="hint">Chargement des raretés… ${f}/${t}</span>`;
+      });
+      rendreFiltreRarete();
+      rendreCartesSet();
+    });
+    return;
+  }
+
+  const total = raretes.reduce((s, [, n]) => s + n, 0);
+  zone.innerHTML = `<div class="seg seg-rarete">
+    <button class="${filtreRarete ? '' : 'on'}" data-r="">Toutes <b>${total}</b></button>
+    ${raretes.map(([r, n]) => `<button class="${filtreRarete === r ? 'on' : ''}" data-r="${esc(r)}" title="${esc(r)}">${esc(abregerRarete(r))} <b>${n}</b></button>`).join('')}
+  </div>`;
+  zone.querySelector('.seg-rarete').addEventListener('click', (e)=>{
+    const b = e.target.closest('button[data-r]');
+    if(!b) return;
+    filtreRarete = b.dataset.r;
+    pageClasseur = 0;
+    rendreFiltreRarete();
+    rendreCartesSet();
+  });
+}
+
+// Libellés abrégés : « Illustration spéciale rare » sur une pastille pousserait la barre
+// hors de l'écran. Le nom complet reste en infobulle.
+const ABREGE_RARETE = {
+  'Commune': 'C', 'Peu Commune': 'PC', 'Rare': 'R', 'Rare Holo': 'RH', 'Holo Rare': 'RH',
+  'Double rare': 'RR', 'Ultra Rare': 'UR', 'Illustration rare': 'IR',
+  'Illustration spéciale rare': 'ISR', 'Hyper rare': 'HR', 'Chromatique ultra rare': 'CUR',
+  'Shiny rare': 'SR', 'Radieux Rare': 'RAD', 'Magnifique rare': 'MAG', 'Promo': 'PROMO',
+  'Sans rareté': '—'
+};
+function abregerRarete(r){
+  if(ABREGE_RARETE[r]) return ABREGE_RARETE[r];
+  return r.length > 12 ? r.slice(0, 11) + '…' : r;
+}
+
 let filtrePossession = 'toutes';
 
 function cartesFiltrees(){
-  if(filtrePossession === 'possedees') return cartesSetCourant.filter(c => possedeCarte(c.id));
-  if(filtrePossession === 'manquantes') return cartesSetCourant.filter(c => !possedeCarte(c.id));
-  return cartesSetCourant;
+  let l = cartesSetCourant;
+  if(filtrePossession === 'possedees') l = l.filter(c => possedeCarte(c.id));
+  else if(filtrePossession === 'manquantes') l = l.filter(c => !possedeCarte(c.id));
+  // Une carte dont la fiche n'est pas chargée est CONSERVÉE : la masquer donnerait
+  // l'impression qu'elle n'appartient pas au set, alors qu'on ignore seulement sa rareté.
+  if(filtreRarete) l = l.filter(c => {
+    const d = detailsCartes.get(c.id);
+    return !d || (d.rarity || 'Sans rareté') === filtreRarete;
+  });
+  return l;
 }
 
 function rendreCartesSet(){
@@ -6528,8 +6654,10 @@ async function openSetDetail(setId){
     setCourantId = setId;
     setCourantMeta = meta;
     pageClasseur = 0;
+    filtreRarete = '';
     rendreCartesSet();
     rendreMasterset();
+    rendreFiltreRarete();
     $('set-detail-status').textContent = `${sorted.length} carte(s)` +
       (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.') +
       ' Touche une carte pour la voir en grand, ou le bouton + pour la marquer comme possédée.';
