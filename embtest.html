@@ -80,6 +80,7 @@
   </div>
   <div style="margin-top:12px; display:flex; gap:9px; flex-wrap:wrap;">
     <button id="btn-run">▶ Lancer la comparaison</button>
+    <button class="ghost" id="btn-sep">⚡ Test de séparation (20 cartes, ~1 min)</button>
     <button class="ghost" id="btn-stop" disabled>■ Arrêter</button>
   </div>
   <div id="status"></div>
@@ -522,6 +523,72 @@ function rendreScores(okHash, okCnn, n, echecs, mh, mc, fini){
   $('verdict').innerHTML = verdict;
 }
 
+// Test de separation seul : la question a trancher AVANT d'engager une demi-heure de
+// calcul est « ce modele distingue-t-il deux illustrations differentes ? ». Vingt cartes
+// suffisent a y repondre, et un modele qui echoue ici echouera sur 207.
+async function testSeparation(){
+  stop = false;
+  $('btn-run').disabled = true; $('btn-sep').disabled = true; $('btn-stop').disabled = false;
+  $('log').textContent = ''; $('scores').innerHTML = ''; $('verdict').textContent = '';
+  const modele = $('cfg-modele').value;
+  const setId = $('cfg-set').value.trim();
+  const zone = $('cfg-zone').value === 'illustration' ? ZONE_ILLUSTRATION : null;
+  try{
+    log('Test de separation — ' + modele);
+    const setData = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId)).json();
+    const toutes = (setData.cards || []).filter(c => c.image);
+    // Cartes reparties sur tout le set plutot que les vingt premieres : des numeros
+    // consecutifs partagent souvent un style d'illustration, ce qui fausserait la mesure
+    // dans le sens favorable.
+    const ech = [];
+    for(let i = 0; i < 20 && i < toutes.length; i++) ech.push(toutes[Math.floor(i * toutes.length / 20)]);
+    demarrerWorkerEmbedding(modele);
+    const vecs = [];
+    for(let i = 0; i < ech.length; i++){
+      if(stop) throw new Error('arrete');
+      statut(`Separation : ${i+1}/${ech.length}…`);
+      const img = await chargerImage(ech[i].image + '/high.webp');
+      const e = await embedding(versDataUrl(img, zone));
+      vecs.push({num: ech[i].localId, v: e.v, hash: empreinte(img, zone)});
+      if(i === 0) log(`Premiere inference : ${e.ms} ms · dimensions : ${e.v.length}`);
+    }
+    let mini = 1, maxi = -1, somme = 0, n = 0;
+    let hMin = 64, hMax = 0, hSomme = 0;
+    for(let i = 0; i < vecs.length; i++){
+      for(let j = i+1; j < vecs.length; j++){
+        const s = cosinus(vecs[i].v, vecs[j].v);
+        if(s < mini) mini = s; if(s > maxi) maxi = s; somme += s;
+        const d = hamming(vecs[i].hash, vecs[j].hash);
+        if(d < hMin) hMin = d; if(d > hMax) hMax = d; hSomme += d;
+        n++;
+      }
+    }
+    const moy = somme / n;
+    log(`CNN   — cosinus entre cartes differentes : min ${mini.toFixed(4)} · moyen ${moy.toFixed(4)} · max ${maxi.toFixed(4)}`);
+    log(`dHash — ecart entre cartes differentes   : min ${hMin} · moyen ${(hSomme/n).toFixed(1)} · max ${hMax} bits`);
+    $('scores').innerHTML = `
+      <div class="card"><div class="n">${mini.toFixed(3)}</div><div class="l">CNN — cosinus le plus eleve entre deux cartes differentes (plus BAS = mieux)</div></div>
+      <div class="card"><div class="n">${moy.toFixed(3)}</div><div class="l">CNN — cosinus moyen</div></div>
+      <div class="card"><div class="n">${hMin}</div><div class="l">dHash — ecart minimal entre cartes differentes (bits)</div></div>
+      <div class="card"><div class="n">${vecs[0].v.length}</div><div class="l">Dimensions de l'embedding</div></div>`;
+    let verdict;
+    if(mini > 0.98){
+      verdict = "⛔ <b>Descripteur dégénéré.</b> Deux cartes sans aucun rapport sont déjà à plus de 0,98 de similarité : ce modèle ne distingue rien, inutile de lancer la comparaison complète.";
+    } else if(mini > 0.9){
+      verdict = "⚠️ <b>Séparation faible.</b> Les cartes différentes restent très proches ; un seuil de décision sera fragile, mais la comparaison complète vaut la peine d'être lancée.";
+    } else {
+      verdict = "✅ <b>Le modèle sépare les illustrations.</b> Lance la comparaison complète pour savoir s'il retrouve la bonne carte à partir d'une PHOTO, ce qui est une question différente et plus difficile.";
+    }
+    $('verdict').innerHTML = verdict;
+    statut('Test de separation termine.');
+  }catch(err){
+    statut('⚠️ ' + err.message); log('ERREUR : ' + err.message);
+  }finally{
+    $('btn-run').disabled = false; $('btn-sep').disabled = false; $('btn-stop').disabled = true;
+  }
+}
+
+$('btn-sep').addEventListener('click', testSeparation);
 $('btn-run').addEventListener('click', lancer);
 $('btn-stop').addEventListener('click', ()=>{ stop = true; statut('Arrêt demandé…'); });
 </script>
