@@ -377,7 +377,10 @@ async function lancer(){
       if(stop) throw new Error('arrêté');
       const r = refs[i];
       try{
-        const img = await chargerImage(r.image + '/high.webp');
+        // low.webp et non high.webp : le modele redimensionne son entree a 256 px et
+        // l'empreinte a 9x8, donc la haute definition n'apporte rien — elle ne faisait
+        // qu'allonger le telechargement et le decodage de 207 images.
+        const img = await chargerImage(r.image + '/low.webp');
         const url = versDataUrl(img, zone);
         const e = await embedding(url);
         base.push({numero: String(parseInt(r.localId, 10)), localId: r.localId, image: r.image,
@@ -544,13 +547,17 @@ async function testSeparation(){
     for(let i = 0; i < 20 && i < toutes.length; i++) ech.push(toutes[Math.floor(i * toutes.length / 20)]);
     demarrerWorkerEmbedding(modele);
     const vecs = [];
+    let msTotal = 0;
     for(let i = 0; i < ech.length; i++){
       if(stop) throw new Error('arrete');
       statut(`Separation : ${i+1}/${ech.length}…`);
-      const img = await chargerImage(ech[i].image + '/high.webp');
+      const img = await chargerImage(ech[i].image + '/low.webp');
       const e = await embedding(versDataUrl(img, zone));
       vecs.push({num: ech[i].localId, v: e.v, hash: empreinte(img, zone)});
-      if(i === 0) log(`Premiere inference : ${e.ms} ms · dimensions : ${e.v.length}`);
+      // La premiere inference inclut le telechargement et l'initialisation du modele :
+      // elle est journalisee a part et exclue de la moyenne, sinon elle la fausserait.
+      if(i === 0) log(`Premiere inference : ${e.ms} ms (modele telecharge et initialise) · dimensions : ${e.v.length}`);
+      else msTotal += e.ms;
     }
     let mini = 1, maxi = -1, somme = 0, n = 0;
     let hMin = 64, hMax = 0, hSomme = 0;
@@ -564,12 +571,15 @@ async function testSeparation(){
       }
     }
     const moy = somme / n;
+    const msMoyen = Math.round(msTotal / Math.max(1, vecs.length - 1));
+    log(`Cout par inference (hors chargement) : ${msMoyen} ms`);
     log(`CNN   — cosinus entre cartes differentes : min ${mini.toFixed(4)} · moyen ${moy.toFixed(4)} · max ${maxi.toFixed(4)}`);
     log(`dHash — ecart entre cartes differentes   : min ${hMin} · moyen ${(hSomme/n).toFixed(1)} · max ${hMax} bits`);
     $('scores').innerHTML = `
       <div class="card"><div class="n">${mini.toFixed(3)}</div><div class="l">CNN — cosinus le plus eleve entre deux cartes differentes (plus BAS = mieux)</div></div>
       <div class="card"><div class="n">${moy.toFixed(3)}</div><div class="l">CNN — cosinus moyen</div></div>
       <div class="card"><div class="n">${hMin}</div><div class="l">dHash — ecart minimal entre cartes differentes (bits)</div></div>
+      <div class="card"><div class="n">${msMoyen} ms</div><div class="l">Cout par inference — a comparer aux ~1700 ms de l'OCR actuel</div></div>
       <div class="card"><div class="n">${vecs[0].v.length}</div><div class="l">Dimensions de l'embedding</div></div>`;
     let verdict;
     if(mini > 0.98){
