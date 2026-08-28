@@ -778,6 +778,17 @@
   .menu-item[data-tab="settings"] .ico{--t1:#a8b4c8; --t2:#8e9bb0;}
   .menu-item[data-tab="guide"] .ico{--t1:#ffd75e; --t2:#ffcb05;}
   .menu-item[data-tab="bench"] .ico{--t1:#8ce0b4; --t2:#3ba55d;}
+  /* Bandeau d'installation. Place en tete de l'onglet Capture et non en surimpression :
+     une bulle flottante par-dessus l'interface se ferme par reflexe sans etre lue. */
+  .bandeau-install{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    margin-bottom:14px; padding:12px 14px; border-radius:12px;
+    background:linear-gradient(120deg, rgba(255,203,5,.14), rgba(61,125,202,.10));
+    border:1px solid rgba(255,203,5,.32);
+  }
+  .bandeau-install b{display:block; font-size:13.5px;}
+  .bandeau-install span{font-size:12px; color:var(--muted);}
+  .bandeau-actions{margin-left:auto; display:flex; align-items:center; gap:10px;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1059,6 +1070,13 @@
     color:var(--muted); font-size:11.5px; display:flex; align-items:center; justify-content:center; gap:8px;
   }
 </style>
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0a0d16">
+  <!-- iOS ignore le manifeste pour l'icône d'accueil : il lui faut sa propre balise. -->
+  <link rel="apple-touch-icon" href="icone-apple-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="PokéScan">
 </head>
 <body>
 
@@ -1149,6 +1167,16 @@
 
   <!-- CAPTURE TAB -->
   <section class="section active" id="section-capture">
+      <div class="bandeau-install" id="bandeau-install" style="display:none;">
+        <div>
+          <b>Installer PokéScan</b>
+          <span>Plein écran, démarrage instantané, et ça marche sans connexion.</span>
+        </div>
+        <div class="bandeau-actions">
+          <button class="link-btn" id="btn-install-non">Plus tard</button>
+          <button class="btn-gold btn-sm" id="btn-install-oui">Installer</button>
+        </div>
+      </div>
       <!-- Bandeau de valeur : la question à laquelle l'app ne répondait pas -->
       <div class="cote-hero" id="cote-hero">
         <div class="cote-tete">
@@ -6216,6 +6244,76 @@ function revueRejeter(){
   rendreRevue();
 }
 
+
+// ---------------- INSTALLATION SUR L'ÉCRAN D'ACCUEIL ----------------
+// L'application est utilisée comme un scanner : debout, une carte dans une main, le
+// téléphone dans l'autre. Dans un onglet de navigateur, la barre d'URL mange une bande
+// d'écran, le geste de retour arrière quitte l'application, et l'onglet peut être tué en
+// arrière-plan — ce qui, avant la sauvegarde de session, faisait perdre le travail.
+// Installée, elle démarre en plein écran depuis l'écran d'accueil.
+let promptInstall = null;
+
+window.addEventListener('beforeinstallprompt', (e) => {
+  // Chrome propose sa propre bannière au moment qu'il juge bon, souvent jamais. On la
+  // retient pour l'offrir à un moment où elle a du sens : quand l'utilisateur a compris à
+  // quoi sert l'application, c'est-à-dire une fois qu'il a scanné.
+  e.preventDefault();
+  promptInstall = e;
+  majBandeauInstall();
+});
+
+window.addEventListener('appinstalled', () => {
+  promptInstall = null;
+  localStorage.setItem('installee', '1');
+  majBandeauInstall();
+  toast('📲 PokéScan est installée — lance-la depuis ton écran d\'accueil.');
+});
+
+function estInstallee(){
+  return window.matchMedia('(display-mode: standalone)').matches ||
+         window.navigator.standalone === true ||
+         localStorage.getItem('installee') === '1';
+}
+
+function majBandeauInstall(){
+  const b = $('bandeau-install');
+  if(!b) return;
+  const refuse = localStorage.getItem('installRefusee') === '1';
+  b.style.display = (promptInstall && !estInstallee() && !refuse) ? '' : 'none';
+}
+
+async function lancerInstall(){
+  if(!promptInstall) return;
+  promptInstall.prompt();
+  const r = await promptInstall.userChoice.catch(()=> null);
+  // Le prompt n'est utilisable qu'une fois : qu'il ait été accepté ou refusé, il est
+  // consommé et il faut attendre que le navigateur en propose un nouveau.
+  promptInstall = null;
+  if(r && r.outcome === 'dismissed') localStorage.setItem('installRefusee', '1');
+  majBandeauInstall();
+}
+
+// Enregistrement du service worker. Encadré de try/catch et jamais bloquant : sur un
+// contexte non sécurisé (http:// autre que localhost), l'API n'existe pas, et
+// l'application doit continuer de fonctionner normalement — elle le faisait déjà avant.
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').then((reg)=>{
+      // Une mise à jour détectée est signalée plutôt qu'appliquée en silence : recharger
+      // sous les doigts de quelqu'un en train de scanner serait pire que d'attendre.
+      reg.addEventListener('updatefound', ()=>{
+        const neuf = reg.installing;
+        if(!neuf) return;
+        neuf.addEventListener('statechange', ()=>{
+          if(neuf.state === 'installed' && navigator.serviceWorker.controller){
+            toast('🔄 Nouvelle version disponible — recharge quand tu veux.');
+          }
+        });
+      });
+    }).catch(()=>{ /* pas de mode hors ligne, l'application marche quand même */ });
+  });
+}
+
 function majCompteurHashes(){
   const el = $('nb-hashes');
   if(el) el.textContent = hashesPersistes.length;
@@ -9060,6 +9158,12 @@ $('chk-validation-auto').checked = validationAuto;
 $('chk-validation-auto').addEventListener('change', (e)=>{
   validationAuto = e.target.checked;
   localStorage.setItem('validationAuto', validationAuto ? '1' : '0');
+});
+
+$('btn-install-oui').addEventListener('click', lancerInstall);
+$('btn-install-non').addEventListener('click', ()=>{
+  localStorage.setItem('installRefusee', '1');
+  majBandeauInstall();
 });
 
 $('btn-revue').addEventListener('click', ouvrirRevue);
