@@ -565,6 +565,35 @@
   .filtre-rarete{margin:6px 0 8px; overflow-x:auto; -webkit-overflow-scrolling:touch;}
   .seg-rarete{min-width:min-content;}
   .seg-rarete button{padding:4px 9px; font-size:11.5px;}
+  /* Grille du Pokedex */
+  .pokedex-grille{
+    display:grid; grid-template-columns:repeat(auto-fill, minmax(84px, 1fr)); gap:8px; margin-top:10px;
+  }
+  .dex-case{
+    background:#0e1119; border:1px solid var(--border); border-radius:10px;
+    padding:6px 4px 5px; text-align:center; cursor:pointer; transition:border-color .15s, transform .15s;
+  }
+  .dex-case:hover{border-color:var(--accent); transform:translateY(-2px);}
+  .dex-case img{width:100%; aspect-ratio:1; object-fit:contain; display:block;}
+  .dex-num{font-size:10px; color:var(--muted); font-weight:700; font-variant-numeric:tabular-nums;}
+  .dex-nom{font-size:11px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  /* Nom du set sur les cartes d'un Pokemon : sans lui, une liste de vingt Dracaufeu tous
+     differents est illisible — c'est l'extension qui les distingue, pas le numero. */
+  .dex-set{
+    position:absolute; bottom:0; left:0; right:0; font-size:9px; padding:2px 3px;
+    background:rgba(0,0,0,.78); color:#cfd6e4; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  }
+  /* Etoile de favori */
+  .fav-etoile{
+    background:none; border:0; cursor:pointer; font-size:15px; line-height:1;
+    color:var(--border); padding:0 4px; transition:color .15s, transform .15s;
+  }
+  .fav-etoile:hover{transform:scale(1.2);}
+  .fav-etoile.on{color:var(--accent);}
+  .series-block.favori .series-head{
+    background:linear-gradient(90deg, rgba(212,175,55,.13), transparent 65%);
+    border-radius:8px; padding-left:8px;
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1142,6 +1171,34 @@
 
   <!-- SETS TAB -->
   <section class="section" id="section-sets">
+
+    <!-- Bascule entre navigation par série et par Pokémon -->
+    <div class="seg" id="nav-catalogue" style="margin-bottom:12px;">
+      <button class="on" data-n="series">🗂️ Par série</button>
+      <button data-n="pokedex">🔴 Par Pokémon</button>
+    </div>
+
+    <!-- Vue Pokédex -->
+    <div class="panel" id="pokedex-vue" style="display:none;">
+      <h2>🔴 Pokédex</h2>
+      <p class="sub">Chaque Pokémon et toutes ses cartes, toutes extensions confondues. Utile quand on cherche « tous mes Dracaufeu » plutôt qu'un set précis.</p>
+      <input type="text" id="pokedex-filtre" placeholder="🔎 Numéro ou nom (ex : 6, Dracaufeu…)" autocomplete="off">
+      <p class="hint" id="pokedex-statut"></p>
+      <div class="pokedex-grille" id="pokedex-grille"></div>
+    </div>
+
+    <!-- Cartes d'un Pokémon -->
+    <div class="panel" id="pokemon-detail" style="display:none;">
+      <button class="btn-ghost btn-sm" id="btn-pokedex-back">← Pokédex</button>
+      <div class="set-detail-head">
+        <img id="pokemon-sprite" alt="">
+        <div>
+          <h2 id="pokemon-nom">—</h2>
+          <p class="sub" id="pokemon-meta">—</p>
+        </div>
+      </div>
+      <div class="cards-grid" id="pokemon-cartes"></div>
+    </div>
     <!-- Vue liste : toutes les séries et leurs sets -->
     <div class="panel" id="sets-browse">
       <h2>🗂️ Toutes les séries</h2>
@@ -2798,19 +2855,23 @@ async function getCardImageHash(cardId, imageBase){
 // avant de revérifier. Si le réseau échoue et qu'une version périmée existe, on la
 // renvoie quand même plutôt que de renvoyer une erreur (dégradation, pas de panne).
 const CARD_DETAIL_MAX_AGE_MS = 14*24*3600*1000;
+// A incrementer des qu'un champ est ajoute a normalizeCard : sans ca, les fiches deja en
+// cache restent incompletes pendant toute la duree de validite du cache.
+const FORME_FICHE = 2;
 async function getCardDetailCached(id){
   const cached = await idbGet('cardDetail', id);
-  // `variants === undefined` signale une fiche mise en cache AVANT que ce champ soit
-  // conserve : elle est traitee comme perimee pour etre rechargee une fois, sinon la carte
-  // paraitrait n'avoir qu'une seule impression pendant les quatorze jours du cache. Une
-  // carte reellement sans variantes stocke `null`, ce qui la distingue de ce cas.
-  const complet = cached && cached.detail && cached.detail.variants !== undefined;
+  // Marqueur de forme plutot qu'un test sur tel ou tel champ. Chaque fois qu'un champ a
+  // ete ajoute a normalizeCard (variants, puis dexId), les fiches deja en cache se sont
+  // retrouvees incompletes SANS jamais etre rechargees, le cache valant quatorze jours :
+  // la fonctionnalite paraissait alors cassee sur les cartes deja consultees. Incrementer
+  // FORME_FICHE suffit desormais a forcer un rechargement unique.
+  const complet = cached && cached.detail && cached.formeFiche === FORME_FICHE;
   if(complet && (Date.now() - cached.fetchedAt) < CARD_DETAIL_MAX_AGE_MS) return cached.detail;
   try{
     const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
     if(r.ok){
       const card = normalizeCard(await r.json());
-      await idbSet('cardDetail', {cardId:id, detail:card, fetchedAt:Date.now()});
+      await idbSet('cardDetail', {cardId:id, detail:card, formeFiche:FORME_FICHE, fetchedAt:Date.now()});
       return card;
     }
   } catch(e){ /* réseau indisponible */ }
@@ -5586,6 +5647,38 @@ $('mode-versions').addEventListener('click', async (e)=>{
   rendreCartesSet();
 });
 
+$('nav-catalogue').addEventListener('click', async (e)=>{
+  const b = e.target.closest('button[data-n]');
+  if(!b) return;
+  $('nav-catalogue').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  const pokedex = b.dataset.n === 'pokedex';
+  // Le detail d'un set ou d'un Pokemon est referme : rester dessus en changeant de mode de
+  // navigation laisserait deux vues concurrentes ouvertes.
+  $('sets-browse').style.display = pokedex ? 'none' : 'block';
+  $('set-detail').style.display = 'none';
+  $('pokedex-vue').style.display = pokedex ? 'block' : 'none';
+  $('pokemon-detail').style.display = 'none';
+  if(pokedex){
+    // Les metadonnees de set servent a nommer et dater les extensions dans la fiche d'un
+    // Pokemon : chargees ici plutot qu'a l'ouverture de l'onglet, elles sont deja en cache
+    // la plupart du temps.
+    chargerMetaSetsRecherche().catch(()=>{});
+    await amorcerNomsDex();
+    rendrePokedex();
+  }
+});
+
+$('pokedex-filtre').addEventListener('input', ()=>{
+  clearTimeout(window.__dexDebounce);
+  window.__dexDebounce = setTimeout(rendrePokedex, 250);
+});
+
+$('btn-pokedex-back').addEventListener('click', ()=>{
+  $('pokemon-detail').style.display = 'none';
+  $('pokedex-vue').style.display = 'block';
+  rendrePokedex();   // un nom appris entre-temps apparait aussitot dans la grille
+});
+
 $('filtre-possession').addEventListener('click', (e)=>{
   const b = e.target.closest('button[data-f]');
   if(!b) return;
@@ -5777,7 +5870,13 @@ function renderSeriesList(){
   // catalogue à chaque visite.
   const ordonnees = seriesIndex.slice()
     .filter(serieRetenue)
-    .sort((a, b) => String(b.releaseDate || '').localeCompare(String(a.releaseDate || '')));
+    .sort((a, b) => {
+      // Les favoris remontent en tête, l'ordre chronologique s'applique à l'intérieur de
+      // chaque groupe : épingler une série ne doit pas casser le repère temporel.
+      const fa = favorisSeries.has(a.id) ? 1 : 0, fb = favorisSeries.has(b.id) ? 1 : 0;
+      if(fa !== fb) return fb - fa;
+      return String(b.releaseDate || '').localeCompare(String(a.releaseDate || ''));
+    });
 
   const html = ordonnees.map(serie => {
     // Un filtre qui matche le nom de la SÉRIE garde tous ses sets (on cherche
@@ -5798,8 +5897,11 @@ function renderSeriesList(){
           ? `<span class="set-ms-badge" title="Valeur de toutes les impressions du set · ${fmtEuro(m.possede)} déjà possédé">${fmtEuro(m.total)} <span>masterset</span></span>`
           : ''; })()}
       </div>`).join('');
-    return `<div class="series-block">
+    const fav = favorisSeries.has(serie.id);
+    return `<div class="series-block${fav ? ' favori' : ''}">
       <div class="series-head">
+        <button class="fav-etoile${fav ? ' on' : ''}" data-fav="${esc(serie.id)}"
+                title="${fav ? 'Retirer des favoris' : 'Épingler cette série en haut'}">${fav ? '★' : '☆'}</button>
         <h3>${esc(serie.name)}</h3>
         <span class="series-count">${sets.length} set(s)</span>
       </div>
@@ -5828,6 +5930,9 @@ function renderSeriesList(){
     renderSeriesList();
   });
 
+  box.querySelectorAll('[data-fav]').forEach(b=>{
+    b.addEventListener('click', (e)=>{ e.stopPropagation(); basculerFavori(b.dataset.fav); });
+  });
   box.querySelectorAll('.set-card').forEach(el=>{
     el.addEventListener('click', ()=> openSetDetail(el.dataset.setId));
   });
@@ -6461,6 +6566,170 @@ const ABREGE_RARETE = {
 function abregerRarete(r){
   if(ABREGE_RARETE[r]) return ABREGE_RARETE[r];
   return r.length > 12 ? r.slice(0, 11) + '…' : r;
+}
+
+
+// ---------------- NAVIGATION PAR POKÉMON ----------------
+// Un même Pokémon traverse vingt-cinq ans d'extensions. Chercher « tous mes Dracaufeu »
+// par la navigation par set demande d'ouvrir les sets un par un ; c'est exactement le
+// genre de question qu'on se pose en triant un stock, et à laquelle rien ne répondait.
+//
+// TCGdex filtre par numéro de Pokédex avec l'opérateur `eq:` — sans lui, dexId=6 renvoie
+// tout le catalogue, l'égalité stricte étant nécessaire sur un champ qui est un tableau.
+const DEX_MAX = 1025;
+const SPRITE_BASE = 'https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/';
+
+// Noms français, remplis au fil de l'eau. Aucune source ne les donne en un seul appel :
+// PokéAPI ne les expose qu'espèce par espèce, ce qui ferait 1025 requêtes pour une page
+// de navigation. On les récupère donc gratuitement des fiches déjà en cache — chaque carte
+// porte son dexId ET son nom — et des recherches faites par l'utilisateur.
+let nomsDex = new Map();
+
+// Nom d'espece a partir d'un nom de CARTE. Les suffixes de forme (-ex, GX, V, VMAX, VSTAR,
+// Radieux...) appartiennent a l'impression, pas au Pokemon : sans ce nettoyage la grille
+// affichait « Dracaufeu-ex » et « Tortank-ex » au lieu des noms du Pokedex.
+// Les prefixes regionaux et les formes (« de Galar », « d'Alola ») sont conserves : ils
+// font partie du nom de l'espece.
+function nomPokemonDepuisCarte(nom){
+  return String(nom || '')
+    // Ancré en FIN de nom uniquement : « ex » ou « V » au milieu appartiennent au nom
+    // lui-même (Vaututrice, Excelangue), les retirer partout mutilerait des espèces.
+    .replace(/[-\s]?(ex|EX|GX|V-UNION|VUNION|VMAX|VSTAR|V)$/, '')
+    .replace(/\s+(Radieux|Radieuse|Brillant|Brillante|Prisme|Lumineux)$/i, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+// Retient le nom le PLUS COURT vu pour un numero : entre « Dracaufeu » et
+// « Dracaufeu de Galar », le premier est le nom d'espece. La grille s'ameliore donc au fil
+// des cartes rencontrees au lieu de rester sur la premiere trouvee.
+function noterNomDex(n, nomCarte){
+  const propre = nomPokemonDepuisCarte(nomCarte);
+  if(!propre) return;
+  const actuel = nomsDex.get(n);
+  if(!actuel || propre.length < actuel.length) nomsDex.set(n, propre);
+}
+
+
+async function amorcerNomsDex(){
+  try{
+    const enCache = await idbGetAll('cardDetail');
+    for(const e of enCache){
+      const d = e.detail;
+      if(d?.name && Array.isArray(d.dexId)) for(const n of d.dexId) noterNomDex(n, d.name);
+    }
+    const sauve = await idbGet('meta', 'nomsDex');
+    if(sauve?.noms) for(const [k, v] of sauve.noms) if(!nomsDex.has(+k)) nomsDex.set(+k, v);
+  }catch(e){ /* la grille marche sans les noms, avec les sprites et les numéros */ }
+}
+
+async function sauverNomsDex(){
+  try{ await idbSet('meta', {key:'nomsDex', noms: [...nomsDex.entries()]}); }catch(e){}
+}
+
+function rendrePokedex(){
+  const q = ($('pokedex-filtre')?.value || '').trim().toLowerCase();
+  const num = parseInt(q, 10);
+  const grille = $('pokedex-grille');
+  let affiches = 0;
+
+  const cases = [];
+  for(let n = 1; n <= DEX_MAX; n++){
+    const nom = nomsDex.get(n) || '';
+    if(q){
+      // Numerique : correspondance par PREFIXE et non par sous-chaine. Taper « 6 » avec une
+      // sous-chaine renvoyait 273 Pokemon (tous ceux dont le numero contient un 6), alors
+      // qu'on cherche le n°6 puis les 60-69 et 600-699. Le prefixe donne exactement ca.
+      const parNum = !isNaN(num) && q === String(num) && String(n).startsWith(String(num));
+      const parNom = nom && nom.toLowerCase().includes(q);
+      if(!parNum && !parNom) continue;
+    }
+    affiches++;
+    cases.push(`
+      <div class="dex-case" data-dex="${n}">
+        <img src="${SPRITE_BASE}${n}.png" alt="" loading="lazy" onerror="this.style.visibility='hidden'">
+        <div class="dex-num">#${String(n).padStart(3, '0')}</div>
+        ${nom ? `<div class="dex-nom">${esc(nom)}</div>` : ''}
+      </div>`);
+  }
+  grille.innerHTML = cases.join('');
+  // Le décompte des noms connus est affiché sans détour : la grille est volontairement
+  // incomplète au départ, autant le dire plutôt que de laisser croire à un défaut.
+  $('pokedex-statut').innerHTML = `${affiches} Pokémon affiché(s) · ${nomsDex.size} nom(s) connu(s) sur ${DEX_MAX}` +
+    (nomsDex.size < DEX_MAX ? ' — les noms se remplissent au fil des recherches et des sets consultés.' : '');
+
+  grille.querySelectorAll('.dex-case').forEach(el=>{
+    el.addEventListener('click', ()=> ouvrirPokemon(parseInt(el.dataset.dex, 10)));
+  });
+}
+
+async function ouvrirPokemon(dex){
+  $('pokedex-vue').style.display = 'none';
+  $('pokemon-detail').style.display = 'block';
+  $('pokemon-sprite').src = SPRITE_BASE + dex + '.png';
+  $('pokemon-nom').textContent = nomsDex.get(dex) || ('#' + String(dex).padStart(3, '0'));
+  $('pokemon-meta').textContent = 'Chargement des cartes…';
+  $('pokemon-cartes').innerHTML = '';
+
+  try{
+    const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards?dexId=eq:${dex}`, {}, {maxRetries:2});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const briefs = await r.json();
+
+    // Le nom vient des cartes elles-mêmes : c'est la source la plus fiable en français, et
+    // elle est déjà là. On le mémorise pour la grille.
+    if(briefs.length){
+      // Toutes les cartes du Pokemon sont passees en revue : la plus courte donne le nom
+      // d'espece, meme si la premiere de la liste est une carte -ex.
+      for(const b of briefs) if(b.name) noterNomDex(dex, b.name);
+      const nom = nomsDex.get(dex);
+      if(nom) $('pokemon-nom').textContent = nom;
+      sauverNomsDex();
+    }
+
+    const avecImage = briefs.filter(b => b.image);
+    // Plus récentes d'abord : l'id de set commence par la série, et l'ordre du catalogue
+    // remonte le temps. Faute de date sur la liste courte, on trie sur l'id de set connu.
+    const meta = metaSetsRecherche || {};
+    const annee = (b)=>{
+      const sid = setDepuisIdCarte(b.id, meta);
+      return (sid && meta[sid]?.annee) || 0;
+    };
+    avecImage.sort((a, b) => annee(b) - annee(a));
+
+    $('pokemon-meta').textContent = `${briefs.length} carte(s) au catalogue` +
+      (briefs.length - avecImage.length ? ` · ${briefs.length - avecImage.length} sans illustration` : '');
+
+    $('pokemon-cartes').innerHTML = avecImage.map(b => {
+      const sid = setDepuisIdCarte(b.id, meta);
+      const nomSet = (sid && meta[sid]?.nom) || '';
+      const poss = possedeCarte(b.id);
+      return `
+        <div class="card-thumb${poss ? ' possedee' : ''}" data-image="${esc(b.image)}"
+             data-card-id="${esc(b.id)}" data-label="${esc((nomSet || sid || '') + ' · #' + b.localId)}">
+          <img src="${esc(b.image)}/low.webp" alt="" loading="lazy">
+          <div class="card-num">#${esc(b.localId)}</div>
+          ${nomSet ? `<div class="dex-set">${esc(nomSet)}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    $('pokemon-cartes').querySelectorAll('.card-thumb').forEach(el=>{
+      el.addEventListener('click', ()=> openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId));
+    });
+  }catch(err){
+    $('pokemon-meta').textContent = '⚠️ Chargement impossible : ' + err.message;
+  }
+}
+
+// ---------------- SÉRIES EN FAVORIS ----------------
+// Sur un stock qu'on dépouille par vagues, on revient toujours aux deux ou trois mêmes
+// extensions. Les épingler évite de refaire défiler le catalogue à chaque session.
+let favorisSeries = new Set(JSON.parse(localStorage.getItem('favorisSeries') || '[]'));
+
+function basculerFavori(id){
+  favorisSeries.has(id) ? favorisSeries.delete(id) : favorisSeries.add(id);
+  localStorage.setItem('favorisSeries', JSON.stringify([...favorisSeries]));
+  renderSeriesList();
 }
 
 let filtrePossession = 'toutes';
@@ -7834,6 +8103,9 @@ function normalizeCard(detail){
     imageBase: detail.image || '', // base brute (sans suffixe), nécessaire à getCardImageHash
     // Table des impressions existantes (normal/holo/reverse/1re édition/promo). Elle
     // n'était pas reprise, si bien que chaque carte paraissait n'avoir qu'une version.
+    // Numeros de Pokedex : servent a rattacher une carte a son Pokemon dans le Pokedex,
+    // et a amorcer les noms francais depuis les fiches deja en cache.
+    dexId: detail.dexId || null,
     variants: detail.variants || null,
     variantsDetailed: detail.variants_detailed || []
   };
