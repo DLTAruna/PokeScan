@@ -1015,6 +1015,7 @@
       <div class="row">
         <button class="btn-primary" id="btn-download-catalogue">📦 Précharger tout le catalogue</button>
         <button class="btn-danger" id="btn-clear-catalogue">🗑️ Vider le cache local</button>
+        <button class="btn-ghost" id="btn-clear-hashes">🧠 Oublier les empreintes photo (<span id="nb-hashes">0</span>)</button>
       </div>
       <div class="progress-bar" id="catalogue-progress"><div class="fill" id="catalogue-progress-fill"></div></div>
       <p class="hint" id="catalogue-status">Chargement du statut du cache local...</p>
@@ -2109,7 +2110,7 @@ const IDB_NAME = 'pokescan_cache_v1';
 // segmentation). Le numéro de version doit augmenter pour qu'onupgradeneeded se déclenche
 // sur les navigateurs ayant déjà la base en v1 — sans ça, le magasin n'existerait jamais
 // chez les utilisateurs existants et toute lecture échouerait silencieusement.
-const IDB_VERSION = 2;
+const IDB_VERSION = 3;
 let idbPromise = null;
 
 function openIdb(){
@@ -2123,6 +2124,8 @@ function openIdb(){
       if(!db.objectStoreNames.contains('cardHashes')) db.createObjectStore('cardHashes', {keyPath:'cardId'});
       if(!db.objectStoreNames.contains('cardDetail')) db.createObjectStore('cardDetail', {keyPath:'cardId'});
       if(!db.objectStoreNames.contains('cardMasks')) db.createObjectStore('cardMasks', {keyPath:'cardId'});
+      // Empreintes des PHOTOS déjà identifiées, conservées d'une session à l'autre.
+      if(!db.objectStoreNames.contains('photoHashes')) db.createObjectStore('photoHashes', {keyPath:'cle'});
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -2183,6 +2186,18 @@ async function idbCount(store){
 // Toutes les clés d'un store en une seule transaction — bien moins coûteux que N
 // lectures individuelles quand il s'agit juste de savoir CE QUI est en cache (ex :
 // pastille "en cache" sur ~200 sets dans l'onglet Sets).
+async function idbGetAll(store){
+  try{
+    const db = await openIdb();
+    return await new Promise((resolve, reject)=>{
+      const tx = db.transaction(store, 'readonly');
+      const req = tx.objectStore(store).getAll();
+      req.onsuccess = ()=> resolve(req.result || []);
+      req.onerror = ()=> reject(req.error);
+    });
+  } catch(e){ return []; }
+}
+
 async function idbAllKeys(store){
   try{
     const db = await openIdb();
@@ -4392,15 +4407,29 @@ async function attemptRead(corners, score){
       liveHash = hashIllustration(sourceForRead);
     }catch(e){ /* pas de raccourci possible cette fois, l'OCR normal prend le relais */ }
 
-    let hashShortcut = null, bestHashDist = null;
-    if(liveHash != null && sessionCardHashes.length){
-      let best = null, bestDist = Infinity;
+    let hashShortcut = null, bestHashDist = null, hashViaMemoire = false;
+    if(liveHash != null && (sessionCardHashes.length || hashesPersistes.length)){
+      let best = null, bestDist = Infinity, bestPersiste = false;
       for(const c of sessionCardHashes){
         const dist = hammingDistance(liveHash, c.hash);
-        if(dist < bestDist){ bestDist = dist; best = c; }
+        if(dist < bestDist){ bestDist = dist; best = c; bestPersiste = false; }
+      }
+      // Empreintes des sessions précédentes, au même seuil : une photo prise hier par le
+      // même appareil vaut exactement celle prise il y a deux minutes.
+      for(const h of hashesPersistes){
+        const dist = hammingDistance(liveHash, h.hash);
+        if(dist < bestDist){ bestDist = dist; best = h; bestPersiste = true; }
       }
       bestHashDist = bestDist; // journalisé même sans déclenchement : c'est ce qui permettra de calibrer le seuil
-      if(best && bestDist <= SAME_PHOTO_MATCH_DIST) hashShortcut = {card: best.card, distance: bestDist};
+      if(best && bestDist <= SAME_PHOTO_MATCH_DIST){
+        // Une entrée mémorisée ne porte que l'identifiant : la fiche vient du cache local
+        // (elle y est forcément, la carte ayant déjà été identifiée une fois).
+        const carte = bestPersiste ? (await idbGet('cardDetail', best.cardId))?.detail : best.card;
+        if(carte){
+          hashShortcut = {card: carte, distance: bestDist};
+          hashViaMemoire = bestPersiste;
+        }
+      }
     }
 
     // Même logique de redimensionnement précoce : le worker redessine de toute façon la
@@ -4555,7 +4584,7 @@ async function attemptRead(corners, score){
       ? '✅ ' + hashShortcut.card.name + ' — doublon reconnu (visuel)'
       : '✅ #' + finalNumber + '/' + finalDenominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
-                     num: hashShortcut ? (finalNumber+' (visuel, écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
+                     num: hashShortcut ? (finalNumber+' (visuel'+(hashViaMemoire?' mémorisé':'')+', écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
                      hashDist: bestHashDist, raw:r.text, rotated, ...timing});
   }catch(e){
     diagPush('err', {msg:'lecture : ' + e.message});
@@ -4665,6 +4694,79 @@ function showLiveResultNotFound(){
 // d'empreintes et sauter l'appel recognize(). On mémorise l'empreinte de LA PHOTO qui
 // vient d'identifier la carte, pas celle du visuel officiel — voir le commentaire de
 // sessionCardHashes pour pourquoi la seconde ne marchait pas.
+
+// ---------------- MÉMOIRE D'EMPREINTES PHOTO, ENTRE SESSIONS ----------------
+// Le raccourci visuel ne vivait que le temps d'une session caméra : à chaque redémarrage,
+// il repartait de zéro et il fallait reconnaître par OCR une carte déjà photographiée dix
+// fois la veille. Sur un stock de plus de mille cartes dépouillé en plusieurs séances,
+// c'est justement là qu'il y a le plus à gagner.
+//
+// On mémorise l'empreinte de LA PHOTO qui a identifié la carte, jamais celle du visuel
+// officiel. La distinction est tout sauf théorique : mesuré sur les 31 photos réelles,
+// comparer une photo au catalogue officiel donne 16 % de bonnes réponses avec une marge
+// NÉGATIVE (une mauvaise carte est plus proche que la bonne dans 29 cas sur 30), parce
+// qu'une photo et un scan propre ne se ressemblent pas — éclairage, reflets, perspective.
+// Photo contre photo, en revanche, c'est le même appareil et la même lumière : aucun écart
+// de domaine, et c'est le seul cas où la comparaison visuelle a démontré qu'elle marchait.
+//
+// Conséquence directe : remplir davantage le cache d'images de l'API n'aiderait en rien
+// ce raccourci. Ce n'est pas une question de couverture du catalogue, c'est que la mesure
+// de ressemblance ne traverse pas l'écart photo/scan.
+const PHOTO_HASH_MAX_PAR_CARTE = 3;  // plusieurs prises d'une même carte = plus de chances de match
+const PHOTO_HASH_MAX_TOTAL = 4000;   // garde-fou : au-delà, on oublie les plus anciennes
+
+let hashesPersistes = []; // [{cle, cardId, hash(BigInt), at}] — sans l'objet carte, résolu à la volée
+
+async function chargerHashesPhotos(){
+  try{
+    const tout = await idbGetAll('photoHashes');
+    hashesPersistes = tout.map(h => ({cle: h.cle, cardId: h.cardId, hash: BigInt('0x' + h.hash), at: h.at}));
+    if(hashesPersistes.length){
+      diagPush('err', {msg: 'empreintes photo mémorisées : ' + hashesPersistes.length});
+    }
+  }catch(e){ hashesPersistes = []; }
+}
+
+// N'enregistre QUE les identifications certaines. Une empreinte issue d'une carte mal
+// identifiée resterait en base indéfiniment et rattacherait silencieusement toutes ses
+// futures photos à la mauvaise carte — une erreur unique deviendrait une erreur permanente,
+// et d'autant plus difficile à repérer qu'elle se présenterait comme un doublon confirmé.
+async function enregistrerHashPhoto(card, liveHash, confiance){
+  if(!card?.id || liveHash == null || confiance !== 'high') return;
+  try{
+    const memeCarte = hashesPersistes.filter(h => h.cardId === card.id);
+    // Une nouvelle prise n'apporte rien si elle est quasi identique à une déjà mémorisée :
+    // on ne garde que des vues réellement différentes, jusqu'à PHOTO_HASH_MAX_PAR_CARTE.
+    if(memeCarte.some(h => hammingDistance(liveHash, h.hash) <= 4)) return;
+    if(memeCarte.length >= PHOTO_HASH_MAX_PAR_CARTE) return;
+
+    const entree = {cle: card.id + '|' + liveHash.toString(16), cardId: card.id,
+                    hash: liveHash.toString(16), at: Date.now()};
+    await idbSet('photoHashes', entree);
+    hashesPersistes.push({cle: entree.cle, cardId: card.id, hash: liveHash, at: entree.at});
+    majCompteurHashes();
+
+    if(hashesPersistes.length > PHOTO_HASH_MAX_TOTAL){
+      hashesPersistes.sort((a, b) => a.at - b.at);
+      const aJeter = hashesPersistes.splice(0, hashesPersistes.length - PHOTO_HASH_MAX_TOTAL);
+      for(const v of aJeter) idbDelete('photoHashes', v.cle).catch(()=>{});
+    }
+  }catch(e){ /* mémorisation best-effort : ne doit jamais interrompre un scan */ }
+}
+
+async function viderHashesPhotos(){
+  try{
+    const db = await openIdb();
+    await new Promise((resolve, reject)=>{
+      const tx = db.transaction('photoHashes', 'readwrite');
+      tx.objectStore('photoHashes').clear();
+      tx.oncomplete = resolve;
+      tx.onerror = ()=> reject(tx.error);
+    });
+    hashesPersistes = [];
+  }catch(e){ /* rien à faire */ }
+}
+
 function registerSessionCardHash(card, liveHash){
   if(!card?.id || liveHash == null) return;
   if(sessionCardHashes.some(c => c.cardId === card.id)) return;
@@ -4689,6 +4791,7 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
     if(mySeq !== liveResultSeq){ if(nameBmp?.close) nameBmp.close(); return; } // une carte plus récente affiche déjà autre chose
     if(result.card){
       registerSessionCardHash(result.card, liveHash); // alimente le raccourci visuel pour les prochains doublons
+      enregistrerHashPhoto(result.card, liveHash, result.confidence); // ...et les sessions suivantes, si l'identification est sûre
       showLiveResultDone(result.card, result.confidence);
       ajouterAuTotalSession(result.card);
       // La confirmation par le nom n'a pas pu être tentée ici : le texte OCR utilisé
@@ -5109,6 +5212,21 @@ $('btn-download-catalogue').addEventListener('click', async ()=>{
     await refreshCatalogueStatus();
   }
 });
+
+$('btn-clear-hashes').addEventListener('click', async ()=>{
+  if(!hashesPersistes.length){ toast('Aucune empreinte mémorisée.'); return; }
+  if(!confirm(`Oublier les ${hashesPersistes.length} empreinte(s) de photos déjà identifiées ? Les prochaines cartes repasseront toutes par l'OCR, plus lent. Le lot et le catalogue ne sont pas touchés.`)) return;
+  await viderHashesPhotos();
+  majCompteurHashes();
+  toast('🧠 Empreintes photo oubliées.');
+});
+
+// Le compteur rend la mémoire visible : sans lui, l'utilisateur n'aurait aucun moyen de
+// savoir que ce raccourci existe, ni pourquoi ses scans accélèrent au fil des séances.
+function majCompteurHashes(){
+  const el = $('nb-hashes');
+  if(el) el.textContent = hashesPersistes.length;
+}
 
 $('btn-clear-catalogue').addEventListener('click', async ()=>{
   await idbClearAll();
@@ -6961,6 +7079,7 @@ renderQueueStrip();
 // Placé au démarrage : si l'utilisateur rouvre l'app pour continuer un scan, il doit
 // retrouver son lot immédiatement, pas après le préchauffage des workers.
 restaurerSession();
+chargerHashesPhotos().then(majCompteurHashes);
 
 // --- Effacements explicites (la sauvegarde automatique n'est annulable que comme ça) ---
 $('btn-vider-file').addEventListener('click', async ()=>{
