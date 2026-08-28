@@ -446,6 +446,57 @@
   .classeur-page:first-child::before{right:4px;}
   .classeur-page:last-child::before{left:4px;}
   @media (max-width:760px){ .classeur-page::before{left:4px; right:auto;} }
+  /* Panneau de versions */
+  .versions-modal{
+    position:fixed; inset:0; z-index:320; display:none; align-items:center; justify-content:center;
+    background:rgba(6,8,14,.86); padding:16px;
+  }
+  .versions-modal.open{display:flex;}
+  .versions-boite{
+    background:var(--panel); border:1px solid var(--border); border-radius:14px;
+    padding:14px 16px; max-width:460px; width:100%; max-height:82vh; overflow:auto;
+    box-shadow:0 24px 60px rgba(0,0,0,.7);
+  }
+  .versions-tete{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px;}
+  .v-ligne{
+    display:flex; align-items:center; gap:9px; padding:8px 6px;
+    border-bottom:1px solid var(--border); font-size:13px; flex-wrap:wrap;
+  }
+  .v-ligne.on{background:rgba(212,175,55,.08);}
+  .v-nom{font-weight:700; min-width:82px;}
+  .v-prix{color:var(--accent); font-weight:700;}
+  .v-etendue{font-size:11px; color:var(--muted);}
+  .v-actions{margin-left:auto; display:flex; align-items:center; gap:7px;}
+  .v-qty{min-width:14px; text-align:center;}
+  /* Une couleur par impression, reprise a l'identique sur les etiquettes du mode complet :
+     c'est le seul moyen de reperer une version d'un coup d'oeil dans une double page. */
+  .v-pastille{width:11px; height:11px; border-radius:50%; flex:none;}
+  .v-normal{background:#8f9bb3;} .v-holo{background:#e8b93c;}
+  .v-reverse{background:#4bb8e0;} .v-firstEdition{background:#7ad39a;}
+  .v-wPromo{background:#c07ae0;}
+
+  /* Etiquette de version, en mode complet */
+  .etiq-variante{
+    position:absolute; top:0; left:0; right:0; z-index:2;
+    font-size:9px; font-weight:800; letter-spacing:.3px; padding:2px 4px;
+    background:rgba(0,0,0,.72); color:#fff; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    border-bottom:2px solid #8f9bb3;
+  }
+  /* Un prix en fourchette est signale visuellement : c'est une information de moindre
+     qualite, elle ne doit pas se lire comme les autres. */
+  .etiq-variante.ambigu{color:#f0c14b;}
+  .etiq-variante.v-holo{border-bottom-color:#e8b93c;}
+  .etiq-variante.v-reverse{border-bottom-color:#4bb8e0;}
+  .etiq-variante.v-firstEdition{border-bottom-color:#7ad39a;}
+  .etiq-variante.v-wPromo{border-bottom-color:#c07ae0;}
+
+  /* Badge « N versions », en mode simple */
+  .badge-versions{
+    position:absolute; bottom:4px; right:4px; padding:1px 6px; border-radius:9px;
+    background:rgba(0,0,0,.75); color:#cfd6e4; border:1px solid var(--border);
+    font-size:10px; font-weight:800; cursor:pointer; line-height:1.5;
+  }
+  .badge-versions.partiel{background:var(--accent); color:#1a1206; border-color:transparent;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1025,6 +1076,10 @@
           <button data-f="possedees">Possédées <b id="n-possedees">0</b></button>
           <button data-f="manquantes">Manquantes <b id="n-manquantes">0</b></button>
         </div>
+        <div class="seg" id="mode-versions">
+          <button class="on" data-m="simple">Simple</button>
+          <button data-m="complet">Toutes versions</button>
+        </div>
         <div class="seg" id="dispo-classeur" style="display:none;">
           <button data-c="4">2×2</button>
           <button class="on" data-c="9">3×3</button>
@@ -1222,6 +1277,16 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 </main>
 
 <!-- Visualiseur plein écran d'une carte : zoom + inclinaison suivie à l'accéléromètre -->
+  <div class="versions-modal" id="versions-modal">
+    <div class="versions-boite">
+      <div class="versions-tete">
+        <b id="versions-titre">—</b>
+        <button class="btn-ghost btn-sm" id="btn-fermer-versions">✕</button>
+      </div>
+      <div id="versions-corps"></div>
+      <p class="hint" style="margin:10px 0 0;">Chaque impression a sa propre valeur : compte-les séparément, c'est ce qui rend l'estimation juste.</p>
+    </div>
+  </div>
 <div class="card-viewer" id="card-viewer">
   <div class="cv-title" id="cv-title">—</div>
   <button class="cv-close" id="cv-close" aria-label="Fermer">✕</button>
@@ -2192,14 +2257,16 @@ const IDB_NAME = 'pokescan_cache_v1';
 // segmentation). Le numéro de version doit augmenter pour qu'onupgradeneeded se déclenche
 // sur les navigateurs ayant déjà la base en v1 — sans ça, le magasin n'existerait jamais
 // chez les utilisateurs existants et toute lecture échouerait silencieusement.
-const IDB_VERSION = 4;
+const IDB_VERSION = 5;
 let idbPromise = null;
 
 function openIdb(){
   if(idbPromise) return idbPromise;
   idbPromise = new Promise((resolve, reject)=>{
     const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = ()=>{
+    // L'evenement porte oldVersion, indispensable pour ne migrer un magasin que lors du
+    // passage de version concerne et pas a chaque ouverture.
+    req.onupgradeneeded = (e)=>{
       const db = req.result;
       if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', {keyPath:'key'});
       if(!db.objectStoreNames.contains('cardLists')) db.createObjectStore('cardLists', {keyPath:'setId'});
@@ -2209,7 +2276,21 @@ function openIdb(){
       // Empreintes des PHOTOS déjà identifiées, conservées d'une session à l'autre.
       if(!db.objectStoreNames.contains('photoHashes')) db.createObjectStore('photoHashes', {keyPath:'cle'});
       // Collection personnelle : ce qu'on possède et qu'on garde, distinct du lot de vente.
-      if(!db.objectStoreNames.contains('collection')) db.createObjectStore('collection', {keyPath:'cardId'});
+      // Clé composite « carte|version » : deux impressions d'un même numéro sont deux
+      // objets différents, avec deux valeurs différentes. Le magasin d'origine était clé
+      // par cardId seul ; ses entrées sont reportées sur la version « normal ».
+      if(db.objectStoreNames.contains('collection') && e.oldVersion < 5){
+        const ancien = req.transaction.objectStore('collection');
+        const lecture = ancien.getAll();
+        lecture.onsuccess = ()=>{
+          const reprises = (lecture.result || []).map(x => ({...x, cle: x.cardId + '|normal', variante: 'normal'}));
+          db.deleteObjectStore('collection');
+          const neuf = db.createObjectStore('collection', {keyPath:'cle'});
+          for(const r of reprises) neuf.put(r);
+        };
+      } else if(!db.objectStoreNames.contains('collection')){
+        db.createObjectStore('collection', {keyPath:'cle'});
+      }
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -2539,7 +2620,12 @@ async function getCardImageHash(cardId, imageBase){
 const CARD_DETAIL_MAX_AGE_MS = 14*24*3600*1000;
 async function getCardDetailCached(id){
   const cached = await idbGet('cardDetail', id);
-  if(cached && (Date.now() - cached.fetchedAt) < CARD_DETAIL_MAX_AGE_MS) return cached.detail;
+  // `variants === undefined` signale une fiche mise en cache AVANT que ce champ soit
+  // conserve : elle est traitee comme perimee pour etre rechargee une fois, sinon la carte
+  // paraitrait n'avoir qu'une seule impression pendant les quatorze jours du cache. Une
+  // carte reellement sans variantes stocke `null`, ce qui la distingue de ce cas.
+  const complet = cached && cached.detail && cached.detail.variants !== undefined;
+  if(complet && (Date.now() - cached.fetchedAt) < CARD_DETAIL_MAX_AGE_MS) return cached.detail;
   try{
     const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
     if(r.ok){
@@ -5297,6 +5383,29 @@ $('btn-download-catalogue').addEventListener('click', async ()=>{
   }
 });
 
+$('btn-fermer-versions').addEventListener('click', fermerPanneauVersions);
+$('versions-modal').addEventListener('click', (e)=>{ if(e.target.id === 'versions-modal') fermerPanneauVersions(); });
+
+$('mode-versions').addEventListener('click', async (e)=>{
+  const b = e.target.closest('button[data-m]');
+  if(!b) return;
+  modeVersions = b.dataset.m;
+  localStorage.setItem('modeVersions', modeVersions);
+  $('mode-versions').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+  pageClasseur = 0;
+  if(!cartesSetCourant.length) return;
+  // Le mode complet ne peut rien afficher sans les fiches détaillées : on les charge en
+  // annonçant la progression, plutôt que de laisser un écran figé sans explication.
+  if(modeVersions === 'complet'){
+    $('set-detail-status').textContent = 'Chargement des versions…';
+    await chargerVariantes(cartesSetCourant, (f, t)=>{
+      $('set-detail-status').textContent = `Chargement des versions… ${f}/${t}`;
+    });
+    $('set-detail-status').textContent = 'Versions chargées — chaque impression a son propre emplacement.';
+  }
+  rendreCartesSet();
+});
+
 $('filtre-possession').addEventListener('click', (e)=>{
   const b = e.target.closest('button[data-f]');
   if(!b) return;
@@ -5491,25 +5600,117 @@ function findSetMeta(setId){
 // La collection est donc un second registre, indépendant du lot : ce qu'on possède et
 // qu'on garde. Un même identifiant de carte peut exister dans les deux — on peut garder un
 // exemplaire et en vendre un autre — d'où deux magasins séparés plutôt qu'un drapeau.
+
+// ---------------- VERSIONS D'UNE CARTE ----------------
+// Une même carte existe en plusieurs impressions — normale, reverse, holo, 1re édition —
+// qui ne valent pas du tout la même chose. Sur le set 151, cela fait 377 versions pour
+// 207 cartes. Les confondre coûte de l'argent : vendre un reverse au prix du normal, ou
+// l'inverse, c'est exactement le genre d'erreur que l'outil doit empêcher.
+//
+// La liste des versions vient de `variants`, la table de booléens de TCGdex — et NON de
+// `variants_detailed`, qui regroupe plusieurs produits Cardmarket sous un même libellé :
+// sur Salamèche 004/165, il contient six entrées dont trois « Reverse » à 0,09 €, 0 € et
+// 15 €, et deux « Normal » à 0,09 € et 69,60 €. Prendre la première venue afficherait un
+// prix faux avec l'aplomb d'un prix juste.
+const ORDRE_VARIANTES = ['normal', 'holo', 'reverse', 'firstEdition', 'wPromo'];
+const NOM_VARIANTE = {
+  normal: 'Normal', holo: 'Holo', reverse: 'Reverse',
+  firstEdition: '1re édition', wPromo: 'Promo'
+};
+// Rattachement au `type` de variants_detailed, qui n'emploie pas les mêmes libellés.
+const TYPE_VARIANTE = {normal: 'Normal', holo: 'Holo', reverse: 'Reverse',
+                       firstEdition: 'Normal', wPromo: 'Normal'};
+
+let detailsCartes = new Map();   // cardId -> fiche détaillée (variantes + prix)
+let chargementVariantes = null;
+
+function variantesDe(detail){
+  if(!detail?.variants) return ['normal'];
+  const v = ORDRE_VARIANTES.filter(k => detail.variants[k]);
+  return v.length ? v : ['normal'];
+}
+
+// Prix d'une version. Quand plusieurs produits Cardmarket partagent le même type, on prend
+// la MÉDIANE plutôt que le premier ou la moyenne : le premier est arbitraire, et la moyenne
+// se fait emporter par l'exemplaire à 69,60 € qui est en réalité une autre impression.
+// L'étendue est conservée pour être affichée en infobulle — mieux vaut montrer l'incertitude
+// que de la masquer.
+function prixVariante(detail, cle){
+  const type = TYPE_VARIANTE[cle] || 'Normal';
+  const vals = (detail?.variantsDetailed || [])
+    .filter(v => v.type === type)
+    .map(v => { const cm = v.pricing?.cardmarket; return cm && (cm.trend ?? cm.avg30 ?? cm.avg7 ?? cm.avg); })
+    .filter(v => typeof v === 'number' && v > 0)
+    .sort((a, b) => a - b);
+  if(!vals.length) return null;
+
+  const m = vals.length % 2
+    ? vals[(vals.length - 1) / 2]
+    : (vals[vals.length/2 - 1] + vals[vals.length/2]) / 2;
+  const min = vals[0], max = vals[vals.length - 1];
+
+  // Quand les produits regroupés sous un même type s'écartent trop, ce ne sont pas des
+  // offres du même objet : TCGdex range sous « Normal » aussi bien le Salamèche 004/165
+  // ordinaire à 0,09 € que son impression Master Ball à 69,60 €. Aucune statistique ne
+  // rattrape ça — ni la moyenne, ni la médiane, qui sur deux valeurs se contente d'en
+  // inventer une troisième. On refuse donc le chiffre unique et on annonce l'étendue :
+  // une fourchette honnête vaut mieux qu'un prix faux présenté comme sûr.
+  const ambigu = max > min * 1.5;
+  return {prix: ambigu ? null : m, min, max, n: vals.length, ambigu};
+}
+
+// Charge les fiches détaillées du set, en tâche de fond. Le mode simple n'en a pas besoin
+// pour s'afficher (une tuile = une carte) ; il ne les utilise que pour enrichir les badges
+// au fur et à mesure. Le mode complet, lui, ne peut rien montrer avant de les avoir.
+async function chargerVariantes(cartes, onProgres){
+  const manquantes = cartes.filter(c => !detailsCartes.has(c.id));
+  if(!manquantes.length) return;
+  let faites = 0;
+  await pLimit(manquantes, 8, async (c)=>{
+    const d = await getCardDetailCached(c.id).catch(()=> null);
+    if(d) detailsCartes.set(c.id, d);
+    faites++;
+    if(onProgres && faites % 10 === 0) onProgres(faites, manquantes.length);
+  });
+}
+
+// Clé de collection : une carte ET sa version. C'est la granularité de ce qu'on possède
+// réellement — deux exemplaires d'un même numéro dans deux impressions différentes sont
+// deux objets distincts, avec deux valeurs distinctes.
+function cleCollection(cardId, variante){ return cardId + '|' + variante; }
+
 const COLLECTION_STORE = 'collection';
-let collection = new Map(); // cardId -> {cardId, setId, localId, qty, at}
+let collection = new Map(); // « cardId|variante » -> {cle, cardId, variante, setId, localId, qty, at}
 
 async function chargerCollection(){
   try{
     const tout = await idbGetAll(COLLECTION_STORE);
-    collection = new Map(tout.map(e => [e.cardId, e]));
+    collection = new Map(tout.map(e => [e.cle, e]));
   }catch(e){ collection = new Map(); }
 }
 
-async function majPossession(cardId, setId, localId, delta){
-  const actuel = collection.get(cardId);
+// Une carte est « possédée » dès qu'au moins une de ses versions l'est. C'est ce que le
+// mode simple montre ; le mode complet, lui, regarde version par version.
+function possedeCarte(cardId){
+  for(const k of collection.keys()) if(k.startsWith(cardId + '|')) return true;
+  return false;
+}
+function quantiteCarte(cardId){
+  let n = 0;
+  for(const [k, e] of collection) if(k.startsWith(cardId + '|')) n += e.qty || 0;
+  return n;
+}
+
+async function majPossession(cardId, setId, localId, delta, variante = 'normal'){
+  const cle = cleCollection(cardId, variante);
+  const actuel = collection.get(cle);
   const qty = Math.max(0, (actuel?.qty || 0) + delta);
   if(qty === 0){
-    collection.delete(cardId);
-    await idbDelete(COLLECTION_STORE, cardId).catch(()=>{});
+    collection.delete(cle);
+    await idbDelete(COLLECTION_STORE, cle).catch(()=>{});
   } else {
-    const e = {cardId, setId, localId, qty, at: actuel?.at || Date.now()};
-    collection.set(cardId, e);
+    const e = {cle, cardId, variante, setId, localId, qty, at: actuel?.at || Date.now()};
+    collection.set(cle, e);
     await idbSet(COLLECTION_STORE, e);
   }
   return qty;
@@ -5519,7 +5720,7 @@ async function majPossession(cardId, setId, localId, delta){
 // réellement chargée et non sur cardCount.official — les deux diffèrent (cartes secrètes
 // au-delà du total imprimé), et afficher « 210/207 » serait absurde.
 function progressionSet(cartes){
-  const possedees = cartes.filter(c => collection.has(c.id)).length;
+  const possedees = cartes.filter(c => possedeCarte(c.id)).length;
   return {possedees, total: cartes.length,
           pct: cartes.length ? Math.round(100 * possedees / cartes.length) : 0};
 }
@@ -5547,17 +5748,78 @@ function tailleClasseur(){
 // quand on pointe une collection, la question n'est jamais « montre-moi tout », c'est
 // « qu'est-ce qu'il me manque ». Les compteurs sont affichés sur les boutons eux-mêmes,
 // pour répondre sans même cliquer.
+
+// Mode d'affichage des versions. « simple » montre une tuile par carte, avec un badge qui
+// ouvre le détail ; « complet » donne un emplacement par version, comme un classeur de
+// masterset. Les deux répondent à des usages différents : parcourir un set d'un coup
+// d'œil, ou pointer méthodiquement chaque impression.
+let modeVersions = localStorage.getItem('modeVersions') || 'simple';
+
+// Panneau de choix des versions d'une carte. Il existe parce qu'en mode simple, cliquer
+// « + » sur une carte à plusieurs impressions est ambigu : décider à la place de
+// l'utilisateur fausserait la valeur de sa collection, souvent d'un ordre de grandeur.
+function ouvrirPanneauVersions(cardId, localId){
+  const detail = detailsCartes.get(cardId);
+  const modal = $('versions-modal');
+  if(!detail){
+    // Fiche pas encore chargée : on la demande et on rouvre, plutôt que d'afficher un
+    // panneau vide qui donnerait l'impression que la carte n'a qu'une version.
+    $('versions-corps').innerHTML = '<p class="hint">Chargement des versions…</p>';
+    modal.classList.add('open');
+    getCardDetailCached(cardId).then(d => {
+      if(d){ detailsCartes.set(cardId, d); ouvrirPanneauVersions(cardId, localId); }
+      else $('versions-corps').innerHTML = '<p class="hint">⚠️ Versions indisponibles (hors ligne ?).</p>';
+    });
+    return;
+  }
+
+  const versions = variantesDe(detail);
+  $('versions-titre').textContent = detail.name + ' · #' + localId;
+  $('versions-corps').innerHTML = versions.map(v => {
+    const e = collection.get(cleCollection(cardId, v));
+    const p = prixVariante(detail, v);
+    const etendue = p && p.ambigu
+      ? `<span class="v-etendue" title="TCGdex regroupe ${p.n} produits Cardmarket sous ce libellé — impressions différentes, prix non comparables">⚠️ ${p.n} produits confondus</span>`
+      : '';
+    return `
+      <div class="v-ligne${e ? ' on' : ''}" data-v="${esc(v)}">
+        <span class="v-pastille v-${esc(v)}"></span>
+        <span class="v-nom">${NOM_VARIANTE[v]}</span>
+        <span class="v-prix">${!p ? '—' : (p.ambigu ? p.min.toFixed(2) + '–' + p.max.toFixed(2) + ' €' : p.prix.toFixed(2) + ' €')}</span>
+        ${etendue}
+        <span class="v-actions">
+          <button class="btn-ghost btn-sm" data-d="-1" ${e ? '' : 'disabled'}>−</button>
+          <b class="v-qty">${e ? e.qty : 0}</b>
+          <button class="btn-ghost btn-sm" data-d="1">+</button>
+        </span>
+      </div>`;
+  }).join('');
+
+  modal.classList.add('open');
+  modal.querySelectorAll('.v-ligne').forEach(l=>{
+    l.querySelectorAll('button[data-d]').forEach(b=>{
+      b.addEventListener('click', async ()=>{
+        await majPossession(cardId, setCourantId, localId, parseInt(b.dataset.d, 10), l.dataset.v);
+        ouvrirPanneauVersions(cardId, localId);   // rafraîchit le panneau
+        rendreCartesSet();                        // et la grille derrière
+      });
+    });
+  });
+}
+
+function fermerPanneauVersions(){ $('versions-modal').classList.remove('open'); }
+
 let filtrePossession = 'toutes';
 
 function cartesFiltrees(){
-  if(filtrePossession === 'possedees') return cartesSetCourant.filter(c => collection.has(c.id));
-  if(filtrePossession === 'manquantes') return cartesSetCourant.filter(c => !collection.has(c.id));
+  if(filtrePossession === 'possedees') return cartesSetCourant.filter(c => possedeCarte(c.id));
+  if(filtrePossession === 'manquantes') return cartesSetCourant.filter(c => !possedeCarte(c.id));
   return cartesSetCourant;
 }
 
 function rendreCartesSet(){
   const grid = $('set-cards-grid');
-  const affichees = cartesFiltrees();
+  const affichees = developper(cartesFiltrees());
   const parPage = tailleClasseur();
   const nbPages = Math.max(1, Math.ceil(affichees.length / (parPage * 2)));
   pageClasseur = Math.min(Math.max(0, pageClasseur), nbPages - 1);
@@ -5575,19 +5837,62 @@ function rendreCartesSet(){
   $('set-progression').className = 'set-progression ' +
     (prog.pct === 100 ? 'complet' : prog.pct > 0 ? 'partiel' : 'vide');
 
-  const tuile = (c)=>{
-    const poss = collection.get(c.id);
+  // Une tuile = une carte (mode simple) ou une carte ET une version (mode complet).
+  // En mode simple, le badge « Nv » indique combien de versions existent et combien sont
+  // possédées : c'est ce badge qui ouvre le détail, plutôt que de multiplier les tuiles.
+  const tuile = (c, variante)=>{
+    const detail = detailsCartes.get(c.id);
+    const versions = detail ? variantesDe(detail) : null;
+    const poss = variante ? collection.get(cleCollection(c.id, variante)) : null;
+    const possCarte = variante ? poss : (possedeCarte(c.id) ? {qty: quantiteCarte(c.id)} : null);
+
+    let badgeVersions = '';
+    if(!variante && versions && versions.length > 1){
+      const nPoss = versions.filter(v => collection.has(cleCollection(c.id, v))).length;
+      badgeVersions = `<button class="badge-versions${nPoss ? ' partiel' : ''}" data-action="versions"
+        title="${versions.length} version(s) : ${versions.map(v => NOM_VARIANTE[v]).join(', ')} — ${nPoss} possédée(s)">${nPoss}/${versions.length}v</button>`;
+    }
+
+    let etiquette = '';
+    if(variante){
+      const p = detail ? prixVariante(detail, variante) : null;
+      const infobulle = p && p.ambigu
+        ? ` — TCGdex regroupe ${p.n} produits sous ce libellé, de ${p.min.toFixed(2)} à ${p.max.toFixed(2)} € : ce ne sont pas la même impression, aucun prix unique n'est fiable ici`
+        : '';
+      const txtPrix = !p ? '' : (p.ambigu ? ` · ${p.min.toFixed(2)}–${p.max.toFixed(2)} €` : ` · ${p.prix.toFixed(2)} €`);
+      etiquette = `<div class="etiq-variante v-${variante}${p && p.ambigu ? ' ambigu' : ''}" title="${esc(NOM_VARIANTE[variante] + infobulle)}">#${esc(c.localId)} ${NOM_VARIANTE[variante].toUpperCase()}${txtPrix}</div>`;
+    }
+
     return `
-      <div class="card-thumb${c.image ? '' : ' sans-image'}${poss ? ' possedee' : ''}"
+      <div class="card-thumb${c.image ? '' : ' sans-image'}${possCarte ? ' possedee' : ''}"
            data-image="${esc(c.image || '')}" data-card-id="${esc(c.id)}"
-           data-local-id="${esc(c.localId)}"
-           data-label="${esc((setCourantMeta?.name || setCourantId) + ' · #' + c.localId)}">
+           data-local-id="${esc(c.localId)}"${variante ? ` data-variante="${esc(variante)}"` : ''}
+           data-label="${esc((setCourantMeta?.name || setCourantId) + ' · #' + c.localId + (variante ? ' · ' + NOM_VARIANTE[variante] : ''))}">
+        ${etiquette}
         ${c.image ? `<img src="${esc(c.image)}/low.webp" alt="" loading="lazy">` : '<div class="thumb-vide">illustration<br>indisponible</div>'}
-        <div class="card-num">#${esc(c.localId)}</div>
-        <button class="btn-possede${poss ? ' on' : ''}" data-action="possede"
-                title="${poss ? 'Possédée ×' + poss.qty + ' — clic pour en retirer une' : 'Marquer comme possédée'}">${poss ? '✓ ' + poss.qty : '+'}</button>
+        ${variante ? '' : `<div class="card-num">#${esc(c.localId)}</div>`}
+        ${badgeVersions}
+        <button class="btn-possede${possCarte ? ' on' : ''}" data-action="possede"
+                title="${possCarte ? 'Possédée ×' + possCarte.qty + ' — clic pour en retirer une' : 'Marquer comme possédée'}">${possCarte ? '✓ ' + possCarte.qty : '+'}</button>
       </div>`;
   };
+
+  // En mode complet, chaque version devient un emplacement à part entière — c'est la
+  // façon dont un classeur de masterset se remplit réellement. Les cartes dont la fiche
+  // n'est pas encore chargée sont représentées par leur seule version connue plutôt
+  // qu'omises : mieux vaut une liste incomplète qu'une liste trompeuse.
+  // Declaration de fonction et non arrow const : elle est appelee en tete de
+  // rendreCartesSet, avant ce point du fichier, et seule une declaration est hissee.
+  function developper(liste){
+    return modeVersions === 'complet'
+      ? liste.flatMap(c => {
+          const d = detailsCartes.get(c.id);
+          return (d ? variantesDe(d) : ['normal']).map(v => ({carte: c, variante: v}));
+        })
+      : liste.map(c => ({carte: c, variante: null}));
+  }
+
+  function rendreTuile(x){ return tuile(x.carte, x.variante); }
 
   if(modeClasseur){
     const d = pageClasseur * parPage * 2;
@@ -5597,8 +5902,8 @@ function rendreCartesSet(){
     grid.className = 'classeur';
     grid.innerHTML = `
       <div class="classeur-pages">
-        <div class="classeur-page" style="--cols:${cols}">${gauche.map(tuile).join('')}</div>
-        <div class="classeur-page" style="--cols:${cols}">${droite.map(tuile).join('')}</div>
+        <div class="classeur-page" style="--cols:${cols}">${gauche.map(rendreTuile).join('')}</div>
+        <div class="classeur-page" style="--cols:${cols}">${droite.map(rendreTuile).join('')}</div>
       </div>
       <div class="classeur-nav">
         <button class="btn-ghost btn-sm" id="cl-prec" ${pageClasseur === 0 ? 'disabled' : ''}>← Page précédente</button>
@@ -5610,7 +5915,7 @@ function rendreCartesSet(){
   } else {
     grid.className = 'cards-grid';
     grid.innerHTML = affichees.length
-      ? affichees.map(tuile).join('')
+      ? affichees.map(rendreTuile).join('')
       : '<p class="hint">Aucune carte dans ce filtre.</p>';
   }
 
@@ -5621,13 +5926,33 @@ function rendreCartesSet(){
       if(ev.target.closest('[data-action="possede"]')) return;
       openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId);
     });
+    const bv = el.querySelector('[data-action="versions"]');
+    if(bv) bv.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      ouvrirPanneauVersions(el.dataset.cardId, el.dataset.localId);
+    });
+
     const b = el.querySelector('[data-action="possede"]');
     if(b) b.addEventListener('click', async (ev)=>{
       ev.stopPropagation();
-      // Clic = +1, clic sur une carte déjà possédée = -1. Deux gestes dans un seul bouton
-      // parce que pointer un classeur se fait carte après carte, sans quitter la grille.
-      const delta = collection.has(el.dataset.cardId) ? -1 : 1;
-      await majPossession(el.dataset.cardId, setCourantId, el.dataset.localId, delta);
+      // Clic = +1, clic sur un emplacement déjà possédé = -1. Deux gestes dans un seul
+      // bouton parce que pointer un classeur se fait carte après carte, sans quitter la
+      // grille.
+      const cardId = el.dataset.cardId;
+      // En mode simple sur une carte à plusieurs versions, on ne peut pas deviner LAQUELLE
+      // l'utilisateur possède : on ouvre le choix plutôt que de décider à sa place, ce qui
+      // fausserait la valeur de sa collection.
+      const detail = detailsCartes.get(cardId);
+      const versions = detail ? variantesDe(detail) : ['normal'];
+      if(!el.dataset.variante && versions.length > 1 && !possedeCarte(cardId)){
+        ouvrirPanneauVersions(cardId, el.dataset.localId);
+        return;
+      }
+      const variante = el.dataset.variante || (possedeCarte(cardId)
+        ? [...collection.keys()].find(k => k.startsWith(cardId + '|')).split('|')[1]
+        : versions[0]);
+      const delta = collection.has(cleCollection(cardId, variante)) ? -1 : 1;
+      await majPossession(cardId, setCourantId, el.dataset.localId, delta, variante);
       rendreCartesSet();
     });
   });
@@ -6843,6 +7168,9 @@ function normalizeCard(detail){
     set: { id: detail.set?.id, name: detail.set?.name },
     images: { small: detail.image ? detail.image + '/low.webp' : '' },
     imageBase: detail.image || '', // base brute (sans suffixe), nécessaire à getCardImageHash
+    // Table des impressions existantes (normal/holo/reverse/1re édition/promo). Elle
+    // n'était pas reprise, si bien que chaque carte paraissait n'avoir qu'une version.
+    variants: detail.variants || null,
     variantsDetailed: detail.variants_detailed || []
   };
 }
@@ -7344,6 +7672,8 @@ chargerCollection();
 $('btn-mode-vue').textContent = modeClasseur ? '▦ Vue grille' : '📖 Mode classeur';
 $('dispo-classeur').querySelectorAll('button').forEach(x =>
   x.classList.toggle('on', parseInt(x.dataset.c, 10) === capaciteClasseur));
+$('mode-versions').querySelectorAll('button').forEach(x =>
+  x.classList.toggle('on', x.dataset.m === modeVersions));
 
 // --- Effacements explicites (la sauvegarde automatique n'est annulable que comme ça) ---
 $('btn-vider-file').addEventListener('click', async ()=>{
