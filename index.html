@@ -479,6 +479,57 @@
   .card-thumb:not(.possedee) img{filter:grayscale(.85) brightness(.62);}
   .card-thumb.possedee{outline:2px solid var(--accent); outline-offset:-2px;}
 
+  /* Un emplacement de classeur : la pochette derriere, la carte dedans. Le rapport est
+     fixe par la pochette et non par la carte, pour que les emplacements VIDES gardent
+     leur place — c'est tout l'interet de la vue classeur : on voit ce qui manque. */
+  .cl-slot{position:relative; aspect-ratio:63/88;}
+  .cl-slot > .cl-poche{position:absolute; inset:0; width:100%; height:100%; z-index:0;}
+  .cl-slot > .card-thumb{position:absolute; inset:0; z-index:1;}
+  .cl-slot > .card-thumb img{height:100%;}
+
+  /* ---- Couverture ---- */
+  /* Un classeur ne s'ouvre pas sur des cartes. Sans cette page, la carte 1 se retrouvait
+     seule a gauche face a la carte 2, alors que dans un classeur reel la premiere double
+     page interieure commence a la carte 1 a gauche ET a la suivante en face. */
+  .classeur-page.couverture{
+    display:flex; align-items:center; justify-content:center; position:relative;
+    overflow:hidden; padding:22px;
+    /* Cuir teinte : la teinte vient du set (--t), la matiere du degrade et du grain SVG. */
+    background:
+      radial-gradient(120% 90% at 30% 12%, hsl(var(--t) 34% 30%) 0%, transparent 62%),
+      linear-gradient(155deg, hsl(var(--t) 30% 24%) 0%, hsl(var(--t) 36% 13%) 58%, hsl(var(--t) 30% 9%) 100%);
+    border-color:hsl(var(--t) 30% 30%);
+    box-shadow:inset 0 0 60px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.10);
+  }
+  .cl-cuir{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
+  .cl-couv-contenu{position:relative; z-index:1; text-align:center; width:100%;}
+  /* Monochrome, mais pas aplati. `brightness(0) invert(1)` donnait bien une teinte unique,
+     au prix de TOUTE la structure interne : le logo se reduisait a une silhouette blanche
+     informe, ou plus rien ne distinguait le lettrage du bandeau qui le porte.
+
+     `luminosity` garde la luminance du logo et emprunte la teinte du fond : meme
+     monochrome, mais le lettrage reste lisible — c'est exactement ce que fait un marquage
+     a chaud sur du cuir. `isolation:isolate` borne le melange a la couverture, sans quoi
+     il irait chercher le fond de l'application derriere elle. */
+  .classeur-page.couverture{isolation:isolate;}
+  .cl-couv-logo{
+    width:min(78%, 260px); height:auto; display:block; margin:0 auto 16px;
+    filter:grayscale(1) contrast(1.2) drop-shadow(0 2px 1px rgba(0,0,0,.6));
+    mix-blend-mode:luminosity; opacity:.62;
+  }
+  .cl-couv-nom{
+    font-size:clamp(15px, 2.4vw, 21px); font-weight:800; letter-spacing:.4px;
+    color:rgba(255,255,255,.86); text-shadow:0 1px 2px rgba(0,0,0,.6);
+  }
+  .cl-couv-sous{
+    margin-top:5px; font-size:12px; color:rgba(255,255,255,.55);
+    font-variant-numeric:tabular-nums;
+  }
+  .cl-couv-jauge{
+    width:min(70%, 220px); height:4px; margin:12px auto 0; border-radius:3px;
+    background:rgba(0,0,0,.4); overflow:hidden;
+  }
+  .cl-couv-jauge i{display:block; height:100%; background:rgba(255,255,255,.6); border-radius:3px;}
   /* ---- Mode classeur ---- */
   .classeur-pages{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
   .classeur-page{
@@ -629,6 +680,22 @@
   /* Le reste a acquerir est la valeur qu'on regarde le plus : elle est mise en avant,
      mais en bleu et non en rouge — c'est un objectif, pas une alerte. */
   .ms-reste{color:#9dbcf5;}
+  /* Progression d'un set sur sa vignette. Elle remplace la valeur du masterset, qui
+     repondait a une question qu'on ne se pose pas en parcourant le classeur : devant une
+     grille de cent trente sets, ce qu'on cherche c'est lesquels sont entames et ou ils en
+     sont — pas combien ils couteraient a acheter en entier. */
+  .set-poss{
+    display:block; margin-top:4px; font-size:11px; font-weight:700; color:var(--muted);
+    font-variant-numeric:tabular-nums;
+  }
+  .set-poss span{font-weight:500; opacity:.7;}
+  .set-poss.partiel{color:var(--accent);}
+  .set-poss.complet{color:#5fd39a;}
+  /* Barre fine plutot qu'un simple ratio : « 41 / 165 » demande un calcul mental a chaque
+     vignette, la barre se lit sans en faire aucun. */
+  .set-jauge{height:3px; margin-top:4px; border-radius:2px; background:rgba(255,255,255,.08); overflow:hidden;}
+  .set-jauge i{display:block; height:100%; background:var(--accent); border-radius:2px;}
+  .set-poss.complet + .set-jauge i{background:#5fd39a;}
   .set-ms-badge{
     display:block; margin-top:3px; font-size:10.5px; font-weight:700; color:var(--accent);
     font-variant-numeric:tabular-nums;
@@ -636,6 +703,41 @@
   .set-ms-badge span{color:var(--muted); font-weight:500;}
   /* Barre des raretes : elle peut compter une dizaine de pastilles, elle defile plutot
      que de passer a la ligne et de repousser la grille vers le bas. */
+  /* Remplissage en masse. Pointer cent quarante communes une par une est le seul moment
+     ou le classeur devient une corvee : ces boutons font en un geste ce qui demandait
+     cent quarante clics. */
+  .remplissage{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:2px 0 10px;}
+  .btn-masse{
+    display:inline-flex; align-items:center; gap:6px; border:1px solid var(--border);
+    background:var(--panel2); color:var(--text); font:inherit; font-size:12px;
+    padding:6px 11px; border-radius:9px; cursor:pointer; white-space:nowrap;
+  }
+  .btn-masse:hover{border-color:var(--accent2);}
+  .btn-masse b{color:var(--accent); font-variant-numeric:tabular-nums;}
+  .btn-masse.fort{border-color:var(--accent); color:var(--accent);}
+  /* L'annulation reste visible tant qu'on n'a pas fait autre chose : un remplissage de
+     six cents emplacements se defait mal a la main, et un toast de deux secondes ne laisse
+     pas le temps de realiser qu'on s'est trompe de version. */
+  .btn-annuler-masse{border-color:#c0563f; color:#e0836f;}
+
+  /* Choix des versions avant remplissage */
+  .masse-ligne{
+    display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px;
+    border:1px solid var(--border); margin-bottom:6px; cursor:pointer; user-select:none;
+  }
+  .masse-ligne:hover{border-color:var(--accent2);}
+  .masse-ligne.on{border-color:var(--accent); background:rgba(255,203,5,.07);}
+  .masse-case{
+    width:17px; height:17px; border-radius:5px; border:1.5px solid var(--border);
+    display:flex; align-items:center; justify-content:center; font-size:11px; color:#1a1206;
+    flex:0 0 auto;
+  }
+  .masse-ligne.on .masse-case{background:var(--accent); border-color:var(--accent);}
+  .masse-nom{flex:1; font-weight:600; font-size:13px;}
+  .masse-cpt{font-size:11.5px; color:var(--muted); font-variant-numeric:tabular-nums;}
+  .masse-pied{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px;}
+  .masse-total{font-size:12.5px; color:var(--muted);}
+  .masse-total b{color:var(--accent); font-variant-numeric:tabular-nums;}
   .filtre-rarete{margin:6px 0 8px; overflow-x:auto; -webkit-overflow-scrolling:touch;}
   .seg-rarete{min-width:min-content;}
   .seg-rarete button{padding:4px 9px; font-size:11.5px;}
@@ -2722,6 +2824,7 @@
       <div class="set-progression vide" id="set-progression"></div>
       <div class="set-masterset" id="set-masterset"></div>
       <div class="filtre-rarete" id="filtre-rarete"></div>
+      <div class="remplissage" id="set-remplissage"></div>
       <div class="set-vue-row">
         <button class="btn-ghost btn-sm" id="btn-mode-vue">📖 Mode classeur</button>
         <div class="seg" id="filtre-possession">
@@ -3032,6 +3135,23 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 </main>
 
 <!-- Visualiseur plein écran d'une carte : zoom + inclinaison suivie à l'accéléromètre -->
+  <div class="versions-modal" id="masse-modal">
+    <div class="versions-boite">
+      <div class="versions-tete">
+        <b id="masse-titre">—</b>
+        <button class="btn-ghost btn-sm" id="btn-fermer-masse">✕</button>
+      </div>
+      <div id="masse-corps"></div>
+      <p class="hint" style="margin:10px 0 0;">Seules les impressions qui existent réellement pour chaque carte sont ajoutées, et les exemplaires déjà pointés ne sont pas comptés deux fois.</p>
+      <div class="masse-pied">
+        <span class="masse-total" id="masse-total">—</span>
+        <span style="display:flex; gap:8px;">
+          <button class="btn-ghost btn-sm" id="btn-masse-annuler">Annuler</button>
+          <button class="btn-primary btn-sm" id="btn-masse-ok">Ajouter</button>
+        </span>
+      </div>
+    </div>
+  </div>
   <div class="versions-modal" id="versions-modal">
     <div class="versions-boite">
       <div class="versions-tete">
@@ -9505,12 +9625,28 @@ function setPossede(setId){
 // morte temporelle a l endroit ou demarre le reste de l application.
 majCompteurFavoris();
 
+
+// Nombre de cartes DISTINCTES possedees par set. Compte sur les cardId et non sur les
+// entrees de `collection`, qui porte une ligne par VERSION : un set dont on aurait les
+// trois impressions de dix cartes afficherait « 30 / 165 » alors qu'on n'en a que dix.
+function possessionParSet(){
+  const m = new Map();
+  for(const e of collection.values()){
+    if(!e.setId) continue;
+    let s = m.get(e.setId);
+    if(!s){ s = new Set(); m.set(e.setId, s); }
+    s.add(e.cardId);
+  }
+  return m;
+}
+
 function renderSeriesList(){
   const box = $('series-list');
   if(!box || !seriesIndex) return;
   const q = ($('sets-filter')?.value || '').trim().toLowerCase();
 
   let shownSets = 0;
+  const possParSet = possessionParSet();
   // Séries de la plus récente à la plus ancienne : c'est là que se trouve l'essentiel de
   // ce qui se collectionne et se revend, et ça évite de faire défiler vingt-cinq ans de
   // catalogue à chaque visite.
@@ -9548,9 +9684,19 @@ function renderSeriesList(){
           : `<div class="set-logo" style="display:flex;align-items:center;justify-content:center;font-size:22px;">🃏</div>`}
         <div class="set-name">${esc(st.name)}</div>
         <div class="set-meta">${st.official != null ? st.official + ' cartes' : ''}${st.total && st.total !== st.official ? ` (${st.total} au total)` : ''}</div>
-        ${(()=>{ const m = mastersets.get(st.id); return m
-          ? `<span class="set-ms-badge" title="Valeur de toutes les impressions du set · ${fmtEuro(m.possede)} déjà possédé">${fmtEuro(m.total)} <span>masterset</span></span>`
-          : ''; })()}
+        ${(()=>{
+          const n = possParSet.get(st.id)?.size || 0;
+          // Denominateur : le total REEL du set, secretes comprises. Prendre le numero
+          // imprime ferait afficher « 172 / 165 » a qui possede les cartes au-dela du
+          // total annonce, ce qui est exact mais se lit comme un bug.
+          const tot = st.total || st.official || 0;
+          if(!tot) return n ? `<span class="set-poss partiel">${n} <span>possédée(s)</span></span>` : '';
+          const pct = Math.min(100, Math.round(100 * n / tot));
+          const cls = n === 0 ? '' : (n >= tot ? ' complet' : ' partiel');
+          return `<span class="set-poss${cls}" title="${n} carte(s) différente(s) possédée(s) sur ${tot}${
+              (()=>{ const m = mastersets.get(st.id); return m ? ` · masterset estimé à ${fmtEuro(m.total)}` : ''; })()}">${n} / ${tot} <span>possédées</span></span>
+            <div class="set-jauge"><i style="width:${pct}%"></i></div>`;
+        })()}
       </div>`).join('');
     const fav = favorisSeries.has(serie.id);
     return `<div class="series-block${fav ? ' favori' : ''}">
@@ -10107,7 +10253,223 @@ let modeVersions = localStorage.getItem('modeVersions') || 'simple';
 // Panneau de choix des versions d'une carte. Il existe parce qu'en mode simple, cliquer
 // « + » sur une carte à plusieurs impressions est ambigu : décider à la place de
 // l'utilisateur fausserait la valeur de sa collection, souvent d'un ordre de grandeur.
+
+// ---------------- REMPLISSAGE EN MASSE ----------------
+// Pointer cent quarante communes une par une est le seul moment ou le classeur devient une
+// corvee, et c'est exactement le cas ou l'on sait deja la reponse : quand on a ouvert
+// quarante boosters, on a TOUTES les communes. Ces boutons font en un geste ce qui
+// demandait cent quarante clics.
+//
+// Le choix des versions n'est pas un detail qu'on pourrait deviner : « toutes les communes »
+// veut dire les normales pour qui range son classeur de base, les reverse pour qui vise le
+// masterset, et les deux pour beaucoup de monde. Decider a la place de l'utilisateur
+// fausserait la valeur de sa collection dans un sens ou dans l'autre, donc on demande —
+// une fenetre, une fois, pour cent quarante cartes.
+
+// Raretes de base, reperees sur le LIBELLE et non sur une liste d'identifiants : TCGdex
+// renvoie du texte francais, dont la casse varie selon l'anciennete du set (« Peu Commune »,
+// « Peu commune »).
+const RARETE_COMMUNE = /^commune?$/i;
+const RARETE_PEU_COMMUNE = /^peu\s+commune?$/i;
+
+// Ecriture groupee : une transaction pour six cents entrees plutot que six cents
+// transactions. majPossession recalcule en plus le masterset a chaque appel, ce qui
+// reviendrait a le recalculer six cents fois pour un seul geste.
+async function idbPutTous(store, valeurs){
+  if(!valeurs.length) return;
+  const db = await openIdb();
+  await new Promise((resolve, reject)=>{
+    const tx = db.transaction(store, 'readwrite');
+    const os = tx.objectStore(store);
+    for(const v of valeurs) os.put(v);
+    tx.oncomplete = resolve;
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+async function idbDeleteTous(store, cles){
+  if(!cles.length) return;
+  const db = await openIdb();
+  await new Promise((resolve, reject)=>{
+    const tx = db.transaction(store, 'readwrite');
+    const os = tx.objectStore(store);
+    for(const k of cles) os.delete(k);
+    tx.oncomplete = resolve;
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+let masseCible = null;              // {titre, cartes, choix:Set}
+let dernierRemplissage = null;      // cles ajoutees au dernier coup, pour l'annulation
+
+// Versions realisables sur un lot, avec ce qui reste a ajouter pour chacune.
+function versionsDuLot(cartes){
+  const dispo = new Map();
+  for(const c of cartes){
+    const d = detailsCartes.get(c.id);
+    for(const v of (d ? variantesDe(d) : ['normal'])){
+      let o = dispo.get(v);
+      if(!o){ o = {total: 0, aAjouter: 0}; dispo.set(v, o); }
+      o.total++;
+      if(!collection.has(cleCollection(c.id, v))) o.aAjouter++;
+    }
+  }
+  return ORDRE_VARIANTES.filter(v => dispo.has(v)).map(v => [v, dispo.get(v)]);
+}
+
+function ouvrirMasse(titre, cartes){
+  if(!cartes.length){ toast('Aucune carte dans ce lot.'); return; }
+  masseCible = {titre, cartes, choix: new Set()};
+  const versions = versionsDuLot(cartes);
+  // Une seule impression possible sur tout le lot : il n'y a rien a choisir, on la coche
+  // d'office plutot que d'imposer un clic sans alternative.
+  if(versions.length === 1) masseCible.choix.add(versions[0][0]);
+  $('masse-titre').textContent = titre + ' · ' + cartes.length + ' carte(s)';
+  rendreMasse();
+  $('masse-modal').classList.add('open');
+}
+
+function rendreMasse(){
+  if(!masseCible) return;
+  const versions = versionsDuLot(masseCible.cartes);
+  $('masse-corps').innerHTML = versions.map(([v, o]) => `
+    <div class="masse-ligne${masseCible.choix.has(v) ? ' on' : ''}" data-v="${esc(v)}">
+      <span class="masse-case">${masseCible.choix.has(v) ? '✓' : ''}</span>
+      <span class="v-pastille v-${esc(v)}"></span>
+      <span class="masse-nom">${NOM_VARIANTE[v]}</span>
+      <span class="masse-cpt">${o.aAjouter} à ajouter · ${o.total - o.aAjouter} déjà pointée(s)</span>
+    </div>`).join('') +
+    (versions.length > 1
+      ? `<button class="btn-masse" id="masse-tout" style="margin-top:2px;">Sélectionner les ${versions.length} impressions</button>`
+      : '');
+
+  const n = versions.filter(([v]) => masseCible.choix.has(v))
+                    .reduce((s, [, o]) => s + o.aAjouter, 0);
+  $('masse-total').innerHTML = `<b>${n}</b> emplacement(s) seront ajoutés`;
+  $('btn-masse-ok').disabled = n === 0;
+
+  $('masse-corps').querySelectorAll('.masse-ligne').forEach(l =>
+    l.addEventListener('click', ()=>{
+      const v = l.dataset.v;
+      masseCible.choix.has(v) ? masseCible.choix.delete(v) : masseCible.choix.add(v);
+      rendreMasse();
+    }));
+  $('masse-tout')?.addEventListener('click', ()=>{
+    for(const [v] of versions) masseCible.choix.add(v);
+    rendreMasse();
+  });
+}
+
+async function appliquerMasse(){
+  if(!masseCible) return;
+  const titre = masseCible.titre;
+  const ajouts = [];
+  for(const c of masseCible.cartes){
+    const d = detailsCartes.get(c.id);
+    for(const v of (d ? variantesDe(d) : ['normal'])){
+      if(!masseCible.choix.has(v)) continue;
+      const cle = cleCollection(c.id, v);
+      // Un exemplaire deja pointe n'est PAS incremente : « j'ai toutes les communes » dit
+      // qu'on les possede, pas qu'on en possede une de plus. Repasser le bouton deux fois
+      // ne doit donc rien changer.
+      if(collection.has(cle)) continue;
+      ajouts.push({cle, cardId: c.id, variante: v, setId: setCourantId,
+                   localId: c.localId, qty: 1, at: Date.now()});
+    }
+  }
+  fermerMasse();
+  if(!ajouts.length){ toast('Tout était déjà pointé.'); return; }
+
+  for(const e of ajouts) collection.set(e.cle, e);
+  await idbPutTous(COLLECTION_STORE, ajouts);
+  dernierRemplissage = {cles: ajouts.map(a => a.cle), titre};
+  await apresRemplissage();
+  toast(ajouts.length + ' emplacement(s) ajouté(s).');
+}
+
+// Un remplissage de six cents emplacements se defait mal a la main, et un toast de deux
+// secondes ne laisse pas le temps de realiser qu'on s'est trompe d'impression : l'annulation
+// reste donc offerte dans la barre tant qu'on n'a pas change de set.
+async function annulerRemplissage(){
+  if(!dernierRemplissage) return;
+  const cles = dernierRemplissage.cles;
+  for(const k of cles) collection.delete(k);
+  await idbDeleteTous(COLLECTION_STORE, cles);
+  dernierRemplissage = null;
+  await apresRemplissage();
+  toast(cles.length + ' emplacement(s) retiré(s).');
+}
+
+// Tout ce qui depend de la collection, recalcule UNE fois pour l'ensemble du lot.
+async function apresRemplissage(){
+  majCoteGlobale();
+  if(setCourantId && mastersets.has(setCourantId) && cartesSetCourant.length){
+    await majMasterset(setCourantId, cartesSetCourant);
+    rendreMasterset();
+  }
+  rendreCartesSet();
+  rendreRemplissage();
+}
+
+function fermerMasse(){ $('masse-modal').classList.remove('open'); }
+
+// Barre de remplissage : elle n'a de sens qu'une fois les raretes connues, puisque « toutes
+// les communes » suppose de savoir lesquelles le sont. Tant qu'elles ne le sont pas, on
+// propose de les charger plutot que d'afficher des boutons qui ne feraient rien.
+function rendreRemplissage(){
+  const zone = $('set-remplissage');
+  if(!zone) return;
+  if(!cartesSetCourant.length){ zone.innerHTML = ''; return; }
+
+  const charge = cartesSetCourant.some(c => detailsCartes.has(c.id));
+  if(!charge){
+    zone.innerHTML = '<button class="btn-masse" id="btn-masse-charger">⚡ Remplissage rapide (charge les raretés)</button>';
+    $('btn-masse-charger').addEventListener('click', async ()=>{
+      zone.innerHTML = '<span class="hint">Chargement des raretés…</span>';
+      await chargerVariantes(cartesSetCourant, (f, t)=>{
+        zone.innerHTML = `<span class="hint">Chargement des raretés… ${f}/${t}</span>`;
+      });
+      rendreRemplissage();
+      rendreFiltreRarete();
+      rendreCartesSet();
+    });
+    return;
+  }
+
+  const par = (test) => cartesSetCourant.filter(c => test(detailsCartes.get(c.id)?.rarity || ''));
+  const communes = par(r => RARETE_COMMUNE.test(r));
+  const peuCommunes = par(r => RARETE_PEU_COMMUNE.test(r));
+  const base = [...communes, ...peuCommunes];
+
+  const bouton = (id, libelle, lot) => lot.length
+    ? `<button class="btn-masse" data-lot="${id}">${libelle} <b>${lot.length}</b></button>` : '';
+
+  zone.innerHTML =
+    `<span class="hint" style="margin:0 4px 0 0;">Remplir d'un coup :</span>` +
+    bouton('c', '● Communes', communes) +
+    bouton('pc', '◐ Peu communes', peuCommunes) +
+    (communes.length && peuCommunes.length ? bouton('base', '◐● Les deux', base) : '') +
+    `<button class="btn-masse fort" data-lot="ms">🗃️ Tout le masterset <b>${cartesSetCourant.length}</b></button>` +
+    (dernierRemplissage
+      ? `<button class="btn-masse btn-annuler-masse" id="btn-annuler-masse">↶ Annuler « ${esc(dernierRemplissage.titre)} » (${dernierRemplissage.cles.length})</button>`
+      : '');
+
+  const lots = {c: ['Toutes les communes', communes], pc: ['Toutes les peu communes', peuCommunes],
+                base: ['Communes et peu communes', base],
+                ms: ['Tout le masterset', cartesSetCourant]};
+  zone.querySelectorAll('[data-lot]').forEach(b => b.addEventListener('click', ()=>{
+    const [titre, lot] = lots[b.dataset.lot];
+    ouvrirMasse(titre, lot);
+  }));
+  $('btn-annuler-masse')?.addEventListener('click', annulerRemplissage);
+}
+
+$('btn-fermer-masse').addEventListener('click', fermerMasse);
+$('btn-masse-annuler').addEventListener('click', fermerMasse);
+$('btn-masse-ok').addEventListener('click', appliquerMasse);
+$('masse-modal').addEventListener('click', (e)=>{ if(e.target.id === 'masse-modal') fermerMasse(); });
+
 function ouvrirPanneauVersions(cardId, localId){
+
   const detail = detailsCartes.get(cardId);
   const modal = $('versions-modal');
   if(!detail){
@@ -10427,11 +10789,84 @@ function cartesFiltrees(){
   return l;
 }
 
+
+// ---------------- HABILLAGE DU CLASSEUR ----------------
+// Le mode classeur affichait deux grilles de vignettes sur un degrade. Ce qui manquait
+// n'est pas de la decoration : c'est la POCHETTE. Dans un vrai classeur, l'emplacement
+// existe avant la carte — c'est lui qui rend un set incomplet lisible d'un coup d'oeil,
+// parce qu'on voit les trous. Une grille dense, elle, se contente de tasser ce qu'on a.
+//
+// La pochette est donc dessinee par emplacement, et non en fond de page : elle se cale
+// ainsi exactement sur la cellule, quelle que soit la disposition (2x2, 3x3, 3x4, 4x4),
+// sans avoir a faire correspondre a la main les gouttieres du SVG et celles de la grille —
+// un calcul qui se serait desynchronise a la premiere retouche du `gap`.
+//
+// preserveAspectRatio="none" : la pochette doit epouser sa cellule, pas garder ses
+// proportions. Les arrondis se deforment de quelques pourcents, ce qui ne se voit pas, et
+// l'encoche du pouce devient une ellipse — ce qu'elle est aussi sur un vrai classeur.
+const POCHE_SVG = `<svg class="cl-poche" viewBox="0 0 100 140" preserveAspectRatio="none" aria-hidden="true">
+  <rect x="1" y="1" width="98" height="138" rx="5" fill="#05070d" fill-opacity=".55"
+        stroke="#ffffff" stroke-opacity=".07" stroke-width="1.4"/>
+  <path d="M6 1v138" stroke="#ffffff" stroke-opacity=".05" stroke-width="1.2"/>
+  <rect x="9" y="6" width="82" height="3.5" rx="1.8" fill="#ffffff" fill-opacity=".07"/>
+  <path d="M40 1a10 7 0 0 0 20 0" fill="#0b0f1a" stroke="#ffffff" stroke-opacity=".06" stroke-width="1.2"/>
+  <path d="M1 118 99 74v64a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4Z" fill="#ffffff" fill-opacity=".018"/>
+</svg>`;
+
+// Couleur du classeur, tiree de l'identifiant du set. Deterministe : le meme set garde sa
+// couleur d'une session a l'autre, comme un classeur garde la sienne sur l'etagere. Une
+// teinte par SET et non par serie, parce que c'est precisement ce qui distingue deux
+// extensions voisines quand elles sont rangees cote a cote.
+function teinteClasseur(setId){
+  let h = 0;
+  for(let i = 0; i < setId.length; i++) h = (h * 37 + setId.charCodeAt(i)) % 360;
+  return h;
+}
+
+// Page de couverture. Le logo du set y est incruste en monochrome plutot qu'en couleurs :
+// une couverture de classeur est marquee a chaud, d'une seule teinte, et un logo en
+// quadrichromie pose sur du cuir se lit comme un autocollant. `brightness(0) invert(1)`
+// reduit n'importe quel logo a sa silhouette blanche ; a faible opacite sur le cuir teinte,
+// elle prend la couleur du classeur, et l'ombre portee sombre en dessous fait le relief.
+function faceCouverture(){
+  const t = teinteClasseur(setCourantId || 'x');
+  const prog = progressionSet(cartesSetCourant);
+  const nom = setCourantMeta?.name || setCourantId || '';
+  const logo = setCourantMeta?.logo;
+  return `<div class="classeur-page couverture" style="--t:${t}">
+    <svg class="cl-cuir" viewBox="0 0 100 140" preserveAspectRatio="none" aria-hidden="true">
+      <defs>
+        <filter id="cl-grain" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="3" seed="7"/>
+          <feColorMatrix type="saturate" values="0"/>
+        </filter>
+      </defs>
+      <rect width="100" height="140" filter="url(#cl-grain)" opacity=".16"/>
+      <rect x="3.5" y="3.5" width="93" height="133" rx="3" fill="none"
+            stroke="#ffffff" stroke-opacity=".22" stroke-width=".7"
+            stroke-dasharray="2.2 2.2" stroke-linecap="round"/>
+    </svg>
+    <div class="cl-couv-contenu">
+      ${logo ? `<img class="cl-couv-logo" src="${esc(logo)}.webp" alt="" loading="lazy">` : ''}
+      <div class="cl-couv-nom">${esc(nom)}</div>
+      <div class="cl-couv-sous">${prog.possedees} / ${prog.total} carte(s) · ${prog.pct} %</div>
+      <div class="cl-couv-jauge"><i style="width:${prog.pct}%"></i></div>
+    </div>
+  </div>`;
+}
+
 function rendreCartesSet(){
   const grid = $('set-cards-grid');
   const affichees = developper(cartesFiltrees());
   const parPage = tailleClasseur();
-  const nbPages = Math.max(1, Math.ceil(affichees.length / (parPage * 2)));
+  // Une « face » = une page simple. La face 0 est la couverture, les suivantes portent
+  // les cartes par paquets de `parPage`.
+  const faces = [{couverture: true}];
+  for(let i = 0; i < affichees.length; i += parPage) faces.push({cartes: affichees.slice(i, i + parPage)});
+  // Le dos de la derniere page existe physiquement, meme vide : sans lui la double page
+  // finale n'aurait qu'un cote et le classeur paraitrait coupe en deux.
+  if(faces.length % 2) faces.push({cartes: []});
+  const nbPages = faces.length / 2;
   pageClasseur = Math.min(Math.max(0, pageClasseur), nbPages - 1);
 
   // Les compteurs portent toujours sur le SET ENTIER, jamais sur la vue filtrée : sinon
@@ -10505,15 +10940,24 @@ function rendreCartesSet(){
   function rendreTuile(x){ return tuile(x.carte, x.variante); }
 
   if(modeClasseur){
-    const d = pageClasseur * parPage * 2;
-    const gauche = affichees.slice(d, d + parPage);
-    const droite = affichees.slice(d + parPage, d + parPage * 2);
-    const cols = parPage === 4 ? 2 : (parPage === 12 ? 3 : (parPage === 9 ? 3 : 4));
+    const cols = parPage === 4 ? 2 : (parPage === 16 ? 4 : 3);
+    const rangs = Math.round(parPage / cols);
+    // Chaque emplacement recoit sa pochette, occupee ou non : une derniere page a moitie
+    // pleine montre ainsi ses pochettes vides au lieu d'un blanc, et le nombre
+    // d'emplacements reste le meme d'une page a l'autre.
+    const rendreFace = (f)=>{
+      if(!f) return '<div class="classeur-page" style="--cols:' + cols + '"></div>';
+      if(f.couverture) return faceCouverture();
+      let slots = '';
+      for(let i = 0; i < cols * rangs; i++)
+        slots += '<div class="cl-slot">' + POCHE_SVG + (f.cartes[i] ? rendreTuile(f.cartes[i]) : '') + '</div>';
+      return `<div class="classeur-page" style="--cols:${cols}">${slots}</div>`;
+    };
     grid.className = 'classeur';
     grid.innerHTML = `
       <div class="classeur-pages">
-        <div class="classeur-page" style="--cols:${cols}">${gauche.map(rendreTuile).join('')}</div>
-        <div class="classeur-page" style="--cols:${cols}">${droite.map(rendreTuile).join('')}</div>
+        ${rendreFace(faces[pageClasseur * 2])}
+        ${rendreFace(faces[pageClasseur * 2 + 1])}
       </div>
       <div class="classeur-nav">
         <button class="btn-ghost btn-sm" id="cl-prec" ${pageClasseur === 0 ? 'disabled' : ''}>← Page précédente</button>
@@ -10604,9 +11048,11 @@ async function openSetDetail(setId){
     setCourantMeta = meta;
     pageClasseur = 0;
     filtreRarete = '';
+    dernierRemplissage = null;
     rendreCartesSet();
     rendreMasterset();
     rendreFiltreRarete();
+    rendreRemplissage();
     $('set-detail-status').textContent = `${sorted.length} carte(s)` +
       (wasCached ? ' — depuis le cache local, aucun appel réseau.' : ' — liste désormais en cache local.') +
       ' Touche une carte pour la voir en grand, ou le bouton + pour la marquer comme possédée.';
