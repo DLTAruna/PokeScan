@@ -133,7 +133,10 @@ function esc(s) {
   return String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
 }
 
-const TIMING_FIELDS = ['ocrMs', 'tExtract', 'tCardBmp', 'tWorker', 'tPrep', 'tSharp', 'tRecognize', 'tEnsure', 'sharp', 'score'];
+// qNet/qLum/qClip/qCad : les jauges de qualite mesurees pendant la visee. Sans elles ici,
+// la vue agregee (?format=stats) les passait sous silence — or c'est precisement la vue
+// ou l'on compare 'l'image etait-elle bonne ?' a 'la lecture a-t-elle abouti ?'.
+const TIMING_FIELDS = ['ocrMs', 'tExtract', 'tCardBmp', 'tWorker', 'tPrep', 'tSharp', 'tRecognize', 'tEnsure', 'sharp', 'score', 'qNet', 'qLum', 'qClip', 'qCad'];
 
 function numStats(values) {
   const vals = values.filter(v => typeof v === 'number' && !Number.isNaN(v)).sort((a, b) => a - b);

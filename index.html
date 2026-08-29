@@ -876,12 +876,12 @@
     background:rgba(255,255,255,.16); overflow:hidden;
     box-shadow:0 1px 3px rgba(0,0,0,.55);
   }
-  /* La transition est ce qui rend la jauge lisible : l'echantillonnage tourne a ~8 Hz,
-     et sans elle la barre sauterait par a-coups — exactement l'impression de saccade
-     qu'on cherche a supprimer. Le CSS interpole entre deux mesures, gratuitement. */
+  /* Aucune transition CSS ici : l'interpolation se fait en JS dans la boucle rAF, a la
+     cadence reelle de l'ecran. Une transition CSS de 160 ms par-dessus ne ferait
+     qu'AJOUTER son propre retard a une valeur deja lissee — les deux se cumulent, et la
+     jauge devient mollassonne au lieu d'etre fluide. */
   .jauge .jt i{
     display:block; height:100%; width:0%; border-radius:3px;
-    transition:width .16s linear, background-color .16s linear;
   }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
@@ -2156,9 +2156,23 @@ function getVisionWorker(){
           if(!svcPromise) svcPromise = (async ()=>{
             const t0 = performance.now();
             const mod = await import(${JSON.stringify(OCR_WORKER_MODULE)});
-            const gpu = await mod.isWebGpuAvailable();
-            ocrDiag.requested = gpu ? ['webgpu','wasm'] : ['wasm'];
-            const s = new mod.PaddleOcrService();
+            // Les moteurs doivent être passés EXPLICITEMENT. Sans ça la librairie tourne
+            // sur ["cpu"], constaté en production, et l'ancienne ligne de diagnostic
+            // annonçait pourtant \`moteurDemandé=["webgpu","wasm"]\` : elle rapportait le
+            // résultat de isWebGpuAvailable(), une variable qui n'était utilisée NULLE PART
+            // ailleurs. On croyait donc demander le GPU sans jamais l'avoir demandé.
+            //
+            // La cause est un défaut de la librairie, vérifié sur son code : le
+            // constructeur de base fusionne DEFAULT_PADDLE_OPTIONS, dont
+            // session.executionProviders = ["cpu"]. Le garde du sous-classe web
+            // (\`session === undefined || aucune clé\`) ne se déclenche donc jamais, et
+            // _resolveSessionExecutionProviders() sort immédiatement en voyant des moteurs
+            // déjà présents — la détection automatique est du code mort.
+            const providers = await mod.getDefaultWebExecutionProviders();
+            ocrDiag.requested = providers;
+            const s = new mod.PaddleOcrService({
+              session: {executionProviders: providers, graphOptimizationLevel: 'all'}
+            });
             // La librairie journalise elle-même (console.warn, session-factory.js) la
             // raison exacte d'un repli webgpu->wasm quand la création de session lève
             // une exception JS à cet endroit — jusqu'ici perdu, ce warning n'était
@@ -4615,6 +4629,24 @@ function heapMb(){
 function diagPush(kind, data){
   const entry = Object.assign({k:kind, t:Date.now()}, data);
   if(kind === 'try'){
+    // Qualité attachée ICI et non sur chaque appel : la première version n'instrumentait
+    // que la ligne de succès, si bien que les 16 échecs de la première session réelle ne
+    // portaient AUCUNE valeur de qualité. C'est exactement à l'envers — ce sont les échecs
+    // qui disent où placer les seuils. Posé dans diagPush, aucun site d'appel ne peut plus
+    // l'oublier, présent ou futur.
+    // try/catch et non un simple garde : `qualite` est déclaré en `let` PLUS BAS dans le
+    // fichier, et une variable let lue avant sa déclaration lève une ReferenceError — y
+    // compris via `typeof`, contrairement à une variable non déclarée. L'ordre actuel est
+    // sûr (aucun 'try' n'est journalisé avant le démarrage caméra), mais c'est précisément
+    // le genre de dépendance d'ordre qui casse toute la page au prochain déplacement de bloc.
+    try{
+      if(qualite.lumMoy != null){
+        entry.qNet = +qualite.netBrut.toFixed(3);
+        entry.qLum = Math.round(qualite.lumMoy);
+        entry.qClip = +qualite.clip.toFixed(3);
+        entry.qCad = +qualite.cad.toFixed(2);
+      }
+    }catch(e){ /* jauges pas encore initialisées : l'observation part sans elles */ }
     entry.heapMb = heapMb();
     entry.queueLen = pendingQueue.length;
     entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
@@ -4921,7 +4953,7 @@ function rectCartePath(ctx, R, radius){
 // son worker à 5-8 Hz et n'a pas à être ralentie). L'échantillon est minuscule
 // (128 px de large, restreint au cadre de visée) : quelques dizaines de milliers
 // d'opérations à ~8 Hz, négligeable devant l'inférence ONNX qui tourne à côté.
-const QUALITE_PERIODE_MS = 130;
+const QUALITE_PERIODE_MS = 100;
 const QUALITE_W = 128;
 const QUALITE_H = Math.round(QUALITE_W * CARD_RATIO);
 
@@ -4930,11 +4962,20 @@ const QUALITE_H = Math.round(QUALITE_W * CARD_RATIO);
 // normalisation). Valeurs relevées — 0 px de flou : 1,36 · 0,5 px : 0,74 · 1 px : 0,33 ·
 // 1,5 px : 0,18 · 2 px : 0,11 · 3 px : 0,06. En dessous de ~0,12 le numéro est illisible ;
 // au-dessus de ~0,45 la lecture passe confortablement.
-const NET_MIN = 0.12, NET_BON = 0.45;
+// RECALÉS sur la première session réelle (29/08, 11 captures réussies) : les valeurs
+// observées vont de 0,837 à 1,286. Avec l'ancien seuil « bon » à 0,45, les onze
+// affichaient 100 % — la jauge saturait et ne bougeait jamais en usage normal, donc elle
+// ne pouvait plus prévenir de rien. Les anciens seuils venaient d'un rendu flouté par
+// calcul, plus contrasté qu'une vraie photo : ils étaient trop bas d'un facteur ~2.
+const NET_MIN = 0.35, NET_BON = 0.90;
 
 // Luminosité moyenne visée, sur 0-255. En dessous de LUM_BASSE le capteur monte en ISO et
 // le bruit détruit les chiffres ; au-dessus de LUM_HAUTE les blancs de la carte saturent.
-const LUM_BASSE = 55, LUM_BONNE_MIN = 105, LUM_BONNE_MAX = 195, LUM_HAUTE = 245;
+// Également recalés : les captures réussies forment deux groupes, 89-99 et 153-159. Avec
+// l'ancien plancher de plateau à 105, les quatre du premier groupe s'affichaient en ORANGE
+// alors qu'elles se lisaient parfaitement — un avertissement pour rien, qui apprend à
+// ignorer la jauge.
+const LUM_BASSE = 45, LUM_BONNE_MIN = 85, LUM_BONNE_MAX = 195, LUM_HAUTE = 245;
 // Fraction de pixels brûlés tolérée. C'est LE défaut des holos : un reflet peut effacer
 // une bande entière de la carte sans faire bouger la moyenne, parce qu'il est compensé
 // par une zone sombre ailleurs. Il faut donc le compter à part.
@@ -4998,10 +5039,22 @@ function scoreCadrage(video){
   }
   aire = Math.abs(aire) / 2;
 
+  // Le débordement du cadre de visée N'EST PAS un défaut, contrairement à ce que faisait
+  // la première version. Deux captures réelles l'ont prouvé : elles marquaient 0,11 et
+  // 0,48 (rouge franc) alors que le détecteur était à 1,000 de confiance et que le numéro
+  // s'est lu correctement — celle à 0,11 avait même la netteté la PLUS ÉLEVÉE de la
+  // session. C'est logique après coup : le détecteur découpe le quadrilatère réel, pas le
+  // rectangle de visée, donc une carte plus grande que le cadre offre PLUS de pixels au
+  // numéro, pas moins. Le cadre sert à viser, pas à délimiter ce qui est lu.
+  //
+  // Seuls deux défauts coûtent vraiment : la carte trop petite (les pixels du numéro
+  // n'existent plus) et la carte qui sort de l'IMAGE (une partie est absente pour de bon).
   const remplissage = aire / Math.max(1e-6, g.w * g.h);
-  const sRemplissage = remplissage >= 0.62 && remplissage <= 1.06 ? 1
-    : remplissage < 0.62 ? Math.max(0, remplissage / 0.62)
-    : Math.max(0, 1 - (remplissage - 1.06) / 0.4);
+  const sRemplissage = remplissage >= 0.55 ? 1 : Math.max(0, remplissage / 0.55);
+
+  // Coins hors image : mesuré sur l'image entière, pas sur le cadre de visée.
+  const horsImage = p.filter(q => q[0] < 0.005 || q[0] > 0.995 || q[1] < 0.005 || q[1] > 0.995).length;
+  const sEntier = Math.max(0, 1 - horsImage * 0.34);
 
   // Perspective : sur une carte vue de face, les côtés opposés ont la même longueur.
   // L'écart relatif entre eux mesure directement l'inclinaison, sans trigonométrie.
@@ -5016,7 +5069,7 @@ function scoreCadrage(video){
 
   const cx = (p[0][0]+p[1][0]+p[2][0]+p[3][0]) / 4;
   const cy = (p[0][1]+p[1][1]+p[2][1]+p[3][1]) / 4;
-  const sCentrage = Math.max(0, 1 - Math.hypot(cx - 0.5, cy - 0.5) / 0.16);
+  const sCentrage = Math.max(0, 1 - Math.hypot(cx - 0.5, cy - 0.5) / 0.22);
 
   // Le remplissage MULTIPLIE le reste au lieu de compter pour une part. Additionné, il
   // laissait une carte tenue deux fois trop loin marquer 0,70 sur la seule vertu d'être
@@ -5024,7 +5077,7 @@ function scoreCadrage(video){
   // tout simplement plus, et qu'aucune qualité de pose ne rachète ça. Un cadrage trop
   // petit ou débordant est mauvais quoi qu'il arrive : c'est une condition, pas un critère
   // parmi d'autres.
-  return Math.max(0, Math.min(1, sRemplissage * (0.55 + 0.28*sPerspective + 0.17*sCentrage)));
+  return Math.max(0, Math.min(1, sRemplissage * sEntier * (0.6 + 0.25*sPerspective + 0.15*sCentrage)));
 }
 
 function echantillonnerQualite(){
@@ -5073,15 +5126,33 @@ function echantillonnerQualite(){
     net: sNet, lum: Math.max(0, Math.min(1, sLum)), cad: scoreCadrage(video),
     lumMoy: moyenne, clip, netBrut: nettete
   };
-  rendreJauges();
+  // Pas de rendu ici : c'est renderOverlayLoop qui affiche, à 60 Hz.
 }
 
 function couleurJauge(v){
   return v < 0.4 ? '#e0553f' : (v < 0.75 ? '#e0a12a' : '#3ba55d');
 }
 
+// Valeur AFFICHÉE, distincte de la valeur mesurée : elle glisse vers la mesure à chaque
+// image d'écran. Sans cette séparation, la barre ne pouvait pas bouger plus souvent que
+// l'échantillonnage, quel que soit le soin mis au reste.
+let jaugesAffichees = {net: 0, lum: 0, cad: 0};
+const JAUGE_TAU_MS = 75;
+
+function animerJauges(dt){
+  const k = 1 - Math.exp(-dt / JAUGE_TAU_MS);
+  let bouge = false;
+  for(const cle of ['net', 'lum', 'cad']){
+    const ecart = qualite[cle] - jaugesAffichees[cle];
+    if(Math.abs(ecart) > 0.0015){ jaugesAffichees[cle] += ecart * k; bouge = true; }
+    else if(jaugesAffichees[cle] !== qualite[cle]){ jaugesAffichees[cle] = qualite[cle]; bouge = true; }
+  }
+  if(bouge) rendreJauges();
+}
+
 function rendreJauges(){
-  const paires = [['jauge-net', qualite.net], ['jauge-lum', qualite.lum], ['jauge-cad', qualite.cad]];
+  const paires = [['jauge-net', jaugesAffichees.net], ['jauge-lum', jaugesAffichees.lum],
+                  ['jauge-cad', jaugesAffichees.cad]];
   for(const [id, v] of paires){
     const el = $(id);
     if(!el) continue;
@@ -5113,6 +5184,7 @@ function arreterQualite(){
   clearInterval(qualiteTimer);
   qualiteTimer = null;
   qualite = {net: 0, lum: 0, cad: 0, lumMoy: 0, clip: 0, netBrut: 0};
+  jaugesAffichees = {net: 0, lum: 0, cad: 0};
   const jauges = $('jauges');
   if(jauges) jauges.style.display = 'none';
   rendreJauges();
@@ -5138,11 +5210,66 @@ function arreterQualite(){
 let overlayTargetState = 'attente', overlayTargetCorners = null;
 let overlayCurrentState = 'attente', overlayCurrentCorners = null;
 let overlayRenderRunning = false;
-const OVERLAY_LERP = 0.3; // vitesse de rattrapage par frame : ~95% rattrapé en ~140ms à 60Hz
+
+// Constante de temps du lissage, en millisecondes, et non plus un coefficient par image.
+// L'ancien « 0,3 par frame » rendait la vitesse de rattrapage dépendante de l'écran :
+// deux fois plus rapide sur un 120 Hz que sur un 60 Hz, pour le même code. Exprimé en
+// temps, le comportement est identique partout.
+const OVERLAY_TAU_MS = 40;        // ~95 % rattrapé en 120 ms, quel que soit l'écran
+
+// Horizon d'extrapolation. Le détecteur ne produit que 5 à 8 positions par seconde : entre
+// deux résultats il n'y a AUCUNE information neuve, et se contenter de lisser vers la
+// dernière position connue fait forcément traîner le contour derrière la carte — c'est ça
+// qu'on voit comme de la lenteur, pas un manque d'images par seconde. On prolonge donc le
+// mouvement à vitesse constante entre deux détections (navigation à l'estime).
+//
+// Plafonné : au-delà, une extrapolation devient une invention. Si le détecteur décroche,
+// le contour se fige sur sa dernière position plausible au lieu de partir en glissade.
+const EXTRAPOLATION_MAX_MS = 110;
+const VITESSE_MAX = 1.6;          // fractions d'image par seconde et par coin
+
+let overlayTargetAt = 0;
+let overlayVitesse = null;
+let dernierRenduAt = 0;
 
 function setOverlayTarget(state, corners){
   overlayTargetState = state;
+  const now = performance.now();
+
+  // Vitesse estimée entre les deux dernières détections. Bridée en norme : un saut de
+  // détection (la carte « téléporte » d'un bord à l'autre parce que le détecteur a
+  // accroché autre chose) produirait sinon une vitesse absurde, prolongée ensuite hors
+  // de l'écran pendant plus de 100 ms.
+  if(corners && overlayTargetCorners && overlayTargetAt){
+    const dt = (now - overlayTargetAt) / 1000;
+    if(dt > 0.008 && dt < 0.5){
+      const brider = (x, y)=>{
+        const m = Math.hypot(x, y);
+        return m > VITESSE_MAX ? [x/m*VITESSE_MAX, y/m*VITESSE_MAX] : [x, y];
+      };
+      const v = (a, b)=> brider((b[0]-a[0])/dt, (b[1]-a[1])/dt);
+      overlayVitesse = {
+        tl: v(overlayTargetCorners.tl, corners.tl), tr: v(overlayTargetCorners.tr, corners.tr),
+        br: v(overlayTargetCorners.br, corners.br), bl: v(overlayTargetCorners.bl, corners.bl)
+      };
+    }
+  }
+  if(!corners) overlayVitesse = null;
+
   overlayTargetCorners = corners;
+  overlayTargetAt = now;
+}
+
+// Position probable de la carte MAINTENANT, et non à l'instant de la dernière détection.
+function cornersPredits(now){
+  if(!overlayTargetCorners) return null;
+  if(!overlayVitesse) return overlayTargetCorners;
+  const dt = Math.min(EXTRAPOLATION_MAX_MS, Math.max(0, now - overlayTargetAt)) / 1000;
+  const p = (c, v) => [c[0] + v[0]*dt, c[1] + v[1]*dt];
+  return {
+    tl: p(overlayTargetCorners.tl, overlayVitesse.tl), tr: p(overlayTargetCorners.tr, overlayVitesse.tr),
+    br: p(overlayTargetCorners.br, overlayVitesse.br), bl: p(overlayTargetCorners.bl, overlayVitesse.bl)
+  };
 }
 
 function lerpCorners(a, b, k){
@@ -5150,22 +5277,35 @@ function lerpCorners(a, b, k){
   return { tl:l(a.tl,b.tl), tr:l(a.tr,b.tr), br:l(a.br,b.br), bl:l(a.bl,b.bl) };
 }
 
-function renderOverlayLoop(){
+function renderOverlayLoop(now){
   if(!overlayRenderRunning) return;
+  now = now || performance.now();
+  // Plafonné à 100 ms : au retour d'un onglet mis en veille, un écart d'une seconde ferait
+  // sauter tout ce qui est animé d'un coup.
+  const dt = dernierRenduAt ? Math.min(100, now - dernierRenduAt) : 16.7;
+  dernierRenduAt = now;
+
   const video = $('video');
   if(video && video.videoWidth){
     overlayCurrentState = overlayTargetState;
-    if(!overlayTargetCorners){
+    const cible = cornersPredits(now);
+    if(!cible){
       // Rien détecté : pas de position à lisser, retour immédiat au placeholder.
       overlayCurrentCorners = null;
     } else if(!overlayCurrentCorners){
       // Première apparition : rien à interpoler depuis, on affiche direct.
-      overlayCurrentCorners = overlayTargetCorners;
+      overlayCurrentCorners = cible;
     } else {
-      overlayCurrentCorners = lerpCorners(overlayCurrentCorners, overlayTargetCorners, OVERLAY_LERP);
+      overlayCurrentCorners = lerpCorners(overlayCurrentCorners, cible, 1 - Math.exp(-dt / OVERLAY_TAU_MS));
     }
     drawGuideOverlay(video, overlayCurrentState, overlayCurrentCorners);
   }
+
+  // Les jauges sont animées sur la MÊME horloge que le cadre. Mesurer coûte cher (une
+  // relecture de pixels), afficher ne coûte rien : on garde donc l'échantillonnage à
+  // ~10 Hz et on interpole l'affichage à la cadence de l'écran. C'est la séparation qui
+  // manquait — la barre bougeait au rythme de la mesure, soit dix pas visibles par seconde.
+  animerJauges(dt);
   requestAnimationFrame(renderOverlayLoop);
 }
 
@@ -5715,8 +5855,6 @@ async function attemptRead(corners, score){
       ? '✅ ' + hashShortcut.card.name + ' — doublon reconnu (visuel)'
       : '✅ #' + finalNumber + '/' + finalDenominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
-                     qNet: +qualite.netBrut.toFixed(3), qLum: Math.round(qualite.lumMoy),
-                     qClip: +qualite.clip.toFixed(3), qCad: +qualite.cad.toFixed(2),
                      num: hashShortcut ? (finalNumber+' (visuel'+(hashViaMemoire?' mémorisé':'')+', écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
                      hashDist: bestHashDist, raw:r.text, rotated, ...timing});
   }catch(e){
