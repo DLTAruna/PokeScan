@@ -1473,6 +1473,62 @@
   .live-qty .qty-moins:hover, .fi-qte .moins:hover{background:rgba(240,128,110,.26);}
   .live-qty button:disabled, .fi-qte button:disabled{opacity:.3; cursor:default;}
   .live-qty, .fi-qte{background:rgba(10,13,22,.72); border-color:rgba(255,255,255,.14);}
+  /* ---- En-tete de jeu dans la barre laterale ----
+     Un simple intitule en petites capitales suffisait tant qu'il n'y avait qu'un jeu. Des
+     qu'il y en a deux, il faut pouvoir dire d'un coup d'oeil DANS LEQUEL on se trouve : le
+     rappel de marque (pastille coloree, nom en gras) fait ce travail mieux qu'un mot gris,
+     et prepare l'arrivee des suivants sans reorganiser le menu a chaque fois. */
+  .lat-jeu{
+    display:flex; align-items:center; gap:9px; padding:11px 10px 7px; margin-top:6px;
+  }
+  .lat-jeu .pastille{
+    width:22px; height:22px; border-radius:7px; flex:none;
+    display:flex; align-items:center; justify-content:center; font-size:12px;
+  }
+  .lat-jeu b{font-size:13px; letter-spacing:.01em;}
+  .lat-jeu .etat{
+    margin-left:auto; font-size:8.5px; font-weight:800; letter-spacing:.1px;
+    padding:2px 6px; border-radius:6px; text-transform:uppercase;
+    background:rgba(255,255,255,.08); color:var(--muted);
+  }
+  .lat-jeu + .lat-lien{margin-top:0;}
+  .lat-groupe{border-left:2px solid rgba(255,255,255,.06); margin-left:12px; padding-left:6px;}
+  .lat-groupe.pokemon{border-left-color:rgba(238,21,21,.32);}
+  .lat-groupe.onepiece{border-left-color:rgba(224,85,63,.32);}
+
+  /* ---- Banniere de jeu, en tete de page ----
+     Elle repond a la meme question que l'en-tete du menu, pour qui arrive directement sur
+     la page sans avoir regarde la barre. */
+  .jeu-banniere{
+    position:relative; overflow:hidden; border-radius:18px; margin-bottom:16px;
+    padding:22px 24px; border:1px solid var(--border);
+    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+  }
+  .jeu-banniere.pokemon{
+    background:linear-gradient(120deg, rgba(238,21,21,.30), rgba(61,125,202,.22) 52%, rgba(21,26,36,.9));
+    border-color:rgba(238,21,21,.34);
+  }
+  .jeu-banniere.onepiece{
+    background:linear-gradient(120deg, rgba(224,85,63,.30), rgba(255,203,5,.18) 55%, rgba(21,26,36,.9));
+    border-color:rgba(224,85,63,.34);
+  }
+  .jeu-banniere .emb{
+    width:52px; height:52px; border-radius:14px; flex:none; font-size:27px;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.14);
+  }
+  .jeu-banniere h2{margin:0; font-size:25px; letter-spacing:-.6px;}
+  .jeu-banniere .accroche{font-size:12.5px; color:rgba(255,255,255,.72); margin-top:3px;}
+  .jeu-banniere .stats{margin-left:auto; display:flex; gap:22px; text-align:right;}
+  .jeu-banniere .stats b{display:block; font-size:19px; font-weight:800;
+    font-variant-numeric:tabular-nums; margin-top:3px;}
+  /* Motif discret, purement decoratif : il donne de la matiere au bandeau sans jamais
+     passer devant le texte, qui reste sur sa propre couche. */
+  .jeu-banniere::after{
+    content:''; position:absolute; inset:0; pointer-events:none; opacity:.5;
+    background:radial-gradient(circle at 88% 12%, rgba(255,255,255,.10), transparent 46%);
+  }
+  .jeu-banniere > *{position:relative; z-index:1;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1835,10 +1891,16 @@
   </div>
 
   <div id="lat-collection" style="display:none;">
-    <div class="lat-titre">Pokémon</div>
+    <div class="lat-jeu"><span class="pastille" style="background:rgba(238,21,21,.20);">🔴</span><b>Pokémon</b></div>
+    <div class="lat-groupe pokemon">
       <button class="lat-lien" data-tab="collection"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" fill="var(--t2)" opacity=".28"/><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Accueil</span></button>
-      <button class="lat-lien" data-tab="sets"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Par série</span></button>
+      <button class="lat-lien" data-tab="sets"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Classeur</span></button>
       <button class="lat-lien" data-tab="scelle"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" fill="var(--t2)" opacity=".28"/><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.6 7 12 10.8 20.4 7M12 10.8v10" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scellé</span><span class="lat-badge scelle-badge zero">0</span></button>
+    </div>
+    <div class="lat-jeu"><span class="pastille" style="background:rgba(224,85,63,.22);">🏴‍☠️</span><b>One Piece</b><span class="etat">Bientôt</span></div>
+    <div class="lat-groupe onepiece">
+      <button class="lat-lien" data-tab="onepiece"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Classeur</span></button>
+    </div>
   </div>
 
   <div class="lat-pied">
@@ -1943,6 +2005,40 @@
     </div>
   </section>
 
+  <section class="section" id="section-onepiece">
+    <div class="jeu-banniere onepiece">
+      <span class="emb">🏴‍☠️</span>
+      <div>
+        <h2>One Piece</h2>
+        <div class="accroche">Le TCG Bandai, des premiers boosters OP-01 aux sets récents.</div>
+      </div>
+      <div class="stats">
+        <div><span class="micro">Cartes</span><b>—</b></div>
+        <div><span class="micro">Séries</span><b>—</b></div>
+      </div>
+    </div>
+    <div class="panel">
+      <h2>Classeur One Piece</h2>
+      <p class="sub">Pas encore disponible.</p>
+      <div class="tb-bloc faire" style="margin-top:12px;">
+        <div class="tb-bloc-tete">
+          <span class="rond">🧭</span>
+          <span><b>Ce qu'il reste à faire</b><small>Pourquoi ce n'est pas qu'un onglet à ajouter</small></span>
+        </div>
+        <div class="tb-ligne"><span>Catalogue des cartes</span><b>à brancher</b></div>
+        <div class="tb-ligne"><span>Cotes du marché</span><b>à brancher</b></div>
+        <div class="tb-ligne"><span>Lecture du numéro à la caméra</span><b>à réentraîner</b></div>
+      </div>
+      <p class="hint" style="margin-top:12px; max-width:70ch;">
+        Tout le pipeline actuel — catalogue, cotes, reconnaissance du numéro — s'appuie sur
+        TCGdex, qui ne couvre que Pokémon. One Piece demande une autre source de données et
+        un découpage différent à la lecture : le numéro n'est pas au même endroit sur la
+        carte. C'est un vrai chantier, pas un onglet à dupliquer — d'où cette page qui le
+        dit plutôt qu'un classeur vide qui ressemblerait à une panne.
+      </p>
+    </div>
+  </section>
+
   <section class="section" id="section-listes">
     <div class="panel">
       <div class="pf-tete">
@@ -1977,21 +2073,25 @@
   </section>
 
   <section class="section" id="section-collection">
-    <div class="col-entete">
-      <span class="titre">🔴 Collection Pokémon</span>
+    <div class="jeu-banniere pokemon">
+      <span class="emb">🔴</span>
+      <div>
+        <h2>Pokémon</h2>
+        <div class="accroche">Le jeu de cartes à collectionner, de la Base 1999 aux dernières extensions.</div>
+      </div>
       <div class="stats">
-        <span><b id="col-cartes">0</b> cartes</span>
-        <span><b id="col-sets">0</b> séries entamées</span>
-        <span><b id="col-valeur">0 €</b></span>
+        <div><span class="micro">Cartes</span><b id="col-cartes">0</b></div>
+        <div><span class="micro">Séries entamées</span><b id="col-sets">0</b></div>
+        <div><span class="micro">Valeur</span><b id="col-valeur">0 €</b></div>
       </div>
     </div>
     <div class="col-portes">
       <button class="col-porte serie" data-tab="sets">
         <span class="chapeau">Toutes les ères</span>
-        <h3>Par série</h3>
+        <h3>Classeur</h3>
         <p>De la Base 1999 aux dernières extensions, bloc par bloc.</p>
         <div class="col-vignettes" id="col-vignettes-series"></div>
-        <span class="cta">Parcourir les séries →</span>
+        <span class="cta">Ouvrir le classeur →</span>
       </button>
       <button class="col-porte scan" data-tab="capture">
         <span class="chapeau">Appareil photo</span>
@@ -2884,7 +2984,7 @@ const ONGLETS_MODE = {
   // portfolio, pas une destination du menu. L'y mettre ferait apparaitre une entree qui
   // n'a aucun sens tant qu'aucune carte n'est ouverte.
   vendeur: ['dashboard', 'batch', 'listes', 'capture', 'identify', 'ventes', 'export'],
-  collection: ['collection', 'sets', 'scelle']
+  collection: ['collection', 'sets', 'scelle', 'onepiece']
 };
 let modeActuel = localStorage.getItem('modeNav') === 'collection' ? 'collection' : 'vendeur';
 
