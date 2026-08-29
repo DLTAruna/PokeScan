@@ -2363,13 +2363,21 @@ function getVisionWorker(){
           'T':'7','B':'8','g':'9','q':'9'
         })};
         function normDigits(s){ return s.split('').map(c=>LOOKALIKES[c]!=null?LOOKALIKES[c]:c).join(''); }
+        // Renvoie les chiffres du groupe, ou null si un caractère illisible se trouve ENTRE
+        // des chiffres — auquel cas c'est un chiffre perdu, et le numéro obtenu serait plus
+        // court que le vrai. Le bruit de tête, lui, est un séparateur : on le jette.
+        function groupeChiffres(brut){
+          const m = normDigits(brut).replace(/^[^0-9]+/, '');
+          return /^[0-9]*$/.test(m) ? m : null;
+        }
         function extractNumbers(txt){
           const t = txt || '', out = [];
           for(let i=0;i<t.length;i++){
             if(t[i] !== '/') continue;
             const brutG = t.slice(Math.max(0,i-3), i), brutD = t.slice(i+1, i+4);
-            const left  = normDigits(brutG).replace(/\\D/g,'');
-            const right = normDigits(brutD).replace(/\\D/g,'');
+            const left  = groupeChiffres(brutG);
+            const right = groupeChiffres(brutD);
+            if(left === null || right === null) continue;
             // Numérateur accepté dès UN chiffre (au lieu de deux) : les sets qui n'impriment
             // pas de zéros de tête écrivent « 1/149 », et l'exigence de deux chiffres
             // rejetait donc toutes les cartes n° 1 à 9 de ces sets — vérifié sur le vrai
@@ -2839,14 +2847,31 @@ async function dataUrlToCanvas(dataUrl){
 
 // Cherche le motif XXX/XXX autour de chaque "/" du texte, en normalisant les sosies
 // de chiffres de part et d'autre. Renvoie tous les candidats plausibles.
+// Chiffres du groupe, ou null si un caractère illisible se trouve ENTRE des chiffres.
+//
+// Relevé sur l'appareil : « 0 B 02a/165 » produisait le numéro 2. La table des sosies ne
+// connaît pas « a », il était donc simplement supprimé et « 02a » devenait « 02 » — un
+// numéro plus court, parfaitement plausible, et faux, qui désigne une autre carte réelle.
+//
+// La distinction qui manquait : du bruit EN TÊTE du groupe est du bruit de séparation (un
+// bout de mot, une puce, un blanc mal segmenté) et peut être jeté ; du bruit À L'INTÉRIEUR,
+// entre deux chiffres, est un chiffre que l'OCR n'a pas su lire, et il disqualifie la
+// lecture. Une lecture rejetée sera rejouée sur l'image suivante, et si la carte résiste la
+// capture de secours l'envoie dans « À vérifier » ; une carte fausse dans le lot se paie en
+// litige acheteur.
+function groupeChiffresPropre(brut){
+  const m = normalizeDigits(brut).replace(/^[^0-9]+/, '');
+  return /^[0-9]*$/.test(m) ? m : null;
+}
+
 function extractNumberCandidates(rawText){
   const text = rawText || '';
   const out = [];
   for(let i=0; i<text.length; i++){
     if(text[i] !== '/') continue;
-    const left = normalizeDigits(text.slice(Math.max(0,i-3), i)).replace(/\D/g,'');
-    const right = normalizeDigits(text.slice(i+1, i+4)).replace(/\D/g,'');
-    if(left.length >= 2 && right.length >= 2){
+    const left = groupeChiffresPropre(text.slice(Math.max(0,i-3), i));
+    const right = groupeChiffresPropre(text.slice(i+1, i+4));
+    if(left !== null && right !== null && left.length >= 2 && right.length >= 2){
       out.push({ number: left.replace(/^0+(?=\d)/,''), denominator: right.replace(/^0+(?=\d)/,'') });
     }
   }
@@ -6887,7 +6912,15 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
     // Le repli sur le numéro n'est PAS silencieux : la note le dit, et l'entrée reste
     // relisible dans le lot. Un numéro mal lu passera donc, mais il passera visiblement —
     // ce qui vaut mieux que bloquer chaque carte au reflet mal placé.
-    if(!cardNameAppearsInText(card, text) && !texteUtile(text)
+    // Dénominateur reconnu = le numéro lu correspond à un set réel. C'est faible comme
+    // preuve, mais c'est la seule qui reste quand le nom est illisible, et c'est mieux que
+    // rien : un dénominateur inventé par l'OCR ne tombe presque jamais sur un total existant.
+    const denom = item._analysis && item._analysis.denominator;
+    const denomPlausible = denom && setDenominatorMap
+      && Array.isArray(setDenominatorMap[String(denom)])
+      && setDenominatorMap[String(denom)].length > 0;
+
+    if(!cardNameAppearsInText(card, text) && !texteUtile(text) && denomPlausible
        && item._analysis && item._analysis.number && item._analysis.status !== 'ok'){
       item._analysis.status = 'ok';
       item._analysis.note = (item._analysis.note || '').replace('nom à relire', 'nom illisible, numéro retenu');
