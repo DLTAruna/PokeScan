@@ -1572,6 +1572,49 @@
     background:linear-gradient(100deg, #a8412c 0%, #7a3a24 48%, #241a2e 100%);
     border-color:rgba(224,85,63,.42);
   }
+  /* ---- Motif de fond des portes de la Collection ----
+     Grand, en tres faible opacite, deborde du cadre : il donne de la matiere a un carre
+     qui n'en avait aucune, sans jamais disputer la lecture au texte. Pose derriere le
+     contenu (z-index) et sans interception du pointeur.
+
+     Dessine en SVG plutot qu'importe : quelques centaines d'octets, aucune dependance a un
+     serveur tiers, aucune question de droits, et il prend la couleur de la carte par
+     currentColor — donc il s'accorde tout seul si la palette change. */
+  .porte-fond{
+    position:absolute; right:-26px; bottom:-30px; width:190px; height:190px;
+    opacity:.10; pointer-events:none; z-index:0;
+  }
+  .col-porte > *{position:relative; z-index:1;}
+  .col-porte.serie{color:#e0553f;}
+  .col-porte.scan{color:#ffcb05;}
+  .col-porte.scelle{color:#a48bff;}
+  /* Au survol le motif se revele un peu : assez pour signaler que la carte repond, pas
+     assez pour passer devant le texte. */
+  .col-porte:hover .porte-fond{opacity:.17;}
+
+  /* Embleme de la banniere Pokemon en tete de page */
+  .jeu-banniere .emb svg{width:34px; height:34px; color:#ee1515;}
+  .lat-banniere .perso-svg{position:absolute; right:-4px; bottom:-6px; height:44px; width:auto;
+    z-index:1; filter:drop-shadow(0 2px 5px rgba(0,0,0,.5)); pointer-events:none;}
+  /* ---- Un seul jeu ouvert a la fois ----
+     Avec deux jeux la liste tenait encore ; avec cinq elle deviendrait un mur ou l'on
+     cherche sa page. Refermer les autres garde le menu a une longueur constante, quel que
+     soit le nombre de jeux ajoutes ensuite.
+
+     La banniere devient donc un bouton : elle en prend le curseur et un chevron qui dit
+     dans quel sens ca va s'ouvrir — sans quoi rien n'indique qu'elle est cliquable. */
+  .lat-banniere{cursor:pointer; border:1px solid rgba(255,255,255,.10); width:100%;
+    font:inherit; color:inherit; text-align:left;}
+  .lat-banniere .chev{
+    position:absolute; right:9px; top:50%; transform:translateY(-50%) rotate(-90deg);
+    z-index:3; font-size:13px; color:rgba(255,255,255,.75); transition:transform .18s ease;
+    text-shadow:0 1px 3px rgba(0,0,0,.7);
+  }
+  .lat-banniere.ouvert .chev{transform:translateY(-50%) rotate(0deg);}
+  .lat-banniere:not(.ouvert){opacity:.72;}
+  .lat-banniere:not(.ouvert):hover{opacity:1;}
+  .lat-groupe{overflow:hidden;}
+  .lat-groupe[hidden]{display:none;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1934,14 +1977,14 @@
   </div>
 
   <div id="lat-collection" style="display:none;">
-    <div class="lat-banniere pokemon"><b>Pokémon</b><img class="perso" alt="" loading="lazy" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" onerror="this.remove()"></div>
-    <div class="lat-groupe pokemon">
+    <button class="lat-banniere pokemon ouvert" data-jeu="pokemon"><span class="chev">▾</span><b>Pokémon</b><img class="perso" alt="" loading="lazy" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" onerror="this.remove()"></button>
+    <div class="lat-groupe pokemon" data-groupe="pokemon">
       <button class="lat-lien" data-tab="collection"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" fill="var(--t2)" opacity=".28"/><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Accueil</span></button>
       <button class="lat-lien" data-tab="sets"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Classeur</span></button>
       <button class="lat-lien" data-tab="scelle"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" fill="var(--t2)" opacity=".28"/><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.6 7 12 10.8 20.4 7M12 10.8v10" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scellé</span><span class="lat-badge scelle-badge zero">0</span></button>
     </div>
-    <div class="lat-banniere onepiece"><b>One Piece</b><span class="etat">Bientôt</span><span class="embleme">🏴‍☠️</span></div>
-    <div class="lat-groupe onepiece">
+    <button class="lat-banniere onepiece" data-jeu="onepiece"><span class="chev">▾</span><b>One Piece</b><span class="etat">Bientôt</span><svg class="perso-svg" viewBox="0 0 100 70" aria-hidden="true"><ellipse cx="50" cy="52" rx="46" ry="15" fill="#e8c06a"/><ellipse cx="50" cy="49" rx="46" ry="15" fill="#f2d489"/><path d="M22 48c0-19 12-32 28-32s28 13 28 32Z" fill="#e8c06a"/><path d="M22 48c0-19 12-32 28-32s28 13 28 32Z" fill="none" stroke="#c9a04e" stroke-width="2"/><path d="M21 44c8 5 50 5 58 0l1 6c-9 5-51 5-60 0Z" fill="#c0392b"/><ellipse cx="50" cy="49" rx="46" ry="15" fill="none" stroke="#c9a04e" stroke-width="2"/></svg></button>
+    <div class="lat-groupe onepiece" data-groupe="onepiece" hidden>
       <button class="lat-lien" data-tab="onepiece"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Classeur</span></button>
     </div>
   </div>
@@ -2050,7 +2093,7 @@
 
   <section class="section" id="section-onepiece">
     <div class="jeu-banniere onepiece">
-      <span class="emb">🏴‍☠️</span>
+      <span class="emb" style="font-size:0;"><svg style="width:38px;height:27px;" viewBox="0 0 100 70" aria-hidden="true"><ellipse cx="50" cy="52" rx="46" ry="15" fill="#e8c06a"/><ellipse cx="50" cy="49" rx="46" ry="15" fill="#f2d489"/><path d="M22 48c0-19 12-32 28-32s28 13 28 32Z" fill="#e8c06a"/><path d="M22 48c0-19 12-32 28-32s28 13 28 32Z" fill="none" stroke="#c9a04e" stroke-width="2"/><path d="M21 44c8 5 50 5 58 0l1 6c-9 5-51 5-60 0Z" fill="#c0392b"/><ellipse cx="50" cy="49" rx="46" ry="15" fill="none" stroke="#c9a04e" stroke-width="2"/></svg></span>
       <div>
         <h2>One Piece</h2>
         <div class="accroche">Le TCG Bandai, des premiers boosters OP-01 aux sets récents.</div>
@@ -2117,7 +2160,7 @@
 
   <section class="section" id="section-collection">
     <div class="jeu-banniere pokemon">
-      <span class="emb">🔴</span>
+      <span class="emb"><svg  viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="4"/><path d="M4 50h29M67 50h29" stroke="currentColor" stroke-width="4"/><path d="M50 4a46 46 0 0 1 46 46H67a17 17 0 0 0-34 0H4A46 46 0 0 1 50 4Z" fill="currentColor" opacity=".55"/><circle cx="50" cy="50" r="17" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="50" cy="50" r="7" fill="currentColor"/></svg></span>
       <div>
         <h2>Pokémon</h2>
         <div class="accroche">Le jeu de cartes à collectionner, de la Base 1999 aux dernières extensions.</div>
@@ -2130,6 +2173,7 @@
     </div>
     <div class="col-portes">
       <button class="col-porte serie" data-tab="sets">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="8" width="76" height="84" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><rect x="56" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="24" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="56" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><path d="M14 22h-6M14 44h-6M14 66h-6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="8" cy="22" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="44" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="66" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/></svg>
         <span class="chapeau">Toutes les ères</span>
         <h3>Classeur</h3>
         <p>De la Base 1999 aux dernières extensions, bloc par bloc.</p>
@@ -2137,6 +2181,7 @@
         <span class="cta">Ouvrir le classeur →</span>
       </button>
       <button class="col-porte scan" data-tab="capture">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><path d="M8 30V14a6 6 0 0 1 6-6h16M70 8h16a6 6 0 0 1 6 6v16M92 70v16a6 6 0 0 1-6 6H70M30 92H14a6 6 0 0 1-6-6V70" fill="none" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="50" cy="50" r="24" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="50" cy="50" r="11" fill="currentColor" opacity=".5"/><path d="M50 18v12M50 70v12M18 50h12M70 50h12" stroke="currentColor" stroke-width="4" stroke-linecap="round"/></svg>
         <span class="chapeau">Appareil photo</span>
         <h3>Scanner</h3>
         <p>Ajoute une carte à ta collection en la présentant à l'objectif.</p>
@@ -2144,6 +2189,7 @@
         <span class="cta">Ouvrir le scanner →</span>
       </button>
       <button class="col-porte scelle" data-tab="scelle">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><path d="M12 42h76v46a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="currentColor" opacity=".32"/><path d="M12 42h76v46a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="none" stroke="currentColor" stroke-width="4"/><rect x="22" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><rect x="40" y="10" width="14" height="36" rx="2" fill="currentColor" opacity=".72"/><rect x="58" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><path d="M12 58h76" stroke="currentColor" stroke-width="3.5" opacity=".7"/></svg>
         <span class="chapeau">Produits fermés</span>
         <h3>Scellé</h3>
         <p>Coffrets, displays et ETB, avec leur cote et leur plus-value.</p>
@@ -3031,6 +3077,41 @@ const ONGLETS_MODE = {
 };
 let modeActuel = localStorage.getItem('modeNav') === 'collection' ? 'collection' : 'vendeur';
 
+
+// ---------------- UN SEUL JEU OUVERT ----------------
+// Avec deux jeux la liste tient encore ; avec cinq elle deviendrait un mur où l'on cherche
+// sa page. Refermer les autres garde le menu à une longueur constante quel que soit le
+// nombre de jeux ajoutés ensuite.
+//
+// Le jeu ouvert est mémorisé : on ne change pas de TCG toutes les cinq minutes, c'est
+// plutôt une session entière passée dans l'un.
+let jeuOuvert = localStorage.getItem('jeuOuvert') || 'pokemon';
+
+function ouvrirJeu(jeu, memoriser){
+  jeuOuvert = jeu;
+  if(memoriser !== false) localStorage.setItem('jeuOuvert', jeu);
+  document.querySelectorAll('.lat-banniere[data-jeu]').forEach(b =>
+    b.classList.toggle('ouvert', b.dataset.jeu === jeu));
+  document.querySelectorAll('.lat-groupe[data-groupe]').forEach(g =>
+    g.hidden = g.dataset.groupe !== jeu);
+}
+
+// Ouvrir une page referme les autres jeux : sans ça, cliquer « Classeur » dans One Piece
+// laisserait le groupe Pokémon déplié au-dessus d'une page One Piece.
+const JEU_DE_ONGLET = {
+  collection:'pokemon', sets:'pokemon', scelle:'pokemon', onepiece:'onepiece'
+};
+
+document.addEventListener('click', (e)=>{
+  const b = e.target.closest('.lat-banniere[data-jeu]');
+  if(!b) return;
+  // Une bannière déjà ouverte ne se referme pas : le menu se retrouverait entièrement
+  // replié, sans aucune page accessible.
+  if(b.dataset.jeu !== jeuOuvert) ouvrirJeu(b.dataset.jeu);
+});
+
+ouvrirJeu(jeuOuvert, false);
+
 function appliquerMode(mode, allerAccueil){
   modeActuel = mode;
   localStorage.setItem('modeNav', mode);
@@ -3200,6 +3281,8 @@ function activerOnglet(nom){
   if(nom === 'ventes') rendreVentes();
   if(nom === 'collection') rendreAccueilCollection();
   if(nom === 'listes') rendreListes();
+  const jeu = JEU_DE_ONGLET[nom];
+  if(jeu && jeu !== jeuOuvert) ouvrirJeu(jeu);
   synchroniserMode(nom);
 
   fermerMenu();
