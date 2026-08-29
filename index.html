@@ -1097,6 +1097,11 @@
   .col-porte.scelle{background:linear-gradient(150deg, rgba(124,92,255,.18), var(--panel));}
   .col-vignettes{display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;}
   .col-vignettes img{height:34px; width:auto; max-width:96px; object-fit:contain; opacity:.9;}
+  /* Vignettes de CARTES et non de logos : format portrait, coins arrondis, legerement
+     chevauchees comme des cartes posees en eventail. */
+  .col-vignettes img{height:58px; width:auto; border-radius:4px; object-fit:cover; opacity:.92;
+    box-shadow:0 3px 10px rgba(0,0,0,.45);}
+  .col-vignettes img + img{margin-left:-14px;}
   .col-entete{
     display:flex; align-items:center; gap:14px; flex-wrap:wrap;
     background:var(--panel); border:1px solid var(--border); border-radius:12px;
@@ -1105,6 +1110,71 @@
   .col-entete .titre{font-size:18px; font-weight:800;}
   .col-entete .stats{margin-left:auto; display:flex; gap:18px; font-size:12.5px; color:var(--muted);}
   .col-entete .stats b{color:var(--text); font-variant-numeric:tabular-nums;}
+  /* ---- Portfolio en grille ----
+     Le tableau reste le bon outil pour MODIFIER (prix, quantite, URL, en ligne et au
+     clavier), mais c'est un mauvais outil pour RECONNAITRE : douze colonnes de texte pour
+     retrouver une carte qu'on identifie en un dixieme de seconde a son illustration. Les
+     deux vues coexistent donc, chacune pour ce qu'elle fait bien — grille par defaut,
+     tableau d'un clic. */
+  .pf-barre{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;}
+  .pf-barre .grandir{flex:1; min-width:180px;}
+  .pf-seg{display:flex; gap:2px; background:var(--panel2); border-radius:9px; padding:3px;}
+  .pf-seg button{
+    border:0; background:transparent; color:var(--muted); cursor:pointer; font:inherit;
+    font-size:12px; font-weight:700; padding:5px 11px; border-radius:7px;
+  }
+  .pf-seg button.on{background:var(--accent); color:#1a1206;}
+
+  .pf-grille{display:grid; gap:12px; grid-template-columns:repeat(auto-fill, minmax(var(--pf-col, 168px), 1fr));}
+  .pf-grille.grand{--pf-col:220px;}
+  .pf-grille.compact{--pf-col:126px;}
+  /* Sur telephone, 168 px de largeur minimale ne laissent passer qu'UNE colonne (2x168 plus
+     l'ecart depassent les 343 px utiles) : la grille perd alors tout son interet et revient
+     a une liste verticale. Un minimum plus bas rend les deux colonnes possibles, ce qui est
+     la densite naturelle pour des cartes en portrait. */
+  /* Valeurs calees sur la largeur REELLE de la grille, pas sur celle de l'ecran : les
+     marges imbriquees (main, panneau) la ramenent a 305 px sur un ecran de 375. A 150 px,
+     2 colonnes plus l'ecart faisaient 312 px — il manquait sept pixels, et la grille
+     retombait a une seule colonne. */
+  @media (max-width: 520px){
+    .pf-grille{--pf-col:138px;}
+    .pf-grille.grand{--pf-col:190px;}
+    .pf-grille.compact{--pf-col:90px;}
+  }
+  .pf-item{
+    position:relative; background:var(--panel); border:1px solid var(--border);
+    border-radius:11px; overflow:hidden; cursor:pointer; text-align:left;
+    display:flex; flex-direction:column; color:var(--text); font:inherit; padding:0;
+    transition:transform .14s ease, border-color .14s ease;
+  }
+  .pf-item:hover{transform:translateY(-3px); border-color:var(--accent2);}
+  /* aspect-ratio plutot qu'une hauteur fixe : la vignette garde le format d'une carte quelle
+     que soit la densite choisie, sans avoir a recalculer trois hauteurs. */
+  .pf-vignette{width:100%; aspect-ratio:63/88; object-fit:cover; background:#0a0a0a; display:block;}
+  .pf-corps{padding:8px 10px 10px;}
+  .pf-nom{font-size:12.5px; font-weight:700; line-height:1.25; overflow:hidden;
+          text-overflow:ellipsis; white-space:nowrap;}
+  .pf-meta{font-size:10.5px; color:var(--muted); margin-top:2px; overflow:hidden;
+           text-overflow:ellipsis; white-space:nowrap;}
+  .pf-prix{display:flex; align-items:baseline; gap:6px; margin-top:6px;}
+  .pf-prix b{font-size:14px; color:var(--accent); font-variant-numeric:tabular-nums;}
+  .pf-prix .marche{font-size:10.5px; color:var(--muted); text-decoration:line-through;}
+  .pf-qte{
+    position:absolute; top:7px; right:7px; background:var(--accent); color:#1a1206;
+    font-size:10.5px; font-weight:800; padding:1px 6px; border-radius:8px;
+  }
+  .pf-etat{
+    position:absolute; top:7px; left:7px; font-size:9.5px; font-weight:800;
+    padding:1px 6px; border-radius:7px;
+  }
+  /* Un manque qui empeche l'export doit se voir sur la vignette, pas seulement dans un
+     compteur en haut de page : c'est la carte concernee qu'il faut retrouver. */
+  .pf-alerte{
+    position:absolute; bottom:38px; left:7px; right:7px; text-align:center;
+    background:rgba(192,57,43,.92); color:#fff; font-size:9.5px; font-weight:700;
+    padding:2px 4px; border-radius:6px;
+  }
+  .pf-vide{text-align:center; color:var(--muted); padding:36px 12px; font-size:13px;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1880,11 +1950,23 @@
         <button class="btn-gold btn-sm" id="btn-revue">🔍 Relire les ajouts auto (<span id="nb-auto">0</span>)</button>
         <span class="hint" id="reprice-status"></span>
       </div>
-      <div class="table-wrap">
-      <div class="lot-filtre">
-        <input type="text" id="lot-filtre" placeholder="🔎 Filtrer le lot — nom, set, numéro, SKU…" autocomplete="off">
+      <div class="pf-barre">
+        <div class="grandir">
+          <input type="text" id="lot-filtre" placeholder="🔎 Filtrer — nom, set, numéro, SKU…" autocomplete="off">
+        </div>
+        <div class="pf-seg" id="pf-vue">
+          <button data-vue="grille" class="on">Grille</button>
+          <button data-vue="tableau">Tableau</button>
+        </div>
+        <div class="pf-seg" id="pf-densite">
+          <button data-densite="grand">Grand</button>
+          <button data-densite="normal" class="on">Normal</button>
+          <button data-densite="compact">Compact</button>
+        </div>
         <span class="hint" id="lot-filtre-info"></span>
       </div>
+      <div class="pf-grille" id="pf-grille"></div>
+      <div class="table-wrap">
       <table id="batch-table">
           <thead>
             <tr>
@@ -2465,17 +2547,34 @@ function rendreAccueilCollection(){
   if($('col-sets')) $('col-sets').textContent = sets.size;
   if($('col-valeur')) $('col-valeur').textContent = val.toFixed(2) + ' €';
 
-  // Vignettes : les logos des séries réellement présentes dans le lot, pas une liste
-  // décorative. Une porte d'entrée qui montre TES séries dit quelque chose ; une qui montre
-  // trois logos choisis d'avance ne dit rien.
-  const z = $('col-vignettes-series');
-  if(z && !z.dataset.rempli){
-    const ids = [...sets].slice(0, 3);
-    if(ids.length){
-      z.innerHTML = ids.map(id => `<img src="https://assets.tcgdex.net/fr/${id.split('-')[0]}/${id}/logo.webp" alt="" onerror="this.remove()">`).join('');
-      z.dataset.rempli = '1';
-    }
-  }
+  // Vignettes : TES cartes, pas une illustration décorative. Une porte d'entrée qui montre
+  // ce qu'on possède déjà dit quelque chose ; trois images choisies d'avance ne disent rien.
+  //
+  // Les visuels de cartes sont utilisés plutôt que les logos de série : leur URL est déjà
+  // dans le lot et donc forcément valide, alors qu'un logo demande de reconstituer
+  // l'identifiant de série à partir de celui du set — ce que la première version faisait
+  // mal (« sv03.5 » n'a pas de tiret, la découpe rendait l'URL fausse et la vignette vide).
+  const visuels = batch.map(e => e.cardImage || e.photo).filter(Boolean);
+  const poser = (id, liste, repli) => {
+    const z = $(id);
+    if(!z) return;
+    const src = liste.length ? liste : repli;
+    z.innerHTML = src.slice(0, 4)
+      .map(u => `<img src="${escapeHtml(u)}" alt="" loading="lazy" onerror="this.remove()">`).join('');
+  };
+  // Repli quand le lot est vide : des cartes emblématiques valent mieux qu'un espace vide,
+  // qui laisserait croire à un chargement raté.
+  const REPLI = [
+    'https://assets.tcgdex.net/fr/sv/sv03.5/006/low.webp',
+    'https://assets.tcgdex.net/fr/sv/sv03.5/151/low.webp',
+    'https://assets.tcgdex.net/fr/sv/sv03.5/025/low.webp',
+    'https://assets.tcgdex.net/fr/sv/sv03.5/009/low.webp'
+  ];
+  poser('col-vignettes-series', visuels, REPLI);
+  poser('col-vignettes-scan', visuels.slice(-4), REPLI.slice().reverse());
+  const visuelsScelle = (typeof scelle !== 'undefined' && Array.isArray(scelle))
+    ? scelle.map(p => p.photo || p.image).filter(Boolean) : [];
+  poser('col-vignettes-scelle', visuelsScelle, []);
 }
 
 function activerOnglet(nom){
@@ -2485,7 +2584,7 @@ function activerOnglet(nom){
 
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === nom));
 
-  if(nom === 'batch') renderBatch();
+  if(nom === 'batch'){ renderBatch(); rendreVuesPortfolio(); }
   if(nom === 'identify') renderIdentify();
   if(nom === 'sets') renderSetsTab();
   if(nom === 'dashboard') rendreDashboard();
@@ -11241,6 +11340,87 @@ function repositionnerPrix(cle){
     (ignorees ? ` · ${ignorees} sans prix marché connu, laissée(s) inchangée(s)` : '');
 }
 
+
+// ---------------- PORTFOLIO EN GRILLE ----------------
+// Le tableau reste le bon outil pour MODIFIER — prix, quantité, URL, en ligne et au clavier.
+// C'en est un mauvais pour RECONNAÎTRE : douze colonnes de texte pour retrouver une carte
+// qu'on identifie en un dixième de seconde à son illustration. Les deux vues coexistent,
+// chacune pour ce qu'elle fait bien.
+let pfVue = localStorage.getItem('pfVue') || 'grille';
+let pfDensite = localStorage.getItem('pfDensite') || 'normal';
+
+function appliquerVuePortfolio(){
+  const g = $('pf-grille'), t = document.querySelector('#section-batch .table-wrap');
+  if(g) g.style.display = pfVue === 'grille' ? '' : 'none';
+  if(t) t.style.display = pfVue === 'tableau' ? '' : 'none';
+  document.querySelectorAll('#pf-vue button').forEach(b => b.classList.toggle('on', b.dataset.vue === pfVue));
+  document.querySelectorAll('#pf-densite button').forEach(b => b.classList.toggle('on', b.dataset.densite === pfDensite));
+  if(g) g.className = 'pf-grille ' + (pfDensite === 'normal' ? '' : pfDensite);
+  // Le réglage de densité n'a de sens qu'en grille : le laisser actif sur le tableau
+  // proposerait un choix sans effet.
+  const d = $('pf-densite');
+  if(d) d.style.display = pfVue === 'grille' ? '' : 'none';
+}
+
+function rendreGrillePortfolio(){
+  const g = $('pf-grille');
+  if(!g) return;
+  const q = ($('lot-filtre')?.value || '').trim().toLowerCase();
+  const correspond = (e)=> !q || [e.cardName, e.setName, e.number, e.sku, e.title, e.rarity]
+    .some(v => String(v || '').toLowerCase().includes(q));
+
+  const lignes = batch.filter(correspond);
+  if(!lignes.length){
+    g.innerHTML = `<div class="pf-vide">${batch.length ? 'Aucune carte ne correspond à ce filtre.' : 'Le lot est vide — scanne une carte pour commencer.'}</div>`;
+    return;
+  }
+
+  g.innerHTML = lignes.map(e => {
+    const idx = batch.indexOf(e);
+    // La photo prise prime sur l'illustration officielle : c'est TON exemplaire, avec son
+    // état réel, et c'est lui qu'on vend.
+    const img = e.photo || e.cardImage || '';
+    const qte = parseInt(e.qty) || 1;
+    const prix = parseFloat(e.price);
+    const marche = parseFloat(e.marketPrice);
+    const manque = !prix ? 'Sans prix' : (!e.imageUrl ? 'Sans image' : '');
+    return `<button class="pf-item" data-idx="${idx}" title="${escapeHtml(e.title || e.cardName || '')}">
+      ${img ? `<img class="pf-vignette" src="${escapeHtml(img)}" loading="lazy" alt="">`
+            : '<div class="pf-vignette"></div>'}
+      <span class="pf-etat re-${e.condition}">${e.condition || 'NM'}</span>
+      ${qte > 1 ? `<span class="pf-qte">×${qte}</span>` : ''}
+      ${manque ? `<span class="pf-alerte">${manque}</span>` : ''}
+      <span class="pf-corps">
+        <span class="pf-nom">${escapeHtml(e.cardName || '—')}</span>
+        <span class="pf-meta">${escapeHtml(e.setName || '')}${e.number ? ' · #' + escapeHtml(e.number) : ''}</span>
+        <span class="pf-prix">
+          <b>${prix ? prix.toFixed(2) + ' €' : '—'}</b>
+          ${marche && prix && marche > prix ? `<span class="marche">${marche.toFixed(2)} €</span>` : ''}
+        </span>
+      </span>
+    </button>`;
+  }).join('');
+
+  // Un clic sur une vignette bascule au tableau, filtré sur cette carte : c'est là qu'on
+  // modifie. Sans ça, la grille serait une impasse — jolie, et sans action possible.
+  g.querySelectorAll('.pf-item').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const e = batch[parseInt(b.dataset.idx)];
+      if(!e) return;
+      if($('lot-filtre')) $('lot-filtre').value = e.sku || e.cardName || '';
+      pfVue = 'tableau';
+      localStorage.setItem('pfVue', pfVue);
+      appliquerVuePortfolio();
+      renderBatch();
+    });
+  });
+}
+
+function rendreVuesPortfolio(){
+  appliquerVuePortfolio();
+  rendreGrillePortfolio();
+}
+
 function renderBatchStatsOnly(){
   majBadgesNav();
   $('stat-count').textContent = batch.length;
@@ -11308,7 +11488,25 @@ $('load-json-input').addEventListener('change', (e)=>{
 let lotFiltreTempo = null;
 $('lot-filtre').addEventListener('input', ()=>{
   clearTimeout(lotFiltreTempo);
-  lotFiltreTempo = setTimeout(renderBatch, 200);
+  // Le filtre agit sur les DEUX vues : elles montrent le meme lot, elles doivent montrer
+  // la meme selection.
+  lotFiltreTempo = setTimeout(()=>{ renderBatch(); rendreGrillePortfolio(); }, 200);
+});
+
+
+$('pf-vue').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-vue]');
+  if(!b) return;
+  pfVue = b.dataset.vue;
+  localStorage.setItem('pfVue', pfVue);
+  appliquerVuePortfolio();
+});
+$('pf-densite').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-densite]');
+  if(!b) return;
+  pfDensite = b.dataset.densite;
+  localStorage.setItem('pfDensite', pfDensite);
+  appliquerVuePortfolio();
 });
 
 $('btn-export-ebay').addEventListener('click', exporterCsvEbay);
