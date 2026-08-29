@@ -1344,6 +1344,34 @@
     .pf-grille.compact .pf-item{flex-direction:column; min-height:0;}
     .pf-grille.compact .pf-vignette{width:100%; aspect-ratio:63/88;}
   }
+  /* ---- Bandeau de valeur, pleine largeur ----
+     Trois tuiles separees (cartes / valeur / sans image) melangeaient deux choses sans
+     rapport : ce que vaut la collection, et un defaut d'export. La premiere merite un
+     bandeau, le second appartient au tableau de bord avec les autres corrections a faire. */
+  .val-bandeau{
+    background:linear-gradient(168deg, #1b2130, #141926 58%, #0f1420);
+    border:1px solid rgba(255,203,5,.22); border-radius:18px;
+    padding:18px 22px; margin-bottom:14px;
+    display:flex; gap:28px; flex-wrap:wrap; align-items:stretch;
+  }
+  .val-bandeau .gauche{min-width:230px;}
+  .val-bandeau .chiffres{display:flex; gap:26px; margin-top:12px; flex-wrap:wrap;}
+  .val-bandeau .chiffres div{min-width:74px;}
+  .val-bandeau .chiffres b{display:block; font-size:19px; font-weight:800;
+    font-variant-numeric:tabular-nums; margin-top:3px;}
+  /* La courbe occupe la place restante : c'est elle qui doit grandir quand l'ecran
+     s'elargit, pas les chiffres, qui ont une taille lisible fixe. */
+  .val-courbe{flex:1; min-width:280px; display:flex; flex-direction:column;
+    border-left:1px solid rgba(255,255,255,.08); padding-left:24px;}
+  .val-courbe .entete{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .val-courbe .entete .pf-seg{margin-left:auto;}
+  .val-graph{flex:1; min-height:96px; margin-top:10px; position:relative;}
+  .val-graph svg{width:100%; height:100%; display:block; overflow:visible;}
+  .val-vide{display:flex; align-items:center; justify-content:center; height:100%;
+    text-align:center; font-size:11.5px; color:var(--muted); line-height:1.6; padding:0 10px;}
+  @media (max-width: 720px){
+    .val-courbe{border-left:0; padding-left:0; border-top:1px solid rgba(255,255,255,.08); padding-top:14px;}
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -2106,10 +2134,29 @@
   <!-- BATCH TAB -->
   <section class="section" id="section-batch">
     <div class="panel">
-      <div class="stat-row">
-        <div class="stat"><div class="num" id="stat-count">0</div><div class="lbl">Cartes dans le lot</div></div>
-        <div class="stat"><div class="num" id="stat-value">0 €</div><div class="lbl">Valeur totale estimée</div></div>
-        <div class="stat"><div class="num" id="stat-noimg">0</div><div class="lbl">Sans URL image</div></div>
+      <div class="val-bandeau">
+        <div class="gauche">
+          <div class="micro">Valeur de la collection</div>
+          <div class="chiffre or" id="val-total">0 €</div>
+          <div class="chiffres">
+            <div><span class="micro">Cartes</span><b id="stat-count">0</b></div>
+            <div><span class="micro">Scellés</span><b id="val-scelle">0</b></div>
+            <div><span class="micro">Références</span><b id="val-refs">0</b></div>
+          </div>
+          <span id="stat-value" hidden>0 €</span><span id="stat-noimg" hidden>0</span>
+        </div>
+        <div class="val-courbe">
+          <div class="entete">
+            <span class="micro">Évolution de la cote</span>
+            <div class="pf-seg" id="val-periode">
+              <button data-jours="7">Semaine</button>
+              <button data-jours="30" class="on">Mois</button>
+              <button data-jours="365">Année</button>
+              <button data-jours="0">Tout</button>
+            </div>
+          </div>
+          <div class="val-graph" id="val-graph"></div>
+        </div>
       </div>
       <div class="repricing-bar">
         <span>Repositionner les prix à</span>
@@ -11737,9 +11784,114 @@ function rendrePagination(total, pages){
     <span class="pages">${pagination}</span>`;
 }
 
+
+// ---------------- HISTORIQUE DE VALEUR ----------------
+// Une courbe d'évolution suppose un historique, et nous n'en gardions aucun : la valeur
+// était recalculée à chaque affichage puis oubliée. Un relevé par jour suffit — c'est le
+// rythme auquel les cotes bougent réellement, et cela tient dans quelques kilo-octets même
+// après plusieurs années.
+//
+// Enregistré à la JOURNÉE et non à chaque modification : sans ça, une session de scan
+// produirait deux cents points dans la même heure et la courbe ne dirait plus rien du temps
+// qui passe.
+const CLE_HISTO = 'historiqueValeur';
+let historiqueValeur = null;
+
+async function chargerHistorique(){
+  if(historiqueValeur) return historiqueValeur;
+  try{
+    const m = await idbGet('meta', CLE_HISTO);
+    historiqueValeur = (m && Array.isArray(m.points)) ? m.points : [];
+  }catch(e){ historiqueValeur = []; }
+  return historiqueValeur;
+}
+
+async function noterValeurDuJour(){
+  const pts = await chargerHistorique();
+  const jour = new Date().toISOString().slice(0, 10);
+  const valeur = valeurTotaleStock();
+  if(!valeur) return;
+  const dernier = pts[pts.length - 1];
+  if(dernier && dernier.j === jour){
+    // Même jour : on écrase plutôt que d'empiler. Le relevé qui compte est le dernier état
+    // connu de la journée, pas le premier.
+    dernier.v = valeur;
+  } else {
+    pts.push({j: jour, v: valeur});
+    // Deux ans de relevés quotidiens : au-delà, l'ancienneté n'apprend plus rien sur un
+    // stock qui tourne, et la lecture d'IndexedDB au démarrage doit rester instantanée.
+    if(pts.length > 730) pts.splice(0, pts.length - 730);
+  }
+  try{ await idbSet('meta', {key: CLE_HISTO, points: pts, at: Date.now()}); }catch(e){}
+}
+
+// Nom explicite : une fonction valeurCollection() existait DEJA et renvoie un objet
+// {total, connues, inconnues}. La mienne, declaree plus bas, l'ecrasait silencieusement —
+// les declarations de fonction se hissent, la derniere gagne — et cassait majCoteGlobale.
+function valeurTotaleStock(){
+  const lot = batch.reduce((s,e) => s + (parseFloat(e.marketPrice) || parseFloat(e.price) || 0) * (parseInt(e.qty)||1), 0);
+  const sc = (typeof scelle !== 'undefined' && Array.isArray(scelle))
+    ? scelle.reduce((s,p) => s + (parseFloat(p.cote)||0) * (parseInt(p.qty)||1), 0) : 0;
+  return lot + sc;
+}
+
+// Courbe tracée à la main en SVG plutôt qu'avec une bibliothèque : une polyligne et deux
+// textes, contre plusieurs dizaines de kilo-octets de dépendance pour un seul graphique.
+function tracerCourbe(points, cible){
+  const z = $(cible);
+  if(!z) return;
+  if(points.length < 2){
+    z.innerHTML = `<div class="val-vide">L'historique se construit — un relevé par jour.<br>
+      La courbe apparaîtra ici dès le deuxième jour d'utilisation.</div>`;
+    return;
+  }
+  const vals = points.map(p => p.v);
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const etendue = (max - min) || 1;
+  const L = 100, H = 34;
+  const x = i => (i / (points.length - 1)) * L;
+  const y = v => H - ((v - min) / etendue) * H;
+  const ligne = points.map((p,i) => `${x(i).toFixed(2)},${y(p.v).toFixed(2)}`).join(' ');
+  const aire = `0,${H} ` + ligne + ` ${L},${H}`;
+  const hausse = vals[vals.length-1] >= vals[0];
+  const couleur = hausse ? '#3ba55d' : '#e85b45';
+  const ecart = vals[0] ? ((vals[vals.length-1] - vals[0]) / vals[0] * 100) : 0;
+
+  z.innerHTML = `<svg viewBox="0 0 ${L} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      <defs><linearGradient id="grad-${cible}" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${couleur}" stop-opacity=".28"/>
+        <stop offset="100%" stop-color="${couleur}" stop-opacity="0"/>
+      </linearGradient></defs>
+      <polygon points="${aire}" fill="url(#grad-${cible})"/>
+      <polyline points="${ligne}" fill="none" stroke="${couleur}" stroke-width="1.1"
+        vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+    </svg>
+    <div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--muted); margin-top:5px;">
+      <span>${points[0].j.slice(5).replace('-','/')}</span>
+      <span style="color:${couleur}; font-weight:700;">${ecart >= 0 ? '+' : ''}${ecart.toFixed(1)} %</span>
+      <span>${points[points.length-1].j.slice(5).replace('-','/')}</span>
+    </div>`;
+}
+
+let valPeriode = 30;
+async function rendreBandeauValeur(){
+  const nbCartes = batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
+  const nbScelle = (typeof scelle !== 'undefined' && Array.isArray(scelle))
+    ? scelle.reduce((s,p) => s + (parseInt(p.qty)||1), 0) : 0;
+  if($('val-total')) $('val-total').textContent = valeurTotaleStock().toFixed(2) + ' €';
+  if($('val-scelle')) $('val-scelle').textContent = nbScelle;
+  if($('val-refs')) $('val-refs').textContent = batch.length + (typeof scelle !== 'undefined' ? scelle.length : 0);
+
+  const pts = await chargerHistorique();
+  const limite = valPeriode ? Date.now() - valPeriode * 86400000 : 0;
+  const filtres = valPeriode ? pts.filter(p => new Date(p.j).getTime() >= limite) : pts;
+  tracerCourbe(filtres, 'val-graph');
+}
+
 function rendreVuesPortfolio(){
   appliquerVuePortfolio();
   rendreGrillePortfolio();
+  noterValeurDuJour().then(rendreBandeauValeur);
 }
 
 function renderBatchStatsOnly(){
@@ -11876,6 +12028,15 @@ $('pf-masquer').addEventListener('click', ()=>{
   localStorage.setItem('pfMasquerPrix', pfMasquerPrix ? '1' : '0');
   $('pf-masquer').textContent = pfMasquerPrix ? '👁️ Afficher €' : '👁️ Masquer €';
   rendreGrillePortfolio();
+});
+
+
+$('val-periode').addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-jours]');
+  if(!b) return;
+  valPeriode = parseInt(b.dataset.jours);
+  document.querySelectorAll('#val-periode button').forEach(x => x.classList.toggle('on', x === b));
+  rendreBandeauValeur();
 });
 
 $('pf-vue').addEventListener('click', (e)=>{
