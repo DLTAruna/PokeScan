@@ -3721,7 +3721,7 @@ async function resolveCardBestEffort(codeCandidates, number, denominator, photoD
     // colle pas, on rétrograde en "à vérifier" plutôt que d'affirmer.
     for(const setId of orderedSets){
       const card = await fetchCardExact(setId, number);
-      if(card) return {card, confidence:'low', note:`#${number}${denominator?'/'+denominator:''} (nom non confirmé)`};
+      if(card) return {card, confidence:'low', note:`#${number}${denominator?'/'+denominator:''} — nom à relire`};
     }
   }
 
@@ -3798,6 +3798,15 @@ function renderAutoResult(card, uncertain){
 // 'fail' (❌ vraiment rien lu, réservé au cas où l'OCR ne trouve NI numéro NI code).
 // Cœur de l'analyse, partagé par la file (photos importées) et la caméra (carte déjà
 // redressée) : même chaîne OCR + résolution, seule la source diffère.
+
+// Vrai si une lecture OCR a rendu quelque chose d'exploitable. Sert à distinguer « la
+// bande du nom a été lue mais le nom ne correspond pas » (rien à gagner à relire) de
+// « la bande du nom n'a rien rendu » (le découpage est tombé à côté, l'image entière
+// peut encore sauver la lecture).
+function texteUtile(t){
+  return typeof t === 'string' && t.replace(/[^a-zA-Zà-üÀ-Ü0-9]/g, '').length >= 4;
+}
+
 async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
   const analysis = { status:'pending', card:null };
   const cropPct = parseFloat($('ocr-crop-pct')?.value) || 10;
@@ -3894,17 +3903,21 @@ async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
 
   await analyserTexte();
 
-  // SECONDE CHANCE, CIBLÉE. L'image entière n'est relue que si le résultat n'est pas
-  // certain — c'est le seul cas où elle vaut son prix.
+  // SECONDE CHANCE, très restreinte : uniquement si la bande du nom n'a rien rendu de
+  // lisible. Pas si le résultat est simplement incertain.
   //
-  // Le premier jet de ce correctif la déclenchait sur l'absence de numéro, ce qui était
-  // le mauvais critère : mesuré sur 8 cartes, il coûtait une troisième passe à 3 d'entre
-  // elles (donc plus lent qu'avant) tout en laissant une carte passer de « certaine » à
-  // « à vérifier ». Le bon critère n'est pas « ai-je un numéro ? » mais « le résultat
-  // est-il exploitable sans intervention humaine ? » : dépenser 2 secondes de plus pour
-  // épargner une vérification manuelle est un bon échange, les dépenser sur une carte
-  // déjà certaine n'en est pas un.
-  if(analysis.status !== 'ok' && await lirePleineImage()){
+  // C'est le troisième réglage de ce critère, et les deux premiers étaient faux pour la
+  // même raison : j'ai raisonné sur l'exception au lieu de la distribution réelle.
+  // « Relire quand le résultat n'est pas certain » paraît raisonnable — dépenser deux
+  // secondes pour épargner une vérification manuelle est un bon échange — sauf que dans
+  // les relevés réels environ 60 % des cartes ne sont PAS certaines. L'exception était en
+  // fait le cas courant, et la troisième passe frappait la majorité des cartes : plus lent
+  // que le code d'avant, qui n'en faisait que deux.
+  //
+  // Le nombre de passes est donc borné à deux dans tous les cas, sauf quand la bande du
+  // nom est illisible — auquel cas elle n'a rien coûté d'utile et l'image entière la
+  // remplace.
+  if(!texteUtile(texts[1]) && await lirePleineImage()){
     await analyserTexte();
   }
 
@@ -6385,7 +6398,18 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
     if(cardNameAppearsInText(card, text)){
       if(item._analysis){
         item._analysis.status = 'ok';
-        item._analysis.note = (item._analysis.note || '') + ' + nom confirmé';
+        // REMPLACE la mention, ne s'y ajoute pas : la note produite était
+        // « #6/165 (nom non confirmé) + nom confirmé », qui se contredit elle-même.
+        // Elle passait inaperçue tant qu'elle restait enfouie dans une ligne d'état ;
+        // la page de vérification l'affiche désormais en évidence sous le nom, et c'est
+        // précisément la phrase sur laquelle on s'appuie pour trancher.
+        // La mention « nom à relire » est ÉCRITE POUR ÊTRE REMPLACÉE : c'est ce qui donne
+        // une note cohérente une fois le nom relu, au lieu d'empiler deux affirmations
+        // contraires dans la même phrase.
+        const n = item._analysis.note || '';
+        item._analysis.note = n.includes('nom à relire')
+          ? n.replace('nom à relire', 'nom confirmé')
+          : n + ' — nom confirmé';
       }
       if(mySeq === liveResultSeq) showLiveResultDone(card, 'high');
       // La confirmation arrive APRÈS coup : au moment de la capture la carte n'était
