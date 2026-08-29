@@ -4648,6 +4648,29 @@ let cardConfirmedAbsentSinceCapture = true;
 let absenceStreak = 0;
 const ABSENCE_STREAK_REQUISE = 4;
 
+// Identifiant de la dernière carte capturée, quel que soit le chemin qui l'a produite.
+let lastCaptureCardId = null;
+
+// ... mais compter des IMAGES était le mauvais étalon, et c'est ce qui a fait revenir les
+// doublons. La cadence de détection n'est pas fixe : elle dépend du coût de l'inférence et
+// de la charge du fil principal. Quatre images valaient environ 600 ms quand ce seuil a été
+// choisi ; après les corrections de performance, la détection tourne plus vite et les mêmes
+// quatre images ne représentent plus que quelques centaines de millisecondes — soit moins
+// qu'un décrochage passager. La carte était donc déclarée « partie » alors qu'elle était
+// toujours là, ce qui rouvrait la porte à une nouvelle capture.
+//
+// Relevé réel : la carte 41/165 capturée QUATRE fois en neuf secondes, sans jamais quitter
+// le champ.
+//
+// Exprimé en temps, le seuil veut dire ce qu'il prétend dire, et ne bougera plus avec les
+// performances de l'appareil ou du code. 700 ms : bien au-delà d'un décrochage de
+// détection, bien en deçà du temps qu'il faut pour échanger physiquement deux cartes.
+// 1200 ms et non 700 : un decrochage de detection dure quelques centaines de
+// millisecondes, alors que retirer une carte et en presenter une autre en demande au moins
+// le double. Le seuil doit tomber franchement entre les deux, pas les frôler tous les deux.
+const ABSENCE_MIN_MS = 1200;
+let absenceDepuis = 0;
+
 // Complète le signal ci-dessus : retour utilisateur — sur une carte tenue à la main,
 // parfaitement immobile en apparence, plusieurs captures du MÊME numéro se sont quand
 // même enchaînées (le score ne descend jamais sous MIN_SCORE, donc
@@ -5767,7 +5790,8 @@ async function detectLoop(){
       // tardive de la même carte comme si c'était une nouvelle. Mesuré : 31 % des captures
       // étaient des doublons.
       absenceStreak++;
-      if(absenceStreak >= ABSENCE_STREAK_REQUISE){
+      if(!absenceDepuis) absenceDepuis = Date.now();
+      if(absenceStreak >= ABSENCE_STREAK_REQUISE && Date.now() - absenceDepuis >= ABSENCE_MIN_MS){
         cardConfirmedAbsentSinceCapture = true;
         // La carte est partie : les échecs accumulés concernaient CELLE-LÀ, ils ne doivent
         // pas se reporter sur la suivante et déclencher un secours immédiat sur une carte
@@ -5779,6 +5803,7 @@ async function detectLoop(){
     } else {
       lowScoreStreak = 0;
       absenceStreak = 0;
+      absenceDepuis = 0;
       setOverlayTarget('lecture', d.corners);
       // Carte localisée : on oriente la mise au point vers la bande du numéro plutôt que
       // de laisser l'autofocus viser le centre du cadre (voir viserMiseAuPoint).
@@ -6200,7 +6225,7 @@ async function attemptRead(corners, score){
     // tremblement de main sur une carte immobile ne déclenche ni l'un ni l'autre,
     // contrairement à une comparaison stricte du numéro lu seul (le bruit de l'OCR peut
     // faire varier le texte reconnu même sans mouvement réel).
-    const visuallyDuplicate = lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= 4;
+    const visuallyDuplicate = lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= SAME_PHOTO_MATCH_DIST;
     const netMoveSinceCapture = lastCaptureCorners ? maxCornerShift(lastCaptureCorners, corners) : Infinity;
     // L'ABSENCE SOUTENUE est désormais la seule preuve qu'une carte a été remplacée. Le
     // déplacement des coins ne peut plus valider seul une nouvelle carte : retirer une
@@ -6214,8 +6239,32 @@ async function attemptRead(corners, score){
     // comportement voulu quand on ne fait que trembler sur place.
     const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture
       && netMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD * 0.5;
-    const sameNumberNeverConfirmedNew = lastCaptureNumber
-      && finalNumber === lastCaptureNumber.number && finalDenominator === lastCaptureNumber.denominator
+    // Deux façons indépendantes de reconnaître la carte précédente, parce qu'aucune des
+    // deux n'est disponible sur les deux chemins :
+    //  - l'identifiant de carte, quand il est connu des deux côtés (le raccourci visuel le
+    //    connaît toujours, la lecture normale l'apprend à la résolution) ;
+    //  - le couple numéro/dénominateur, avec les zéros de tête retirés — « 041 » et « 41 »
+    //    désignent la même carte et doivent se comparer comme telles.
+    const memeCarteParId = lastCaptureCardId && hashShortcut
+      && hashShortcut.card.id === lastCaptureCardId;
+    // Le dénominateur ne se compare que si les deux côtés en ont un VRAI. Le raccourci
+    // visuel y met l'identifiant de la carte (« sv03.5-041 ») là où la lecture normale y
+    // met le total imprimé (« 165 ») : exiger leur égalité revenait à ne jamais rien
+    // reconnaître dès que les deux chemins se croisaient. Or c'est exactement ce qui arrive
+    // pendant la seconde de résolution, où l'identifiant de carte n'est pas encore connu du
+    // côté de la lecture normale.
+    //
+    // Quand l'un des deux n'est pas numérique, on s'en tient au numéro. Deux cartes
+    // différentes portant le même numéro dans deux sets différents pourraient alors se
+    // confondre — mais seulement si la carte n'a jamais quitté le champ entre les deux, ce
+    // que la condition d'absence exige par ailleurs. Le cas ne peut donc pas se produire.
+    const denomComparable = (d) => /^\d+$/.test(String(d || ''));
+    const memeCarteParNumero = lastCaptureNumber
+      && stripLeadingZero(String(finalNumber)) === lastCaptureNumber.number
+      && ((denomComparable(finalDenominator) && denomComparable(lastCaptureNumber.denominator))
+            ? String(finalDenominator) === lastCaptureNumber.denominator
+            : true);
+    const sameNumberNeverConfirmedNew = (memeCarteParId || memeCarteParNumero)
       && !cardConfirmedNewSinceCapture;
     if(visuallyDuplicate || sameNumberNeverConfirmedNew){
       setAimHint('Même carte — présente la suivante');
@@ -6226,8 +6275,11 @@ async function attemptRead(corners, score){
 
     // Lecture réussie : on garde la carte redressée puis recadrée renvoyée par le worker.
     lastCaptureHash = r.hash;
-    lastCaptureNumber = {number:finalNumber, denominator:finalDenominator};
+    lastCaptureNumber = {number: stripLeadingZero(String(finalNumber)), denominator: String(finalDenominator)};
     lastCaptureCorners = corners;
+    // Connu tout de suite par le raccourci visuel ; la lecture normale le renseignera à la
+    // résolution (voir resolveLiveResult), quelques centaines de millisecondes plus tard.
+    lastCaptureCardId = hashShortcut ? hashShortcut.card.id : null;
     cardConfirmedAbsentSinceCapture = false;
     lastCaptureAt = Date.now();
     const cv = document.createElement('canvas');
@@ -6580,6 +6632,10 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
 
     if(mySeq !== liveResultSeq){ if(nameBmp?.close) nameBmp.close(); return; } // une carte plus récente affiche déjà autre chose
     if(result.card){
+      // Complète la clé d'identité de la dernière capture. Sans ça, la carte suivante
+      // reconnue par raccourci visuel n'aurait rien à quoi se comparer, et repasserait
+      // pour une nouvelle carte.
+      if(mySeq === liveResultSeq) lastCaptureCardId = result.card.id;
       registerSessionCardHash(result.card, liveHash); // alimente le raccourci visuel pour les prochains doublons
       enregistrerHashPhoto(result.card, liveHash, result.confidence); // ...et les sessions suivantes, si l'identification est sûre
       showLiveResultDone(result.card, result.confidence);
@@ -7354,7 +7410,8 @@ let derniereEntreeAuto = null;   // dernière ligne ajoutée automatiquement, po
 
 function validerAutomatiquement(card, item){
   const entry = construireEntree(card, item?.photo || null);
-  const {entry: cible, fusionnee} = ajouterAuLot(entry, {auto: true});
+  const resultat = ajouterAuLot(entry, {auto: true});
+  const {entry: cible, fusionnee} = resultat;
   derniereEntreeAuto = cible;
 
   // La photo est consommée : elle a servi, la carte est au lot. La laisser dans la file
@@ -7365,7 +7422,7 @@ function validerAutomatiquement(card, item){
 
   noterRecent(cible);
   noterSetRecent(card.set?.id);
-  noterSession(entry, fusionnee);
+  noterSession(entry, fusionnee, resultat.ignoree);
 
   renderBatchStatsOnly();
   updateQueueBadges();
@@ -7734,7 +7791,8 @@ let sessionDebut = Date.now();
 let sessionAjoutees = 0;
 let sessionValeur = 0;
 
-function noterSession(entry, fusionnee){
+function noterSession(entry, fusionnee, ignoree){
+  if(ignoree) return;   // rien n'a été ajouté : le bilan ne doit pas prétendre le contraire
   sessionAjoutees++;
   sessionValeur += (parseFloat(entry.price) || 0) * (fusionnee ? 1 : (parseInt(entry.qty) || 1));
   majBilanSession();
@@ -10206,6 +10264,17 @@ function ajouterAuLot(entry, opts = {}){
     : batch.find(e => e.setId === entry.setId && e.number === entry.number && e.condition === entry.condition);
 
   if(jumelle){
+    // Fenêtre pendant laquelle un second exemplaire de la MÊME carte est physiquement
+    // impossible s'il n'y a pas eu de moment sans carte dans le cadre.
+    const FUSION_MIN_MS = 3000;
+    const trop_tot = opts.auto && jumelle.ajouteA
+      && (Date.now() - jumelle.ajouteA) < FUSION_MIN_MS
+      && !cardConfirmedAbsentSinceCapture;
+    if(trop_tot){
+      toast('↩️ ' + (entry.cardName || 'Carte') + ' déjà comptée — retire-la du cadre pour en scanner un second exemplaire.');
+      return {entry: jumelle, fusionnee: true, ignoree: true};
+    }
+    jumelle.ajouteA = Date.now();
     jumelle.qty = (parseInt(jumelle.qty) || 1) + (parseInt(entry.qty) || 1);
     if(!jumelle.photo && entry.photo) jumelle.photo = entry.photo;
     // Une ligne validée à la main perd sa marque « auto » : elle a été vue par un humain,
@@ -10216,6 +10285,7 @@ function ajouterAuLot(entry, opts = {}){
   }
 
   if(opts.auto) entry.auto = true;
+  entry.ajouteA = Date.now();
   batch.push(entry);
   planifierSauvegardeSession();
   return {entry, fusionnee: false};
