@@ -5715,7 +5715,13 @@ async function detectLoop(){
       // tardive de la même carte comme si c'était une nouvelle. Mesuré : 31 % des captures
       // étaient des doublons.
       absenceStreak++;
-      if(absenceStreak >= ABSENCE_STREAK_REQUISE) cardConfirmedAbsentSinceCapture = true;
+      if(absenceStreak >= ABSENCE_STREAK_REQUISE){
+        cardConfirmedAbsentSinceCapture = true;
+        // La carte est partie : les échecs accumulés concernaient CELLE-LÀ, ils ne doivent
+        // pas se reporter sur la suivante et déclencher un secours immédiat sur une carte
+        // qui n'a même pas encore eu sa chance.
+        echecsConsecutifs = 0;
+      }
     } else {
       lowScoreStreak = 0;
       absenceStreak = 0;
@@ -5863,6 +5869,11 @@ async function attemptRead(corners, score){
   if(readInFlight) return;
   readInFlight = true;
   const t0 = performance.now();
+  // Déclarées au niveau de la fonction pour rester lisibles depuis le `finally`, qui fait
+  // le bilan de la tentative : c'est le seul endroit traversé par TOUS les chemins de
+  // sortie, succès comme échecs, présents et à venir.
+  let captureFaite = false;
+  let redressement = null;
   try{
     const video = $('video');
     if(!video || !video.videoWidth) return;
@@ -5982,6 +5993,9 @@ async function attemptRead(corners, score){
     // celles tombées dans le bon sens deviennent lisibles, ce qui ne l'étaient pas avant
     // (rejetées en bloc comme "forme incompatible").
     let sourceForRead = extracted.output;
+    // Conservé au niveau de la fonction : c'est cette image, déjà redressée et payée, que
+    // la capture de secours réutilise au lieu de la jeter.
+    redressement = sourceForRead;
     const rotated = isLandscape && !isPortrait; // pour diagnostic : sens de rotation deviné, pas garanti correct
     if(rotated){
       const src = extracted.output;
@@ -5992,6 +6006,7 @@ async function attemptRead(corners, score){
       rctx.rotate(-Math.PI/2);
       rctx.drawImage(src, -src.width/2, -src.height/2);
       sourceForRead = rot;
+      redressement = rot;
     }
 
     // Raccourci visuel : compare la carte redressée aux cartes déjà confirmées cette
@@ -6179,6 +6194,7 @@ async function attemptRead(corners, score){
       }
     }, 'image/png');
 
+    captureFaite = true;
     capturedThisSession++;
     flashScreen();
     if(navigator.vibrate) navigator.vibrate(40);
@@ -6193,6 +6209,77 @@ async function attemptRead(corners, score){
     diagPush('err', {msg:'lecture : ' + e.message});
   }finally{
     readInFlight = false;
+    // Bilan de la tentative, en un seul endroit plutôt qu'à chacun des cinq points
+    // d'échec : impossible d'en oublier un, aujourd'hui ou plus tard.
+    if(captureFaite){
+      echecsConsecutifs = 0;
+    } else {
+      echecsConsecutifs++;
+      if(echecsConsecutifs >= ECHECS_AVANT_SECOURS){
+        // Le redressement quand on l'a (meilleur cadrage, déjà calculé), sinon le contenu
+        // du cadre de visée — pour que la sortie de secours fonctionne AUSSI quand l'échec
+        // survient avant le redressement, ce qui est justement le cas le plus désespéré.
+        const video = $('video');
+        let source = redressement;
+        if(!source && video && video.videoWidth){
+          const g = guideRect(video);
+          const W = 600, H = Math.round(W*CARD_RATIO);
+          source = document.createElement('canvas');
+          source.width = W; source.height = H;
+          source.getContext('2d').drawImage(video,
+            g.x*video.videoWidth, g.y*video.videoHeight,
+            g.w*video.videoWidth, g.h*video.videoHeight, 0, 0, W, H);
+        }
+        if(source) capturerSansLecture(source, 'après ' + echecsConsecutifs + ' échecs');
+      }
+    }
+  }
+}
+
+
+// ---------------- SORTIE DE SECOURS : CAPTURER SANS AVOIR SU LIRE ----------------
+// La capture ne se déclenchait QUE si l'OCR avait lu le numéro. Une carte qu'il n'arrive
+// pas à lire n'était donc jamais capturée : elle n'entrait ni dans la file, ni dans le
+// lot, ni dans aucun compteur. Elle n'existait nulle part.
+//
+// Ce n'est pas un cas marginal. Sur la dernière session réelle : 64 tentatives, 26
+// captures, 38 échecs dont 33 « numéro illisible ». Près de six tentatives sur dix
+// n'aboutissaient à rien de visible — l'utilisateur présente une carte, l'application
+// réessaie en boucle, et rien ne se passe. Sans repère, impossible de savoir s'il faut
+// insister ou passer à la suivante.
+//
+// Au-delà de ce seuil, on capture donc quand même. L'image part dans « À vérifier », où
+// elle sera identifiée à la main via la comparaison photo/proposition — ce qui redonne à
+// cet onglet son rôle : le refuge des cartes que la lecture automatique ne sait pas traiter.
+const ECHECS_AVANT_SECOURS = 5;   // ~3 s de tentatives infructueuses sur la même carte
+let echecsConsecutifs = 0;
+
+// L'analyse de file N'EST PAS pré-remplie : on la laisse volontairement vide pour que
+// processQueueAnalysis rejoue la lecture en arrière-plan. Ce second passage emprunte un
+// chemin différent (image entière, autres découpages, pas de contrainte de temps réel) et
+// réussit parfois là où la lecture en direct a échoué. En cas d'échec là aussi, la carte
+// arrive dans « À vérifier » avec sa photo, prête pour une identification manuelle.
+function capturerSansLecture(canvas, raison){
+  try{
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    canvas.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
+
+    // Même comptabilité qu'une capture normale : sans ça, la carte suivante serait
+    // comparée à une empreinte périmée et pourrait passer pour un doublon.
+    lastCaptureHash = null;
+    lastCaptureNumber = null;
+    lastCaptureCorners = null;
+    cardConfirmedAbsentSinceCapture = true;
+    lastCaptureAt = Date.now();
+    echecsConsecutifs = 0;
+
+    capturedThisSession++;
+    flashScreen();
+    if(navigator.vibrate) navigator.vibrate([30, 60, 30]);   // motif distinct d'une lecture réussie
+    setAimHint('📥 Non lue — envoyée dans « À vérifier »');
+    diagPush('try', {ok:false, hint:'capture de secours (' + (raison || '?') + ')'});
+  }catch(e){
+    diagPush('err', {msg:'capture de secours : ' + e.message});
   }
 }
 
