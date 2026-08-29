@@ -1015,7 +1015,13 @@
        meme contrainte laisse le contenu tasse au milieu d'un large vide. On elargit donc, sans
        aller jusqu'a la pleine largeur : les tableaux et les grilles de cartes en profitent,
        le texte reste sous une longueur de ligne raisonnable. */
-    main{max-width:1180px; padding:20px 26px;}
+    /* Pleine largeur, comme chez eux. La contrainte de 1180 px venait d'une regle de
+       lisibilite — au-dela, une ligne de texte devient penible a suivre — mais elle
+       s'applique au TEXTE, pas a une grille de vignettes. Sur cet ecran, ce sont les
+       grilles qui occupent la place, et chaque colonne perdue est une carte de moins
+       visible d'un coup d'oeil. Les rares blocs de texte sont bornes individuellement. */
+    main{max-width:none; padding:20px 26px;}
+    main .sub, main .hint{max-width:78ch;}
     /* L'en-tete repetait le nom de l'application, desormais present en haut de la barre
        laterale. Sur telephone il reste la seule identification de la page, on ne le retire
        donc qu'ici. */
@@ -1254,6 +1260,90 @@
      varient de 8 a 18 px se lit comme un assemblage, pas comme un ensemble. */
   .panel, .tb-carte, .col-porte, .pf-item{border-radius:18px;}
   .col-porte{background-image:linear-gradient(160deg, rgba(255,255,255,.045), transparent 60%);}
+  /* ---- Carte d'inventaire, format horizontal ----
+     Mesure chez eux : carte 256x202, vignette 126x200 collee a gauche en object-fit
+     contain, informations a droite, et un pied en deux colonnes Achat | Cote.
+
+     Le format horizontal n'est pas qu'une preference : il permet d'afficher le nom en
+     entier, l'extension, l'etat ET deux prix cote a cote, ce qu'une vignette verticale ne
+     peut pas faire sans devenir tres haute. Sur une page d'inventaire, on lit les
+     informations autant que l'on regarde l'illustration. */
+  .pf-tete{display:flex; align-items:flex-start; gap:14px; flex-wrap:wrap; margin-bottom:14px;}
+  .pf-tete h2{margin:0;}
+  .pf-tete .sub{margin:2px 0 0;}
+  .pf-tete .actions{margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;}
+
+  .pf-grille{display:grid; gap:16px; grid-template-columns:repeat(auto-fill, minmax(var(--pf-col, 256px), 1fr));}
+  .pf-grille.grand{--pf-col:320px;}
+  .pf-grille.compact{--pf-col:196px;}
+  .pf-item{
+    /* flex-direction explicite : une regle .pf-item plus ancienne imposait column, et comme
+       celle-ci ne redefinissait pas la propriete, la carte continuait de s'empiler malgre
+       tout le reste. Une valeur heritee d'une regle qu'on croit remplacee est le piege
+       classique quand deux blocs CSS portent le meme selecteur. */
+    position:relative; display:flex; flex-direction:row; align-items:stretch; overflow:hidden;
+    background:linear-gradient(160deg, #171b26, #10131c);
+    border:1px solid rgba(255,255,255,.09); border-radius:16px;
+    cursor:pointer; text-align:left; color:var(--text); font:inherit; padding:0;
+    min-height:150px; transition:transform .14s ease, border-color .14s ease;
+  }
+  .pf-item:hover{transform:translateY(-2px); border-color:var(--accent2);}
+  .pf-item.choisi{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent) inset;}
+  /* contain et non cover : une carte rognee perd son cadre et son coin bas-gauche, or
+     c'est precisement la que se trouve le numero qu'on cherche a verifier d'un coup d'oeil. */
+  .pf-vignette{width:47%; min-width:96px; object-fit:contain; background:#0a0a0a;
+    align-self:stretch; display:block;}
+  .pf-infos{flex:1; min-width:0; display:flex; flex-direction:column; padding:11px 12px;}
+  .pf-nom{font-size:14px; font-weight:600; line-height:1.25;
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
+  .pf-sous{font-size:12px; font-weight:500; color:rgba(241,243,248,.54); margin-top:3px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .pf-chip{align-self:flex-start; margin-top:7px; font-size:9.5px; font-weight:800;
+    padding:2px 7px; border-radius:6px;}
+  /* Pied en deux colonnes : le prix d'achat en face de la cote, c'est le seul endroit ou
+     la marge se lit sans calcul mental. */
+  .pf-pied{display:flex; gap:10px; margin-top:auto; padding-top:9px;
+    border-top:1px solid rgba(255,255,255,.07);}
+  .pf-pied > div{flex:1; min-width:0;}
+  .pf-pied .l{font-size:10px; font-weight:400; color:rgba(241,243,248,.54); display:block;}
+  .pf-pied .v{font-size:14px; font-weight:600; font-variant-numeric:tabular-nums;}
+  .pf-pied .v.cote{color:var(--accent);}
+  .pf-pied .v.gain{color:#3ba55d;}
+  .pf-pied .v.perte{color:var(--bad);}
+  .pf-qte{position:absolute; top:8px; right:8px; background:var(--accent); color:#1a1206;
+    font-size:10.5px; font-weight:800; padding:1px 6px; border-radius:8px; z-index:2;}
+  /* Posee sur la VIGNETTE et non en bas de la carte, ou elle recouvrait le pied
+     Achat/Cote — c'est-a-dire l'information la plus utile de la carte. */
+  .pf-alerte{position:absolute; bottom:8px; left:8px; background:rgba(192,57,43,.92);
+    color:#fff; font-size:9.5px; font-weight:700; padding:2px 6px; border-radius:6px; z-index:2;
+    max-width:44%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .pf-coche{position:absolute; top:8px; left:8px; width:19px; height:19px; border-radius:5px;
+    border:2px solid rgba(255,255,255,.5); background:rgba(0,0,0,.5); z-index:2;
+    display:none; align-items:center; justify-content:center; font-size:12px; color:#1a1206;}
+  .pf-grille.selection .pf-coche{display:flex;}
+  .pf-item.choisi .pf-coche{background:var(--accent); border-color:var(--accent);}
+
+  .pf-resultats{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:12px;}
+  .pf-resultats .compte{font-size:12.5px; color:var(--muted);}
+  .pf-resultats .droite{margin-left:auto; display:flex; gap:8px; align-items:center; flex-wrap:wrap;}
+  .pf-pagination{display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    margin-top:14px; padding-top:12px; border-top:1px solid var(--border); font-size:12.5px;
+    color:var(--muted);}
+  .pf-pagination .pages{margin-left:auto; display:flex; gap:5px;}
+  .pf-pagination .pages button{
+    border:1px solid var(--border); background:var(--panel2); color:var(--text);
+    font:inherit; font-size:12px; padding:4px 10px; border-radius:7px; cursor:pointer;
+  }
+  .pf-pagination .pages button.on{background:var(--accent); color:#1a1206; border-color:var(--accent);}
+  .pf-pagination .pages button:disabled{opacity:.4; cursor:default;}
+
+  @media (max-width: 520px){
+    .pf-grille{--pf-col:100%;}
+    .pf-grille.grand{--pf-col:100%;}
+    .pf-grille.compact{--pf-col:150px;}
+    .pf-grille.compact .pf-item{flex-direction:column; min-height:0;}
+    .pf-grille.compact .pf-vignette{width:100%; aspect-ratio:63/88;}
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -2029,27 +2119,59 @@
         <button class="btn-gold btn-sm" id="btn-revue">🔍 Relire les ajouts auto (<span id="nb-auto">0</span>)</button>
         <span class="hint" id="reprice-status"></span>
       </div>
+      <div class="pf-tete">
+        <div>
+          <h2 style="margin:0;">Portfolio</h2>
+          <p class="sub">Gère tes cartes et produits scellés.</p>
+        </div>
+        <div class="actions">
+          <button class="btn-ghost btn-sm" id="pf-masquer">👁️ Masquer €</button>
+          <button class="btn-gold btn-sm" data-tab="capture">+ Ajouter une carte</button>
+          <button class="btn-ghost btn-sm" data-tab="scelle">+ Ajouter un scellé</button>
+        </div>
+      </div>
+
       <div class="pf-barre">
         <div class="grandir">
-          <input type="text" id="lot-filtre" placeholder="🔎 Filtrer — nom, set, numéro, SKU…" autocomplete="off">
+          <input type="text" id="lot-filtre" placeholder="🔎 Rechercher par nom, série, numéro…" autocomplete="off">
         </div>
-        <div class="pf-seg" id="pf-vue">
-          <button data-vue="grille" class="on">Grille</button>
-          <button data-vue="tableau">Tableau</button>
+        <select id="pf-statut" style="width:auto; min-width:140px;">
+          <option value="">Tous les statuts</option>
+          <option value="prix">Avec un prix</option>
+          <option value="sansprix">Sans prix</option>
+          <option value="sansimage">Sans image</option>
+        </select>
+        <select id="pf-tri" style="width:auto; min-width:170px;">
+          <option value="recent">Date d'ajout (récent)</option>
+          <option value="ancien">Date d'ajout (ancien)</option>
+          <option value="cher">Cote décroissante</option>
+          <option value="basprix">Cote croissante</option>
+          <option value="nom">Nom (A→Z)</option>
+        </select>
+      </div>
+
+      <div class="pf-resultats">
+        <span class="compte" id="pf-compte">0 carte</span>
+        <div class="droite">
+          <button class="btn-ghost btn-sm" id="pf-selection">☑️ Sélectionner</button>
+          <div class="pf-seg" id="pf-vue">
+            <button data-vue="grille" class="on">Grille</button>
+            <button data-vue="tableau">Tableau</button>
+          </div>
+          <div class="pf-seg" id="pf-densite">
+            <button data-densite="grand">Grand</button>
+            <button data-densite="normal" class="on">Normal</button>
+            <button data-densite="compact">Compact</button>
+          </div>
         </div>
-        <div class="pf-seg" id="pf-densite">
-          <button data-densite="grand">Grand</button>
-          <button data-densite="normal" class="on">Normal</button>
-          <button data-densite="compact">Compact</button>
-        </div>
-        <span class="hint" id="lot-filtre-info"></span>
       </div>
       <div class="pf-grille" id="pf-grille"></div>
+      <div class="pf-pagination" id="pf-pagination"></div>
       <div class="table-wrap">
       <table id="batch-table">
           <thead>
             <tr>
-              <th>Photo</th><th>SKU</th><th>Titre</th><th>État</th><th>Prix</th><th>Marché</th><th>Devise</th><th>Qté</th><th>URL image (pour eBay)</th><th></th>
+              <th>Photo</th><th>SKU</th><th>Titre</th><th>État</th><th>Achat</th><th>Prix</th><th>Marché</th><th>Devise</th><th>Qté</th><th>URL image (pour eBay)</th><th></th>
             </tr>
           </thead>
           <tbody id="batch-tbody"></tbody>
@@ -11344,6 +11466,7 @@ function renderBatch(){
           ${['NM','LP','MP','HP','DMG'].map(c=>`<option value="${c}" ${entry.condition===c?'selected':''}>${c}</option>`).join('')}
         </select>
       </td>
+      <td><input type="number" data-field="achat" value="${entry.achat || ''}" style="width:70px;" step="0.01" placeholder="—"></td>
       <td><input type="number" data-field="price" value="${entry.price}" style="width:70px;" step="0.01"></td>
       <td class="cell-marche">${positionMarche(entry)}</td>
       <td>
@@ -11361,6 +11484,9 @@ function renderBatch(){
         if(input.dataset.field==='price' || input.dataset.field==='qty' || input.dataset.field==='imageUrl'){
           renderBatchStatsOnly();
         }
+        // La grille montre les memes chiffres que le tableau : modifier l'un sans rafraichir
+        // l'autre laisserait deux vues du meme lot en desaccord.
+        if(typeof rendreGrillePortfolio === 'function') rendreGrillePortfolio();
       });
     });
     tr.querySelector('[data-action="delete"]').addEventListener('click', ()=>{
@@ -11476,51 +11602,106 @@ function appliquerVuePortfolio(){
   if(d) d.style.display = pfVue === 'grille' ? '' : 'none';
 }
 
+// Pagination et sélection : sur mille cartes, tout rendre d'un coup fabrique des milliers
+// de noeuds DOM et une page qui rame. Et sans sélection, la moindre action groupée oblige à
+// répéter le même geste ligne par ligne.
+let pfPage = 0;
+let pfParPage = parseInt(localStorage.getItem('pfParPage')) || 24;
+let pfModeSelection = false;
+let pfChoisies = new Set();
+let pfMasquerPrix = localStorage.getItem('pfMasquerPrix') === '1';
+
+function pfLignesFiltrees(){
+  const q = ($('lot-filtre')?.value || '').trim().toLowerCase();
+  const statut = $('pf-statut')?.value || '';
+  const tri = $('pf-tri')?.value || 'recent';
+
+  let l = batch.filter(e => {
+    if(q && ![e.cardName, e.setName, e.number, e.sku, e.title, e.rarity]
+        .some(v => String(v || '').toLowerCase().includes(q))) return false;
+    if(statut === 'prix' && !parseFloat(e.price)) return false;
+    if(statut === 'sansprix' && parseFloat(e.price)) return false;
+    if(statut === 'sansimage' && e.imageUrl) return false;
+    return true;
+  });
+
+  const cote = e => parseFloat(e.marketPrice) || parseFloat(e.price) || 0;
+  // L'ordre d'INSERTION fait office de date d'ajout : les entrées n'en portent pas, mais
+  // le lot est toujours empilé dans l'ordre où les cartes ont été scannées.
+  if(tri === 'ancien') l = l.slice();
+  else if(tri === 'recent') l = l.slice().reverse();
+  else if(tri === 'cher') l = l.slice().sort((a,b)=> cote(b) - cote(a));
+  else if(tri === 'basprix') l = l.slice().sort((a,b)=> cote(a) - cote(b));
+  else if(tri === 'nom') l = l.slice().sort((a,b)=> String(a.cardName||'').localeCompare(String(b.cardName||'')));
+  return l;
+}
+
 function rendreGrillePortfolio(){
   const g = $('pf-grille');
   if(!g) return;
-  const q = ($('lot-filtre')?.value || '').trim().toLowerCase();
-  const correspond = (e)=> !q || [e.cardName, e.setName, e.number, e.sku, e.title, e.rarity]
-    .some(v => String(v || '').toLowerCase().includes(q));
 
-  const lignes = batch.filter(correspond);
-  if(!lignes.length){
-    g.innerHTML = `<div class="pf-vide">${batch.length ? 'Aucune carte ne correspond à ce filtre.' : 'Le lot est vide — scanne une carte pour commencer.'}</div>`;
+  const lignes = pfLignesFiltrees();
+  const total = lignes.length;
+  const pages = Math.max(1, Math.ceil(total / pfParPage));
+  if(pfPage >= pages) pfPage = pages - 1;
+  const debut = pfPage * pfParPage;
+  const visibles = lignes.slice(debut, debut + pfParPage);
+
+  const nbEx = lignes.reduce((s,e)=> s + (parseInt(e.qty)||1), 0);
+  if($('pf-compte')) $('pf-compte').textContent =
+    total ? `${total} référence(s) · ${nbEx} exemplaire(s)` : 'Aucune carte';
+
+  g.classList.toggle('selection', pfModeSelection);
+
+  if(!visibles.length){
+    g.innerHTML = `<div class="pf-vide">${batch.length ? 'Aucune carte ne correspond à ces filtres.' : 'Le lot est vide — scanne une carte pour commencer.'}</div>`;
+    rendrePagination(total, pages);
     return;
   }
 
-  g.innerHTML = lignes.map(e => {
+  const eur = v => pfMasquerPrix ? '•••' : (v ? v.toFixed(2) + ' €' : '—');
+
+  g.innerHTML = visibles.map(e => {
     const idx = batch.indexOf(e);
     // La photo prise prime sur l'illustration officielle : c'est TON exemplaire, avec son
     // état réel, et c'est lui qu'on vend.
     const img = e.photo || e.cardImage || '';
     const qte = parseInt(e.qty) || 1;
-    const prix = parseFloat(e.price);
-    const marche = parseFloat(e.marketPrice);
+    const prix = parseFloat(e.price) || 0;
+    const achat = parseFloat(e.achat) || 0;
     const manque = !prix ? 'Sans prix' : (!e.imageUrl ? 'Sans image' : '');
-    return `<button class="pf-item" data-idx="${idx}" title="${escapeHtml(e.title || e.cardName || '')}">
+    // La couleur de la cote dit la marge sans calcul : verte si elle dépasse l'achat,
+    // rouge si elle est en dessous, neutre tant qu'aucun achat n'est renseigné.
+    const cls = achat ? (prix >= achat ? 'gain' : 'perte') : 'cote';
+    return `<button class="pf-item${pfChoisies.has(e.id) ? ' choisi' : ''}" data-idx="${idx}" data-id="${escapeHtml(e.id)}" title="${escapeHtml(e.title || e.cardName || '')}">
+      <span class="pf-coche">${pfChoisies.has(e.id) ? '✓' : ''}</span>
       ${img ? `<img class="pf-vignette" src="${escapeHtml(img)}" loading="lazy" alt="">`
-            : '<div class="pf-vignette"></div>'}
-      <span class="pf-etat re-${e.condition}">${e.condition || 'NM'}</span>
+            : '<span class="pf-vignette"></span>'}
       ${qte > 1 ? `<span class="pf-qte">×${qte}</span>` : ''}
       ${manque ? `<span class="pf-alerte">${manque}</span>` : ''}
-      <span class="pf-corps">
+      <span class="pf-infos">
         <span class="pf-nom">${escapeHtml(e.cardName || '—')}</span>
-        <span class="pf-meta">${escapeHtml(e.setName || '')}${e.number ? ' · #' + escapeHtml(e.number) : ''}</span>
-        <span class="pf-prix">
-          <b>${prix ? prix.toFixed(2) + ' €' : '—'}</b>
-          ${marche && prix && marche > prix ? `<span class="marche">${marche.toFixed(2)} €</span>` : ''}
+        <span class="pf-sous">${escapeHtml(e.setName || '')}${e.number ? ' · #' + escapeHtml(e.number) : ''}</span>
+        <span class="pf-chip re-${e.condition}">${e.condition || 'NM'}</span>
+        <span class="pf-pied">
+          <div><span class="l">Achat</span><span class="v">${eur(achat)}</span></div>
+          <div><span class="l">Cote</span><span class="v ${cls}">${eur(prix)}</span></div>
         </span>
       </span>
     </button>`;
   }).join('');
 
-  // Un clic sur une vignette bascule au tableau, filtré sur cette carte : c'est là qu'on
-  // modifie. Sans ça, la grille serait une impasse — jolie, et sans action possible.
   g.querySelectorAll('.pf-item').forEach(b=>{
     b.addEventListener('click', ()=>{
       const e = batch[parseInt(b.dataset.idx)];
       if(!e) return;
+      if(pfModeSelection){
+        // En mode sélection, le clic coche au lieu de naviguer : partir sur une autre page
+        // au premier clic rendrait toute sélection multiple impossible.
+        if(pfChoisies.has(e.id)) pfChoisies.delete(e.id); else pfChoisies.add(e.id);
+        rendreGrillePortfolio();
+        return;
+      }
       if($('lot-filtre')) $('lot-filtre').value = e.sku || e.cardName || '';
       pfVue = 'tableau';
       localStorage.setItem('pfVue', pfVue);
@@ -11528,6 +11709,32 @@ function rendreGrillePortfolio(){
       renderBatch();
     });
   });
+
+  rendrePagination(total, pages);
+  if(typeof majBarreSelection === 'function') majBarreSelection();
+}
+
+function rendrePagination(total, pages){
+  const z = $('pf-pagination');
+  if(!z) return;
+  if(total <= pfParPage && pfParPage === 24){ z.innerHTML = ''; return; }
+  const bouton = (lbl, page, actif, off) =>
+    `<button data-page="${page}"${actif ? ' class="on"' : ''}${off ? ' disabled' : ''}>${lbl}</button>`;
+  const tailles = [24, 48, 96].map(n =>
+    `<button data-taille="${n}"${n === pfParPage ? ' class="on"' : ''}>${n}</button>`).join('');
+  let pagination = '';
+  if(pages > 1){
+    pagination = bouton('‹', pfPage - 1, false, pfPage === 0);
+    for(let p = 0; p < pages; p++){
+      // Au-dela de sept pages, on n'affiche que le voisinage : une rangee de quarante
+      // numeros ne se lit pas et ne se clique pas mieux.
+      if(pages > 7 && Math.abs(p - pfPage) > 2 && p !== 0 && p !== pages - 1) continue;
+      pagination += bouton(String(p + 1), p, p === pfPage);
+    }
+    pagination += bouton('›', pfPage + 1, false, pfPage >= pages - 1);
+  }
+  z.innerHTML = `<span>Par page</span><div class="pf-seg">${tailles}</div>
+    <span class="pages">${pagination}</span>`;
 }
 
 function rendreVuesPortfolio(){
@@ -11607,6 +11814,69 @@ $('lot-filtre').addEventListener('input', ()=>{
   lotFiltreTempo = setTimeout(()=>{ renderBatch(); rendreGrillePortfolio(); }, 200);
 });
 
+
+
+// Filtres, tri et pagination retombent tous sur le même rendu : un seul point d'entrée
+// évite qu'un contrôle ajouté plus tard oublie de rafraîchir la grille.
+['pf-statut','pf-tri'].forEach(id=>{
+  const el = $(id);
+  if(el) el.addEventListener('change', ()=>{ pfPage = 0; rendreGrillePortfolio(); });
+});
+
+$('pf-pagination').addEventListener('click', (e)=>{
+  const t = e.target.closest('button[data-taille]');
+  if(t){ pfParPage = parseInt(t.dataset.taille); localStorage.setItem('pfParPage', pfParPage);
+         pfPage = 0; rendreGrillePortfolio(); return; }
+  const p = e.target.closest('button[data-page]');
+  if(p && !p.disabled){ pfPage = Math.max(0, parseInt(p.dataset.page)); rendreGrillePortfolio(); }
+});
+
+$('pf-selection').addEventListener('click', ()=>{
+  pfModeSelection = !pfModeSelection;
+  if(!pfModeSelection) pfChoisies.clear();
+  $('pf-selection').textContent = pfModeSelection ? '✕ Quitter la sélection' : '☑️ Sélectionner';
+  majBarreSelection();
+  rendreGrillePortfolio();
+});
+
+// Barre d'actions groupées : elle n'apparaît QUE lorsqu'une carte est cochée. Un bandeau
+// permanent avec des boutons inertes occupe de la place et n'apprend rien.
+function majBarreSelection(){
+  let z = $('pf-actions-groupe');
+  if(!z){
+    z = document.createElement('div');
+    z.id = 'pf-actions-groupe';
+    z.className = 'repricing-bar';
+    z.style.display = 'none';
+    $('pf-grille').parentNode.insertBefore(z, $('pf-grille'));
+  }
+  if(!pfModeSelection || !pfChoisies.size){ z.style.display = 'none'; return; }
+  z.style.display = '';
+  z.innerHTML = `<span><b>${pfChoisies.size}</b> carte(s) sélectionnée(s)</span>
+    <button class="btn-ghost btn-sm" id="pfg-tout">Tout sélectionner</button>
+    <button class="btn-ghost btn-sm" id="pfg-rien">Tout décocher</button>
+    <button class="btn-ghost btn-sm" id="pfg-supprimer" style="color:var(--danger,#e5484d)">🗑️ Retirer du lot</button>`;
+  $('pfg-tout').onclick = ()=>{ pfLignesFiltrees().forEach(e=>pfChoisies.add(e.id)); rendreGrillePortfolio(); majBarreSelection(); };
+  $('pfg-rien').onclick = ()=>{ pfChoisies.clear(); rendreGrillePortfolio(); majBarreSelection(); };
+  $('pfg-supprimer').onclick = ()=>{
+    const n = pfChoisies.size;
+    if(!confirm(`Retirer ${n} carte(s) du lot ?`)) return;
+    for(let i = batch.length - 1; i >= 0; i--) if(pfChoisies.has(batch[i].id)) batch.splice(i, 1);
+    pfChoisies.clear();
+    planifierSauvegardeSession();
+    renderBatch(); rendreGrillePortfolio(); majBarreSelection();
+    toast(`🗑️ ${n} carte(s) retirée(s).`);
+  };
+}
+
+// Masquer les prix : utile pour montrer son inventaire à quelqu'un sans exposer ce qu'on
+// en attend, ou simplement pour parcourir ses cartes sans penser argent.
+$('pf-masquer').addEventListener('click', ()=>{
+  pfMasquerPrix = !pfMasquerPrix;
+  localStorage.setItem('pfMasquerPrix', pfMasquerPrix ? '1' : '0');
+  $('pf-masquer').textContent = pfMasquerPrix ? '👁️ Afficher €' : '👁️ Masquer €';
+  rendreGrillePortfolio();
+});
 
 $('pf-vue').addEventListener('click', (e)=>{
   const b = e.target.closest('button[data-vue]');
