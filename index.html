@@ -187,8 +187,8 @@
      de visée superposé doit s'aligner au pixel près sur l'image vidéo. */
   video{width:100%; display:block; max-height:65vh; object-fit:contain; background:#000;}
   .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none;}
-  .flash.show{opacity:.85; transition:opacity 0s;}
-  .flash:not(.show){transition:opacity .25s;}
+  .flash.show{opacity:.22; transition:opacity 0s;}
+  .flash:not(.show){transition:opacity .16s ease-out;}
   .capture-fab{
     position:absolute; bottom:16px; left:50%; transform:translateX(-50%); width:64px; height:64px;
     border-radius:50%; border:3px solid var(--accent); font-size:22px;
@@ -215,14 +215,14 @@
   }
   .auto-toggle.on{background:var(--good); border-color:var(--good);}
   .cam-counter{
-    position:absolute; top:10px; right:10px; background:rgba(0,0,0,.6); color:#fff;
+    position:absolute; top:38px; right:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
   }
   /* Valeur cumulée des cartes identifiées depuis le démarrage de la caméra : sur une
      session de plusieurs centaines de cartes, c'est l'information qui dit s'il vaut la
      peine de continuer, et la chercher dans l'onglet Lot casse le rythme du scan. */
   .cam-total{
-    position:absolute; top:38px; right:10px; background:rgba(212,175,55,.92); color:#1a1206;
+    position:absolute; top:10px; right:10px; background:rgba(212,175,55,.92); color:#1a1206;
     padding:4px 10px; border-radius:14px; font-size:13px; font-weight:700;
     box-shadow:0 2px 8px rgba(0,0,0,.4);
   }
@@ -235,7 +235,7 @@
   /* Rappel de prise en main : les doigts posés sur les bords gênent la détection du
      quadrilatère de la carte, même si le numéro (bas-gauche) reste visible. */
   .grip-hint{
-    position:absolute; top:46px; left:50%; transform:translateX(-50%);
+    position:absolute; top:72px; left:50%; transform:translateX(-50%);
     background:rgba(0,0,0,.55); color:#fff; padding:4px 10px; border-radius:12px;
     font-size:11px; white-space:nowrap; pointer-events:none; max-width:92%;
     overflow:hidden; text-overflow:ellipsis; opacity:.85;
@@ -853,6 +853,36 @@
   .lot-filtre{display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin:10px 0 4px;}
   .lot-filtre input{flex:1; min-width:180px;}
   .lot-filtre .hint{margin:0; white-space:nowrap;}
+  /* ---- Jauges de qualite de prise de vue ----
+     Trois causes dominent les lectures ratees : le boug/flou, le manque de lumiere, et
+     le reflet sur les holos. Jusqu'ici l'application ne disait rien de tout ca : elle
+     affichait « Vise la carte » et l'utilisateur recommencait sans savoir quoi corriger.
+     Trois jauges continues valent mieux qu'un message d'erreur apres coup, parce qu'on
+     les corrige EN VISANT, avant meme d'avoir declenche. */
+  .jauges{
+    position:absolute; left:6px; top:50%; transform:translateY(-50%);
+    display:flex; flex-direction:column; gap:8px; pointer-events:none; z-index:3;
+    padding:8px 8px 9px; border-radius:11px;
+    background:rgba(8,10,16,.46); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+    border:1px solid rgba(255,255,255,.09);
+  }
+  .jauge{display:flex; flex-direction:column; gap:3px;}
+  .jauge .jl{
+    font-size:8px; font-weight:800; letter-spacing:.09em; color:rgba(255,255,255,.62);
+    text-shadow:0 1px 3px rgba(0,0,0,.9);
+  }
+  .jauge .jt{
+    display:block; width:42px; height:4px; border-radius:3px;
+    background:rgba(255,255,255,.16); overflow:hidden;
+    box-shadow:0 1px 3px rgba(0,0,0,.55);
+  }
+  /* La transition est ce qui rend la jauge lisible : l'echantillonnage tourne a ~8 Hz,
+     et sans elle la barre sauterait par a-coups — exactement l'impression de saccade
+     qu'on cherche a supprimer. Le CSS interpole entre deux mesures, gratuitement. */
+  .jauge .jt i{
+    display:block; height:100%; width:0%; border-radius:3px;
+    transition:width .16s linear, background-color .16s linear;
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1302,6 +1332,11 @@
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Objectif</button>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
         <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
+        <div class="jauges" id="jauges" style="display:none;">
+          <div class="jauge"><span class="jl">NETTETÉ</span><span class="jt"><i id="jauge-net"></i></span></div>
+          <div class="jauge"><span class="jl">LUMIÈRE</span><span class="jt"><i id="jauge-lum"></i></span></div>
+          <div class="jauge"><span class="jl">CADRAGE</span><span class="jt"><i id="jauge-cad"></i></span></div>
+        </div>
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
         <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
         <button class="capture-fab" id="btn-capture-frame">📸</button>
@@ -4757,7 +4792,12 @@ function roundedPolyPath(ctx, pts, radius){
   ctx.closePath();
 }
 
-// Dessine le quadrilatère détecté par-dessus la vidéo, dans la couleur de l'état —
+// Durée de l'impulsion de capture. Assez longue pour être vue, assez courte pour ne pas
+// se superposer à la capture suivante (l'intervalle minimal entre deux est de 400 ms).
+const PULSE_DUREE_MS = 320;
+let pulseCaptureAt = -1e9;
+
+// Dessine le cadre de visée par-dessus la vidéo, dans la couleur de l'état —
 // rouge (aucune carte), orange (détectée, lecture en cours), vert (capturée). Les coins
 // viennent du worker (fractions 0-1 de l'image) ; sans détection, on retombe sur le
 // cadre placeholder fixe. Un canvas de 640px de large suffit (l'overlay ne dessine que
@@ -4776,37 +4816,306 @@ function drawGuideOverlay(video, state, corners){
   const ctx = cvs.getContext('2d');
   ctx.clearRect(0,0,OW,OH);
 
-  let pts;
-  if(corners){
-    pts = [corners.tl, corners.tr, corners.br, corners.bl].map(p => [p[0]*OW, p[1]*OH]);
-  } else {
-    const g = guideRect(video);
-    const x = g.x*OW, y = g.y*OH, w = g.w*OW, h = g.h*OH;
-    pts = [[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
-  }
+  // Le cadre de référence est FIXE, ancré sur le rectangle de visée. Auparavant tout
+  // (le masque sombre comme le trait) épousait le quadrilatère détecté, qui se réajuste
+  // 5 à 8 fois par seconde sur une carte tenue à la main : le trou clair se déformait en
+  // permanence sous les doigts, et c'est cette respiration continue de l'image qui se
+  // lisait comme un défaut de fluidité. Une cible immobile donne aussi quelque chose à
+  // viser, là où un cadre qui suit la carte ne dit jamais où la mettre.
+  const g = guideRect(video);
+  const R = {x: g.x*OW, y: g.y*OH, w: g.w*OW, h: g.h*OH};
+  const radius = Math.min(R.w, R.h) * 0.055;
 
-  // Rayon des coins : une vraie carte Pokémon a les coins arrondis, pas droits — ce
-  // cadre doit épouser la même forme plutôt qu'un simple rectangle. ~7 % du plus petit
-  // côté de la boîte englobante, comme un vrai coin de carte à cette échelle.
-  const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
-  const radius = Math.min(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys)) * 0.07;
+  const couleurs = {attente:'#e0553f', lecture:'#e0a12a', ok:'#3ba55d'};
+
+  // Impulsion de capture : le vrai signal « c'est pris ». Animée ici, dans la boucle
+  // rAF déjà en place, elle suit le rafraîchissement réel de l'écran — là où l'ancien
+  // voile blanc opaque masquait la vidéo un quart de seconde d'un bloc.
+  const dt = performance.now() - pulseCaptureAt;
+  const pulse = dt >= 0 && dt < PULSE_DUREE_MS ? Math.pow(1 - dt/PULSE_DUREE_MS, 2) : 0;
+  const couleur = pulse > 0 ? couleurs.ok : (couleurs[state] || couleurs.attente);
 
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,.38)';
+  ctx.fillStyle = 'rgba(0,0,0,.42)';
   ctx.beginPath();
-  ctx.rect(0,0,OW,OH);
-  roundedPolyPath(ctx, pts, radius);
+  ctx.rect(0, 0, OW, OH);
+  rectCartePath(ctx, R, radius);
   ctx.fill('evenodd');
   ctx.restore();
 
-  const couleurs = {attente:'#e0553f', lecture:'#e0a12a', ok:'#3ba55d'};
-  const couleur = couleurs[state] || couleurs.attente;
+  // Le quadrilatère détecté reste tracé, mais en fil discret : il montre que le
+  // détecteur accroche la carte sans redevenir l'élément dominant de l'image.
+  if(corners){
+    const pts = [corners.tl, corners.tr, corners.br, corners.bl].map(p => [p[0]*OW, p[1]*OH]);
+    const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
+    ctx.save();
+    ctx.globalAlpha = 0.34;
+    ctx.strokeStyle = couleur;
+    ctx.lineWidth = Math.max(1.5, OW*0.0028);
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    roundedPolyPath(ctx, pts, Math.min(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys)) * 0.07);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // Coins d'équerre, comme sur une mire d'appareil photo : quatre repères valent un
+  // rectangle complet pour cadrer, et laissent la carte entièrement visible.
+  const marge = pulse * Math.min(R.w, R.h) * 0.035;
+  ctx.save();
   ctx.strokeStyle = couleur;
-  ctx.lineWidth = Math.max(3, OW*0.006);
+  ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  ctx.beginPath();
-  roundedPolyPath(ctx, pts, radius);
-  ctx.stroke();
+  ctx.lineWidth = Math.max(3, OW*0.0072) * (1 + pulse*0.7);
+  if(pulse > 0){
+    ctx.shadowColor = couleurs.ok;
+    ctx.shadowBlur = 22 * pulse;
+  }
+  ctx.globalAlpha = 1;
+  dessinerCoins(ctx, {x: R.x - marge, y: R.y - marge, w: R.w + marge*2, h: R.h + marge*2}, radius);
+  ctx.restore();
+}
+
+// Quatre équerres aux coins d'un rectangle à coins arrondis. La longueur des branches est
+// prise sur le petit côté pour rester proportionnée quelle que soit la taille du cadre.
+function dessinerCoins(ctx, R, radius){
+  const branche = Math.min(R.w, R.h) * 0.16;
+  const r = Math.min(radius, R.w/2, R.h/2);
+  const x0 = R.x, y0 = R.y, x1 = R.x + R.w, y1 = R.y + R.h;
+  const equerre = (cx, cy, sx, sy) => {
+    ctx.beginPath();
+    ctx.moveTo(cx + sx*(r + branche), cy);
+    ctx.lineTo(cx + sx*r, cy);
+    ctx.arcTo(cx, cy, cx, cy + sy*r, r);
+    ctx.lineTo(cx, cy + sy*(r + branche));
+    ctx.stroke();
+  };
+  equerre(x0, y0,  1,  1);
+  equerre(x1, y0, -1,  1);
+  equerre(x1, y1, -1, -1);
+  equerre(x0, y1,  1, -1);
+}
+
+// Rectangle à coins arrondis, tracé comme sous-chemin (pas de beginPath : le masque
+// assombri a besoin de l'ajouter au rectangle englobant déjà tracé, pour son découpage
+// en 'evenodd').
+function rectCartePath(ctx, R, radius){
+  const r = Math.min(radius, R.w/2, R.h/2);
+  ctx.moveTo(R.x + r, R.y);
+  ctx.arcTo(R.x + R.w, R.y,        R.x + R.w, R.y + R.h, r);
+  ctx.arcTo(R.x + R.w, R.y + R.h,  R.x,       R.y + R.h, r);
+  ctx.arcTo(R.x,       R.y + R.h,  R.x,       R.y,       r);
+  ctx.arcTo(R.x,       R.y,        R.x + R.w, R.y,       r);
+  ctx.closePath();
+}
+
+
+// ---------------- QUALITÉ DE PRISE DE VUE (netteté / lumière / cadrage) ----------------
+// Trois causes expliquent la quasi-totalité des lectures ratées : le flou de bougé, le
+// manque de lumière, et le reflet sur les cartes brillantes. L'application les détectait
+// déjà — mais seulement APRÈS coup, sur l'image capturée, et sans jamais le dire : côté
+// utilisateur, ça se traduisait par un « Vise la carte » qui ne bouge pas, sans indiquer
+// quoi corriger. On mesure donc en continu, pendant la visée, et on l'affiche.
+//
+// Boucle propre, sur le fil principal, indépendante de la détection ML (qui tourne dans
+// son worker à 5-8 Hz et n'a pas à être ralentie). L'échantillon est minuscule
+// (128 px de large, restreint au cadre de visée) : quelques dizaines de milliers
+// d'opérations à ~8 Hz, négligeable devant l'inférence ONNX qui tourne à côté.
+const QUALITE_PERIODE_MS = 130;
+const QUALITE_W = 128;
+const QUALITE_H = Math.round(QUALITE_W * CARD_RATIO);
+
+// Seuils de netteté, MESURÉS et non devinés : rendu d'une vraie carte flouté
+// progressivement puis réduit comme le ferait un capteur (voir la note ci-dessous sur la
+// normalisation). Valeurs relevées — 0 px de flou : 1,36 · 0,5 px : 0,74 · 1 px : 0,33 ·
+// 1,5 px : 0,18 · 2 px : 0,11 · 3 px : 0,06. En dessous de ~0,12 le numéro est illisible ;
+// au-dessus de ~0,45 la lecture passe confortablement.
+const NET_MIN = 0.12, NET_BON = 0.45;
+
+// Luminosité moyenne visée, sur 0-255. En dessous de LUM_BASSE le capteur monte en ISO et
+// le bruit détruit les chiffres ; au-dessus de LUM_HAUTE les blancs de la carte saturent.
+const LUM_BASSE = 55, LUM_BONNE_MIN = 105, LUM_BONNE_MAX = 195, LUM_HAUTE = 245;
+// Fraction de pixels brûlés tolérée. C'est LE défaut des holos : un reflet peut effacer
+// une bande entière de la carte sans faire bouger la moyenne, parce qu'il est compensé
+// par une zone sombre ailleurs. Il faut donc le compter à part.
+const CLIP_MAX = 0.10;
+
+let toileQualite = null;
+let qualiteTimer = null;
+let qualite = {net: 0, lum: 0, cad: 0, lumMoy: 0, clip: 0, netBrut: 0};
+
+// Variance du laplacien NORMALISÉE par le contraste de l'image.
+//
+// La variance brute est inutilisable telle quelle ici : elle varie comme le carré du
+// contraste, donc une carte parfaitement nette mais sous-exposée donne le même chiffre
+// qu'une carte bien éclairée et floue (mesuré : 73 contre 1142 pour la même image, du
+// simple fait de la luminosité). Les deux jauges seraient alors tombées ensemble pour une
+// seule et même cause, ce qui leur retire toute valeur de diagnostic — l'utilisateur
+// aurait vu « flou » là où le vrai problème est « sombre ».
+//
+// En divisant par l'écart-type de la luminance, on obtient une grandeur sans dimension qui
+// ne dépend plus de l'exposition (mesuré : 0,696 / 0,723 / 0,737 pour la même netteté à
+// trois luminosités différentes, soit ±3 %) mais uniquement de la finesse des détails.
+function mesurerQualiteImage(gris, w, h){
+  let somme = 0;
+  for(let i = 0; i < gris.length; i++) somme += gris[i];
+  const moyenne = somme / gris.length;
+
+  let varSomme = 0;
+  for(let i = 0; i < gris.length; i++){ const d = gris[i] - moyenne; varSomme += d * d; }
+  const ecartType = Math.sqrt(varSomme / gris.length);
+
+  let s = 0, s2 = 0, n = 0;
+  for(let y = 1; y < h - 1; y++){
+    for(let x = 1; x < w - 1; x++){
+      const i = y * w + x;
+      const lap = 4*gris[i] - gris[i-1] - gris[i+1] - gris[i-w] - gris[i+w];
+      s += lap; s2 += lap * lap; n++;
+    }
+  }
+  const varLap = n ? (s2 / n - (s / n) ** 2) : 0;
+  // +1 au dénominateur : une image parfaitement unie (écart-type 0) ne doit pas diviser
+  // par zéro et se retrouver déclarée infiniment nette.
+  return {nettete: Math.sqrt(Math.max(0, varLap)) / (ecartType + 1), moyenne};
+}
+
+// Score de cadrage, calculé sur le quadrilatère que le détecteur ML renvoie déjà. Trois
+// défauts distincts, pondérés selon ce qui gêne réellement la lecture : une carte trop
+// petite dans le cadre perd les pixels du numéro (le plus grave), une carte inclinée
+// impose un redressement plus violent, un décentrage est le moins pénalisant des trois.
+function scoreCadrage(video){
+  const c = overlayTargetCorners;
+  if(!c) return 0;
+  const g = guideRect(video);
+  const p = [c.tl, c.tr, c.br, c.bl];
+
+  // Aire du quadrilatère (formule du lacet), dans le même repère fractionnaire que le
+  // cadre de visée — les deux sont exprimés en fractions de l'image.
+  let aire = 0;
+  for(let i = 0; i < 4; i++){
+    const a = p[i], b = p[(i+1) % 4];
+    aire += a[0]*b[1] - b[0]*a[1];
+  }
+  aire = Math.abs(aire) / 2;
+
+  const remplissage = aire / Math.max(1e-6, g.w * g.h);
+  const sRemplissage = remplissage >= 0.62 && remplissage <= 1.06 ? 1
+    : remplissage < 0.62 ? Math.max(0, remplissage / 0.62)
+    : Math.max(0, 1 - (remplissage - 1.06) / 0.4);
+
+  // Perspective : sur une carte vue de face, les côtés opposés ont la même longueur.
+  // L'écart relatif entre eux mesure directement l'inclinaison, sans trigonométrie.
+  const d = (a, b) => Math.hypot(b[0]-a[0], b[1]-a[1]);
+  const haut = d(c.tl, c.tr), bas = d(c.bl, c.br);
+  const gauche = d(c.tl, c.bl), droite = d(c.tr, c.br);
+  const dissym = Math.max(
+    Math.abs(haut - bas) / Math.max(haut, bas, 1e-6),
+    Math.abs(gauche - droite) / Math.max(gauche, droite, 1e-6)
+  );
+  const sPerspective = Math.max(0, 1 - dissym / 0.18);
+
+  const cx = (p[0][0]+p[1][0]+p[2][0]+p[3][0]) / 4;
+  const cy = (p[0][1]+p[1][1]+p[2][1]+p[3][1]) / 4;
+  const sCentrage = Math.max(0, 1 - Math.hypot(cx - 0.5, cy - 0.5) / 0.16);
+
+  // Le remplissage MULTIPLIE le reste au lieu de compter pour une part. Additionné, il
+  // laissait une carte tenue deux fois trop loin marquer 0,70 sur la seule vertu d'être
+  // bien centrée et bien à plat — alors qu'à cette distance les pixels du numéro n'y sont
+  // tout simplement plus, et qu'aucune qualité de pose ne rachète ça. Un cadrage trop
+  // petit ou débordant est mauvais quoi qu'il arrive : c'est une condition, pas un critère
+  // parmi d'autres.
+  return Math.max(0, Math.min(1, sRemplissage * (0.55 + 0.28*sPerspective + 0.17*sCentrage)));
+}
+
+function echantillonnerQualite(){
+  const video = $('video');
+  if(!video || !video.videoWidth) return;
+
+  if(!toileQualite){
+    toileQualite = document.createElement('canvas');
+    toileQualite.width = QUALITE_W;
+    toileQualite.height = QUALITE_H;
+  }
+  const ctx = toileQualite.getContext('2d', {willReadFrequently: true});
+
+  // Restreint au cadre de visée, pas à l'image entière : le décor autour (table, tapis,
+  // main) ferait monter la netteté et bouger la luminosité sans rien dire de la carte.
+  const g = guideRect(video);
+  const vw = video.videoWidth, vh = video.videoHeight;
+  ctx.drawImage(video, g.x*vw, g.y*vh, g.w*vw, g.h*vh, 0, 0, QUALITE_W, QUALITE_H);
+
+  const data = ctx.getImageData(0, 0, QUALITE_W, QUALITE_H).data;
+  const gris = new Float32Array(QUALITE_W * QUALITE_H);
+  let brules = 0;
+  for(let i = 0; i < gris.length; i++){
+    const j = i * 4;
+    const y = 0.299*data[j] + 0.587*data[j+1] + 0.114*data[j+2];
+    gris[i] = y;
+    if(y >= 250) brules++;
+  }
+  const clip = brules / gris.length;
+  const {nettete, moyenne} = mesurerQualiteImage(gris, QUALITE_W, QUALITE_H);
+
+  // Netteté ramenée sur 0-1 entre les deux seuils mesurés.
+  const sNet = Math.max(0, Math.min(1, (nettete - NET_MIN) / (NET_BON - NET_MIN)));
+
+  // Lumière : plateau à 1 dans la bonne plage, décroissance linéaire de part et d'autre,
+  // puis pénalité multiplicative pour les reflets. Multiplicative et non soustractive :
+  // une image bien exposée EN MOYENNE mais barrée d'un reflet reste inexploitable, la
+  // moyenne correcte ne doit pas racheter la brûlure.
+  let sLum;
+  if(moyenne >= LUM_BONNE_MIN && moyenne <= LUM_BONNE_MAX) sLum = 1;
+  else if(moyenne < LUM_BONNE_MIN) sLum = Math.max(0, (moyenne - LUM_BASSE) / (LUM_BONNE_MIN - LUM_BASSE));
+  else sLum = Math.max(0, (LUM_HAUTE - moyenne) / (LUM_HAUTE - LUM_BONNE_MAX));
+  sLum *= Math.max(0, 1 - clip / CLIP_MAX);
+
+  qualite = {
+    net: sNet, lum: Math.max(0, Math.min(1, sLum)), cad: scoreCadrage(video),
+    lumMoy: moyenne, clip, netBrut: nettete
+  };
+  rendreJauges();
+}
+
+function couleurJauge(v){
+  return v < 0.4 ? '#e0553f' : (v < 0.75 ? '#e0a12a' : '#3ba55d');
+}
+
+function rendreJauges(){
+  const paires = [['jauge-net', qualite.net], ['jauge-lum', qualite.lum], ['jauge-cad', qualite.cad]];
+  for(const [id, v] of paires){
+    const el = $(id);
+    if(!el) continue;
+    // Plancher visuel à 4 % : une barre totalement vide ne se distingue pas d'une jauge
+    // en panne, alors qu'un liseré rouge se lit comme « mesuré, et mauvais ».
+    el.style.width = Math.round(Math.max(0.04, v) * 100) + '%';
+    el.style.backgroundColor = couleurJauge(v);
+  }
+}
+
+// Nomme la cause la plus probable au lieu d'un « Vise la carte » qui n'apprend rien.
+// Ordre volontaire : le reflet d'abord (c'est le défaut le moins évident à l'œil, et le
+// premier tueur de lecture sur les holos), puis l'obscurité, puis le flou.
+function indiceVisee(base){
+  if(qualite.clip > CLIP_MAX) return 'Reflet — incline un peu la carte';
+  if(qualite.lumMoy && qualite.lumMoy < LUM_BASSE) return 'Trop sombre — rapproche une lampe';
+  if(qualite.net < 0.35) return 'Flou — éloigne un peu le téléphone';
+  return base;
+}
+
+function demarrerQualite(){
+  arreterQualite();
+  const jauges = $('jauges');
+  if(jauges) jauges.style.display = '';
+  qualiteTimer = setInterval(echantillonnerQualite, QUALITE_PERIODE_MS);
+}
+
+function arreterQualite(){
+  clearInterval(qualiteTimer);
+  qualiteTimer = null;
+  qualite = {net: 0, lum: 0, cad: 0, lumMoy: 0, clip: 0, netBrut: 0};
+  const jauges = $('jauges');
+  if(jauges) jauges.style.display = 'none';
+  rendreJauges();
 }
 
 // ---------------- LISSAGE DU CADRE (60 Hz, indépendant de la détection) ----------------
@@ -4929,7 +5238,7 @@ async function detectLoop(){
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
-      setAimHint('Vise la carte');
+      setAimHint(indiceVisee('Vise la carte'));
       // Un raté isolé (reflet, main qui repositionne la carte un instant) ne doit pas
       // effacer la progression déjà accumulée — seul un décrochage SOUTENU signifie
       // vraiment que la carte est sortie du champ. Avant ce compteur, un seul coup dur
@@ -4967,7 +5276,7 @@ async function detectLoop(){
         // Message à deux paliers, purement informatif désormais : un vrai signal de
         // proximité basé sur l'écart mesuré, pas une simple animation — mais qui ne
         // retient plus la tentative de lecture ci-dessous.
-        setAimHint(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte');
+        setAimHint(indiceVisee(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte'));
       }
 
       const now = Date.now();
@@ -5406,6 +5715,8 @@ async function attemptRead(corners, score){
       ? '✅ ' + hashShortcut.card.name + ' — doublon reconnu (visuel)'
       : '✅ #' + finalNumber + '/' + finalDenominator + ' — identification en cours');
     diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
+                     qNet: +qualite.netBrut.toFixed(3), qLum: Math.round(qualite.lumMoy),
+                     qClip: +qualite.clip.toFixed(3), qCad: +qualite.cad.toFixed(2),
                      num: hashShortcut ? (finalNumber+' (visuel'+(hashViaMemoire?' mémorisé':'')+', écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
                      hashDist: bestHashDist, raw:r.text, rotated, ...timing});
   }catch(e){
@@ -5671,6 +5982,7 @@ function startAimLoop(){
   if(video) drawGuideOverlay(video, 'attente', null);
   overlayRenderRunning = true;
   requestAnimationFrame(renderOverlayLoop);
+  demarrerQualite();
 
   // Les deux moteurs (~6 Mo OCR + ~3,5 Mo détecteur, au premier lancement), chacun dans
   // son propre worker, sont initialisés en parallèle sans figer l'aperçu — et AVANT la
@@ -5711,6 +6023,7 @@ function startAimLoop(){
 }
 
 function stopAimLoop(){
+  arreterQualite();
   detectRunning = false;
   readInFlight = false;
   overlayRenderRunning = false;
@@ -5778,6 +6091,7 @@ async function captureFrame(){
 }
 
 function flashScreen(){
+  pulseCaptureAt = performance.now();
   const flash = $('flash');
   flash.classList.add('show');
   setTimeout(()=> flash.classList.remove('show'), 90);
