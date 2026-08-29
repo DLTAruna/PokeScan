@@ -2880,6 +2880,52 @@ function detectCardBounds(img){
 // global) échouaient tous les deux à isoler le texte du fond.
 // On fait tourner l'OCR sur les deux et on garde la meilleure confiance (petit
 // "ensemble" de variantes, sans changer de moteur OCR).
+
+// Bande du HAUT de carte (le nom, et lui seul). Même principe que
+// cropBottomBandForOcr : tout est exprimé en % de la CARTE détectée, jamais de la photo,
+// pour rester invariant au zoom et au cadrage.
+//
+// Existe pour remplacer la lecture de l'image ENTIÈRE dans l'analyse de file. Le coût de
+// PaddleOCR suit la quantité de texte présente, et une carte entière en est couverte
+// (attaques, description, texte de règle) alors qu'on ne cherchait qu'une chose là-dedans :
+// le nom, pour confirmer le numéro lu en bas. Mesuré sur la même carte — bande du nom
+// 522 ms, image entière 2085 ms, pour le même nom lu.
+function cropTopBandForOcr(dataUrl, cardBounds = null, pct = 22){
+  return new Promise((resolve, reject)=>{
+    const img = new Image();
+    img.onload = ()=>{
+      let cropTop, cropH, cropLeft, cropW;
+      if(cardBounds != null){
+        const cardW = (cardBounds.rightFrac - cardBounds.leftFrac) * img.naturalWidth;
+        const cardH = (cardBounds.bottomFrac - cardBounds.topFrac) * img.naturalHeight;
+        cropTop = Math.max(0, cardBounds.topFrac * img.naturalHeight);
+        cropH = Math.max(16, cardH * pct/100);
+        cropLeft = cardBounds.leftFrac * img.naturalWidth;
+        cropW = Math.max(16, cardW);
+      } else {
+        cropTop = 0;
+        cropH = Math.max(16, Math.round(img.naturalHeight * pct/100));
+        cropLeft = 0;
+        cropW = img.naturalWidth;
+      }
+      // Agrandissement plus modeste que pour le numéro (×6) : le nom est imprimé bien
+      // plus gros que le numéro de collection, il n'a pas besoin du même zoom pour
+      // tomber dans la plage de taille où PaddleOCR travaille le mieux — et chaque pixel
+      // ajouté ici se paie en temps de lecture.
+      const scale = 2.5;
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(cropW * scale);
+      canvas.height = Math.round(cropH * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.imageSmoothingEnabled = true;
+      ctx.drawImage(img, cropLeft, cropTop, cropW, cropH, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = ()=> reject(new Error('image illisible'));
+    img.src = dataUrl;
+  });
+}
+
 function cropBottomBandForOcr(dataUrl, pct, mode='invert', widthPct=45, cardBounds=null){
   return new Promise((resolve, reject)=>{
     const img = new Image();
@@ -3699,50 +3745,102 @@ async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
 
   const texts = [];
   try{ texts.push(await recognizeText(await dataUrlToCanvas(croppedRaw))); }
-  catch(e){ /* passe crop en échec, la pleine image peut encore réussir */ }
-  try{ texts.push(await recognizeText(await dataUrlToCanvas(analysisSrc))); }
-  catch(e){ /* passe pleine image en échec */ }
+  catch(e){ /* passe crop en échec, les passes suivantes peuvent encore réussir */ }
 
-  const rawText = texts.join('\n').trim();
-  analysis.rawText = rawText;
-  if(showDebug && $('ocr-debug-text')) $('ocr-debug-text').textContent = rawText || '(vide)';
-
-  // Candidats de numéro avec normalisation des sosies de chiffres ("183/I65" -> "183/165").
-  const candidates = extractNumberCandidates(rawText);
-  const number = candidates.length ? candidates[0].number : null;
-  const denominator = candidates.length ? candidates[0].denominator : null;
-  const codeCandidates = [...rawText.toUpperCase().matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
-  const nameCandidates = extractNameCandidates(rawText);
-  analysis.numberCandidates = candidates;
-  analysis.nameCandidates = nameCandidates;
-  analysis.number = number;
-  analysis.denominator = denominator;
-  analysis.code = codeCandidates[0] || null;
-
-  // On ne déclare "illisible" que si l'OCR n'a rendu ni numéro, ni code, ni nom.
-  if(!number && !codeCandidates.length && !nameCandidates.length && !currentSetHintId){
-    analysis.status = 'fail';
-    return analysis;
+  // Seconde passe sur la BANDE DU NOM et non plus sur l'image entière. La seconde passe
+  // servait deux choses : rattraper un numéro que le crop du bas aurait manqué, et
+  // fournir le nom pour confirmer ce numéro. Or elle payait la lecture de TOUTE la carte
+  // — attaques, description, texte de règle — alors que le coût de PaddleOCR suit
+  // directement la quantité de texte rencontrée. Mesuré sur la même carte : 2085 ms pour
+  // l'image entière contre 522 ms pour la seule bande du nom, qui rend le même service.
+  //
+  // Le nom compte plus qu'il n'y paraît : c'est lui qui fait passer une carte de « à
+  // vérifier » à « certaine », donc qui décide si l'utilisateur devra la valider à la
+  // main. Le supprimer pour gagner du temps aurait reporté le coût sur lui.
+  // Sautée quand la bande du bas n'a rien donné du tout : dans ce cas le découpage est
+  // tombé à côté de la carte, la seconde chance ci-dessous lira l'image entière de toute
+  // façon, et celle-ci contient déjà le nom. Lire la bande du nom ici serait payer une
+  // passe pour une information qu'on s'apprête à obtenir gratuitement.
+  if(extractNumberCandidates(texts.join('\n')).length){
+    try{
+      const bandeNom = await cropTopBandForOcr(analysisSrc, cardBounds);
+      texts.push(await recognizeText(await dataUrlToCanvas(bandeNom)));
+    }catch(e){ /* pas de nom lisible, la confirmation ne pourra pas se faire */ }
   }
 
-  if(!setAbbrMap){
-    const loaded = await loadSetAbbreviationMap((done,total)=>{
-      if($('set-map-status')) $('set-map-status').textContent = `🔎 Chargement de la table des sets... (${done}/${total})`;
-    });
-    setAbbrMap = loaded.map;
-    setDenominatorMap = loaded.byDenominator;
-    if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+  // Le texte s'ACCUMULE dans `texts` : on peut donc relire l'image entière plus tard et
+  // rejouer toute l'analyse sur l'ensemble, sans rien perdre de ce qui a déjà été lu.
+  let pleineImageLue = false;
+
+  async function lirePleineImage(){
+    if(pleineImageLue) return false;
+    pleineImageLue = true;
+    try{
+      texts.push(await recognizeText(await dataUrlToCanvas(analysisSrc)));
+      return true;
+    }catch(e){ return false; }
   }
 
-  const result = await resolveCardBestEffort(codeCandidates, number, denominator, analysisSrc, rawText);
-  if(result.card){
-    analysis.card = result.card;
-    analysis.note = result.note;
-    // 'high' = numéro confirmé par le nom -> certain. Sinon : à vérifier.
-    analysis.status = result.confidence === 'high' ? 'ok' : 'uncertain';
-  } else {
-    analysis.status = 'uncertain';
+  async function analyserTexte(){
+    const rawText = texts.join('\n').trim();
+    analysis.rawText = rawText;
+    if(showDebug && $('ocr-debug-text')) $('ocr-debug-text').textContent = rawText || '(vide)';
+
+    // Candidats de numéro avec normalisation des sosies de chiffres ("183/I65" -> "183/165").
+    const candidates = extractNumberCandidates(rawText);
+    const number = candidates.length ? candidates[0].number : null;
+    const denominator = candidates.length ? candidates[0].denominator : null;
+    const codeCandidates = [...rawText.toUpperCase().matchAll(/\b[A-Z]{2,6}\b/g)].map(m=>m[0]);
+    const nameCandidates = extractNameCandidates(rawText);
+    analysis.numberCandidates = candidates;
+    analysis.nameCandidates = nameCandidates;
+    analysis.number = number;
+    analysis.denominator = denominator;
+    analysis.code = codeCandidates[0] || null;
+
+    // On ne déclare "illisible" que si l'OCR n'a rendu ni numéro, ni code, ni nom.
+    if(!number && !codeCandidates.length && !nameCandidates.length && !currentSetHintId){
+      analysis.status = 'fail';
+      return;
+    }
+
+    if(!setAbbrMap){
+      const loaded = await loadSetAbbreviationMap((done,total)=>{
+        if($('set-map-status')) $('set-map-status').textContent = `🔎 Chargement de la table des sets... (${done}/${total})`;
+      });
+      setAbbrMap = loaded.map;
+      setDenominatorMap = loaded.byDenominator;
+      if($('set-map-status')) $('set-map-status').textContent = `Table des sets : ${Object.keys(setAbbrMap).length} code(s) en cache.`;
+    }
+
+    const result = await resolveCardBestEffort(codeCandidates, number, denominator, analysisSrc, rawText);
+    if(result.card){
+      analysis.card = result.card;
+      analysis.note = result.note;
+      // 'high' = numéro confirmé par le nom -> certain. Sinon : à vérifier.
+      analysis.status = result.confidence === 'high' ? 'ok' : 'uncertain';
+    } else {
+      analysis.card = null;
+      analysis.status = 'uncertain';
+    }
   }
+
+  await analyserTexte();
+
+  // SECONDE CHANCE, CIBLÉE. L'image entière n'est relue que si le résultat n'est pas
+  // certain — c'est le seul cas où elle vaut son prix.
+  //
+  // Le premier jet de ce correctif la déclenchait sur l'absence de numéro, ce qui était
+  // le mauvais critère : mesuré sur 8 cartes, il coûtait une troisième passe à 3 d'entre
+  // elles (donc plus lent qu'avant) tout en laissant une carte passer de « certaine » à
+  // « à vérifier ». Le bon critère n'est pas « ai-je un numéro ? » mais « le résultat
+  // est-il exploitable sans intervention humaine ? » : dépenser 2 secondes de plus pour
+  // épargner une vérification manuelle est un bon échange, les dépenser sur une carte
+  // déjà certaine n'en est pas un.
+  if(analysis.status !== 'ok' && await lirePleineImage()){
+    await analyserTexte();
+  }
+
   return analysis;
 }
 
