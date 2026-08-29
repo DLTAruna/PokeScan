@@ -1372,6 +1372,69 @@
   @media (max-width: 720px){
     .val-courbe{border-left:0; padding-left:0; border-top:1px solid rgba(255,255,255,.08); padding-top:14px;}
   }
+  /* ---- Fiche d'article ---- */
+  .fi-tete{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  .fi-tete h2{margin:0; font-size:22px;}
+  .fi-tete .actions{margin-left:auto; display:flex; gap:8px; flex-wrap:wrap;}
+  .fi-chips{display:flex; gap:6px; flex-wrap:wrap; margin-top:5px;}
+  .fi-chip{font-size:10px; font-weight:700; padding:2px 8px; border-radius:7px;
+    background:rgba(255,255,255,.07); color:var(--muted);}
+  .fi-corps{display:grid; gap:16px; grid-template-columns:minmax(240px, 340px) 1fr;}
+  @media (max-width: 860px){ .fi-corps{grid-template-columns:1fr;} }
+  .fi-visuel{position:relative; background:var(--panel); border:1px solid var(--border);
+    border-radius:18px; padding:16px; text-align:center;}
+  .fi-visuel img{width:100%; max-width:280px; border-radius:9px; display:block; margin:0 auto;}
+  /* Le compteur de quantite est pose SUR l'image, comme chez eux : c'est le geste le plus
+     frequent sur une fiche, il ne doit pas demander de chercher un champ. */
+  .fi-qte{position:absolute; left:50%; transform:translateX(-50%); bottom:26px;
+    display:flex; align-items:center; gap:9px; background:rgba(10,13,22,.94);
+    border:1px solid var(--border); border-radius:16px; padding:4px 6px;}
+  .fi-qte button{width:26px; height:26px; border-radius:50%; border:0; cursor:pointer;
+    font-size:16px; font-weight:800; color:#fff; line-height:1;}
+  .fi-qte .plus{background:#3ba55d;} .fi-qte .moins{background:#c0392b;}
+  .fi-qte b{min-width:22px; text-align:center; font-variant-numeric:tabular-nums;}
+
+  .fi-prix{display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); margin-bottom:14px;}
+  .fi-bloc{background:var(--panel); border:1px solid var(--border); border-radius:14px; padding:12px 14px;}
+  .fi-bloc.cote{border-color:rgba(255,203,5,.3); background:linear-gradient(160deg, #1c1a18, #12100f);}
+  .fi-bloc .v{font-size:22px; font-weight:800; letter-spacing:-.8px; margin-top:5px;
+    font-variant-numeric:tabular-nums;}
+  .fi-bloc .v.or{color:var(--accent);}
+  .fi-bloc input{margin-top:5px;}
+  .fi-liens{display:flex; gap:9px; flex-wrap:wrap; margin-bottom:14px;}
+  .fi-liens a{flex:1; min-width:150px; text-align:center; text-decoration:none;
+    background:var(--panel2); border:1px solid var(--border); border-radius:11px;
+    padding:10px; font-size:12.5px; font-weight:700; color:var(--text);}
+  .fi-liens a:hover{border-color:var(--accent2);}
+  .fi-panneau{background:var(--panel); border:1px solid var(--border); border-radius:16px;
+    padding:14px 16px; margin-bottom:14px;}
+  .fi-panneau .entete{display:flex; align-items:center; gap:10px; margin-bottom:8px;}
+  .fi-panneau .entete .pf-seg{margin-left:auto;}
+  .fi-graph{min-height:110px; position:relative;}
+  .fi-graph svg{width:100%; height:110px; display:block; overflow:visible;}
+  .fi-notes textarea{width:100%; min-height:88px; resize:vertical;}
+
+  /* ---- Listes ---- */
+  .li-grille{display:grid; gap:12px; grid-template-columns:repeat(auto-fill, minmax(230px, 1fr));}
+  .li-carte{background:linear-gradient(160deg, #171b26, #10131c); border:1px solid var(--border);
+    border-radius:16px; padding:14px 16px; cursor:pointer; text-align:left; color:var(--text);
+    font:inherit; transition:transform .14s, border-color .14s;}
+  .li-carte:hover{transform:translateY(-2px); border-color:var(--accent2);}
+  .li-carte b{font-size:15px; display:block;}
+  .li-carte .compte{font-size:12px; color:var(--muted); margin-top:3px;}
+  .li-carte .valeur{font-size:17px; font-weight:800; color:var(--accent); margin-top:8px;
+    font-variant-numeric:tabular-nums;}
+  /* ---- Courbe de tendance sur la vignette ----
+     Posee AU-DESSUS de la ligne Achat/Cote : c'est le contexte du prix, il doit se lire
+     avant lui. Volontairement minuscule et sans axe — a cette taille, une courbe ne donne
+     pas des valeurs, elle donne une DIRECTION, et c'est tout ce qu'on lui demande.
+     La couleur porte la meme information que la pente, pour ceux qui distinguent mal les
+     variations d'un trait de deux pixels. */
+  .pf-tendance{display:flex; align-items:center; gap:6px; margin-top:7px; min-height:16px;}
+  .pf-tendance svg{width:52px; height:15px; display:block; overflow:visible; flex:none;}
+  .pf-tendance .pct{font-size:10px; font-weight:800; font-variant-numeric:tabular-nums;}
+  .pf-tendance .attente{font-size:9.5px; color:rgba(241,243,248,.38);}
+  .tend-hausse{color:#3ba55d;} .tend-baisse{color:#e85b45;} .tend-stable{color:rgba(241,243,248,.72);}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1726,6 +1789,7 @@
     <div class="lat-titre">Navigation</div>
       <button class="lat-lien" data-tab="dashboard"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3.5" width="8" height="7" rx="1.8" fill="var(--t2)" opacity=".3"/><rect x="3" y="3.5" width="8" height="7" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="3.5" width="8" height="11" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="3" y="13" width="8" height="7.5" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Dashboard</span></button>
       <button class="lat-lien" data-tab="batch"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" fill="var(--t2)" opacity=".28"/><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M9 8.2V5.6a1.6 1.6 0 0 1 1.6-1.6h2.8A1.6 1.6 0 0 1 15 5.6v2.6" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.5 12.6h17" stroke="var(--t1)" stroke-width="1.7" opacity=".6"/></svg><span>Portfolio</span><span class="lat-badge lot-badge zero">0</span></button>
+      <button class="lat-lien" data-tab="listes"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Listes</span></button>
       <button class="lat-lien" data-tab="capture"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 8V5.6a2 2 0 0 1 2-2H8M16 3.6h2.6a2 2 0 0 1 2 2V8M20.6 16v2.4a2 2 0 0 1-2 2H16M8 20.4H5.4a2 2 0 0 1-2-2V16" stroke="var(--t1)" stroke-width="1.7"/><rect x="7.6" y="7.8" width="8.8" height="8.4" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="7.6" y="7.8" width="8.8" height="8.4" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scanner</span></button>
       <button class="lat-lien" data-tab="identify"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="2.8" width="11.4" height="15" rx="2" stroke="var(--t1)" stroke-width="1.7"/><circle cx="15.6" cy="15" r="4.6" fill="var(--t2)" opacity=".32"/><circle cx="15.6" cy="15" r="4.6" stroke="var(--t1)" stroke-width="1.7"/><path d="m19 18.4 2.3 2.3" stroke="var(--t1)" stroke-width="1.7"/></svg><span>À vérifier</span><span class="lat-badge queue-badge zero">0</span></button>
       <button class="lat-lien" data-tab="ventes"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 6.4h2.2l2.2 9.6h9.2l2.2-7.2H7.2" stroke="var(--t1)" stroke-width="1.7"/><circle cx="10" cy="19.2" r="1.5" fill="var(--t2)"/><circle cx="16.4" cy="19.2" r="1.5" fill="var(--t2)"/><path d="M13.6 3.4v4.4m-2.2-2.2h4.4" stroke="var(--t1)" stroke-width="1.7" opacity=".7"/></svg><span>Ventes</span></button>
@@ -1779,6 +1843,82 @@
 <main>
 
   <!-- CAPTURE TAB -->
+  <section class="section" id="section-fiche">
+    <div class="panel">
+      <button class="link-btn" id="fi-retour" style="margin-bottom:10px;">‹ Retour au portfolio</button>
+      <div class="fi-tete">
+        <div>
+          <h2 id="fi-nom">—</h2>
+          <div class="fi-chips" id="fi-chips"></div>
+        </div>
+        <div class="actions">
+          <button class="btn-ghost btn-sm" id="fi-liste">↗ Ajouter à une liste</button>
+          <button class="btn-ghost btn-sm" id="fi-supprimer" style="color:var(--danger,#e5484d)">🗑️ Retirer</button>
+        </div>
+      </div>
+      <div class="fi-corps">
+        <div>
+          <div class="fi-visuel">
+            <img id="fi-image" src="" alt="">
+            <div class="fi-qte">
+              <button class="moins" id="fi-moins">−</button>
+              <b id="fi-qte-val">1</b>
+              <button class="plus" id="fi-plus">+</button>
+            </div>
+          </div>
+          <div class="fi-panneau fi-notes" style="margin-top:14px;">
+            <div class="micro">Notes</div>
+            <textarea id="fi-note" placeholder="Notes sur cet article (état, provenance, remarques…)"></textarea>
+          </div>
+        </div>
+        <div>
+          <div class="fi-prix">
+            <div class="fi-bloc">
+              <div class="micro">Prix d'achat</div>
+              <input type="number" id="fi-achat" step="0.01" placeholder="—">
+            </div>
+            <div class="fi-bloc cote">
+              <div class="micro">Cote du marché</div>
+              <div class="v or" id="fi-cote">—</div>
+            </div>
+            <div class="fi-bloc">
+              <div class="micro">Prix de vente</div>
+              <input type="number" id="fi-vente" step="0.01" placeholder="—">
+            </div>
+          </div>
+          <div class="fi-liens" id="fi-liens"></div>
+          <div class="fi-panneau">
+            <div class="entete">
+              <span class="micro">Évolution de la cote</span>
+              <span class="hint" id="fi-histo-info"></span>
+            </div>
+            <div class="fi-graph" id="fi-graph"></div>
+          </div>
+          <div class="fi-panneau">
+            <div class="micro" style="margin-bottom:8px;">Détail</div>
+            <div id="fi-detail"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="section-listes">
+    <div class="panel">
+      <div class="pf-tete">
+        <div>
+          <h2 style="margin:0;">Listes</h2>
+          <p class="sub">Regroupe des cartes pour une vente, un envoi en gradation, un échange.</p>
+        </div>
+        <div class="actions">
+          <button class="btn-gold btn-sm" id="li-nouvelle">+ Nouvelle liste</button>
+        </div>
+      </div>
+      <div class="li-grille" id="li-grille"></div>
+      <div id="li-detail" style="display:none;"></div>
+    </div>
+  </section>
+
   <section class="section" id="section-dashboard">
     <div class="panel">
       <h2>Tableau de bord</h2>
@@ -2695,7 +2835,10 @@ const $ = (id) => document.getElementById(id);
 // Le mode est mémorisé : on ne bascule pas entre vendre et collectionner toutes les cinq
 // minutes, c'est plutôt une session entière passée dans l'un ou dans l'autre.
 const ONGLETS_MODE = {
-  vendeur: ['dashboard', 'batch', 'capture', 'identify', 'ventes', 'export'],
+  // 'fiche' n'y figure pas volontairement : c'est une vue de detail atteinte depuis le
+  // portfolio, pas une destination du menu. L'y mettre ferait apparaitre une entree qui
+  // n'a aucun sens tant qu'aucune carte n'est ouverte.
+  vendeur: ['dashboard', 'batch', 'listes', 'capture', 'identify', 'ventes', 'export'],
   collection: ['collection', 'sets', 'scelle']
 };
 let modeActuel = localStorage.getItem('modeNav') === 'collection' ? 'collection' : 'vendeur';
@@ -2868,6 +3011,7 @@ function activerOnglet(nom){
   if(nom === 'dashboard') rendreDashboard();
   if(nom === 'ventes') rendreVentes();
   if(nom === 'collection') rendreAccueilCollection();
+  if(nom === 'listes') rendreListes();
   synchroniserMode(nom);
 
   fermerMenu();
@@ -11730,6 +11874,7 @@ function rendreGrillePortfolio(){
         <span class="pf-nom">${escapeHtml(e.cardName || '—')}</span>
         <span class="pf-sous">${escapeHtml(e.setName || '')}${e.number ? ' · #' + escapeHtml(e.number) : ''}</span>
         <span class="pf-chip re-${e.condition}">${e.condition || 'NM'}</span>
+        ${courbeTendance(e.cardId)}
         <span class="pf-pied">
           <div><span class="l">Achat</span><span class="v">${eur(achat)}</span></div>
           <div><span class="l">Cote</span><span class="v ${cls}">${eur(prix)}</span></div>
@@ -11749,11 +11894,7 @@ function rendreGrillePortfolio(){
         rendreGrillePortfolio();
         return;
       }
-      if($('lot-filtre')) $('lot-filtre').value = e.sku || e.cardName || '';
-      pfVue = 'tableau';
-      localStorage.setItem('pfVue', pfVue);
-      appliquerVuePortfolio();
-      renderBatch();
+      ouvrirFiche(e.id);
     });
   });
 
@@ -11888,10 +12029,247 @@ async function rendreBandeauValeur(){
   tracerCourbe(filtres, 'val-graph');
 }
 
+
+// ---------------- FICHE D'ARTICLE ----------------
+// La grille répond à « qu'est-ce que j'ai ? ». Elle ne répond pas à « que vaut CETTE carte,
+// d'où vient ce prix, et qu'en fais-je ? ». Jusqu'ici la seule réponse était une ligne de
+// tableau à douze colonnes, où l'on modifiait sans jamais voir.
+let ficheId = null;
+
+// Historique PAR ARTICLE, distinct de celui de la collection : c'est la cote de la carte qui
+// intéresse ici, et elle bouge indépendamment du reste du stock.
+const CLE_HISTO_ITEM = 'historiqueCotes';
+let historiqueCotes = null;
+
+async function chargerHistoriqueCotes(){
+  if(historiqueCotes) return historiqueCotes;
+  try{
+    const m = await idbGet('meta', CLE_HISTO_ITEM);
+    historiqueCotes = (m && m.parCarte) ? m.parCarte : {};
+  }catch(e){ historiqueCotes = {}; }
+  return historiqueCotes;
+}
+
+async function noterCotesDuJour(){
+  const h = await chargerHistoriqueCotes();
+  const jour = new Date().toISOString().slice(0, 10);
+  let change = false;
+  for(const e of batch){
+    const c = parseFloat(e.marketPrice);
+    if(!c || !e.cardId) continue;
+    const pts = h[e.cardId] || (h[e.cardId] = []);
+    const dernier = pts[pts.length - 1];
+    if(dernier && dernier.j === jour){ if(dernier.v !== c){ dernier.v = c; change = true; } }
+    else { pts.push({j: jour, v: c}); change = true; if(pts.length > 730) pts.shift(); }
+  }
+  if(change){ try{ await idbSet('meta', {key: CLE_HISTO_ITEM, parCarte: h, at: Date.now()}); }catch(e){} }
+}
+
+// Tendance à 7 jours de la cote, dessinée sur la vignette.
+//
+// Les cotes viennent de TCGdex, qui relaie Cardmarket : cette courbe est donc bien la
+// tendance Cardmarket, relevée une fois par jour par l'application elle-même.
+//
+// Le seuil de 2 % sépare « stagne » de « bouge » : en dessous, l'écart relève du bruit de
+// relevé plus que du marché, et colorer un tel écart en vert ou en rouge ferait dire à la
+// courbe ce qu'elle ne sait pas.
+const TENDANCE_SEUIL = 2;
+
+function courbeTendance(cardId){
+  const pts = (historiqueCotes && cardId && historiqueCotes[cardId]) || [];
+  const recents = pts.slice(-7);
+  if(recents.length < 2){
+    // Rien à montrer encore. On le dit plutôt que de tracer une ligne plate, qui se lirait
+    // comme « stable » alors qu'on ne sait simplement rien.
+    return '<span class="pf-tendance"><span class="attente">tendance en construction</span></span>';
+  }
+  const v = recents.map(p => p.v);
+  const pct = v[0] ? ((v[v.length-1] - v[0]) / v[0]) * 100 : 0;
+  const cls = Math.abs(pct) < TENDANCE_SEUIL ? 'tend-stable' : (pct > 0 ? 'tend-hausse' : 'tend-baisse');
+  const min = Math.min(...v), max = Math.max(...v), etendue = (max - min) || 1;
+  const L = 52, H = 15;
+  const d = v.map((val, i) =>
+    `${((i / (v.length - 1)) * L).toFixed(1)},${(H - ((val - min) / etendue) * H).toFixed(1)}`).join(' ');
+  return `<span class="pf-tendance ${cls}">
+      <svg viewBox="0 0 ${L} ${H}" preserveAspectRatio="none" aria-hidden="true">
+        <polyline points="${d}" fill="none" stroke="currentColor" stroke-width="1.6"
+          vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <span class="pct">${pct >= 0 ? '+' : ''}${pct.toFixed(1)} %</span>
+    </span>`;
+}
+
+async function ouvrirFiche(id){
+  const e = batch.find(x => x.id === id);
+  if(!e) return;
+  ficheId = id;
+  activerOnglet('fiche');
+
+  $('fi-nom').textContent = e.cardName || 'Sans nom';
+  $('fi-chips').innerHTML = [
+    e.setName && `<span class="fi-chip">${escapeHtml(e.setName)}</span>`,
+    e.number && `<span class="fi-chip">#${escapeHtml(e.number)}</span>`,
+    e.rarity && `<span class="fi-chip">${escapeHtml(e.rarity)}</span>`,
+    `<span class="fi-chip re-${e.condition}">${e.condition || 'NM'}</span>`
+  ].filter(Boolean).join('');
+
+  $('fi-image').src = e.photo || e.cardImage || '';
+  $('fi-qte-val').textContent = parseInt(e.qty) || 1;
+  $('fi-achat').value = e.achat || '';
+  $('fi-vente').value = e.price || '';
+  $('fi-note').value = e.note || '';
+  const cote = parseFloat(e.marketPrice);
+  $('fi-cote').textContent = cote ? cote.toFixed(2) + ' €' : '—';
+
+  // Liens sortants : la cote que nous affichons vient d'une seule source. Pouvoir la
+  // confronter en un clic à Cardmarket et aux ventes eBay abouties est ce qui permet de
+  // fixer un prix en confiance plutôt que de faire confiance à un chiffre isolé.
+  const q = encodeURIComponent([e.cardName, e.number].filter(Boolean).join(' '));
+  $('fi-liens').innerHTML = `
+    <a href="https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString=${q}" target="_blank" rel="noopener">🔎 Voir sur Cardmarket</a>
+    <a href="https://www.ebay.fr/sch/i.html?_nkw=${q}&LH_Sold=1&LH_Complete=1" target="_blank" rel="noopener">💰 Ventes eBay abouties</a>`;
+
+  const ligne = (l, v) => `<div class="tb-ligne"><span>${l}</span><b>${v}</b></div>`;
+  const achat = parseFloat(e.achat) || 0;
+  const vente = parseFloat(e.price) || 0;
+  const qte = parseInt(e.qty) || 1;
+  $('fi-detail').innerHTML =
+    ligne('SKU', escapeHtml(e.sku || '—')) +
+    ligne('Quantité', qte) +
+    ligne('Valeur au marché', cote ? (cote * qte).toFixed(2) + ' €' : '—') +
+    ligne('Marge unitaire', achat ? ((vente - achat).toFixed(2) + ' €') : 'achat non renseigné') +
+    ligne('Positionnement', (cote && vente) ? Math.round(vente / cote * 100) + ' % du marché' : '—') +
+    ligne('Image eBay', e.imageUrl ? '✓' : '✗ manquante');
+
+  const h = await chargerHistoriqueCotes();
+  const pts = (e.cardId && h[e.cardId]) || [];
+  tracerCourbe(pts, 'fi-graph');
+  $('fi-histo-info').textContent = pts.length
+    ? `${pts.length} relevé(s)` : 'un relevé est pris à chaque ouverture du portfolio';
+}
+
+function majFicheChamp(champ, valeur){
+  const e = batch.find(x => x.id === ficheId);
+  if(!e) return;
+  e[champ] = valeur;
+  planifierSauvegardeSession();
+  renderBatchStatsOnly();
+  rendreGrillePortfolio();
+}
+
+// ---------------- LISTES ----------------
+// Un lot est un tas ; une liste est une intention. « À envoyer en gradation », « pour la
+// bourse de samedi », « lot Vinted » : ce sont des sous-ensembles qui se constituent et se
+// défont sans rien retirer du portfolio. Les cartes ne sont donc PAS déplacées, seulement
+// référencées par leur identifiant — une carte peut appartenir à plusieurs listes, et
+// supprimer une liste ne perd jamais de carte.
+let listes = [];
+let listeOuverte = null;
+
+async function chargerListes(){
+  try{
+    const m = await idbGet('meta', 'listes');
+    listes = (m && Array.isArray(m.listes)) ? m.listes : [];
+  }catch(e){ listes = []; }
+  return listes;
+}
+async function sauverListes(){
+  try{ await idbSet('meta', {key:'listes', listes, at: Date.now()}); }catch(e){}
+}
+
+function valeurListe(l){
+  return (l.cartes || []).reduce((s, id) => {
+    const e = batch.find(x => x.id === id);
+    return s + (e ? (parseFloat(e.price) || parseFloat(e.marketPrice) || 0) * (parseInt(e.qty)||1) : 0);
+  }, 0);
+}
+
+async function rendreListes(){
+  await chargerListes();
+  const g = $('li-grille'), d = $('li-detail');
+  if(!g) return;
+
+  if(listeOuverte){
+    const l = listes.find(x => x.id === listeOuverte);
+    if(!l){ listeOuverte = null; return rendreListes(); }
+    g.style.display = 'none'; d.style.display = '';
+    const cartes = (l.cartes || []).map(id => batch.find(x => x.id === id)).filter(Boolean);
+    d.innerHTML = `<button class="link-btn" id="li-retour">‹ Toutes les listes</button>
+      <div class="pf-tete" style="margin-top:10px;">
+        <div><h2 style="margin:0;">${escapeHtml(l.nom)}</h2>
+          <p class="sub">${cartes.length} carte(s) · ${valeurListe(l).toFixed(2)} €</p></div>
+        <div class="actions">
+          <button class="btn-ghost btn-sm" id="li-renommer">✏️ Renommer</button>
+          <button class="btn-ghost btn-sm" id="li-vider" style="color:var(--danger,#e5484d)">🗑️ Supprimer la liste</button>
+        </div>
+      </div>
+      <div class="pf-grille">${cartes.length ? cartes.map(e => `
+        <button class="pf-item" data-retirer="${escapeHtml(e.id)}">
+          ${(e.photo||e.cardImage) ? `<img class="pf-vignette" src="${escapeHtml(e.photo||e.cardImage)}" loading="lazy" alt="">` : '<span class="pf-vignette"></span>'}
+          <span class="pf-infos">
+            <span class="pf-nom">${escapeHtml(e.cardName||'—')}</span>
+            <span class="pf-sous">${escapeHtml(e.setName||'')}${e.number?' · #'+escapeHtml(e.number):''}</span>
+            <span class="pf-pied"><div><span class="l">Retirer</span><span class="v">✕</span></div>
+              <div><span class="l">Prix</span><span class="v cote">${(parseFloat(e.price)||0).toFixed(2)} €</span></div></span>
+          </span>
+        </button>`).join('') : '<div class="pf-vide">Liste vide — ouvre une carte et utilise « Ajouter à une liste ».</div>'}</div>`;
+
+    $('li-retour').onclick = ()=>{ listeOuverte = null; rendreListes(); };
+    $('li-renommer').onclick = async ()=>{
+      const n = prompt('Nom de la liste', l.nom);
+      if(n && n.trim()){ l.nom = n.trim(); await sauverListes(); rendreListes(); }
+    };
+    $('li-vider').onclick = async ()=>{
+      if(!confirm(`Supprimer la liste « ${l.nom} » ? Les cartes restent dans le portfolio.`)) return;
+      listes = listes.filter(x => x.id !== l.id);
+      listeOuverte = null;
+      await sauverListes(); rendreListes();
+      toast('🗑️ Liste supprimée — aucune carte retirée du portfolio.');
+    };
+    d.querySelectorAll('[data-retirer]').forEach(b=>{
+      b.onclick = async ()=>{
+        l.cartes = (l.cartes||[]).filter(id => id !== b.dataset.retirer);
+        await sauverListes(); rendreListes();
+      };
+    });
+    return;
+  }
+
+  g.style.display = ''; d.style.display = 'none';
+  g.innerHTML = listes.length ? listes.map(l => `<button class="li-carte" data-liste="${escapeHtml(l.id)}">
+      <b>${escapeHtml(l.nom)}</b>
+      <span class="compte">${(l.cartes||[]).length} carte(s)</span>
+      <span class="valeur">${valeurListe(l).toFixed(2)} €</span>
+    </button>`).join('')
+    : '<div class="pf-vide">Aucune liste. Crée-en une pour regrouper des cartes à vendre, à faire grader ou à échanger.</div>';
+  g.querySelectorAll('[data-liste]').forEach(b=>{
+    b.onclick = ()=>{ listeOuverte = b.dataset.liste; rendreListes(); };
+  });
+}
+
+async function ajouterAUneListe(cardEntryId){
+  await chargerListes();
+  const noms = listes.map((l,i) => `${i+1}. ${l.nom} (${(l.cartes||[]).length})`).join('\n');
+  const rep = prompt(
+    (listes.length ? 'Numéro de la liste :\n' + noms + '\n\n' : '') +
+    'Ou tape un nom pour créer une nouvelle liste.', listes.length ? '1' : 'À vendre');
+  if(!rep) return;
+  let cible = listes[parseInt(rep) - 1];
+  if(!cible){
+    cible = {id: 'l' + Date.now(), nom: rep.trim(), cartes: []};
+    listes.push(cible);
+  }
+  if(!cible.cartes.includes(cardEntryId)) cible.cartes.push(cardEntryId);
+  await sauverListes();
+  toast(`↗ Ajoutée à « ${cible.nom} » (${cible.cartes.length} carte(s)).`);
+}
+
 function rendreVuesPortfolio(){
   appliquerVuePortfolio();
   rendreGrillePortfolio();
   noterValeurDuJour().then(rendreBandeauValeur);
+  // Les cotes par carte sont relevées en même temps : un seul passage, deux historiques.
+  noterCotesDuJour().then(()=> rendreGrillePortfolio());
 }
 
 function renderBatchStatsOnly(){
@@ -12037,6 +12415,38 @@ $('val-periode').addEventListener('click', (e)=>{
   valPeriode = parseInt(b.dataset.jours);
   document.querySelectorAll('#val-periode button').forEach(x => x.classList.toggle('on', x === b));
   rendreBandeauValeur();
+});
+
+
+$('fi-retour').addEventListener('click', ()=> activerOnglet('batch'));
+$('fi-plus').addEventListener('click', ()=>{
+  const e = batch.find(x => x.id === ficheId); if(!e) return;
+  e.qty = (parseInt(e.qty)||1) + 1; $('fi-qte-val').textContent = e.qty;
+  planifierSauvegardeSession(); renderBatchStatsOnly(); rendreGrillePortfolio();
+});
+$('fi-moins').addEventListener('click', ()=>{
+  const e = batch.find(x => x.id === ficheId); if(!e) return;
+  e.qty = Math.max(1, (parseInt(e.qty)||1) - 1); $('fi-qte-val').textContent = e.qty;
+  planifierSauvegardeSession(); renderBatchStatsOnly(); rendreGrillePortfolio();
+});
+$('fi-achat').addEventListener('input', ()=> majFicheChamp('achat', $('fi-achat').value));
+$('fi-vente').addEventListener('input', ()=> majFicheChamp('price', $('fi-vente').value));
+$('fi-note').addEventListener('input', ()=> majFicheChamp('note', $('fi-note').value));
+$('fi-liste').addEventListener('click', ()=> ficheId && ajouterAUneListe(ficheId));
+$('fi-supprimer').addEventListener('click', ()=>{
+  const i = batch.findIndex(x => x.id === ficheId);
+  if(i < 0) return;
+  if(!confirm('Retirer « ' + (batch[i].cardName||'cette carte') + ' » du portfolio ?')) return;
+  batch.splice(i, 1);
+  planifierSauvegardeSession();
+  activerOnglet('batch'); renderBatch(); rendreGrillePortfolio();
+});
+$('li-nouvelle').addEventListener('click', async ()=>{
+  const n = prompt('Nom de la nouvelle liste', 'À vendre');
+  if(!n || !n.trim()) return;
+  await chargerListes();
+  listes.push({id:'l'+Date.now(), nom:n.trim(), cartes:[]});
+  await sauverListes(); rendreListes();
 });
 
 $('pf-vue').addEventListener('click', (e)=>{
