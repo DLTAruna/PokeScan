@@ -5,7 +5,18 @@
 // une correction en bug permanent — l'ancienne version reste servie et l'utilisateur n'a
 // aucun moyen d'en sortir. Toute la stratégie ci-dessous découle de ce risque.
 
-const VERSION = 'pokescan-v1';
+// DEUX caches, et non un seul. Avec un cache unique, faire tourner la version pour
+// invalider l'application évinçait du même coup les modèles ONNX (~9,5 Mo), qu'il fallait
+// alors retélécharger en données mobiles — pour du contenu identique, puisqu'ils sont
+// versionnés dans leur URL. Résultat : on hésitait à changer la version, et l'application
+// pouvait rester servie depuis un cache périmé.
+//
+// Séparés, la version de la COQUILLE peut être incrémentée à chaque correctif sans rien
+// coûter, et le cache des ressources externes n'est jamais purgé.
+const VERSION_COQUILLE = 'pokescan-coquille-v3';
+const VERSION_EXTERNE = 'pokescan-externe-v1';
+const CACHES_ACTIFS = [VERSION_COQUILLE, VERSION_EXTERNE];
+
 const COQUILLE = [
   './',
   './index.html',
@@ -16,7 +27,7 @@ const COQUILLE = [
 
 self.addEventListener('install', (e) => {
   e.waitUntil(
-    caches.open(VERSION)
+    caches.open(VERSION_COQUILLE)
       .then((c) => c.addAll(COQUILLE))
       // skipWaiting : la nouvelle version prend la main sans attendre la fermeture de tous
       // les onglets. Sur une application installée que l'utilisateur ne ferme jamais
@@ -29,7 +40,9 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((cles) => Promise.all(cles.filter((k) => k !== VERSION).map((k) => caches.delete(k))))
+      .then((cles) => Promise.all(
+        cles.filter((k) => !CACHES_ACTIFS.includes(k)).map((k) => caches.delete(k))
+      ))
       .then(() => self.clients.claim())
   );
 });
@@ -50,12 +63,19 @@ self.addEventListener('fetch', (e) => {
   if (memeOrigine) {
     // Réseau d'abord pour le code de l'application : une correction poussée doit arriver
     // dès la prochaine ouverture connectée. Le cache ne sert que de filet hors ligne.
+    //
+    // Le réseau est borné dans le temps : sans ça, une connexion très lente (et non
+    // coupée) fait attendre l'utilisateur devant une page blanche au lieu de lui servir
+    // la version en cache, qui s'affiche instantanément.
     e.respondWith(
-      fetch(req)
+      Promise.race([
+        fetch(req),
+        new Promise((_, rejeter) => setTimeout(() => rejeter(new Error('réseau trop lent')), 3500))
+      ])
         .then((rep) => {
           if (rep && rep.ok) {
             const copie = rep.clone();
-            caches.open(VERSION).then((c) => c.put(req, copie));
+            caches.open(VERSION_COQUILLE).then((c) => c.put(req, copie));
           }
           return rep;
         })
@@ -71,15 +91,26 @@ self.addEventListener('fetch', (e) => {
     caches.match(req).then((cachee) => cachee || fetch(req).then((rep) => {
       if (rep && (rep.ok || rep.type === 'opaque')) {
         const copie = rep.clone();
-        caches.open(VERSION).then((c) => c.put(req, copie));
+        caches.open(VERSION_EXTERNE).then((c) => c.put(req, copie));
       }
       return rep;
     }))
   );
 });
 
-// Permet à la page de forcer la bascule après une mise à jour détectée, sans attendre un
-// second rechargement.
 self.addEventListener('message', (e) => {
+  // Permet à la page de forcer la bascule après une mise à jour détectée, sans attendre un
+  // second rechargement.
   if (e.data === 'basculer') self.skipWaiting();
+
+  // Purge de la seule coquille, à la demande de la page (bouton « Forcer la mise à jour »).
+  // Le cache des ressources externes est délibérément épargné : c'est lui qui pèse, et il
+  // n'est jamais en cause quand c'est le code de l'application qui semble périmé.
+  if (e.data === 'purger-coquille') {
+    e.waitUntil(
+      caches.delete(VERSION_COQUILLE).then(() => {
+        if (e.source && e.source.postMessage) e.source.postMessage('coquille-purgee');
+      })
+    );
+  }
 });

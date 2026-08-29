@@ -1481,7 +1481,10 @@
       <div class="hint diag-controls" style="margin-top:8px;">
         <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
         <button class="btn-ghost btn-sm" id="btn-diag-share" style="margin-left:6px; display:none;">📤 Partager</button>
-        <button class="btn-ghost btn-sm" id="btn-diag-test" style="margin-left:6px;">🔌 Tester le relais</button>
+        <button class="btn-ghost btn-sm" id="btn-diag-test" style="margin-left:6px;">🔌 Tester le relais</button>        &nbsp;·&nbsp;
+        <button class="link-btn" id="btn-forcer-maj">🔄 Forcer la mise à jour</button>
+        <span class="hint" id="build-version" style="margin-left:8px;"></span>
+
         <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
         <span id="diag-count" style="margin-left:8px;"></span>
         <label style="margin-left:10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
@@ -2105,6 +2108,16 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 </div>
 
 <script>
+// ---------------- VERSION EMBARQUÉE ----------------
+// Estampillée à la construction du fichier, et déclarée TOUT EN HAUT : elle est lue par
+// des écouteurs enregistrés bien avant le milieu du script.
+//
+// Sans ce marqueur, impossible de distinguer « le correctif ne marche pas » de « le
+// correctif n'est pas arrivé jusqu'à l'appareil » — et sur une application installée
+// servie par un service worker, la seconde hypothèse est au moins aussi probable que la
+// première. Plusieurs allers-retours ont été perdus faute de pouvoir trancher.
+const BUILD_VERSION = '2026-08-29 13:44';
+
 // ---------------- STATE ----------------
 let pendingQueue = [];   // {id, photo(dataUrl)}
 let skippedQueue = [];
@@ -4236,6 +4249,10 @@ $('btn-diag-copy').addEventListener('click', copyDiagReport);
 // seule, et pour laquelle il ne faut surtout RIEN changer). Sans le message exact, on
 // corrige au hasard. Une seule observation envoyée : tester ne doit pas re-flooder ce
 // qu'on soupçonne justement d'avoir été saturé.
+
+$('btn-forcer-maj').addEventListener('click', forcerMiseAJour);
+if($('build-version')) $('build-version').textContent = 'version ' + BUILD_VERSION;
+
 $('btn-diag-test').addEventListener('click', async ()=>{
   const el = $('diag-view');
   el.style.display = 'block';
@@ -4897,6 +4914,7 @@ function diagPush(kind, data){
         entry.qCad = +qualite.cad.toFixed(2);
       }
     }catch(e){ /* jauges pas encore initialisées : l'observation part sans elles */ }
+    entry.build = BUILD_VERSION;
     entry.heapMb = heapMb();
     entry.queueLen = pendingQueue.length;
     entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
@@ -5149,9 +5167,15 @@ function drawGuideOverlay(video, state, corners){
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   ctx.lineWidth = Math.max(3, OW*0.0072) * (1 + pulse*0.7);
+  // Le halo est obtenu par un seul trait large et translucide sous le trait principal,
+  // et non par shadowBlur : même lecture à l'œil, sans l'opération la plus lourde de
+  // l'API canvas au moment précis où le processeur est le plus sollicité.
   if(pulse > 0){
-    ctx.shadowColor = couleurs.ok;
-    ctx.shadowBlur = 22 * pulse;
+    ctx.save();
+    ctx.globalAlpha = 0.28 * pulse;
+    ctx.lineWidth = Math.max(3, OW*0.0072) * (1 + pulse*0.7) * 3.2;
+    dessinerCoins(ctx, {x: R.x - marge, y: R.y - marge, w: R.w + marge*2, h: R.h + marge*2}, radius);
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
   dessinerCoins(ctx, {x: R.x - marge, y: R.y - marge, w: R.w + marge*2, h: R.h + marge*2}, radius);
@@ -5203,7 +5227,7 @@ function rectCartePath(ctx, R, radius){
 // son worker à 5-8 Hz et n'a pas à être ralentie). L'échantillon est minuscule
 // (128 px de large, restreint au cadre de visée) : quelques dizaines de milliers
 // d'opérations à ~8 Hz, négligeable devant l'inférence ONNX qui tourne à côté.
-const QUALITE_PERIODE_MS = 100;
+const QUALITE_PERIODE_MS = 180;
 const QUALITE_W = 128;
 const QUALITE_H = Math.round(QUALITE_W * CARD_RATIO);
 
@@ -5344,6 +5368,11 @@ function scoreCadrage(video){
 function echantillonnerQualite(){
   const video = $('video');
   if(!video || !video.videoWidth) return;
+  // Silence pendant une lecture : le redressement et l'envoi au worker travaillent sur le
+  // même fil, et les jauges n'apprennent rien d'utile durant ces quelques centaines de
+  // millisecondes — la décision de déclencher est déjà prise. Les geler là est gratuit
+  // pour l'utilisateur et rend le fil au travail qui, lui, est sur le chemin critique.
+  if(readInFlight) return;
 
   if(!toileQualite){
     toileQualite = document.createElement('canvas');
@@ -5419,8 +5448,13 @@ function rendreJauges(){
     if(!el) continue;
     // Plancher visuel à 4 % : une barre totalement vide ne se distingue pas d'une jauge
     // en panne, alors qu'un liseré rouge se lit comme « mesuré, et mauvais ».
-    el.style.width = Math.round(Math.max(0.04, v) * 100) + '%';
-    el.style.backgroundColor = couleurJauge(v);
+    const largeur = Math.round(Math.max(0.04, v) * 100) + '%';
+    const couleur = couleurJauge(v);
+    // Écriture seulement si le rendu change RÉELLEMENT. Une valeur interpolée bouge à
+    // chaque image, mais son arrondi au pour-cent ne change que quelques fois par
+    // transition : écrire les autres fois ne fait que déclencher des recalculs de style.
+    if(el.dataset.l !== largeur){ el.style.width = largeur; el.dataset.l = largeur; }
+    if(el.dataset.c !== couleur){ el.style.backgroundColor = couleur; el.dataset.c = couleur; }
   }
 }
 
@@ -6773,7 +6807,10 @@ function majProposition(){
   const wrap = $('identify-photo-wrap');
   if(wrap) wrap.style.display = 'none';
   $('prop-photo').src = item.photo || '';
-  $('prop-carte').src = a.card.image ? a.card.image + '/high.webp' : (a.card.imageUrl || '');
+  // low.webp et non high.webp : la vignette fait 168 px de large, l'image d'impression
+  // pèse plusieurs centaines de kilo-octets pour un résultat identique à l'écran. C'est
+  // ce chargement, répété à chaque carte, qui rendait la fenêtre de validation lente.
+  $('prop-carte').src = a.card.image ? a.card.image + '/low.webp' : (a.card.imageUrl || '');
   $('prop-nom').textContent = a.card.name || '—';
   $('prop-detail').textContent = [a.card.set?.name, a.card.localId ? '#' + a.card.localId : '', a.card.rarity]
     .filter(Boolean).join(' · ');
@@ -7480,6 +7517,31 @@ function majBilanSession(){
     <span class="sep">·</span><span><b>${sessionValeur.toFixed(2)} €</b> ajoutés</span>
     <span class="sep">·</span><span><b>${cadence}</b> carte/min</span>
     <span class="sep">·</span><span><b>${pendingQueue.length}</b> à vérifier</span>`;
+}
+
+
+// Purge la coquille mise en cache par le service worker et recharge. Ne touche PAS au
+// cache des modèles OCR (~9,5 Mo), qui n'est jamais en cause quand c'est le code de
+// l'application qui paraît périmé — les retélécharger en données mobiles serait une
+// punition gratuite.
+async function forcerMiseAJour(){
+  const el = $('build-version');
+  if(el) el.textContent = 'Mise à jour…';
+  try{
+    if('serviceWorker' in navigator){
+      const reg = await navigator.serviceWorker.getRegistration();
+      if(reg && reg.active){
+        reg.active.postMessage('purger-coquille');
+        // On n'attend pas la confirmation : le rechargement forcé ci-dessous suffit, et
+        // rester bloqué sur une réponse qui n'arrive pas serait pire que de recharger.
+        await new Promise(r => setTimeout(r, 400));
+      }
+      if(reg) await reg.update().catch(()=>{});
+    }
+  }catch(e){ /* on recharge quand même */ }
+  // Paramètre unique : contourne aussi le cache HTTP du navigateur, qui se place DEVANT
+  // le service worker et peut à lui seul resservir un ancien index.html.
+  location.replace(location.pathname + '?maj=' + Date.now());
 }
 
 function majCompteurHashes(){
