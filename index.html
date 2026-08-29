@@ -1175,6 +1175,85 @@
     padding:2px 4px; border-radius:6px;
   }
   .pf-vide{text-align:center; color:var(--muted); padding:36px 12px; font-size:13px;}
+  /* ---- Passe de finition, calee sur des valeurs RELEVEES et non estimees ----
+     Trois ecarts expliquaient l'essentiel de la difference d'allure :
+
+     1. Le rayon. 17-18 px chez eux, 12-16 px chez nous. Sur des cartes de cette taille,
+        quatre pixels de rayon separent « encadre » de « pose ».
+     2. Le fond. Un degrade diagonal (160-168 deg) et non un aplat : la carte prend un
+        volume que la couleur unie ne donne jamais.
+     3. La typographie, et c'est la que se joue le plus gros. Leurs grands chiffres sont a
+        44 px avec un interlettrage NEGATIF de -2,2 px, leurs micro-libelles a 8,5 px avec
+        +1,53 px. Ce contraste — chiffres tres serres, libelles tres espaces — est leur
+        signature. Nos chiffres a 26 px sans reglage paraissaient a cote simplement pas
+        dessines. */
+  .tb-hero{
+    background:linear-gradient(168deg, #1b2130, #141926 58%, #0f1420);
+    border:1px solid rgba(255,203,5,.22); border-radius:18px;
+    padding:20px 22px; margin-bottom:14px;
+    display:flex; gap:26px; flex-wrap:wrap; align-items:flex-start;
+  }
+  .tb-hero .bloc{min-width:170px;}
+  .tb-hero .bloc.droite{margin-left:auto; text-align:right;}
+  .micro{
+    font-size:8.5px; font-weight:700; letter-spacing:1.5px; text-transform:uppercase;
+    color:rgba(241,243,248,.46);
+  }
+  .chiffre{
+    font-size:44px; font-weight:800; letter-spacing:-2.2px; line-height:1.05;
+    margin-top:7px; font-variant-numeric:tabular-nums;
+  }
+  .chiffre.or{color:var(--accent);}
+  .chiffre.vert{color:#3ba55d;}
+  .chiffre.moyen{font-size:30px; letter-spacing:-1.3px;}
+  .tb-hero .sous{font-size:11.5px; color:var(--muted); margin-top:5px;}
+  /* L'alignement a droite n'a de sens que tant que les blocs sont cote a cote : une fois
+     empiles, il produit une colonne de chiffres desalignee avec les deux du dessus. */
+  @media (max-width: 640px){
+    .tb-hero{gap:16px; padding:16px 17px;}
+    .tb-hero .bloc.droite{margin-left:0; text-align:left;}
+    .chiffre{font-size:36px; letter-spacing:-1.6px;}
+    .chiffre.moyen{font-size:26px; letter-spacing:-1px;}
+  }
+
+  /* Cartes de section : des LIGNES etiquetees sous un titre, pas des tuiles separees.
+     Trois chiffres qui se rapportent au meme sujet se lisent mieux empiles sous un intitule
+     commun qu'eparpilles dans une grille ou plus rien ne dit ce qui va avec quoi. */
+  .tb-sections{display:grid; gap:14px; grid-template-columns:repeat(auto-fit, minmax(300px, 1fr));}
+  .tb-bloc{
+    background:linear-gradient(160deg, #171320, #0f0b0c);
+    border:1px solid rgba(255,255,255,.09); border-radius:18px; overflow:hidden;
+  }
+  .tb-bloc.lot{border-color:rgba(255,203,5,.22); background:linear-gradient(160deg, #1c1a18, #0f0d0c);}
+  .tb-bloc.faire{border-color:rgba(61,125,202,.26); background:linear-gradient(160deg, #141b26, #0d1016);}
+  .tb-bloc.alerte{border-color:rgba(232,91,69,.30); background:linear-gradient(160deg, #221615, #100c0c);}
+  .tb-bloc-tete{display:flex; align-items:center; gap:11px; padding:13px 15px;}
+  .tb-bloc-tete .rond{
+    width:30px; height:30px; border-radius:9px; flex:none;
+    background:rgba(255,255,255,.07); display:flex; align-items:center; justify-content:center;
+  }
+  .tb-bloc-tete b{font-size:13.5px; display:block;}
+  .tb-bloc-tete small{font-size:11px; color:var(--muted);}
+  .tb-bloc-tete .fleche{margin-left:auto; color:var(--muted); font-size:17px;}
+  /* Filet a 7 % : assez pour separer deux lignes, trop faible pour dessiner un tableau.
+     C'est la difference entre des lignes groupees et une grille. */
+  .tb-ligne{
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    padding:11px 15px; border-top:1px solid rgba(255,255,255,.07); font-size:12.5px;
+  }
+  .tb-ligne span{color:var(--muted);}
+  .tb-ligne b{font-variant-numeric:tabular-nums; font-size:13.5px;}
+  .tb-ligne b.or{color:var(--accent);}
+  .tb-ligne b.rouge{color:var(--bad);}
+  .tb-ligne b.vert{color:#3ba55d;}
+  .tb-bloc button.tb-ligne{width:100%; background:transparent; border-left:0; border-right:0;
+    border-bottom:0; color:var(--text); font:inherit; cursor:pointer; text-align:left;}
+  .tb-bloc button.tb-ligne:hover{background:rgba(255,255,255,.04);}
+
+  /* Les panneaux et cartes existants s'alignent sur le meme rayon : un ecran ou les rayons
+     varient de 8 a 18 px se lit comme un assemblage, pas comme un ensemble. */
+  .panel, .tb-carte, .col-porte, .pf-item{border-radius:18px;}
+  .col-porte{background-image:linear-gradient(160deg, rgba(255,255,255,.045), transparent 60%);}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1586,8 +1665,8 @@
     <div class="panel">
       <h2>Tableau de bord</h2>
       <p class="sub">Où en est le stock, et ce qu'il reste à faire.</p>
-      <div class="tb-grille" id="tb-grille"></div>
-      <div class="tb-grille" id="tb-actions"></div>
+      <div id="tb-hero"></div>
+      <div class="tb-sections" id="tb-sections"></div>
     </div>
   </section>
 
@@ -2480,8 +2559,8 @@ function synchroniserMode(nom){
 // utile et c'est celle qu'aucun écran ne donnait : le travail en attente était réparti
 // entre trois onglets qu'il fallait ouvrir un par un pour en faire le tour.
 function rendreDashboard(){
-  const g = $('tb-grille');
-  if(!g) return;
+  const hero = $('tb-hero'), secs = $('tb-sections');
+  if(!hero || !secs) return;
 
   const valeurLot = batch.reduce((s,e) => s + (parseFloat(e.price)||0) * (parseInt(e.qty)||1), 0);
   const nbLot = batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
@@ -2492,34 +2571,64 @@ function rendreDashboard(){
   const valeurScelle = (typeof scelle !== 'undefined' && Array.isArray(scelle))
     ? scelle.reduce((s,p) => s + (parseFloat(p.cote)||0) * (parseInt(p.qty)||1), 0) : 0;
 
-  const carte = (lbl, val, sub, cls) =>
-    `<div class="tb-carte ${cls||''}"><div class="lbl">${lbl}</div><div class="val">${val}</div><div class="sub">${sub||''}</div></div>`;
+  const total = valeurLot + valeurScelle;
+  const marche = batch.reduce((s,e) => s + (parseFloat(e.marketPrice)||0) * (parseInt(e.qty)||1), 0);
+  // Écart au marché plutôt qu'une plus-value : on ne connaît pas le prix d'achat, mais on
+  // sait à quel pourcentage du marché on se positionne — et c'est ce chiffre-là qui dit si
+  // le lot partira vite ou dormira.
+  const ecart = marche ? Math.round((valeurLot / marche) * 100) : null;
 
-  g.innerHTML =
-    carte('Valeur du stock', (valeurLot + valeurScelle).toFixed(2) + ' €',
-          `${nbLot} carte(s) · ${nbScelle} scellé(s)`, 'or') +
-    carte('Prêt à vendre', valeurLot.toFixed(2) + ' €',
-          `${nbLot - sansPrix} ligne(s) avec un prix`, 'vert') +
-    carte('Scellé', valeurScelle.toFixed(2) + ' €', `${nbScelle} produit(s)`) +
-    carte('À vérifier', String(pendingQueue.length),
-          pendingQueue.length ? 'cartes en attente de ta décision' : 'rien en attente');
+  hero.innerHTML = `<div class="tb-hero">
+      <div class="bloc">
+        <div class="micro">Cote du stock</div>
+        <div class="chiffre or">${total.toFixed(2)} €</div>
+        <div class="sous">${nbLot} carte(s) · ${nbScelle} scellé(s)</div>
+      </div>
+      <div class="bloc">
+        <div class="micro">Positionnement</div>
+        <div class="chiffre moyen">${ecart != null ? ecart + ' %' : '—'}</div>
+        <div class="sous">${ecart != null ? 'du prix marché (' + marche.toFixed(2) + ' €)' : 'aucun prix marché connu'}</div>
+      </div>
+      <div class="bloc droite">
+        <div class="micro">Prêt à vendre</div>
+        <div class="chiffre moyen vert">${valeurLot.toFixed(2)} €</div>
+        <div class="sous">${nbLot - sansPrix} ligne(s) avec un prix</div>
+      </div>
+    </div>`;
+
+  const ligne = (lbl, val, cls) => `<div class="tb-ligne"><span>${lbl}</span><b class="${cls||''}">${val}</b></div>`;
+  const lienLigne = (tab, lbl, val, cls) =>
+    `<button class="tb-ligne" data-tab="${tab}"><span>${lbl}</span><b class="${cls||''}">${val} ›</b></button>`;
+
+  const bloc = (cls, ico, titre, sous, corps, tab) => `<div class="tb-bloc ${cls}">
+      <${tab ? 'button' : 'div'} class="tb-bloc-tete"${tab ? ` data-tab="${tab}" style="width:100%; background:transparent; border:0; color:inherit; font:inherit; cursor:pointer;"` : ''}>
+        <span class="rond">${ico}</span>
+        <span><b>${titre}</b><small>${sous}</small></span>
+        ${tab ? '<span class="fleche">›</span>' : ''}
+      </${tab ? 'button' : 'div'}>
+      ${corps}
+    </div>`;
 
   // Ce qui BLOQUE une vente, chiffré et cliquable. Ces défauts existaient déjà dans le lot,
   // mais il fallait les découvrir soi-même en parcourant la liste.
-  const a = $('tb-actions');
-  if(!a) return;
-  const actions = [];
-  if(pendingQueue.length) actions.push({t:'identify', lbl:'Cartes à vérifier', n:pendingQueue.length,
-    sub:'Elles n\'entreront pas dans l\'export tant qu\'elles sont ici.'});
-  if(sansPrix) actions.push({t:'batch', lbl:'Lignes sans prix', n:sansPrix,
-    sub:'eBay refuse une annonce sans prix de départ.'});
-  if(sansImage) actions.push({t:'batch', lbl:'Lignes sans image', n:sansImage,
-    sub:'eBay refuse aussi les lignes sans URL d\'image.'});
-  a.innerHTML = actions.length
-    ? actions.map(x => `<button class="tb-carte" data-tab="${x.t}" style="cursor:pointer; text-align:left; width:100%;">
-        <div class="lbl">${x.lbl}</div><div class="val">${x.n}</div><div class="sub">${x.sub}</div></button>`).join('')
-    : `<div class="tb-carte vert"><div class="lbl">Rien à corriger</div>
-       <div class="val">✓</div><div class="sub">Toutes les lignes sont exportables.</div></div>`;
+  const aFaire =
+    (pendingQueue.length ? lienLigne('identify', 'Cartes à vérifier', pendingQueue.length, 'rouge') : '') +
+    (sansPrix ? lienLigne('batch', 'Lignes sans prix', sansPrix, 'rouge') : '') +
+    (sansImage ? lienLigne('batch', 'Lignes sans image', sansImage, 'rouge') : '') +
+    (!pendingQueue.length && !sansPrix && !sansImage
+      ? ligne('Tout est exportable', '✓', 'vert') : '');
+
+  secs.innerHTML =
+    bloc('lot', '🗃️', 'Ton lot', 'Ce que tu comptes vendre',
+      ligne('Valeur de vente', valeurLot.toFixed(2) + ' €', 'or') +
+      ligne('Valeur au marché', marche.toFixed(2) + ' €') +
+      ligne('Lignes', String(batch.length)) +
+      ligne('Exemplaires', String(nbLot)), 'batch') +
+    bloc(aFaire.includes('rouge') ? 'alerte' : 'faire', '⚠️', 'À traiter',
+      'Ce qui bloque un export', aFaire) +
+    bloc('faire', '📦', 'Scellé', 'Produits fermés',
+      ligne('Cote estimée', valeurScelle.toFixed(2) + ' €', 'or') +
+      ligne('Produits', String(nbScelle)), 'scelle');
 }
 
 // ---------------- VENTES ----------------
@@ -2625,7 +2734,12 @@ document.querySelectorAll('.navbar [data-tab], .menu-item[data-tab]').forEach(bt
 document.addEventListener('click', (e)=>{
   const mode = e.target.closest('.lat-mode');
   if(mode){ appliquerMode(mode.dataset.mode, true); return; }
-  const lien = e.target.closest('.lat-lien[data-tab], .col-porte[data-tab], .tb-carte[data-tab], [data-tab].btn-gold');
+  // Selecteur volontairement large plutot qu'une liste de classes a maintenir : la version
+  // precedente enumerait les classes connues, et chaque nouveau composant portant data-tab
+  // (les lignes et les en-tetes du tableau de bord) cessait silencieusement de naviguer.
+  // On exclut seulement les deux barres, qui ont deja leur propre ecouteur.
+  const lien = e.target.closest('[data-tab]');
+  if(lien && (lien.closest('.navbar') || lien.classList.contains('menu-item'))) return;
   if(lien) activerOnglet(lien.dataset.tab);
 });
 
