@@ -4466,6 +4466,104 @@ function buildCameraConstraints(deviceId){
 // réelles sont remontées au diagnostic — c'est la seule façon de savoir, sur un
 // appareil qu'on ne peut pas tester ici, si le focus continu / le zoom sont même
 // disponibles, et si "1" est une valeur acceptée dans la plage réelle de l'appareil.
+
+// ---------------- OBJECTIF : CORRIGER SUR CONSTAT, PAS SUR SUPPOSITION ----------------
+// Sur les téléphones multi-objectifs, le navigateur n'expose qu'UNE caméra arrière logique
+// (vérifié sur l'appareil : deux entrées seulement, une avant une arrière). Impossible donc
+// de choisir l'objectif principal par deviceId — le seul levier est le zoom.
+//
+// Et ce zoom n'a aucune sémantique garantie. Relevé sur un Samsung réel :
+//   zoom capacités = {min: 1, max: 30}
+// Or l'application caméra du téléphone affiche 0,6× à 30× : le « 1 » du navigateur est donc
+// l'ULTRA GRAND-ANGLE, pas l'objectif principal. Et l'ultra grand-angle des Samsung est à
+// focus fixe, avec une distance minimale de mise au point de l'ordre de 30 à 50 cm : une
+// carte tenue assez près pour remplir le cadre est À L'INTÉRIEUR de cette distance et ne
+// peut physiquement pas être nette. Aucun réglage logiciel n'y changera rien — il faut
+// changer d'objectif, donc monter le zoom.
+//
+// Une version antérieure imposait zoom:1 au démarrage. C'était activement FAUX sur cet
+// appareil, et la conclusion inscrite dans ce fichier était de ne plus rien deviner. Elle
+// reste juste : on ne devine toujours rien A PRIORI. Mais ne rien faire laisse la caméra
+// ouverte sur l'objectif inutilisable, ce qui n'est pas mieux.
+//
+// D'où cette troisième voie : n'intervenir que sur CONSTAT d'échec, et vérifier le résultat.
+// La jauge de netteté existe déjà et est calibrée sur des captures réelles — elle donne le
+// signal qui manquait pour trancher sans supposer.
+const FLOU_AVANT_OBJECTIF_MS = 2500;
+let paliersObjectif = [];      // zooms à essayer, du plus large au plus serré
+let palierCourant = -1;        // -1 = on n'a encore rien changé
+let correctionObjectifActive = false;
+let flouDepuis = 0;
+let pisteObjectif = null;      // track courant, pour appliquer le zoom
+
+// Décide s'il y a lieu de tenter quoi que ce soit, et prépare les paliers.
+// Le rapport max/min est la signature d'une caméra logique multi-objectifs : un capteur
+// unique n'offre pas un facteur 30. Sur un téléphone à objectif unique, rien ne se déclenche.
+function preparerCorrectionObjectif(track, caps){
+  paliersObjectif = [];
+  palierCourant = -1;
+  flouDepuis = 0;
+  pisteObjectif = track;
+  correctionObjectifActive = false;
+
+  if(hasZoomPreference()) return;          // l'utilisateur a tranché, on ne touche à rien
+  if(!caps.zoom || !caps.zoom.min || !caps.zoom.max) return;
+  if(caps.zoom.max / caps.zoom.min < 5) return;   // objectif unique : rien à corriger
+
+  const min = caps.zoom.min;
+  // 1,7 ≈ 1/0,6 : le facteur qui sépare l'ultra grand-angle de l'objectif principal.
+  // 2,5 en second recours, pour les appareils dont l'ultra grand-angle est plus large encore.
+  paliersObjectif = [min * 1.7, min * 2.5].filter(z => z <= caps.zoom.max);
+  correctionObjectifActive = paliersObjectif.length > 0;
+}
+
+// Appelée depuis la boucle de détection, uniquement quand une carte EST détectée : un flou
+// sans carte dans le cadre ne dit rien sur l'objectif.
+function surveillerNettete(){
+  if(!correctionObjectifActive || !pisteObjectif) return;
+  // La netteté doit être franchement mauvaise, pas seulement moyenne : on utilise le seuil
+  // du rouge de la jauge, celui-là même qu'aucune des 37 captures réussies du relevé réel
+  // n'atteignait.
+  if(qualite.netBrut >= NET_MIN){ flouDepuis = 0; return; }
+  if(!flouDepuis){ flouDepuis = Date.now(); return; }
+  if(Date.now() - flouDepuis < FLOU_AVANT_OBJECTIF_MS) return;
+
+  flouDepuis = 0;
+  palierCourant++;
+  if(palierCourant >= paliersObjectif.length){
+    // Tous les paliers essayés sans succès : le problème n'est pas l'objectif. On cesse
+    // d'insister plutôt que de faire tourner le zoom indéfiniment sous les doigts.
+    correctionObjectifActive = false;
+    setAimHint('Toujours flou — approche ou éloigne un peu la carte');
+    diagPush('err', {msg:'caméra: paliers d\'objectif épuisés, correction abandonnée'});
+    return;
+  }
+
+  const z = paliersObjectif[palierCourant];
+  pisteObjectif.applyConstraints({advanced:[{zoom:z}]}).then(()=>{
+    toast('🔍 Objectif ajusté (zoom ' + z.toFixed(1) + '×) — l\'ultra grand-angle ne fait pas la mise au point de près.');
+    diagPush('err', {msg:'caméra: correction automatique d\'objectif -> zoom ' + z.toFixed(2)});
+  }).catch(e=>{
+    diagPush('err', {msg:'caméra: correction d\'objectif refusée (' + e.message + ')'});
+    correctionObjectifActive = false;
+  });
+}
+
+// Une capture réussie VALIDE le réglage courant : c'est la preuve empirique qu'on cherchait,
+// bien plus fiable qu'une valeur choisie a priori. Mémorisée pour cet appareil, elle évite
+// de refaire toute la recherche au démarrage suivant.
+function validerObjectifCourant(){
+  if(palierCourant < 0 || hasZoomPreference() || !pisteObjectif) return;
+  try{
+    const z = pisteObjectif.getSettings ? pisteObjectif.getSettings().zoom : null;
+    if(typeof z === 'number'){
+      savePreferredZoom(z);
+      correctionObjectifActive = false;
+      diagPush('err', {msg:'caméra: zoom ' + z + ' retenu (capture réussie à ce réglage)'});
+    }
+  }catch(e){ /* sans conséquence : on retentera au prochain démarrage */ }
+}
+
 async function applyTrackTweaksAndDiagnostics(track){
   try{
     const caps = track.getCapabilities ? track.getCapabilities() : {};
@@ -4491,6 +4589,7 @@ async function applyTrackTweaksAndDiagnostics(track){
                         ' réglage=' + (settings.zoom ?? '?') +
                         ' résolution=' + settings.width + 'x' + settings.height +
                         ' label=' + (track.label || '?')});
+    preparerCorrectionObjectif(track, caps);
     renderZoomButtons(track, caps);
   }catch(e){
     diagPush('err', {msg:'caméra: focusMode/zoom non applicable (' + e.message + ')'});
@@ -4515,7 +4614,11 @@ async function startCamera(){
       availableCameras = [];
       diagPush('err', {msg:'caméra: énumération des objectifs échouée (' + e.message + ')'});
     }
-    $('btn-switch-lens').style.display = availableCameras.length > 1 ? 'block' : 'none';
+    // Seules les caméras ARRIÈRE ont un sens ici. Le bouton s'affichait dès que deux
+    // caméras existaient — soit toujours, puisqu'il y a une caméra frontale — et basculait
+    // donc vers l'avant, ce qui n'a aucun intérêt pour scanner une carte posée devant soi.
+    const arriere = availableCameras.filter(d => !/front|avant|user/i.test(d.label || ''));
+    $('btn-switch-lens').style.display = arriere.length > 1 ? 'block' : 'none';
 
     await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
 
@@ -5804,6 +5907,8 @@ async function detectLoop(){
       lowScoreStreak = 0;
       absenceStreak = 0;
       absenceDepuis = 0;
+      // Une carte EST là : si elle reste floue, c'est le moment de soupçonner l'objectif.
+      surveillerNettete();
       setOverlayTarget('lecture', d.corners);
       // Carte localisée : on oriente la mise au point vers la bande du numéro plutôt que
       // de laisser l'autofocus viser le centre du cadre (voir viserMiseAuPoint).
@@ -6320,6 +6425,7 @@ async function attemptRead(corners, score){
     }, 'image/png');
 
     captureFaite = true;
+    validerObjectifCourant();
     capturedThisSession++;
     flashScreen();
     if(navigator.vibrate) navigator.vibrate(40);
