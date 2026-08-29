@@ -1580,9 +1580,21 @@
      Dessine en SVG plutot qu'importe : quelques centaines d'octets, aucune dependance a un
      serveur tiers, aucune question de droits, et il prend la couleur de la carte par
      currentColor — donc il s'accorde tout seul si la palette change. */
-  .porte-fond{
-    position:absolute; right:-26px; bottom:-30px; width:190px; height:190px;
-    opacity:.10; pointer-events:none; z-index:0;
+  /* Selecteur enfant direct, et non la seule classe : `.col-porte > *` place juste en
+     dessous a la MEME specificite (0,1,0) l'emportait par simple ordre de declaration, et
+     remettait le motif en position:relative. Il repassait donc DANS LE FLUX, ou ses 190 px
+     poussaient tout le contenu vers le bas — la carte gonflait de 210 a 436 px et le titre
+     descendait de 230 px. Un decalage invisible a la lecture du CSS, evident a l'ecran.
+
+     Ancre en bas a GAUCHE : le motif entre par le coin d'ou vient la lecture, et laisse
+     libre la diagonale ou se trouvent le texte et l'appel a l'action. */
+  .col-porte > .porte-fond{
+    position:absolute; left:-30px; bottom:-34px; right:auto; top:auto;
+    width:200px; height:200px;
+    /* 0,14 et non 0,10 : le motif etait bien plus lisible quand il debordait d'une carte
+       gonflee par le bug de flux. Ramene a sa taille normale, la meme opacite le rendait
+       presque invisible — l'oeil compare une surface, pas une valeur de CSS. */
+    opacity:.14; pointer-events:none; z-index:0;
   }
   .col-porte > *{position:relative; z-index:1;}
   .col-porte.serie{color:#e0553f;}
@@ -1590,7 +1602,7 @@
   .col-porte.scelle{color:#a48bff;}
   /* Au survol le motif se revele un peu : assez pour signaler que la carte repond, pas
      assez pour passer devant le texte. */
-  .col-porte:hover .porte-fond{opacity:.17;}
+  .col-porte:hover .porte-fond{opacity:.22;}
 
   /* Embleme de la banniere Pokemon en tete de page */
   .jeu-banniere .emb svg{width:34px; height:34px; color:#ee1515;}
@@ -1615,6 +1627,19 @@
   .lat-banniere:not(.ouvert):hover{opacity:1;}
   .lat-groupe{overflow:hidden;}
   .lat-groupe[hidden]{display:none;}
+  /* Pokeball en filigrane : elle donne du volume a un bandeau qui n'etait qu'un degrade.
+     Blanche et non rouge — sur un fond deja rouge, un motif rouge disparait ; le blanc a
+     tres faible opacite se lit comme une texture, pas comme un second element.
+
+     Debordante en haut a droite, du cote ou il n'y a que les compteurs : elle remplit le
+     vide sans jamais passer sous le titre. */
+  .jeu-banniere .ban-fond{
+    position:absolute; right:-38px; top:-58px; width:210px; height:210px;
+    opacity:.07; pointer-events:none; z-index:0;
+  }
+  @media (max-width: 720px){
+    .jeu-banniere .ban-fond{width:150px; height:150px; right:-30px; top:-42px;}
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -2160,6 +2185,13 @@
 
   <section class="section" id="section-collection">
     <div class="jeu-banniere pokemon">
+      <svg class="ban-fond" viewBox="0 0 100 100" aria-hidden="true">
+        <circle cx="50" cy="50" r="46" fill="none" stroke="#fff" stroke-width="4"/>
+        <path d="M4 50h29M67 50h29" stroke="#fff" stroke-width="4"/>
+        <path d="M50 4a46 46 0 0 1 46 46H67a17 17 0 0 0-34 0H4A46 46 0 0 1 50 4Z" fill="#fff" opacity=".5"/>
+        <circle cx="50" cy="50" r="17" fill="none" stroke="#fff" stroke-width="4"/>
+        <circle cx="50" cy="50" r="7" fill="#fff"/>
+      </svg>
       <span class="emb"><svg  viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="4"/><path d="M4 50h29M67 50h29" stroke="currentColor" stroke-width="4"/><path d="M50 4a46 46 0 0 1 46 46H67a17 17 0 0 0-34 0H4A46 46 0 0 1 50 4Z" fill="currentColor" opacity=".55"/><circle cx="50" cy="50" r="17" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="50" cy="50" r="7" fill="currentColor"/></svg></span>
       <div>
         <h2>Pokémon</h2>
