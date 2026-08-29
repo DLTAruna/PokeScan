@@ -4564,6 +4564,59 @@ function validerObjectifCourant(){
   }catch(e){ /* sans conséquence : on retentera au prochain démarrage */ }
 }
 
+
+// ---------------- FLUX CAMÉRA MORT ----------------
+// Un aperçu noir ne se signale par aucune erreur : la vidéo continue de livrer des images,
+// simplement toutes vides. Le détecteur y voit même un score élevé, l'OCR tourne, et rien
+// n'indique que plus rien n'est photographié. Relevé sur l'appareil : qNet=0, qLum=0,
+// sharp=0 pendant toute la fin de la session, sans une seule erreur levée.
+//
+// La luminance moyenne strictement nulle est le signal : une scène réelle, même dans le
+// noir, ne rend jamais exactement zéro sur tous les pixels. Relancer une caméra qui filme
+// vraiment le noir ne coûte de toute façon qu'un redémarrage.
+const FLUX_MORT_MS = 3000;
+// Deux tentatives, pas plus. Une caméra vraiment perdue est récupérée du premier coup ;
+// au-delà, c'est que la scène est réellement noire (objectif couvert, pièce sans lumière)
+// et relancer en boucle ne ferait qu'empiler les messages sans rien réparer.
+const RELANCES_MAX = 2;
+let noirDepuis = 0;
+let relanceEnCours = false;
+let relancesFaites = 0;
+
+function surveillerFluxMort(){
+  if(relanceEnCours) return;
+  if(relancesFaites >= RELANCES_MAX) return;
+  // Plus de flux DU TOUT : rien ne sert d'attendre trois secondes de noir, il n'y a même
+  // plus de pixels à regarder. C'est l'état dans lequel laissait une bascule d'objectif
+  // refusée, avec la boucle de détection qui continuait de tourner dans le vide.
+  if(!cameraStream && detectRunning){
+    relancesFaites++;
+    relanceEnCours = true;
+    diagPush('err', {msg:'caméra: plus aucun flux, reprise immédiate'});
+    reprendreCamera(currentCameraDeviceId).finally(()=>{ relanceEnCours = false; });
+    return;
+  }
+  if(!cameraStream) return;
+  if(qualite.lumMoy > 0.5){ noirDepuis = 0; return; }
+  if(!noirDepuis){ noirDepuis = Date.now(); return; }
+  if(Date.now() - noirDepuis < FLUX_MORT_MS) return;
+
+  noirDepuis = 0;
+  relanceEnCours = true;
+  relancesFaites++;
+  diagPush('err', {msg:'caméra: flux noir depuis ' + FLUX_MORT_MS + ' ms, relance automatique (' + relancesFaites + '/' + RELANCES_MAX + ')'});
+  toast('📷 Aperçu perdu — redémarrage de la caméra…');
+  (async ()=>{
+    try{
+      if(cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+      cameraStream = null;
+      if(!(await reprendreCamera(currentCameraDeviceId))){
+        toast('⚠️ Impossible de relancer la caméra — appuie sur « Terminer » puis redémarre-la.');
+      }
+    }finally{ relanceEnCours = false; }
+  })();
+}
+
 async function applyTrackTweaksAndDiagnostics(track){
   try{
     const caps = track.getCapabilities ? track.getCapabilities() : {};
@@ -4641,19 +4694,61 @@ async function startCamera(){
 // changement d'appareil (deviceId), pas juste un zoom numérique sur celui déjà ouvert.
 // Ne fait rien de spécial si l'appareil ne fusionne ses objectifs qu'en une seule
 // caméra logique (bouton alors masqué, availableCameras.length <= 1).
+// Caméras arrière uniquement : basculer vers la caméra frontale n'a aucun sens pour
+// photographier une carte posée devant soi, et c'est pourtant ce que faisait le cycle.
+function objectifsArriere(){
+  const arriere = availableCameras.filter(d => !/front|avant|user/i.test(d.label || ''));
+  return arriere.length ? arriere : availableCameras;
+}
+
+
+// Rouvre la caméra, en deux tentatives : d'abord l'objectif demandé, puis — s'il est
+// refusé — sans aucun identifiant. Un appareil qui refuse d'ouvrir un objectif PAR
+// IDENTIFIANT les refusera souvent tous, alors qu'il accepte encore facingMode.
+async function reprendreCamera(deviceId){
+  for(const id of [deviceId, null]){
+    try{
+      cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(id));
+      currentCameraDeviceId = id;
+      $('video').srcObject = cameraStream;
+      await $('video').play().catch(()=>{});
+      await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
+      diagPush('err', {msg:'caméra: reprise réussie (' + (id ? 'objectif ' + String(id).slice(0,8) : 'facingMode') + ')'});
+      return true;
+    }catch(e){
+      diagPush('err', {msg:'caméra: reprise refusée (' + (id ? String(id).slice(0,8) : 'facingMode') + ' : ' + e.message + ')'});
+      cameraStream = null;
+    }
+  }
+  return false;
+}
+
 async function switchLens(){
-  if(availableCameras.length < 2) return;
-  const idx = availableCameras.findIndex(d => d.deviceId === currentCameraDeviceId);
-  const next = availableCameras[(idx + 1) % availableCameras.length];
+  const liste = objectifsArriere();
+  if(liste.length < 2) return;
+  const idx = liste.findIndex(d => d.deviceId === currentCameraDeviceId);
+  const next = liste[(idx + 1) % liste.length];
+  const precedent = currentCameraDeviceId;
+
+  // L'ancien flux est LIBÉRÉ D'ABORD. Android n'autorise pas deux sessions caméra
+  // simultanées : demander la nouvelle avant d'avoir rendu l'ancienne échoue, et emporte
+  // souvent l'ancienne avec elle — l'aperçu devient noir et ne revient jamais.
+  if(cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+  cameraStream = null;
+
   try{
-    const newStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(next.deviceId));
-    if(cameraStream) cameraStream.getTracks().forEach(t => t.stop());
-    cameraStream = newStream;
+    cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(next.deviceId));
     currentCameraDeviceId = next.deviceId;
     $('video').srcObject = cameraStream;
     await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
+    diagPush('err', {msg:'caméra: objectif -> ' + (next.label || next.deviceId.slice(0,8))});
   }catch(e){
-    diagPush('err', {msg:'caméra: changement d\'objectif échoué (' + e.message + ')'});
+    diagPush('err', {msg:'caméra: changement d\'objectif échoué (' + e.message + '), retour au précédent'});
+    // Rendre la caméra dans l'état où on l'a trouvée, plutôt que de laisser l'utilisateur
+    // devant un écran noir. Sans ce rattrapage, une bascule refusée mettait fin à la session.
+    if(!(await reprendreCamera(precedent))){
+      toast('⚠️ La caméra n\'a pas pu redémarrer — appuie sur « Terminer » puis relance-la.');
+    }
   }
 }
 $('btn-switch-lens').addEventListener('click', switchLens);
@@ -5568,6 +5663,7 @@ function echantillonnerQualite(){
     lumMoy: moyenne, clip, netBrut: nettete
   };
   msJauges += performance.now() - tQ0;
+  surveillerFluxMort();
   // Pas de rendu ici : c'est renderOverlayLoop qui affiche, à 60 Hz.
 }
 
@@ -5626,6 +5722,7 @@ function indiceVisee(base){
 function demarrerQualite(){
   arreterQualite();
   msCadre = 0; msJauges = 0; imagesDessinees = 0; imagesSautees = 0;
+  relancesFaites = 0; noirDepuis = 0;   // nouvelle session caméra : le compteur repart
   const jauges = $('jauges');
   if(jauges) jauges.style.display = '';
   qualiteTimer = setInterval(echantillonnerQualite, QUALITE_PERIODE_MS);
@@ -5948,7 +6045,7 @@ async function detectLoop(){
           setAimHint(indiceVisee('Ajuste la prise de vue'));
           if(!blocageDepuis){
             blocageDepuis = now;
-            diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score});
+            diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score: d.score});
           } else if(now - blocageDepuis >= SECOURS_BLOCAGE_MS){
             // Quatre secondes à refuser la même carte : le filtre a beau avoir raison sur
             // la qualité, il a tort de laisser l'utilisateur sans issue. On capture, il
