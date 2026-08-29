@@ -4699,6 +4699,9 @@ async function startCamera(){
     $('btn-switch-lens').style.display = arriere.length > 1 ? 'block' : 'none';
 
     await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
+    // Après l'énumération : c'est seulement ici qu'on sait quels objectifs existent ET ce
+    // que celui qu'on a ouvert sait faire.
+    await choisirObjectifNet();
 
     $('video').srcObject = cameraStream;
     $('video-wrap').classList.add('active');
@@ -4746,6 +4749,67 @@ async function reprendreCamera(deviceId){
     }
   }
   return false;
+}
+
+
+// Relevé sur le Galaxy S23 : l'objectif ouvert par facingMode déclare
+//   focusMode capacités = ["manual"]     -> aucun autofocus continu disponible
+//   label = "camera 2, facing back"      -> alors que "camera 0, facing back" existe aussi
+//
+// Chrome sélectionne « camera 2 », l'ultra grand-angle, à focus fixe. Les cartes restent
+// donc molles quoi qu'on fasse : sharp mesuré entre 200 et 320 sur la carte redressée,
+// contre 700 à 1600 sur un téléphone qui lit correctement. Assez net pour passer le seuil
+// anti-flou, jamais assez pour que le numéro se lise — 33 tentatives, 0 capture.
+//
+// Le discriminant n'est pas le libellé (« camera 0 » n'est une convention que sur certains
+// pilotes) mais la CAPACITÉ : un capteur principal expose toujours un autofocus continu, un
+// ultra grand-angle à focus fixe n'en expose aucun. On teste donc les objectifs arrière et
+// on garde le premier qui sait faire la mise au point.
+//
+// Ne coûte rien sur un téléphone dont le premier objectif convient : la fonction sort
+// immédiatement sans rien rouvrir.
+async function choisirObjectifNet(){
+  const arriere = objectifsArriere();
+  if(arriere.length < 2) return;
+
+  const piste = cameraStream && cameraStream.getVideoTracks()[0];
+  const caps = piste && piste.getCapabilities ? piste.getCapabilities() : {};
+  if(!caps.focusMode || caps.focusMode.includes('continuous')) return;   // déjà convenable
+
+  const initial = currentCameraDeviceId;
+  diagPush('err', {msg:'caméra: objectif courant sans autofocus continu (' +
+                        JSON.stringify(caps.focusMode) + '), recherche d\'un autre'});
+
+  for(const cam of arriere){
+    if(cam.deviceId === currentCameraDeviceId) continue;
+    // Libérer AVANT d'ouvrir : Android n'autorise pas deux sessions simultanées, et une
+    // demande concurrente emporte souvent celle déjà ouverte.
+    if(cameraStream) cameraStream.getTracks().forEach(t => t.stop());
+    cameraStream = null;
+    try{
+      cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(cam.deviceId));
+      currentCameraDeviceId = cam.deviceId;
+      $('video').srcObject = cameraStream;
+      await $('video').play().catch(()=>{});
+      const p2 = cameraStream.getVideoTracks()[0];
+      const c2 = p2.getCapabilities ? p2.getCapabilities() : {};
+      await applyTrackTweaksAndDiagnostics(p2);
+      if(c2.focusMode && c2.focusMode.includes('continuous')){
+        diagPush('err', {msg:'caméra: objectif retenu = ' + (cam.label || cam.deviceId.slice(0,8)) +
+                              ' (autofocus continu disponible)'});
+        toast('📷 Objectif changé pour celui qui fait la mise au point.');
+        return;
+      }
+    }catch(e){
+      diagPush('err', {msg:'caméra: objectif ' + (cam.label || '?') + ' inutilisable (' + e.message + ')'});
+      cameraStream = null;
+    }
+  }
+
+  // Aucun objectif arrière n'expose d'autofocus : on revient à celui du départ plutôt que
+  // de laisser l'utilisateur sur un objectif choisi au hasard pendant la recherche.
+  diagPush('err', {msg:'caméra: aucun objectif arrière avec autofocus continu, retour au premier'});
+  if(currentCameraDeviceId !== initial || !cameraStream) await reprendreCamera(initial);
 }
 
 async function switchLens(){
