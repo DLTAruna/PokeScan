@@ -780,8 +780,10 @@
     width:24px; height:24px; border-radius:50%; border:0; cursor:pointer;
     font-size:16px; font-weight:800; line-height:1; color:#fff;
   }
-  .qty-plus{background:#3ba55d;}
-  .qty-moins{background:#c0392b;}
+  /* Aplats retires : la version transparente est definie plus haut avec le reste des
+     boutons de quantite. Les laisser ici revenait a se battre a specificite egale, ou seul
+     l'ordre dans la feuille departage — un arbitrage qu'on ne veut pas avoir a relire. */
+
   .live-qty button:disabled{opacity:.35; cursor:default;}
   .qty-val{font-size:12px; font-weight:800; min-width:24px; text-align:center; font-variant-numeric:tabular-nums;}
 
@@ -1383,7 +1385,11 @@
   @media (max-width: 860px){ .fi-corps{grid-template-columns:1fr;} }
   .fi-visuel{position:relative; background:var(--panel); border:1px solid var(--border);
     border-radius:18px; padding:16px; text-align:center;}
-  .fi-visuel img{width:100%; max-width:280px; border-radius:9px; display:block; margin:0 auto;}
+  /* L'image est cliquable : le curseur doit le dire, sinon personne ne decouvre le
+     visualiseur. */
+  .fi-visuel img{width:100%; max-width:280px; border-radius:9px; display:block; margin:0 auto;
+    cursor:zoom-in;}
+  .fi-visuel .astuce{font-size:10.5px; color:var(--muted); margin-top:10px;}
   /* Le compteur de quantite est pose SUR l'image, comme chez eux : c'est le geste le plus
      frequent sur une fiche, il ne doit pas demander de chercher un champ. */
   .fi-qte{position:absolute; left:50%; transform:translateX(-50%); bottom:26px;
@@ -1391,7 +1397,7 @@
     border:1px solid var(--border); border-radius:16px; padding:4px 6px;}
   .fi-qte button{width:26px; height:26px; border-radius:50%; border:0; cursor:pointer;
     font-size:16px; font-weight:800; color:#fff; line-height:1;}
-  .fi-qte .plus{background:#3ba55d;} .fi-qte .moins{background:#c0392b;}
+
   .fi-qte b{min-width:22px; text-align:center; font-variant-numeric:tabular-nums;}
 
   .fi-prix{display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); margin-bottom:14px;}
@@ -1435,6 +1441,38 @@
   .pf-tendance .pct{font-size:10px; font-weight:800; font-variant-numeric:tabular-nums;}
   .pf-tendance .attente{font-size:9.5px; color:rgba(241,243,248,.38);}
   .tend-hausse{color:#3ba55d;} .tend-baisse{color:#e85b45;} .tend-stable{color:rgba(241,243,248,.72);}
+  /* ---- Boutons de quantite, partout ----
+     Ils etaient ovales : une largeur et une hauteur fixes dans un conteneur flex qui les
+     etirait, plus border-radius:50%, donne une ellipse des que le contenu pousse. Le
+     correctif n'est pas d'ajuster les valeurs mais d'empecher l'etirement (flex:none) et
+     de rendre le carre explicite (aspect-ratio), pour que le rond reste rond quel que soit
+     le contexte ou on les reutilise.
+
+     Et en transparence plutot qu'en aplat colore : sur une photo de carte ou un apercu
+     video, deux pastilles pleines vert et rouge attirent l'oeil plus que le sujet. Le
+     signe garde la couleur — c'est lui qui porte le sens — le fond se contente de le
+     rendre lisible sur n'importe quel fond. */
+  .live-qty button, .fi-qte button{
+    width:28px; height:28px; flex:none; aspect-ratio:1; padding:0;
+    border-radius:50%; cursor:pointer; line-height:1;
+    font-size:17px; font-weight:700;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(255,255,255,.10); border:1px solid rgba(255,255,255,.20);
+    transition:background .13s, border-color .13s, transform .1s;
+  }
+  .live-qty button:hover, .fi-qte button:hover{background:rgba(255,255,255,.18);}
+  .live-qty button:active, .fi-qte button:active{transform:scale(.9);}
+  /* Le fond est redeclare ici : des regles plus anciennes (.qty-plus{background:#3ba55d})
+     se trouvent PLUS BAS dans la feuille et l'emportaient a specificite egale. Le rond
+     restait donc un aplat vert ou rouge malgre tout le reste. */
+  .live-qty .qty-plus, .fi-qte .plus{
+    color:#5fd08a; background:rgba(95,208,138,.14); border-color:rgba(95,208,138,.42);}
+  .live-qty .qty-moins, .fi-qte .moins{
+    color:#f0806e; background:rgba(240,128,110,.14); border-color:rgba(240,128,110,.42);}
+  .live-qty .qty-plus:hover, .fi-qte .plus:hover{background:rgba(95,208,138,.26);}
+  .live-qty .qty-moins:hover, .fi-qte .moins:hover{background:rgba(240,128,110,.26);}
+  .live-qty button:disabled, .fi-qte button:disabled{opacity:.3; cursor:default;}
+  .live-qty, .fi-qte{background:rgba(10,13,22,.72); border-color:rgba(255,255,255,.14);}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1859,12 +1897,14 @@
       <div class="fi-corps">
         <div>
           <div class="fi-visuel">
-            <img id="fi-image" src="" alt="">
+            <img id="fi-image" src="" alt="" title="Voir en grand — inclinaison et reflets holographiques">
             <div class="fi-qte">
               <button class="moins" id="fi-moins">−</button>
               <b id="fi-qte-val">1</b>
               <button class="plus" id="fi-plus">+</button>
             </div>
+            <div class="astuce">Touche l'image pour l'ouvrir en grand — incline le téléphone
+              ou glisse le doigt pour faire jouer les reflets. L'effet se coupe depuis le visualiseur.</div>
           </div>
           <div class="fi-panneau fi-notes" style="margin-top:14px;">
             <div class="micro">Notes</div>
@@ -2298,14 +2338,7 @@
           <div class="val-graph" id="val-graph"></div>
         </div>
       </div>
-      <div class="repricing-bar">
-        <span>Repositionner les prix à</span>
-        <input type="number" id="reprice-pct" value="80" min="1" max="300" step="5"> %
-        <span>du prix marché</span>
-        <button class="btn-ghost btn-sm" id="btn-reprice-all">Appliquer à tout le lot</button>
-        <button class="btn-gold btn-sm" id="btn-revue">🔍 Relire les ajouts auto (<span id="nb-auto">0</span>)</button>
-        <span class="hint" id="reprice-status"></span>
-      </div>
+
       <div class="pf-tete">
         <div>
           <h2 style="margin:0;">Portfolio</h2>
@@ -2340,6 +2373,7 @@
       <div class="pf-resultats">
         <span class="compte" id="pf-compte">0 carte</span>
         <div class="droite">
+          <button class="btn-gold btn-sm" id="btn-revue">🔍 Relire les ajouts auto (<span id="nb-auto">0</span>)</button>
           <button class="btn-ghost btn-sm" id="pf-selection">☑️ Sélectionner</button>
           <div class="pf-seg" id="pf-vue">
             <button data-vue="grille" class="on">Grille</button>
@@ -2563,6 +2597,17 @@
 
   <!-- SETTINGS TAB -->
   <section class="section" id="section-settings">
+    <div class="panel">
+      <h2>Politique de prix</h2>
+      <p class="sub">Recalcule d'un coup le prix de vente de tout le lot à partir de la cote du marché.</p>
+      <div class="repricing-bar">
+        <span>Repositionner les prix à</span>
+        <input type="number" id="reprice-pct" value="80" min="1" max="300" step="5"> %
+        <span>du prix marché</span>
+        <button class="btn-ghost btn-sm" id="btn-reprice-all">Appliquer à tout le lot</button>
+        <span class="hint" id="reprice-status"></span>
+      </div>
+    </div>
     <div class="panel">
       <h2>Source des données : TCGdex</h2>
       <p class="sub">La recherche et les prix viennent de <a href="https://tcgdex.dev" target="_blank">TCGdex</a> (gratuit, sans clé, pas de limite documentée). Contrairement à l'ancienne source (Pokémon TCG API, en cours de dépréciation), TCGdex gère nativement les cartes en <b>français</b> et fournit des prix Cardmarket en <b>€</b> en plus des prix TCGPlayer en $.</p>
@@ -12075,17 +12120,33 @@ async function noterCotesDuJour(){
 // courbe ce qu'elle ne sait pas.
 const TENDANCE_SEUIL = 2;
 
+// Deux fenêtres différentes, et c'est voulu : la COURBE montre trois mois, le VERDICT
+// (couleur et pourcentage) porte sur sept jours.
+//
+// Sept points de tracé ne dessinent rien — on y voit du bruit, pas une tendance. Trois mois
+// donnent une forme lisible, où l'on distingue une carte qui monte depuis longtemps d'une
+// autre qui rebondit après avoir chuté. Mais pour décider maintenant, c'est la semaine
+// écoulée qui compte : une carte en hausse de 40 % sur trois mois et en baisse de 10 %
+// depuis lundi n'est pas en train de monter.
+const TENDANCE_JOURS_TRACE = 90;
+const TENDANCE_JOURS_VERDICT = 7;
+
 function courbeTendance(cardId){
   const pts = (historiqueCotes && cardId && historiqueCotes[cardId]) || [];
-  const recents = pts.slice(-7);
-  if(recents.length < 2){
+  const limite = Date.now() - TENDANCE_JOURS_TRACE * 86400000;
+  const trace = pts.filter(p => new Date(p.j).getTime() >= limite);
+  const recents = pts.slice(-TENDANCE_JOURS_VERDICT);
+  if(trace.length < 2){
     // Rien à montrer encore. On le dit plutôt que de tracer une ligne plate, qui se lirait
     // comme « stable » alors qu'on ne sait simplement rien.
     return '<span class="pf-tendance"><span class="attente">tendance en construction</span></span>';
   }
-  const v = recents.map(p => p.v);
-  const pct = v[0] ? ((v[v.length-1] - v[0]) / v[0]) * 100 : 0;
+  // Verdict sur la semaine…
+  const w = recents.map(p => p.v);
+  const pct = (w.length >= 2 && w[0]) ? ((w[w.length-1] - w[0]) / w[0]) * 100 : 0;
   const cls = Math.abs(pct) < TENDANCE_SEUIL ? 'tend-stable' : (pct > 0 ? 'tend-hausse' : 'tend-baisse');
+  // …tracé sur trois mois.
+  const v = trace.map(p => p.v);
   const min = Math.min(...v), max = Math.max(...v), etendue = (max - min) || 1;
   const L = 52, H = 15;
   const d = v.map((val, i) =>
@@ -12419,6 +12480,17 @@ $('val-periode').addEventListener('click', (e)=>{
 
 
 $('fi-retour').addEventListener('click', ()=> activerOnglet('batch'));
+$('fi-image').addEventListener('click', ()=>{
+  const e = batch.find(x => x.id === ficheId);
+  if(!e) return;
+  // openCardViewer attend la base d'URL sans suffixe et ajoute /high.webp lui-meme. Les
+  // entrees du lot stockent la vignette deja suffixee en /low.webp : on retire le suffixe
+  // plutot que de stocker un champ de plus.
+  const base = (e.cardImage || '').replace(/\/(low|high)\.webp$/, '');
+  if(!base){ toast("Pas d'illustration officielle pour cette carte."); return; }
+  openCardViewer(base, e.cardName || '', e.cardId || null);
+});
+
 $('fi-plus').addEventListener('click', ()=>{
   const e = batch.find(x => x.id === ficheId); if(!e) return;
   e.qty = (parseInt(e.qty)||1) + 1; $('fi-qte-val').textContent = e.qty;
