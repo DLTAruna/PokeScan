@@ -4935,6 +4935,10 @@ function diagPush(kind, data){
       }
     }catch(e){ /* jauges pas encore initialisées : l'observation part sans elles */ }
     entry.build = BUILD_VERSION;
+    entry.msCadre = Math.round(msCadre);
+    entry.msJauges = Math.round(msJauges);
+    entry.imgDess = imagesDessinees;
+    entry.imgSaut = imagesSautees;
     entry.heapMb = heapMb();
     entry.queueLen = pendingQueue.length;
     entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
@@ -5407,6 +5411,7 @@ function echantillonnerQualite(){
   const vw = video.videoWidth, vh = video.videoHeight;
   ctx.drawImage(video, g.x*vw, g.y*vh, g.w*vw, g.h*vh, 0, 0, QUALITE_W, QUALITE_H);
 
+  const tQ0 = performance.now();
   const data = ctx.getImageData(0, 0, QUALITE_W, QUALITE_H).data;
   const gris = new Float32Array(QUALITE_W * QUALITE_H);
   let brules = 0;
@@ -5436,6 +5441,7 @@ function echantillonnerQualite(){
     net: sNet, lum: Math.max(0, Math.min(1, sLum)), cad: scoreCadrage(video),
     lumMoy: moyenne, clip, netBrut: nettete
   };
+  msJauges += performance.now() - tQ0;
   // Pas de rendu ici : c'est renderOverlayLoop qui affiche, à 60 Hz.
 }
 
@@ -5493,6 +5499,7 @@ function indiceVisee(base){
 
 function demarrerQualite(){
   arreterQualite();
+  msCadre = 0; msJauges = 0; imagesDessinees = 0; imagesSautees = 0;
   const jauges = $('jauges');
   if(jauges) jauges.style.display = '';
   qualiteTimer = setInterval(echantillonnerQualite, QUALITE_PERIODE_MS);
@@ -5525,6 +5532,14 @@ function arreterQualite(){
 // par ex.) au-delà de ce que l'écran affiche réellement : sur un écran 60 Hz, la boucle
 // tourne déjà à son maximum possible ; sur un 90/120 Hz elle suivra automatiquement plus
 // vite, sans rien à changer ici.
+
+// Temps cumulé passé dans les deux postes soupçonnés, depuis le démarrage de la caméra.
+// Remontés dans le diagnostic pour pouvoir dire, chiffres en main et sur le bon appareil,
+// s'il reste quelque chose à gratter — au lieu de l'estimer depuis un ordinateur où tout
+// coûte trente fois moins cher.
+let msCadre = 0, msJauges = 0;
+let imagesDessinees = 0, imagesSautees = 0;
+
 let overlayTargetState = 'attente', overlayTargetCorners = null;
 let overlayCurrentState = 'attente', overlayCurrentCorners = null;
 let overlayRenderRunning = false;
@@ -5605,6 +5620,8 @@ function renderOverlayLoop(now){
 
   const video = $('video');
   if(video && video.videoWidth){
+    const etatPrecedent = overlayCurrentState;
+    const avant = overlayCurrentCorners;
     overlayCurrentState = overlayTargetState;
     const cible = cornersPredits(now);
     if(!cible){
@@ -5616,7 +5633,24 @@ function renderOverlayLoop(now){
     } else {
       overlayCurrentCorners = lerpCorners(overlayCurrentCorners, cible, 1 - Math.exp(-dt / OVERLAY_TAU_MS));
     }
-    drawGuideOverlay(video, overlayCurrentState, overlayCurrentCorners);
+
+    // Seuil en fraction d'image : en dessous, le déplacement ne vaut même pas un pixel à
+    // l'écran. Continuer à redessiner pour ça, c'est payer une composition plein écran
+    // pour un résultat que personne ne peut voir.
+    const pulseActive = (now - pulseCaptureAt) < PULSE_DUREE_MS;
+    const change = etatPrecedent !== overlayCurrentState
+      || pulseActive
+      || (!avant) !== (!overlayCurrentCorners)
+      || (avant && overlayCurrentCorners && maxCornerShift(avant, overlayCurrentCorners) > 0.0004);
+
+    if(change){
+      const t0 = performance.now();
+      drawGuideOverlay(video, overlayCurrentState, overlayCurrentCorners);
+      msCadre += performance.now() - t0;
+      imagesDessinees++;
+    } else {
+      imagesSautees++;
+    }
   }
 
   // Les jauges sont animées sur la MÊME horloge que le cadre. Mesurer coûte cher (une
