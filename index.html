@@ -493,15 +493,87 @@
      page interieure commence a la carte 1 a gauche ET a la suivante en face. */
   .classeur-page.couverture{
     display:flex; align-items:center; justify-content:center; position:relative;
-    overflow:hidden; padding:22px;
-    /* Cuir teinte : la teinte vient du set (--t), la matiere du degrade et du grain SVG. */
+    overflow:hidden; padding:26px 22px;
+    /* Quatre couches, chacune pour une chose que le cuir fait et qu'un degre plat ne fait
+       pas : une lumiere rasante en haut a gauche, un vignettage qui creuse les bords, une
+       bande de dos plus sombre du cote de la reliure, et enfin la teinte de fond. La
+       version precedente n'avait que la derniere, et c'est ce qui la faisait ressembler a
+       un aplat colore plutot qu'a une matiere. */
     background:
-      radial-gradient(120% 90% at 30% 12%, hsl(var(--t) 34% 30%) 0%, transparent 62%),
-      linear-gradient(155deg, hsl(var(--t) 30% 24%) 0%, hsl(var(--t) 36% 13%) 58%, hsl(var(--t) 30% 9%) 100%);
-    border-color:hsl(var(--t) 30% 30%);
-    box-shadow:inset 0 0 60px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.10);
+      radial-gradient(105% 72% at 20% 6%, rgba(255,255,255,.15), rgba(255,255,255,0) 58%),
+      radial-gradient(128% 104% at 50% 44%, rgba(0,0,0,0) 34%, rgba(0,0,0,.55) 100%),
+      linear-gradient(90deg, rgba(0,0,0,0) 0 86%, rgba(0,0,0,.34) 95%, rgba(255,255,255,.06) 100%),
+      linear-gradient(158deg, hsl(var(--t) 32% 28%) 0%, hsl(var(--t) 34% 17%) 54%, hsl(var(--t) 33% 8%) 100%);
+    border-color:hsl(var(--t) 28% 26%);
+    box-shadow:inset 0 0 70px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.13);
   }
-  .cl-cuir{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
+  /* Grain en relief reel (bruit + eclairage directionnel) plutot qu'un simple bruit
+     translucide : c'est l'ombre portee de chaque grain qui fait lire « cuir » plutot que
+     « bruit ». Pas de viewBox — le filtre travaille en pixels CSS, sinon l'etirement d'un
+     petit viewBox vers la taille de la page transformait le grain en stries. */
+  .cl-cuir{
+    position:absolute; inset:0; width:100%; height:100%; pointer-events:none;
+    mix-blend-mode:overlay; opacity:.6;
+  }
+  /* Surpiqure : deux traits, un clair et un sombre juste dessous, comme un fil qui creuse
+     le cuir. Un seul trait clair aurait flotte a la surface. */
+  .classeur-page.couverture::after{
+    content:''; position:absolute; inset:15px; border-radius:6px; z-index:2;
+    border:1.4px dashed rgba(255,255,255,.22); pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(0,0,0,.30), 0 1px 0 rgba(0,0,0,.28);
+  }
+  /* Le Pokemon phare : grand, debordant, fondu sur les bords. Non masque, l'image se
+     lirait comme une carte collee sur la couverture ; le degrade de masque efface le
+     cadre et il ne reste que l'illustration, marquee dans le cuir. */
+  .cl-couv-phare{
+    position:absolute; right:-9%; bottom:-5%; width:76%; aspect-ratio:1/1; z-index:0;
+    overflow:hidden; pointer-events:none;
+    transform:rotate(-6deg); transform-origin:100% 100%;
+    mix-blend-mode:luminosity; opacity:.42;
+    -webkit-mask-image:radial-gradient(closest-side at 52% 42%, #000 32%, transparent 84%);
+    mask-image:radial-gradient(closest-side at 52% 42%, #000 32%, transparent 84%);
+  }
+  /* Cadre carre + image au ratio de la carte : on ne voit que les 70 % superieurs, soit
+     l'illustration seule. La marge negative fait sortir la bordure haute du cadre. */
+  .cl-couv-phare img{
+    width:100%; height:auto; display:block; margin-top:-5%;
+    filter:grayscale(1) contrast(1.1);
+  }
+  /* Reglage d'habillage : discret, dans le coin, il n'a pas a disputer l'attention au
+     contenu de la couverture. */
+  .cl-couv-reglage{
+    position:absolute; left:12px; bottom:12px; z-index:3; width:30px; height:30px;
+    border-radius:50%; border:1px solid rgba(255,255,255,.16); cursor:pointer;
+    background:rgba(0,0,0,.34); color:rgba(255,255,255,.55); font-size:14px; line-height:1;
+    opacity:0; transition:opacity .15s, color .15s;
+  }
+  .classeur-page.couverture:hover .cl-couv-reglage{opacity:1;}
+  .cl-couv-reglage:hover{color:#fff; border-color:rgba(255,255,255,.4);}
+  @media (hover: none){ .cl-couv-reglage{opacity:1;} }
+
+  /* Nuancier de cuirs */
+  .cuir-nuances{display:flex; flex-wrap:wrap; gap:7px;}
+  .cuir-nuance{
+    width:34px; height:34px; border-radius:9px; cursor:pointer; padding:0;
+    border:2px solid transparent; box-shadow:inset 0 1px 0 rgba(255,255,255,.18);
+    background:linear-gradient(155deg, hsl(var(--t) 32% 30%), hsl(var(--t) 33% 12%));
+  }
+  .cuir-nuance.auto{
+    background:var(--panel2); color:var(--muted); font:inherit; font-size:12px; font-weight:800;
+  }
+  .cuir-nuance.on{border-color:var(--accent);}
+  /* Choix du Pokemon phare */
+  .phare-grille{display:grid; grid-template-columns:repeat(auto-fill, minmax(58px, 1fr)); gap:7px;}
+  .phare-vign{
+    padding:0; border:2px solid transparent; border-radius:7px; overflow:hidden;
+    background:var(--panel2); cursor:pointer; aspect-ratio:63/88;
+  }
+  .phare-vign img{width:100%; height:100%; object-fit:cover; display:block;}
+  .phare-vign.vide{
+    display:flex; align-items:center; justify-content:center;
+    color:var(--muted); font:inherit; font-size:13px; font-weight:800;
+  }
+  .phare-vign.on{border-color:var(--accent);}
   .cl-couv-contenu{position:relative; z-index:1; text-align:center; width:100%;}
   /* Monochrome, mais pas aplati. `brightness(0) invert(1)` donnait bien une teinte unique,
      au prix de TOUTE la structure interne : le logo se reduisait a une silhouette blanche
@@ -546,6 +618,9 @@
     /* Une double page cote a cote sur un ecran de telephone donnerait des vignettes
        illisibles : les deux pages passent l'une sous l'autre. */
     .classeur-pages{grid-template-columns:1fr;}
+    /* Empilee, la couverture n'a plus de page en face pour lui donner sa hauteur : sans
+       proportions imposees elle s'aplatissait en bandeau. */
+    .classeur-page.couverture{aspect-ratio:3/4; max-height:62vh; margin:0 auto;}
   }
   /* Groupe de boutons segmentes — un seul choix actif, comme les bascules de TCG Crew.
      Preferable a un <select> ici : les options sont peu nombreuses et on veut les compter
@@ -721,6 +796,22 @@
   .btn-annuler-masse{border-color:#c0563f; color:#e0836f;}
 
   /* Choix des versions avant remplissage */
+  .masse-sect{
+    font-size:11px; font-weight:800; letter-spacing:.6px; text-transform:uppercase;
+    color:var(--muted); margin:12px 0 7px;
+  }
+  .masse-sect:first-child{margin-top:0;}
+  .masse-puces{display:flex; flex-wrap:wrap; gap:6px; margin-bottom:2px;}
+  .masse-puce{
+    border:1px solid var(--border); background:var(--panel2); color:var(--muted);
+    font:inherit; font-size:12px; padding:5px 10px; border-radius:8px; cursor:pointer;
+    white-space:nowrap;
+  }
+  .masse-puce:hover{border-color:var(--accent2); color:var(--text);}
+  .masse-puce b{margin-left:4px; font-variant-numeric:tabular-nums; opacity:.7;}
+  .masse-puce.on{background:var(--accent); border-color:var(--accent); color:#1a1206; font-weight:700;}
+  .masse-puce.on b{opacity:.8;}
+  .masse-puce.tout{border-style:dashed;}
   .masse-ligne{
     display:flex; align-items:center; gap:10px; padding:9px 10px; border-radius:9px;
     border:1px solid var(--border); margin-bottom:6px; cursor:pointer; user-select:none;
@@ -2808,6 +2899,7 @@
       <p class="sub">Parcours le catalogue complet, série par série. Un set marqué <span class="cache-dot cached"></span> a sa liste de cartes en cache local : son identification ne fait plus aucun appel réseau. Ouvrir un set le met en cache au passage.</p>
       <input type="text" id="sets-filter" placeholder="🔎 Filtrer par nom de set ou de série (ex: 151, Écarlate, Néo…)" autocomplete="off">
       <p class="hint" id="sets-status">Chargement du catalogue…</p>
+      <p class="hint" id="ms-etat" style="margin-top:-2px;"></p>
       <div id="series-list"></div>
     </div>
 
@@ -3135,6 +3227,16 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 </main>
 
 <!-- Visualiseur plein écran d'une carte : zoom + inclinaison suivie à l'accéléromètre -->
+  <div class="versions-modal" id="style-modal">
+    <div class="versions-boite">
+      <div class="versions-tete">
+        <b>Habillage du classeur</b>
+        <button class="btn-ghost btn-sm" id="btn-fermer-style">✕</button>
+      </div>
+      <div id="style-corps"></div>
+      <p class="hint" style="margin:12px 0 0;">Réglages propres à ce set : une étagère de classeurs identiques ne sert à rien, on les reconnaît à leur couleur.</p>
+    </div>
+  </div>
   <div class="versions-modal" id="masse-modal">
     <div class="versions-boite">
       <div class="versions-tete">
@@ -4880,7 +4982,7 @@ const CARD_DETAIL_MAX_AGE_MS = 14*24*3600*1000;
 // A incrementer des qu'un champ est ajoute a normalizeCard : sans ca, les fiches deja en
 // cache restent incompletes pendant toute la duree de validite du cache.
 const FORME_FICHE = 2;
-async function getCardDetailCached(id){
+async function getCardDetailCached(id, maxAge){
   const cached = await idbGet('cardDetail', id);
   // Marqueur de forme plutot qu'un test sur tel ou tel champ. Chaque fois qu'un champ a
   // ete ajoute a normalizeCard (variants, puis dexId), les fiches deja en cache se sont
@@ -4888,7 +4990,7 @@ async function getCardDetailCached(id){
   // la fonctionnalite paraissait alors cassee sur les cartes deja consultees. Incrementer
   // FORME_FICHE suffit desormais a forcer un rechargement unique.
   const complet = cached && cached.detail && cached.formeFiche === FORME_FICHE;
-  if(complet && (Date.now() - cached.fetchedAt) < CARD_DETAIL_MAX_AGE_MS) return cached.detail;
+  if(complet && (Date.now() - cached.fetchedAt) < (maxAge || CARD_DETAIL_MAX_AGE_MS)) return cached.detail;
   try{
     const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
     if(r.ok){
@@ -10153,10 +10255,13 @@ function prixRetenu(detail, variante){
   return p.ambigu ? p.min : p.prix;
 }
 
-function calculerMasterset(setId, cartes){
+// `details` par defaut sur la map de l'ecran, mais parametrable : le calcul de fond
+// travaille sur une map locale qu'il jette ensuite, sans faire enfler celle de l'ecran.
+function calculerMasterset(setId, cartes, details){
+  const fiches = details || detailsCartes;
   let total = 0, possede = 0, versions = 0, sansPrix = 0;
   for(const c of cartes){
-    const d = detailsCartes.get(c.id);
+    const d = fiches.get(c.id);
     if(!d){ sansPrix++; continue; }
     for(const v of variantesDe(d)){
       versions++;
@@ -10188,30 +10293,140 @@ function rendreMasterset(){
   const zone = $('set-masterset');
   if(!zone) return;
   const m = mastersets.get(setCourantId);
-  const perime = m && (Date.now() - m.calculeLe) > MASTERSET_MAX_AGE_MS;
 
+  // Plus de bouton « calculer » : la valeur est calculee toute seule, et rejouee au bout
+  // d'une semaine. Un bouton n'a d'interet que si l'utilisateur sait mieux que nous quand
+  // le presser — ce n'etait pas le cas ici, et une cote a un mois ne vaut rien.
   if(!m){
-    zone.innerHTML = `<button class="btn-ghost btn-sm" id="btn-calc-masterset">💰 Calculer la valeur du masterset</button>
-      <span class="hint">Somme de toutes les impressions du set — nécessite de charger les fiches (une fois).</span>`;
-  } else {
-    zone.innerHTML = `
-      <div class="ms-bloc"><span class="ms-lbl">Masterset complet</span><b class="ms-num">${fmtEuro(m.total)}</b></div>
-      <div class="ms-bloc"><span class="ms-lbl">Déjà possédé</span><b class="ms-num ms-poss">${fmtEuro(m.possede)}</b></div>
-      <div class="ms-bloc"><span class="ms-lbl">Reste à acquérir</span><b class="ms-num ms-reste">${fmtEuro(m.restant)}</b></div>
-      <span class="hint">${m.versions} impression(s)${m.sansPrix ? ` · ${m.sansPrix} sans cote connue, non compté(es)` : ''}${perime ? ' · cotes datées, recalcule' : ''}
-        <button class="link-btn" id="btn-calc-masterset">↻ recalculer</button></span>`;
+    zone.innerHTML = msEnCours || msFile.length
+      ? '<span class="hint">💰 Valeur du masterset en cours de calcul…</span>'
+      : '<span class="hint">💰 Valeur du masterset en attente de calcul.</span>';
+    return;
   }
 
-  const b = $('btn-calc-masterset');
-  if(b) b.addEventListener('click', async ()=>{
-    zone.innerHTML = '<span class="hint">Chargement des cotes…</span>';
-    await chargerVariantes(cartesSetCourant, (f, t)=>{
-      zone.innerHTML = `<span class="hint">Chargement des cotes… ${f}/${t}</span>`;
-    });
-    await majMasterset(setCourantId, cartesSetCourant);
-    rendreMasterset();
-    renderSeriesList();   // le badge de la liste des sets se met à jour aussi
+  const jours = Math.floor((Date.now() - m.calculeLe) / 86400000);
+  const quand = jours <= 0 ? "aujourd’hui" : (jours === 1 ? 'hier' : 'il y a ' + jours + ' jours');
+  zone.innerHTML = `
+    <div class="ms-bloc"><span class="ms-lbl">Masterset complet</span><b class="ms-num">${fmtEuro(m.total)}</b></div>
+    <div class="ms-bloc"><span class="ms-lbl">Déjà possédé</span><b class="ms-num ms-poss">${fmtEuro(m.possede)}</b></div>
+    <div class="ms-bloc"><span class="ms-lbl">Reste à acquérir</span><b class="ms-num ms-reste">${fmtEuro(m.restant)}</b></div>
+    <span class="hint">${m.versions} impression(s)${m.sansPrix ? ` · ${m.sansPrix} sans cote connue, non compté(es)` : ''} · coté ${quand}</span>`;
+}
+
+
+// ---------------- CALCUL AUTOMATIQUE DES MASTERSETS ----------------
+// La valeur d'un masterset ne se demandait qu'au clic, set par set. C'est un bouton qu'on
+// finit toujours par appuyer, donc autant que la valeur soit deja la — et surtout : une
+// cote a un mois ne vaut pas grand-chose, alors qu'un bouton ne se represse jamais tout
+// seul. Le calcul devient donc une tache de fond, rejouee au bout d'une semaine.
+//
+// PORTEE. Le catalogue compte plus de mille sets, soit deux cent mille fiches : tout
+// evaluer serait des dizaines de milliers de requetes par semaine pour des extensions que
+// l'utilisateur ne collectionne pas. Le calcul se limite donc aux sets qui le concernent —
+// une carte possedee, un favori, ou un set deja ouvert (liste en cache) — et s'etend tout
+// seul a mesure qu'il en ouvre d'autres.
+const MS_CONCURRENCE = 6;      // fiches en parallele, pour ne pas saturer TCGdex
+let msFile = [];               // setIds restant a evaluer
+let msEnCours = false;
+let msProgres = null;          // {fait, total, nom} pendant le travail
+
+function setsAEvaluer(){
+  const vus = new Set();
+  // Les sets ou l'utilisateur possede quelque chose passent en premier : ce sont ceux dont
+  // il regarde la valeur, et ceux ou « reste a acquerir » veut dire quelque chose.
+  for(const e of collection.values()) if(e.setId) vus.add(e.setId);
+  for(const id of favorisSets) vus.add(id);
+  for(const id of cachedSetIds) vus.add(id);
+  const frais = (id)=>{
+    const m = mastersets.get(id);
+    return m && (Date.now() - m.calculeLe) < MASTERSET_MAX_AGE_MS;
+  };
+  return [...vus].filter(id => !frais(id));
+}
+
+// Variante hors-ecran de chargerVariantes : les fiches vont dans une map LOCALE, jetee
+// ensuite. Les verser dans `detailsCartes` ferait grossir sans fin une map qui ne sert
+// qu'au set affiche — mille sets y laisseraient deux cent mille entrees en memoire.
+async function fichesDuSet(cartes, maxAge){
+  const map = new Map();
+  await pLimit(cartes, MS_CONCURRENCE, async (c)=>{
+    const d = await getCardDetailCached(c.id, maxAge).catch(()=> null);
+    if(d) map.set(c.id, d);
   });
+  return map;
+}
+
+async function evaluerSet(setId){
+  const cartes = await getSetCardList(setId).catch(()=> []);
+  if(!cartes.length) return null;
+  // maxAge d'une semaine et non les quatorze jours par defaut : recalculer sur des fiches
+  // vieilles de deux semaines rafraichirait la DATE du calcul sans rafraichir les cotes,
+  // ce qui est pire que ne rien faire — le chiffre paraitrait a jour sans l'etre.
+  const fiches = await fichesDuSet(cartes, MASTERSET_MAX_AGE_MS);
+  // Le set AFFICHE profite au passage des fiches que le calcul vient de telecharger. La
+  // rarete, le filtre de remplissage et le Pokemon phare en dependent tous les trois, et
+  // les redemander depuis l'ecran referait exactement les memes deux cents requetes — ce
+  // qui obligeait l'utilisateur a cliquer « charger les raretes » pour une donnee que
+  // l'application venait d'avoir en main.
+  // `cartesSetCourant.length` en plus de l identifiant : le calcul de fond et l ouverture
+  // du set courent en parallele, et sans cette garde le rendu pouvait tomber pile entre le
+  // moment ou setCourantId est affecte et celui ou la liste arrive — la grille se
+  // redessinait alors vide, avec des compteurs a zero sur un set de 188 cartes.
+  if(setId === setCourantId && fiches.size && cartesSetCourant.length){
+    for(const [k, v] of fiches) detailsCartes.set(k, v);
+    rendreFiltreRarete();
+    rendreRemplissage();
+    rendreCartesSet();
+  }
+  const m = calculerMasterset(setId, cartes, fiches);
+  mastersets.set(setId, m);
+  await idbSet('meta', m).catch(()=>{});
+  return m;
+}
+
+async function travaillerMastersets(){
+  if(msEnCours) return;
+  msEnCours = true;
+  try{
+    while(msFile.length){
+      const setId = msFile.shift();
+      msProgres = {fait: msProgres ? msProgres.fait + 1 : 1, restant: msFile.length, setId};
+      majEtatMastersets();
+      await evaluerSet(setId).catch(()=>{});
+      // Le set affiche profite immediatement de son propre calcul.
+      if(setId === setCourantId) rendreMasterset();
+      if($('sets-browse')?.style.display !== 'none') renderSeriesList();
+    }
+  } finally {
+    msEnCours = false;
+    msProgres = null;
+    majEtatMastersets();
+  }
+}
+
+// `enTete` sert quand l'utilisateur ouvre un set : c'est celui qu'il regarde, il ne doit
+// pas attendre derriere quarante autres.
+function planifierMastersets(ids, enTete){
+  const aFaire = ids.filter(id => id && !msFile.includes(id));
+  if(!aFaire.length) return;
+  if(enTete) msFile.unshift(...aFaire); else msFile.push(...aFaire);
+  travaillerMastersets();
+}
+
+function majEtatMastersets(){
+  const el = $('ms-etat');
+  if(!el) return;
+  el.textContent = msProgres
+    ? `💰 Cotes en cours d’actualisation… ${msProgres.fait} set(s) fait(s), ${msProgres.restant} en attente`
+    : '';
+}
+
+// Demarrage differe : au chargement, l'application a mieux a faire que d'ouvrir six
+// connexions vers TCGdex. Et rien du tout en mode economie de donnees — c'est exactement
+// le genre de tache de fond que ce reglage vise.
+function demarrerCalculMastersets(){
+  if(navigator.connection && navigator.connection.saveData) return;
+  setTimeout(()=> planifierMastersets(setsAEvaluer()), 5000);
 }
 
 function progressionSet(cartes){
@@ -10266,11 +10481,6 @@ let modeVersions = localStorage.getItem('modeVersions') || 'simple';
 // fausserait la valeur de sa collection dans un sens ou dans l'autre, donc on demande —
 // une fenetre, une fois, pour cent quarante cartes.
 
-// Raretes de base, reperees sur le LIBELLE et non sur une liste d'identifiants : TCGdex
-// renvoie du texte francais, dont la casse varie selon l'anciennete du set (« Peu Commune »,
-// « Peu commune »).
-const RARETE_COMMUNE = /^commune?$/i;
-const RARETE_PEU_COMMUNE = /^peu\s+commune?$/i;
 
 // Ecriture groupee : une transaction pour six cents entrees plutot que six cents
 // transactions. majPossession recalcule en plus le masterset a chaque appel, ce qui
@@ -10298,8 +10508,36 @@ async function idbDeleteTous(store, cles){
   });
 }
 
-let masseCible = null;              // {titre, cartes, choix:Set}
 let dernierRemplissage = null;      // cles ajoutees au dernier coup, pour l'annulation
+
+// Selection courante de la fenetre de remplissage : quelles cartes, quelles impressions.
+// Les deux vivent ensemble parce que ce sont les deux moities d'une meme decision — « les
+// communes en reverse » n'a de sens qu'entier. La barre precedente les separait : quatre
+// boutons choisissaient les cartes, la fenetre choisissait ensuite les impressions, et
+// « Les deux » etait une troisieme entree qui ne faisait que combiner les deux premieres.
+// Un bouton par combinaison ne passe pas l'echelle : ce set a huit raretes.
+let masseSel = {raretes: new Set(), impressions: new Set()};
+
+function rareteDe(c){
+  const d = detailsCartes.get(c.id);
+  return (d && d.rarity) || 'Sans rareté';
+}
+
+// Les cartes du set groupees par rarete, les plus nombreuses d'abord : les communes en
+// tete, les secretes en fin de liste, soit l'ordre dans lequel on parcourt un set.
+function lotsParRarete(){
+  const m = new Map();
+  for(const c of cartesSetCourant){
+    const r = rareteDe(c);
+    if(!m.has(r)) m.set(r, []);
+    m.get(r).push(c);
+  }
+  return [...m.entries()].sort((a, b) => b[1].length - a[1].length);
+}
+
+function cartesSelectionnees(){
+  return cartesSetCourant.filter(c => masseSel.raretes.has(rareteDe(c)));
+}
 
 // Versions realisables sur un lot, avec ce qui reste a ajouter pour chacune.
 function versionsDuLot(cartes){
@@ -10316,57 +10554,96 @@ function versionsDuLot(cartes){
   return ORDRE_VARIANTES.filter(v => dispo.has(v)).map(v => [v, dispo.get(v)]);
 }
 
-function ouvrirMasse(titre, cartes){
-  if(!cartes.length){ toast('Aucune carte dans ce lot.'); return; }
-  masseCible = {titre, cartes, choix: new Set()};
-  const versions = versionsDuLot(cartes);
-  // Une seule impression possible sur tout le lot : il n'y a rien a choisir, on la coche
-  // d'office plutot que d'imposer un clic sans alternative.
-  if(versions.length === 1) masseCible.choix.add(versions[0][0]);
-  $('masse-titre').textContent = titre + ' · ' + cartes.length + ' carte(s)';
+function ouvrirMasse(){
+  if(!cartesSetCourant.length) return;
+  masseSel = {raretes: new Set(), impressions: new Set()};
+  $('masse-titre').textContent = 'Remplir ' + (setCourantMeta?.name || '');
   rendreMasse();
   $('masse-modal').classList.add('open');
 }
 
 function rendreMasse(){
-  if(!masseCible) return;
-  const versions = versionsDuLot(masseCible.cartes);
-  $('masse-corps').innerHTML = versions.map(([v, o]) => `
-    <div class="masse-ligne${masseCible.choix.has(v) ? ' on' : ''}" data-v="${esc(v)}">
-      <span class="masse-case">${masseCible.choix.has(v) ? '✓' : ''}</span>
-      <span class="v-pastille v-${esc(v)}"></span>
-      <span class="masse-nom">${NOM_VARIANTE[v]}</span>
-      <span class="masse-cpt">${o.aAjouter} à ajouter · ${o.total - o.aAjouter} déjà pointée(s)</span>
-    </div>`).join('') +
-    (versions.length > 1
-      ? `<button class="btn-masse" id="masse-tout" style="margin-top:2px;">Sélectionner les ${versions.length} impressions</button>`
-      : '');
+  const lots = lotsParRarete();
+  const cartes = cartesSelectionnees();
+  const versions = versionsDuLot(cartes);
+  // Une impression cochee qui n'existe plus dans la nouvelle selection ne doit pas rester
+  // comptee en silence : on la retire, sinon le total afficherait des emplacements que le
+  // bouton n'ajouterait jamais.
+  const possibles = new Set(versions.map(([v]) => v));
+  for(const v of [...masseSel.impressions]) if(!possibles.has(v)) masseSel.impressions.delete(v);
 
-  const n = versions.filter(([v]) => masseCible.choix.has(v))
+  const toutes = lots.length && lots.every(([r]) => masseSel.raretes.has(r));
+  const puces = lots.map(([r, l]) => `
+    <button class="masse-puce${masseSel.raretes.has(r) ? ' on' : ''}" data-r="${esc(r)}" title="${esc(r)}">
+      ${esc(abregerRarete(r) === r ? r : r)} <b>${l.length}</b>
+    </button>`).join('');
+
+  $('masse-corps').innerHTML = `
+    <div class="masse-sect">Quelles cartes</div>
+    <div class="masse-puces">
+      <button class="masse-puce tout${toutes ? ' on' : ''}" data-r="*">Tout le set <b>${cartesSetCourant.length}</b></button>
+      ${puces}
+    </div>
+    <div class="masse-sect">Quelles impressions</div>
+    ${!cartes.length
+      ? '<p class="hint" style="margin:2px 0 0;">Choisis d’abord une ou plusieurs raretés ci-dessus.</p>'
+      : versions.map(([v, o]) => `
+        <div class="masse-ligne${masseSel.impressions.has(v) ? ' on' : ''}" data-v="${esc(v)}">
+          <span class="masse-case">${masseSel.impressions.has(v) ? '✓' : ''}</span>
+          <span class="v-pastille v-${esc(v)}"></span>
+          <span class="masse-nom">${NOM_VARIANTE[v]}</span>
+          <span class="masse-cpt">${o.aAjouter} à ajouter · ${o.total - o.aAjouter} déjà pointée(s)</span>
+        </div>`).join('') +
+        (versions.length > 1
+          ? `<button class="btn-masse" id="masse-tout-v" style="margin-top:2px;">Les ${versions.length} impressions</button>`
+          : '')}`;
+
+  const n = versions.filter(([v]) => masseSel.impressions.has(v))
                     .reduce((s, [, o]) => s + o.aAjouter, 0);
-  $('masse-total').innerHTML = `<b>${n}</b> emplacement(s) seront ajoutés`;
+  $('masse-total').innerHTML = `<b>${n}</b> emplacement(s) · ${cartes.length} carte(s)`;
   $('btn-masse-ok').disabled = n === 0;
 
+  $('masse-corps').querySelectorAll('.masse-puce').forEach(b =>
+    b.addEventListener('click', ()=>{
+      if(b.dataset.r === '*'){
+        // Bascule franche : « Tout le set » coche tout, ou decoche tout s'il l'etait deja.
+        if(toutes) masseSel.raretes.clear();
+        else for(const [r] of lots) masseSel.raretes.add(r);
+      } else {
+        const r = b.dataset.r;
+        masseSel.raretes.has(r) ? masseSel.raretes.delete(r) : masseSel.raretes.add(r);
+      }
+      rendreMasse();
+    }));
   $('masse-corps').querySelectorAll('.masse-ligne').forEach(l =>
     l.addEventListener('click', ()=>{
       const v = l.dataset.v;
-      masseCible.choix.has(v) ? masseCible.choix.delete(v) : masseCible.choix.add(v);
+      masseSel.impressions.has(v) ? masseSel.impressions.delete(v) : masseSel.impressions.add(v);
       rendreMasse();
     }));
-  $('masse-tout')?.addEventListener('click', ()=>{
-    for(const [v] of versions) masseCible.choix.add(v);
+  $('masse-tout-v')?.addEventListener('click', ()=>{
+    for(const [v] of versions) masseSel.impressions.add(v);
     rendreMasse();
   });
 }
 
+// Libelle de ce qu'on vient d'ajouter, pour que le bouton d'annulation dise sur quoi il
+// porte. « Annuler (134) » ne suffit pas : a deux remplissages d'ecart on ne sait plus
+// lequel on defait.
+function libelleSelection(){
+  const lots = lotsParRarete();
+  if(lots.length && lots.every(([r]) => masseSel.raretes.has(r))) return 'tout le set';
+  const noms = [...masseSel.raretes];
+  return noms.length <= 2 ? noms.join(' et ').toLowerCase() : noms.length + ' raretés';
+}
+
 async function appliquerMasse(){
-  if(!masseCible) return;
-  const titre = masseCible.titre;
+  const titre = libelleSelection();
   const ajouts = [];
-  for(const c of masseCible.cartes){
+  for(const c of cartesSelectionnees()){
     const d = detailsCartes.get(c.id);
     for(const v of (d ? variantesDe(d) : ['normal'])){
-      if(!masseCible.choix.has(v)) continue;
+      if(!masseSel.impressions.has(v)) continue;
       const cle = cleCollection(c.id, v);
       // Un exemplaire deja pointe n'est PAS incremente : « j'ai toutes les communes » dit
       // qu'on les possede, pas qu'on en possede une de plus. Repasser le bouton deux fois
@@ -10402,7 +10679,7 @@ async function annulerRemplissage(){
 // Tout ce qui depend de la collection, recalcule UNE fois pour l'ensemble du lot.
 async function apresRemplissage(){
   majCoteGlobale();
-  if(setCourantId && mastersets.has(setCourantId) && cartesSetCourant.length){
+  if(setCourantId && cartesSetCourant.length){
     await majMasterset(setCourantId, cartesSetCourant);
     rendreMasterset();
   }
@@ -10412,9 +10689,9 @@ async function apresRemplissage(){
 
 function fermerMasse(){ $('masse-modal').classList.remove('open'); }
 
-// Barre de remplissage : elle n'a de sens qu'une fois les raretes connues, puisque « toutes
-// les communes » suppose de savoir lesquelles le sont. Tant qu'elles ne le sont pas, on
-// propose de les charger plutot que d'afficher des boutons qui ne feraient rien.
+// Un seul bouton d'entree. Il n'a de sens qu'une fois les raretes connues, puisque tout le
+// tri se fait sur elles ; tant qu'elles ne le sont pas, on propose de les charger plutot
+// que d'ouvrir une fenetre vide.
 function rendreRemplissage(){
   const zone = $('set-remplissage');
   if(!zone) return;
@@ -10422,7 +10699,7 @@ function rendreRemplissage(){
 
   const charge = cartesSetCourant.some(c => detailsCartes.has(c.id));
   if(!charge){
-    zone.innerHTML = '<button class="btn-masse" id="btn-masse-charger">⚡ Remplissage rapide (charge les raretés)</button>';
+    zone.innerHTML = '<button class="btn-masse" id="btn-masse-charger">⚡ Remplir d’un coup (charge les raretés)</button>';
     $('btn-masse-charger').addEventListener('click', async ()=>{
       zone.innerHTML = '<span class="hint">Chargement des raretés…</span>';
       await chargerVariantes(cartesSetCourant, (f, t)=>{
@@ -10431,35 +10708,19 @@ function rendreRemplissage(){
       rendreRemplissage();
       rendreFiltreRarete();
       rendreCartesSet();
+      ouvrirMasse();
     });
     return;
   }
 
-  const par = (test) => cartesSetCourant.filter(c => test(detailsCartes.get(c.id)?.rarity || ''));
-  const communes = par(r => RARETE_COMMUNE.test(r));
-  const peuCommunes = par(r => RARETE_PEU_COMMUNE.test(r));
-  const base = [...communes, ...peuCommunes];
-
-  const bouton = (id, libelle, lot) => lot.length
-    ? `<button class="btn-masse" data-lot="${id}">${libelle} <b>${lot.length}</b></button>` : '';
-
   zone.innerHTML =
-    `<span class="hint" style="margin:0 4px 0 0;">Remplir d'un coup :</span>` +
-    bouton('c', '● Communes', communes) +
-    bouton('pc', '◐ Peu communes', peuCommunes) +
-    (communes.length && peuCommunes.length ? bouton('base', '◐● Les deux', base) : '') +
-    `<button class="btn-masse fort" data-lot="ms">🗃️ Tout le masterset <b>${cartesSetCourant.length}</b></button>` +
+    '<button class="btn-masse fort" id="btn-masse-ouvrir">⚡ Remplir d’un coup</button>' +
+    '<span class="hint" style="margin:0;">Marque d’un geste toutes les cartes d’une ou plusieurs raretés.</span>' +
     (dernierRemplissage
-      ? `<button class="btn-masse btn-annuler-masse" id="btn-annuler-masse">↶ Annuler « ${esc(dernierRemplissage.titre)} » (${dernierRemplissage.cles.length})</button>`
+      ? `<button class="btn-masse btn-annuler-masse" id="btn-annuler-masse">↶ Annuler ${esc(dernierRemplissage.titre)} (${dernierRemplissage.cles.length})</button>`
       : '');
 
-  const lots = {c: ['Toutes les communes', communes], pc: ['Toutes les peu communes', peuCommunes],
-                base: ['Communes et peu communes', base],
-                ms: ['Tout le masterset', cartesSetCourant]};
-  zone.querySelectorAll('[data-lot]').forEach(b => b.addEventListener('click', ()=>{
-    const [titre, lot] = lots[b.dataset.lot];
-    ouvrirMasse(titre, lot);
-  }));
+  $('btn-masse-ouvrir').addEventListener('click', ouvrirMasse);
   $('btn-annuler-masse')?.addEventListener('click', annulerRemplissage);
 }
 
@@ -10813,47 +11074,147 @@ const POCHE_SVG = `<svg class="cl-poche" viewBox="0 0 100 140" preserveAspectRat
   <path d="M1 118 99 74v64a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4Z" fill="#ffffff" fill-opacity=".018"/>
 </svg>`;
 
-// Couleur du classeur, tiree de l'identifiant du set. Deterministe : le meme set garde sa
-// couleur d'une session a l'autre, comme un classeur garde la sienne sur l'etagere. Une
-// teinte par SET et non par serie, parce que c'est precisement ce qui distingue deux
-// extensions voisines quand elles sont rangees cote a cote.
+// ---------------- HABILLAGE DE LA COUVERTURE ----------------
+// Deux reglages par set : la teinte du cuir et le Pokemon marque dessus. Ils sont ranges
+// par setId et non globalement, parce que c'est exactement le point : une etagere de
+// classeurs identiques ne sert a rien, on les distingue justement a la couleur et a ce
+// qu'il y a d'imprime sur la tranche.
+const CLE_STYLE_CLASSEUR = 'styleClasseurs';
+let styleClasseurs = {};
+try{ styleClasseurs = JSON.parse(localStorage.getItem(CLE_STYLE_CLASSEUR) || '{}'); }catch(e){}
+
+// Teinte par defaut : tiree de l'identifiant du set. Deterministe, donc le meme set garde
+// sa couleur d'une session a l'autre meme sans reglage explicite.
 function teinteClasseur(setId){
   let h = 0;
   for(let i = 0; i < setId.length; i++) h = (h * 37 + setId.charCodeAt(i)) % 360;
   return h;
 }
+function teinteDuClasseur(setId){
+  const t = styleClasseurs[setId] && styleClasseurs[setId].teinte;
+  return typeof t === 'number' ? t : teinteClasseur(setId || 'x');
+}
 
-// Page de couverture. Le logo du set y est incruste en monochrome plutot qu'en couleurs :
-// une couverture de classeur est marquee a chaud, d'une seule teinte, et un logo en
-// quadrichromie pose sur du cuir se lit comme un autocollant. `brightness(0) invert(1)`
-// reduit n'importe quel logo a sa silhouette blanche ; a faible opacite sur le cuir teinte,
-// elle prend la couleur du classeur, et l'ombre portee sombre en dessous fait le relief.
+// Palette de cuirs plutot qu'un selecteur de couleur libre : sur du cuir teinte, la
+// saturation et la luminosite sont imposees par la matiere — seule la teinte varie
+// vraiment. Un `input[type=color]` aurait laisse choisir un rose fluo qui n'a jamais
+// existe en reliure.
+const TEINTES_CUIR = [345, 0, 18, 34, 46, 74, 108, 150, 176, 200, 224, 262, 288, 315];
+
+// Le « phare » du set : la carte qu'on montrerait pour le resumer. Les illustrations
+// speciales rares d'abord — c'est litteralement leur role dans un set moderne : une
+// illustration pleine page d'un Pokemon emblematique. A defaut, la plus chere, qui est
+// presque toujours la meme carte.
+const RANGS_PHARE = [/illustration sp/i, /illustration/i, /hyper|chromatique|shiny/i,
+                     /ultra/i, /double rare/i, /rare/i];
+function rangPhare(r){
+  const i = RANGS_PHARE.findIndex(x => x.test(r || ''));
+  return i < 0 ? 99 : i;
+}
+
+function candidatsPhare(){
+  return cartesSetCourant
+    .map(c => { const d = detailsCartes.get(c.id); return {c, d}; })
+    .filter(o => o.d && o.c.image)
+    .map(o => ({c: o.c, d: o.d, rang: rangPhare(o.d.rarity),
+                prix: prixRetenu(o.d, variantesDe(o.d)[0]) || 0}))
+    .sort((a, b) => a.rang - b.rang || b.prix - a.prix);
+}
+
+function cartePhare(){
+  const reglage = styleClasseurs[setCourantId] && styleClasseurs[setCourantId].phare;
+  if(reglage === 'aucun') return null;
+  if(reglage) return cartesSetCourant.find(c => c.id === reglage) || null;
+  const l = candidatsPhare();
+  return l.length ? l[0].c : null;
+}
+
+function enregistrerStyleClasseur(champ, valeur){
+  if(!setCourantId) return;
+  const s = styleClasseurs[setCourantId] || (styleClasseurs[setCourantId] = {});
+  if(valeur === null) delete s[champ]; else s[champ] = valeur;
+  if(!Object.keys(s).length) delete styleClasseurs[setCourantId];
+  localStorage.setItem(CLE_STYLE_CLASSEUR, JSON.stringify(styleClasseurs));
+  rendreCartesSet();
+  if($('style-modal').classList.contains('open')) rendreStyleClasseur();
+}
+
 function faceCouverture(){
-  const t = teinteClasseur(setCourantId || 'x');
+  const t = teinteDuClasseur(setCourantId);
   const prog = progressionSet(cartesSetCourant);
   const nom = setCourantMeta?.name || setCourantId || '';
   const logo = setCourantMeta?.logo;
+  const phare = cartePhare();
   return `<div class="classeur-page couverture" style="--t:${t}">
-    <svg class="cl-cuir" viewBox="0 0 100 140" preserveAspectRatio="none" aria-hidden="true">
+    <svg class="cl-cuir" aria-hidden="true">
       <defs>
-        <filter id="cl-grain" x="0" y="0" width="100%" height="100%">
-          <feTurbulence type="fractalNoise" baseFrequency="1.1" numOctaves="3" seed="7"/>
-          <feColorMatrix type="saturate" values="0"/>
+        <filter id="cl-cuir-f" x="0" y="0" width="100%" height="100%">
+          <feTurbulence type="fractalNoise" baseFrequency="1.05" numOctaves="3" seed="11" result="bruit"/>
+          <feDiffuseLighting in="bruit" lighting-color="#ffffff" surfaceScale="2.2" result="relief">
+            <feDistantLight azimuth="228" elevation="46"/>
+          </feDiffuseLighting>
         </filter>
       </defs>
-      <rect width="100" height="140" filter="url(#cl-grain)" opacity=".16"/>
-      <rect x="3.5" y="3.5" width="93" height="133" rx="3" fill="none"
-            stroke="#ffffff" stroke-opacity=".22" stroke-width=".7"
-            stroke-dasharray="2.2 2.2" stroke-linecap="round"/>
+      <rect width="100%" height="100%" filter="url(#cl-cuir-f)"/>
     </svg>
+    ${phare ? `<div class="cl-couv-phare"><img src="${esc(phare.image)}/high.webp" alt="" loading="lazy"></div>` : ''}
     <div class="cl-couv-contenu">
       ${logo ? `<img class="cl-couv-logo" src="${esc(logo)}.webp" alt="" loading="lazy">` : ''}
       <div class="cl-couv-nom">${esc(nom)}</div>
       <div class="cl-couv-sous">${prog.possedees} / ${prog.total} carte(s) · ${prog.pct} %</div>
       <div class="cl-couv-jauge"><i style="width:${prog.pct}%"></i></div>
     </div>
+    <button class="cl-couv-reglage" id="btn-style-classeur" title="Couleur du classeur et Pokémon phare">⚙</button>
   </div>`;
 }
+
+function ouvrirStyleClasseur(){
+  rendreStyleClasseur();
+  $('style-modal').classList.add('open');
+}
+function fermerStyleClasseur(){ $('style-modal').classList.remove('open'); }
+
+function rendreStyleClasseur(){
+  const reglage = styleClasseurs[setCourantId] || {};
+  const t = teinteDuClasseur(setCourantId);
+  const auto = typeof reglage.teinte !== 'number';
+
+  const nuances = TEINTES_CUIR.map(h => `
+    <button class="cuir-nuance${!auto && t === h ? ' on' : ''}" data-teinte="${h}"
+            style="--t:${h}" title="Teinte ${h}°"></button>`).join('');
+
+  // Les candidats sont limites a dix-huit : au-dela on ne choisit plus, on fait defiler.
+  const cands = candidatsPhare().slice(0, 18);
+  const choisie = cartePhare();
+  const vignettes = cands.map(o => `
+    <button class="phare-vign${choisie && choisie.id === o.c.id ? ' on' : ''}" data-phare="${esc(o.c.id)}"
+            title="#${esc(o.c.localId)} — ${esc(o.d.rarity || '')}">
+      <img src="${esc(o.c.image)}/low.webp" alt="" loading="lazy">
+    </button>`).join('');
+
+  $('style-corps').innerHTML = `
+    <div class="masse-sect">Couleur du classeur</div>
+    <div class="cuir-nuances">
+      <button class="cuir-nuance auto${auto ? ' on' : ''}" data-teinte="auto" title="Couleur déduite du set">A</button>
+      ${nuances}
+    </div>
+    <div class="masse-sect">Pokémon phare</div>
+    ${cands.length ? `<div class="phare-grille">
+      <button class="phare-vign vide${reglage.phare === 'aucun' ? ' on' : ''}" data-phare="aucun" title="Aucun">∅</button>
+      <button class="phare-vign vide${!reglage.phare ? ' on' : ''}" data-phare="auto" title="Choisi automatiquement : l’illustration spéciale rare la plus cotée">A</button>
+      ${vignettes}
+    </div>` : '<p class="hint" style="margin:2px 0 0;">Charge les raretés du set pour choisir une carte.</p>'}`;
+
+  $('style-corps').querySelectorAll('[data-teinte]').forEach(b =>
+    b.addEventListener('click', ()=> enregistrerStyleClasseur('teinte',
+      b.dataset.teinte === 'auto' ? null : parseInt(b.dataset.teinte, 10))));
+  $('style-corps').querySelectorAll('[data-phare]').forEach(b =>
+    b.addEventListener('click', ()=> enregistrerStyleClasseur('phare',
+      b.dataset.phare === 'auto' ? null : b.dataset.phare)));
+}
+
+$('btn-fermer-style').addEventListener('click', fermerStyleClasseur);
+$('style-modal').addEventListener('click', (e)=>{ if(e.target.id === 'style-modal') fermerStyleClasseur(); });
 
 function rendreCartesSet(){
   const grid = $('set-cards-grid');
@@ -10964,6 +11325,9 @@ function rendreCartesSet(){
         <span class="classeur-pos">Pages ${pageClasseur*2+1}–${pageClasseur*2+2} sur ${nbPages*2}</span>
         <button class="btn-ghost btn-sm" id="cl-suiv" ${pageClasseur >= nbPages-1 ? 'disabled' : ''}>Page suivante →</button>
       </div>`;
+    // Le bouton d'habillage nait avec la couverture, donc a chaque rendu : il faut le
+    // relier ici et non une fois pour toutes au demarrage.
+    $('btn-style-classeur')?.addEventListener('click', ouvrirStyleClasseur);
     $('cl-prec')?.addEventListener('click', ()=>{ pageClasseur--; rendreCartesSet(); });
     $('cl-suiv')?.addEventListener('click', ()=>{ pageClasseur++; rendreCartesSet(); });
   } else {
@@ -11049,6 +11413,7 @@ async function openSetDetail(setId){
     pageClasseur = 0;
     filtreRarete = '';
     dernierRemplissage = null;
+    planifierMastersets([setId], true);
     rendreCartesSet();
     rendreMasterset();
     rendreFiltreRarete();
@@ -13500,7 +13865,8 @@ chargerHashesPhotos().then(majCompteurHashes);
 remplirTypesScelle();
 // La cote globale ne peut etre calculee qu'une fois les trois registres charges : elle est
 // donc appelee apres, et non a la suite de chacun.
-Promise.all([chargerCollection(), chargerScelle(), chargerMastersets()]).then(()=>{ renderScelle(); majCoteGlobale(); });
+Promise.all([chargerCollection(), chargerScelle(), chargerMastersets()])
+  .then(()=>{ renderScelle(); majCoteGlobale(); demarrerCalculMastersets(); });
 
 $('chk-validation-auto').checked = validationAuto;
 $('chk-validation-auto').addEventListener('change', (e)=>{
