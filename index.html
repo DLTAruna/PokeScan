@@ -863,7 +863,12 @@
     position:absolute; left:6px; top:50%; transform:translateY(-50%);
     display:flex; flex-direction:column; gap:8px; pointer-events:none; z-index:3;
     padding:8px 8px 9px; border-radius:11px;
-    background:rgba(8,10,16,.46); backdrop-filter:blur(7px); -webkit-backdrop-filter:blur(7px);
+    /* PAS de backdrop-filter ici. Cet élément est superposé au <video> de la caméra, et
+       un filtre d'arrière-plan par-dessus une couche vidéo fait basculer le compositeur
+       sur un chemin de rendu où, sur plusieurs GPU Android, la vidéo se rend NOIRE. Le
+       défaut ne se voit pas sur ordinateur, ce qui le rend d'autant plus traître. Un fond
+       simplement plus opaque donne la même lisibilité sans toucher à la composition. */
+    background:rgba(8,10,16,.74);
     border:1px solid rgba(255,255,255,.09);
   }
   .jauge{display:flex; flex-direction:column; gap:3px;}
@@ -882,6 +887,44 @@
      jauge devient mollassonne au lieu d'etre fluide. */
   .jauge .jt i{
     display:block; height:100%; width:0%; border-radius:3px;
+  }
+  /* Bloc de proposition : la question posee en grand, avant le champ de recherche. */
+  .proposition{
+    margin:12px 0; padding:14px; border-radius:12px;
+    background:linear-gradient(150deg, rgba(61,125,202,.10), rgba(255,203,5,.06));
+    border:1px solid rgba(61,125,202,.30);
+  }
+  .prop-images{display:flex; align-items:center; justify-content:center; gap:12px;}
+  .prop-images figure{margin:0; text-align:center; flex:0 1 168px;}
+  /* Hauteur identique des deux cotes : comparer deux images de tailles differentes
+     demande un effort inutile a chaque carte, et sur des centaines de cartes cet effort
+     se paie. object-fit:contain plutot que cover — un recadrage pourrait masquer le coin
+     bas-gauche, c'est-a-dire justement le numero qu'on cherche a verifier. */
+  .prop-images img{
+    width:100%; height:218px; object-fit:contain; border-radius:8px;
+    background:#0a0a0a; display:block;
+  }
+  .prop-images figcaption{font-size:11px; color:var(--muted); margin-top:4px;}
+  .prop-vs{font-size:19px; color:var(--muted); flex:none;}
+  .prop-infos{
+    display:flex; flex-direction:column; gap:2px; align-items:center;
+    margin:10px 0 12px; text-align:center;
+  }
+  .prop-infos b{font-size:16px;}
+  .prop-infos span{font-size:12px; color:var(--muted);}
+  .prop-raison{font-style:italic; opacity:.85;}
+  .prop-actions{display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;}
+  .prop-actions .btn-gold{min-width:150px;}
+  /* Sur telephone la decision se prend au pouce : les deux boutons passent pleine
+     largeur pour ne pas se rater, la comparaison garde la priorite verticale. */
+  @media (max-width: 520px){
+    .prop-images img{height:168px;}
+    .prop-actions{flex-direction:column; align-items:stretch;}
+    .prop-actions .btn-gold, .prop-actions .btn-ghost{width:100%;}
+  }
+  .auto-validees{
+    margin:10px 0; padding:9px 12px; border-radius:10px; font-size:12.5px;
+    background:rgba(59,165,93,.12); border:1px solid rgba(59,165,93,.32);
   }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
@@ -1448,6 +1491,30 @@
 
       <div class="divider"></div>
 
+      <div class="proposition" id="proposition" style="display:none;">
+        <div class="prop-images">
+          <figure>
+            <img id="prop-photo" alt="">
+            <figcaption>Ta photo</figcaption>
+          </figure>
+          <div class="prop-vs">≟</div>
+          <figure>
+            <img id="prop-carte" alt="">
+            <figcaption id="prop-carte-legende">Proposition</figcaption>
+          </figure>
+        </div>
+        <div class="prop-infos">
+          <b id="prop-nom">—</b>
+          <span id="prop-detail"></span>
+          <span class="prop-raison" id="prop-raison"></span>
+        </div>
+        <div class="prop-actions">
+          <button class="btn-gold" id="prop-oui">✓ C'est bien ça</button>
+          <button class="btn-ghost" id="prop-non">✗ Non, chercher</button>
+          <button class="link-btn" id="prop-passer">Passer</button>
+        </div>
+      </div>
+      <div class="auto-validees" id="auto-validees" style="display:none;"></div>
       <div class="identify-photo-wrap" id="identify-photo-wrap">
         <img id="identify-photo" class="identify-photo" style="display:none;">
         <div class="no-photo-placeholder" id="identify-placeholder">
@@ -3781,7 +3848,11 @@ async function runAutoIdentify(myToken){
 
   if(!setStatus('🔎 Lecture automatique du code carte...')) return;
   const result = await analyzeQueueItem(item);
+  // Une carte devenue certaine pendant cette analyse part directement au lot : inutile
+  // de proposer une confirmation pour quelque chose qui n'a plus besoin d'être confirmé.
+  if(validerSiCertain(item)){ renderIdentify(); return; }
   if(myToken !== identifyToken || $('search-name').value.trim() !== '') return;
+  majProposition();
   renderQueueOverview();
 
   if(result.status === 'ok'){
@@ -3821,6 +3892,7 @@ async function processQueueAnalysis(){
       const item = pendingQueue.find(it => !it._analysis || it._analysis.status === 'pending');
       if(!item) break;
       await analyzeQueueItem(item);
+      validerSiCertain(item);
       renderQueueOverview();
       updateCaptureProgress();
       // Rend la main au navigateur entre deux cartes : sans ça, l'aperçu caméra
@@ -5349,6 +5421,29 @@ function hexHamming(a, b){
   return d;
 }
 
+
+// ---------------- CONDITIONS DE DÉCLENCHEMENT ----------------
+// Une lecture coûte cher : 806 ms de recognize() en médiane sur téléphone, soit 82 % du
+// temps total d'une tentative. La lancer sur une image dont on sait déjà qu'elle ne peut
+// pas aboutir, c'est bloquer le worker OCR pendant presque une seconde — pendant laquelle
+// aucune bonne image ne peut être lue non plus. Refuser tôt est donc doublement gagnant.
+//
+// Les seuils sont ceux, mesurés, de la zone ROUGE des jauges : sur les 37 captures
+// réussies du relevé réel, AUCUNE n'y tombe. Le filtre ne peut donc pas faire rater une
+// carte qui serait passée, et il écarte 4 des 13 échecs constatés. C'est volontairement
+// prudent : un filtre trop zélé transformerait un scan qui marche en scan qui ne
+// déclenche jamais, ce qui est bien pire que quelques lectures perdues.
+function conditionsReunies(){
+  // Pas encore de mesure (tout premier instant après le démarrage caméra) : on laisse
+  // passer plutôt que de bloquer sur une absence d'information.
+  if(qualite.lumMoy == null || qualite.lumMoy === 0) return {ok: true};
+
+  if(qualite.netBrut < NET_MIN) return {ok: false, raison: 'flou'};
+  if(qualite.clip > CLIP_MAX) return {ok: false, raison: 'reflet'};
+  if(qualite.lumMoy < LUM_BASSE) return {ok: false, raison: 'sombre'};
+  return {ok: true};
+}
+
 // ---------------- BOUCLE DE SCAN ----------------
 // Deux boucles indépendantes, pas une seule chaîne séquentielle :
 //  - detectLoop() : tourne en continu (auto-replanifiée, pas un setInterval fixe), ne
@@ -5437,8 +5532,17 @@ async function detectLoop(){
       if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
-        lastReadAttemptAt = now;
-        attemptRead(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
+        // Dernier verrou avant de mobiliser le worker OCR pour ~800 ms : si l'image est
+        // dans le rouge, on n'essaie même pas. L'utilisateur voit pourquoi (l'indice
+        // nomme la cause) au lieu de subir une tentative qui échouera de toute façon.
+        const cond = conditionsReunies();
+        if(cond.ok){
+          lastReadAttemptAt = now;
+          attemptRead(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
+        } else {
+          setAimHint(indiceVisee('Ajuste la prise de vue'));
+          diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score});
+        }
       }
     }
   }catch(e){
@@ -6117,6 +6221,15 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
         item._analysis.note = (item._analysis.note || '') + ' + nom confirmé';
       }
       if(mySeq === liveResultSeq) showLiveResultDone(card, 'high');
+      // La confirmation arrive APRÈS coup : au moment de la capture la carte n'était
+      // pas encore certaine, elle n'a donc pas été validée automatiquement. Maintenant
+      // qu'elle l'est, il n'y a aucune raison de la laisser attendre un geste humain.
+      if(validationAuto && pendingQueue.includes(item)){
+        const r = validerAutomatiquement(card, item);
+        toast(r.fusionnee
+          ? `🔁 ${card.name} — 2e exemplaire, quantité ${r.cible.qty}`
+          : `✅ ${card.name} — confirmé et ajouté au lot`);
+      }
     }
   }catch(e){ /* tant pis, le résultat reste 🤔 — jamais bloquant */ }
 }
@@ -6406,6 +6519,90 @@ $('current-set-hint').addEventListener('input', ()=>{
   setHintDebounce = setTimeout(()=> resolveSetHint($('current-set-hint').value), 500);
 });
 
+
+// Valide sans rien demander toute carte que l'analyse vient de juger CERTAINE. Une carte
+// « certaine » est une carte dont le nom a été confirmé par une seconde lecture,
+// indépendante de celle du numéro : demander à l'utilisateur de confirmer ce que deux
+// lectures concordantes ont déjà établi, c'est lui faire faire le travail deux fois.
+// Le doute, lui, continue de passer par « À vérifier » — c'est là toute la différence.
+function validerSiCertain(item){
+  if(!validationAuto) return false;
+  const a = item && item._analysis;
+  if(!a || a.status !== 'ok' || !a.card) return false;
+  if(!pendingQueue.includes(item)) return false;
+  const r = validerAutomatiquement(a.card, item);
+  noterAutoValidee(a.card, r);
+  return true;
+}
+
+// Compteur discret : la validation automatique fait disparaître des cartes sans que rien
+// ne se passe à l'écran, ce qui est déroutant. Un total cumulé, annulable, rend le
+// travail invisible à nouveau visible.
+let autoValideesSession = 0;
+function noterAutoValidee(card, r){
+  autoValideesSession++;
+  const el = $('auto-validees');
+  if(!el) return;
+  el.style.display = '';
+  el.innerHTML = `✅ <b>${autoValideesSession}</b> carte(s) ajoutée(s) automatiquement sans vérification
+    — dernière : ${escapeHtml(card.name)}${r && r.fusionnee ? ' (2e exemplaire)' : ''}`;
+}
+
+
+// ---------------- PROPOSITION EN UN GESTE ----------------
+// Affiche la carte proposée par l'analyse face à la photo, avec la raison qui l'a
+// produite. Répondre « oui » ajoute et passe à la suivante ; « non » rend la main à la
+// recherche manuelle, qui reste inchangée juste en dessous.
+let propositionCourante = null;
+
+function majProposition(){
+  const z = $('proposition');
+  if(!z) return;
+  const item = pendingQueue[0];
+  const a = item && item._analysis;
+
+  // Rien à proposer : soit la file est vide, soit la lecture n'a rien donné du tout.
+  // Dans ce dernier cas la recherche manuelle est le seul recours, et la masquer ne
+  // ferait qu'ajouter du bruit au-dessus d'elle.
+  if(!item || !a || !a.card){
+    z.style.display = 'none';
+    propositionCourante = null;
+    const wrap = $('identify-photo-wrap');
+    if(wrap) wrap.style.display = '';
+    return;
+  }
+
+  propositionCourante = {item, card: a.card};
+  z.style.display = '';
+  const wrap = $('identify-photo-wrap');
+  if(wrap) wrap.style.display = 'none';
+  $('prop-photo').src = item.photo || '';
+  $('prop-carte').src = a.card.image ? a.card.image + '/high.webp' : (a.card.imageUrl || '');
+  $('prop-nom').textContent = a.card.name || '—';
+  $('prop-detail').textContent = [a.card.set?.name, a.card.localId ? '#' + a.card.localId : '', a.card.rarity]
+    .filter(Boolean).join(' · ');
+  // La raison est ce qui permet de trancher vite : « nom confirmé » ne se vérifie pas de
+  // la même façon qu'« écart visuel 6 ». Elle était reléguée sous le champ de recherche.
+  $('prop-raison').textContent = a.note ? '(' + a.note + ')' : '';
+  $('prop-carte-legende').textContent = a.status === 'ok' ? 'Proposition — certaine' : 'Proposition — à vérifier';
+}
+
+function accepterProposition(){
+  const p = propositionCourante;
+  if(!p) return;
+  const i = pendingQueue.indexOf(p.item);
+  if(i < 0) return;
+  const entry = construireEntree(p.card, p.item.photo || null);
+  const {entry: cible, fusionnee} = ajouterAuLot(entry);
+  pendingQueue.splice(i, 1);
+  noterRecent(cible);
+  noterSession(entry, fusionnee);
+  planifierSauvegardeSession();
+  renderBatchStatsOnly();
+  renderIdentify();
+  toast(fusionnee ? `🔁 ${p.card.name} — quantité ${cible.qty}` : `✅ ${p.card.name} ajouté`);
+}
+
 function renderIdentify(){
   const myToken = ++identifyToken;
   updateQueueBadges();
@@ -6432,10 +6629,22 @@ function renderIdentify(){
   highlightedIndex = -1;
   $('search-name').focus();
 
+  majProposition();
   renderQueueOverview();
   processQueueAnalysis();
   if(pendingQueue.length) runAutoIdentify(myToken);
 }
+
+
+$('prop-oui').addEventListener('click', accepterProposition);
+$('prop-non').addEventListener('click', ()=>{
+  $('proposition').style.display = 'none';
+  propositionCourante = null;
+  const wrap = $('identify-photo-wrap');
+  if(wrap) wrap.style.display = '';
+  $('search-name').focus();
+});
+$('prop-passer').addEventListener('click', ()=> $('btn-skip-card').click());
 
 $('btn-review-skipped').addEventListener('click', ()=>{
   if(!skippedQueue.length){ toast('Aucune carte passée.'); return; }
