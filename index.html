@@ -170,14 +170,80 @@
      file d'attente) est masqué ici, pas supprimé : il redevient visible normalement dès
      la sortie du plein écran. */
   #cam-fullscreen-area.fs{
-    position:fixed; inset:0; z-index:200; background:var(--bg);
-    padding:10px 10px calc(10px + env(safe-area-inset-bottom));
-    padding-top:calc(10px + env(safe-area-inset-top));
-    overflow:hidden; display:flex; flex-direction:column; gap:8px;
+    position:fixed; inset:0; z-index:200; background:#000;
+    overflow:hidden; display:flex; flex-direction:column; justify-content:flex-end;
   }
-  #cam-fullscreen-area.fs .video-wrap{flex:1 1 auto; min-height:0;}
+  /* La video sort du FLUX et couvre toute la surface. Auparavant elle etait un simple
+     element flex parmi d'autres : quatre blocs d'information s'empilaient sous elle et
+     lui prenaient 274 px sur 812, soit 34 % de l'ecran. Il ne restait que 450 px de haut
+     a la camera, et comme le flux est en 9:16 avec object-fit:contain, la video n'occupait
+     reellement que 253 px de large — 122 px de barres noires en plus.
+
+     Ce n'est pas qu'une question de confort : le nombre de pixels sur le numero decide de
+     la reussite de l'OCR, et « numero illisible » est le mode d'echec dominant des
+     releves reels (10 sur 13). Rendre la surface a la camera ameliore le taux de lecture.
+
+     Les blocs restent en flux normal, donc empiles vers le bas par justify-content, mais
+     PAR-DESSUS la video : aucun decalage a calculer, aucun offset magique a maintenir. */
+  #cam-fullscreen-area.fs .video-wrap{
+    position:absolute; inset:0; z-index:0; border-radius:0; min-height:0;
+  }
   #cam-fullscreen-area.fs video{width:100%; height:100%; max-height:none;}
-  #cam-fullscreen-area.fs .live-result{flex-shrink:0;}
+
+  /* Barre de resultat : posee sur le bas de la video, compacte. */
+  #cam-fullscreen-area.fs .live-result{
+    position:relative; z-index:10; flex-shrink:0;
+    /* La marge basse doit loger le sélecteur d'état, qui déborde volontairement SOUS la
+       barre (bottom:-11px) pour rester lisible sans empiéter sur les informations. Avec
+       8 px, il finissait 2 px hors de l'écran et se retrouvait rogné. */
+    margin:0 8px calc(22px + env(safe-area-inset-bottom));
+    /* Pas de backdrop-filter au-dessus de la video : voir le commentaire de .jauges,
+       c'est ce qui rendait l'apercu noir sur certains GPU Android. */
+    background:rgba(8,10,16,.88); border-color:rgba(255,255,255,.12);
+  }
+  #cam-fullscreen-area.fs .live-result img{width:38px; height:53px;}
+  #cam-fullscreen-area.fs .live-result-info{font-size:12px;}
+
+  /* Bande des ajouts : plus de place reservee, elle se deploie a la demande AU-DESSUS
+     de la video. Le rattrapage d'une erreur remontant a trois cartes reste possible sans
+     quitter le scan, ce qui etait sa seule raison d'etre. */
+  #cam-fullscreen-area.fs .bande-recents{
+    display:none; position:relative; z-index:10; flex-shrink:0;
+    margin:0 8px 6px; padding:6px 8px; border-radius:10px;
+    background:rgba(8,10,16,.88); border:1px solid rgba(255,255,255,.12);
+  }
+  #cam-fullscreen-area.fs .bande-recents.ouverte{display:flex;}
+
+  /* Ces deux blocs n'ont plus de place reservee en plein ecran : le bilan est repris
+     par la pastille doree du haut, la suggestion flotte sur la video quand elle sort. */
+  #cam-fullscreen-area.fs #bilan-session{display:none !important;}
+  #cam-fullscreen-area.fs #suggestion-set{
+    position:absolute; top:calc(66px + env(safe-area-inset-top)); left:8px; right:8px;
+    z-index:22; margin:0;
+  }
+  /* Le compteur fait doublon avec la pastille doree, qui porte desormais les deux
+     chiffres ; le rappel de prise en main est un conseil de premiere carte, il n'a pas
+     sa place en permanence sur un ecran ou chaque pixel sert a viser. */
+  #cam-fullscreen-area.fs .cam-counter,
+  #cam-fullscreen-area.fs .grip-hint{display:none;}
+
+  /* Pastille d'ouverture de la bande. */
+  .pastille-recents{
+    position:absolute; top:38px; right:10px; z-index:4;
+    background:rgba(0,0,0,.66); color:#fff; border:1px solid var(--border);
+    border-radius:14px; padding:4px 11px; font-size:12px; cursor:pointer;
+    display:none; align-items:center; gap:5px;
+  }
+  #cam-fullscreen-area.fs .pastille-recents.dispo{display:flex;}
+
+  /* Les elements ancres au bas de la video se decalent au-dessus de la barre de
+     resultat, qui est desormais posee par-dessus eux. */
+  #cam-fullscreen-area.fs .aim-hint{bottom:184px;}
+  #cam-fullscreen-area.fs .capture-fab{
+    bottom:108px; left:auto; right:14px; transform:none;
+  }
+  #cam-fullscreen-area.fs .capture-fab:active{transform:scale(.94);}
+  #cam-fullscreen-area.fs .jauges{left:8px;}
   #cam-fullscreen-area.fs #cam-error,
   #cam-fullscreen-area.fs #capture-progress,
   #cam-fullscreen-area.fs .diag-controls,
@@ -1380,6 +1446,7 @@
           <div class="jauge"><span class="jl">LUMIÈRE</span><span class="jt"><i id="jauge-lum"></i></span></div>
           <div class="jauge"><span class="jl">CADRAGE</span><span class="jt"><i id="jauge-cad"></i></span></div>
         </div>
+        <button class="pastille-recents" id="pastille-recents" title="Voir les dernières cartes ajoutées"></button>
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
         <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
         <button class="capture-fab" id="btn-capture-frame">📸</button>
@@ -6149,7 +6216,9 @@ function renderTotalSession(){
   if(totalSession.USD > 0) bouts.push('$' + totalSession.USD.toFixed(2));
   if(!bouts.length){ el.style.display = 'none'; return; }
   el.style.display = '';
-  el.textContent = '💰 ' + bouts.join(' + ');
+  // Le compte de cartes rejoint la valeur dans la MÊME pastille : le bilan de session
+  // occupait 72 px de hauteur pour trois chiffres dont deux tiennent ici.
+  el.textContent = (sessionAjoutees ? sessionAjoutees + ' · ' : '💰 ') + bouts.join(' + ');
   // Le détail va dans l'infobulle plutôt que dans le badge : sur un écran de téléphone
   // en mode scan, le badge doit rester lisible d'un coup d'œil.
   el.title = totalSession.sansPrix
@@ -6387,6 +6456,11 @@ function startAimLoop(){
 
 function stopAimLoop(){
   arreterQualite();
+  // La bande refermée : sans ça, elle rouvrirait d'elle-même au démarrage caméra suivant
+  // et reprendrait la place qu'on vient justement de rendre à la visée.
+  const bande = $('bande-recents');
+  if(bande) bande.classList.remove('ouverte');
+  majPastilleRecents();
   detectRunning = false;
   readInFlight = false;
   overlayRenderRunning = false;
@@ -7242,13 +7316,36 @@ function noterRecent(entry){
   rendreRecents();
 }
 
+
+// ---------------- BANDE DES AJOUTS : DÉPLOYÉE À LA DEMANDE ----------------
+// En plein écran la bande n'occupe plus de place tant qu'on ne la demande pas. Elle reste
+// accessible d'un geste, parce que c'est elle qui permet de rattraper une erreur remontant
+// à plusieurs cartes sans sortir de la caméra.
+function basculerBandeRecents(){
+  const b = $('bande-recents');
+  if(!b) return;
+  b.classList.toggle('ouverte');
+  majPastilleRecents();
+}
+
+function majPastilleRecents(){
+  const p = $('pastille-recents');
+  const b = $('bande-recents');
+  if(!p || !b) return;
+  const n = recents.length;
+  // La pastille ne s'affiche pas tant qu'il n'y a rien à montrer : un bouton qui ouvre
+  // une bande vide n'apprend rien et occupe un coin d'écran utile pour viser.
+  p.classList.toggle('dispo', n > 0);
+  p.textContent = b.classList.contains('ouverte') ? `▼ ${n}` : `▲ ${n}`;
+}
+
 function rendreRecents(){
   const z = $('bande-recents');
   if(!z) return;
   // Une entrée retirée du lot entre-temps disparaît de la bande : afficher une vignette
   // qui ne correspond plus à rien inviterait à cliquer dans le vide.
   recents = recents.filter(r => batch.some(e => e.id === r.entryId));
-  if(!recents.length){ z.style.display = 'none'; return; }
+  if(!recents.length){ z.style.display = 'none'; z.classList.remove('ouverte'); majPastilleRecents(); return; }
   z.style.display = '';
   z.innerHTML = recents.map(r => {
     const e = batch.find(x => x.id === r.entryId);
@@ -7260,6 +7357,7 @@ function rendreRecents(){
       <button data-id="${escapeHtml(r.entryId)}" title="Retirer du lot">✕</button>
     </div>`;
   }).join('');
+  majPastilleRecents();
   z.querySelectorAll('button[data-id]').forEach(b=>{
     b.addEventListener('click', ()=>{
       const i = batch.findIndex(e => e.id === b.dataset.id);
@@ -7347,6 +7445,7 @@ function noterSession(entry, fusionnee){
 }
 
 function majBilanSession(){
+  renderTotalSession();  // la pastille dorée porte le compte en plein écran
   const z = $('bilan-session');
   if(!z) return;
   if(!sessionAjoutees){ z.style.display = 'none'; return; }
@@ -10296,6 +10395,9 @@ $('chk-validation-auto').addEventListener('change', (e)=>{
   validationAuto = e.target.checked;
   localStorage.setItem('validationAuto', validationAuto ? '1' : '0');
 });
+
+
+$('pastille-recents').addEventListener('click', basculerBandeRecents);
 
 $('live-etat').addEventListener('click', (e)=>{
   const b = e.target.closest('button[data-e]');
