@@ -4962,20 +4962,31 @@ const QUALITE_H = Math.round(QUALITE_W * CARD_RATIO);
 // normalisation). Valeurs relevées — 0 px de flou : 1,36 · 0,5 px : 0,74 · 1 px : 0,33 ·
 // 1,5 px : 0,18 · 2 px : 0,11 · 3 px : 0,06. En dessous de ~0,12 le numéro est illisible ;
 // au-dessus de ~0,45 la lecture passe confortablement.
-// RECALÉS sur la première session réelle (29/08, 11 captures réussies) : les valeurs
-// observées vont de 0,837 à 1,286. Avec l'ancien seuil « bon » à 0,45, les onze
-// affichaient 100 % — la jauge saturait et ne bougeait jamais en usage normal, donc elle
-// ne pouvait plus prévenir de rien. Les anciens seuils venaient d'un rendu flouté par
-// calcul, plus contrasté qu'une vraie photo : ils étaient trop bas d'un facteur ~2.
-const NET_MIN = 0.35, NET_BON = 0.90;
+// Seuils calés sur 50 tentatives réelles (37 réussies, 13 échouées), et non plus sur les
+// 11 premières : ce premier échantillon montrait un plancher de réussite à 0,837, le jeu
+// complet le place à 0,333. Caler sur onze points était du surajustement, et ça se voyait —
+// quatre captures parfaitement lues s'affichaient en rouge franc.
+//
+// Choisis par balayage sur les données plutôt qu'au jugé, avec un coût asymétrique : un
+// faux rouge pèse trois fois un échec manqué, parce qu'une jauge qui crie au loup sur des
+// photos correctes apprend à être ignorée — ce qui est pire que de ne rien afficher.
+// Résultat : 0 faux rouge sur les 37 réussites, 31 en vert, et 4 des 13 échecs signalés.
+const NET_MIN = 0.22, NET_BON = 0.75;
 
 // Luminosité moyenne visée, sur 0-255. En dessous de LUM_BASSE le capteur monte en ISO et
 // le bruit détruit les chiffres ; au-dessus de LUM_HAUTE les blancs de la carte saturent.
-// Également recalés : les captures réussies forment deux groupes, 89-99 et 153-159. Avec
-// l'ancien plancher de plateau à 105, les quatre du premier groupe s'affichaient en ORANGE
-// alors qu'elles se lisaient parfaitement — un avertissement pour rien, qui apprend à
-// ignorer la jauge.
-const LUM_BASSE = 45, LUM_BONNE_MIN = 85, LUM_BONNE_MAX = 195, LUM_HAUTE = 245;
+// La luminosité NE PRÉDIT RIEN, mesuré : AUC de 0,542 sur les 50 tentatives, contre 0,775
+// pour la netteté et 0,771 pour le cadrage (0,5 = aucun pouvoir discriminant). Les
+// réussites s'étalent sur 64-159, les échecs sur 64-146 : les deux distributions se
+// superposent presque exactement.
+//
+// La jauge est conservée quand même, mais avec une bande volontairement large. La raison
+// est que ces 50 photos ont TOUTES été prises dans une lumière correcte : le défaut que la
+// jauge doit attraper — une pièce vraiment sombre, un contre-jour — ne s'est simplement
+// jamais produit ici. La supprimer parce qu'elle n'a rien signalé quand il n'y avait rien à
+// signaler serait la mauvaise conclusion. La resserrer, en revanche, ne produirait que des
+// avertissements sans rapport avec le résultat.
+const LUM_BASSE = 35, LUM_BONNE_MIN = 62, LUM_BONNE_MAX = 205, LUM_HAUTE = 248;
 // Fraction de pixels brûlés tolérée. C'est LE défaut des holos : un reflet peut effacer
 // une bande entière de la carte sans faire bouger la moyenne, parce qu'il est compensé
 // par une zone sombre ailleurs. Il faut donc le compter à part.
@@ -5168,8 +5179,11 @@ function rendreJauges(){
 // premier tueur de lecture sur les holos), puis l'obscurité, puis le flou.
 function indiceVisee(base){
   if(qualite.clip > CLIP_MAX) return 'Reflet — incline un peu la carte';
-  if(qualite.lumMoy && qualite.lumMoy < LUM_BASSE) return 'Trop sombre — rapproche une lampe';
-  if(qualite.net < 0.35) return 'Flou — éloigne un peu le téléphone';
+  if(qualite.lumMoy && qualite.lumMoy < LUM_BONNE_MIN) return 'Trop sombre — rapproche une lampe';
+  // Seuil aligné sur le rouge de la jauge, et non plus sur une valeur indépendante : les
+  // deux disaient des choses différentes de la même image, ce qui n'a aucun sens pour
+  // l'utilisateur — barre verte et message « Flou » en même temps.
+  if(qualite.net < 0.4) return 'Flou — éloigne un peu le téléphone';
   return base;
 }
 
