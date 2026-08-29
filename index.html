@@ -1586,10 +1586,10 @@
      poussaient tout le contenu vers le bas — la carte gonflait de 210 a 436 px et le titre
      descendait de 230 px. Un decalage invisible a la lecture du CSS, evident a l'ecran.
 
-     Ancre en bas a GAUCHE : le motif entre par le coin d'ou vient la lecture, et laisse
-     libre la diagonale ou se trouvent le texte et l'appel a l'action. */
+     Ancre en bas a DROITE : le texte et l'appel a l'action occupent la colonne de gauche,
+     le motif prend donc le coin oppose, celui qui reste vide. */
   .col-porte > .porte-fond{
-    position:absolute; left:-30px; bottom:-34px; right:auto; top:auto;
+    position:absolute; right:-30px; bottom:-34px; left:auto; top:auto;
     width:200px; height:200px;
     /* 0,14 et non 0,10 : le motif etait bien plus lisible quand il debordait d'une carte
        gonflee par le bug de flux. Ramene a sa taille normale, la meme opacite le rendait
@@ -1640,6 +1640,49 @@
   @media (max-width: 720px){
     .jeu-banniere .ban-fond{width:150px; height:150px; right:-30px; top:-42px;}
   }
+  /* ---- Bascule du classeur, en plus gros ----
+     Deux boutons de 12 px dans un coin ne se lisaient pas comme le choix structurant
+     qu'ils sont : ce sont deux facons de parcourir TOUT le catalogue, pas un reglage
+     secondaire. Ils prennent donc la taille de ce qu'ils commandent. */
+  #nav-catalogue{gap:6px; padding:5px;}
+  #nav-catalogue button{
+    font-size:14.5px; font-weight:700; padding:11px 20px; border-radius:11px;
+    display:flex; align-items:center; gap:8px;
+  }
+  #nav-catalogue button .n{
+    font-size:10px; font-weight:800; padding:1px 6px; border-radius:6px;
+    background:rgba(255,255,255,.12);
+  }
+  #nav-catalogue button.on .n{background:rgba(0,0,0,.22);}
+
+  /* Etoile de favori sur un SET, posee sur la vignette. Discrete tant qu'elle n'est pas
+     active : une grille de quarante etoiles vides attire l'oeil plus que les logos. */
+  .set-card{position:relative;}
+  .set-fav{
+    position:absolute; top:5px; right:5px; z-index:3; width:24px; height:24px;
+    display:flex; align-items:center; justify-content:center;
+    border:0; border-radius:50%; cursor:pointer; font-size:13px; line-height:1;
+    background:rgba(0,0,0,.42); color:rgba(255,255,255,.42); opacity:0; transition:opacity .14s, color .14s;
+  }
+  .set-card:hover .set-fav{opacity:1;}
+  .set-fav.on{opacity:1; color:var(--accent);}
+  /* Sur ecran tactile il n'y a pas de survol : l'etoile y reste visible en permanence,
+     sinon elle serait inatteignable. */
+  @media (hover: none){ .set-fav{opacity:1;} }
+
+  /* Barre d'outils du classeur : des icones plutot qu'une phrase. La ligne d'etat
+     precedente enoncait ses filtres en toutes lettres, ce qui prenait deux lignes pour un
+     reglage qu'on active une fois. */
+  .cl-outils{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:10px 0 6px;}
+  .cl-outils .grandir{flex:1; min-width:170px;}
+  .cl-bouton{
+    display:flex; align-items:center; gap:6px; border:1px solid var(--border);
+    background:var(--panel2); color:var(--muted); font:inherit; font-size:12px;
+    padding:7px 11px; border-radius:9px; cursor:pointer; white-space:nowrap;
+  }
+  .cl-bouton:hover{border-color:var(--accent2); color:var(--text);}
+  .cl-bouton.on{background:var(--accent); border-color:var(--accent); color:#1a1206; font-weight:700;}
+  .cl-bouton .pastille{font-size:9.5px; font-weight:800; opacity:.75;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -2632,6 +2675,7 @@
     <!-- Bascule entre navigation par série et par Pokémon -->
     <div class="seg" id="nav-catalogue" style="margin-bottom:12px;">
       <button class="on" data-n="series">🗂️ Par série</button>
+      <button data-n="favoris">⭐ Mes favoris <span class="n" id="nav-nb-favoris">0</span></button>
       <button data-n="pokedex">🔴 Par Pokémon</button>
     </div>
 
@@ -8755,6 +8799,7 @@ $('nav-catalogue').addEventListener('click', async (e)=>{
   if(!b) return;
   $('nav-catalogue').querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
   const pokedex = b.dataset.n === 'pokedex';
+  vueFavoris = b.dataset.n === 'favoris';
   // Le detail d'un set ou d'un Pokemon est referme : rester dessus en changeant de mode de
   // navigation laisserait deux vues concurrentes ouvertes.
   $('sets-browse').style.display = pokedex ? 'none' : 'block';
@@ -8768,6 +8813,10 @@ $('nav-catalogue').addEventListener('click', async (e)=>{
     chargerMetaSetsRecherche().catch(()=>{});
     await amorcerNomsDex();
     rendrePokedex();
+  } else {
+    // Series et Favoris partagent le meme rendu : seul le filtre change. Une seconde vue
+    // dupliquerait la mise en page des sets, qui divergerait a la premiere retouche.
+    renderSeriesList();
   }
 });
 
@@ -9404,6 +9453,58 @@ function esc(s){
   return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
 
+
+// ---------------- FAVORIS DE SETS ----------------
+// Les favoris existants portaient sur une SÉRIE entière — une ère de vingt sets. C'est une
+// granularité utile pour retrouver un bloc, pas pour suivre les quelques extensions qu'on
+// complète réellement. Les deux coexistent : la série reste épinglable en tête de liste,
+// le set devient épinglable individuellement et alimente l'onglet Favoris.
+const CLE_FAV_SETS = 'favorisSets';
+let favorisSets = new Set(JSON.parse(localStorage.getItem(CLE_FAV_SETS) || '[]'));
+
+function basculerFavoriSet(id){
+  if(favorisSets.has(id)) favorisSets.delete(id); else favorisSets.add(id);
+  localStorage.setItem(CLE_FAV_SETS, JSON.stringify([...favorisSets]));
+  majCompteurFavoris();
+  renderSeriesList();
+}
+
+function majCompteurFavoris(){
+  const el = $('nav-nb-favoris');
+  if(el) el.textContent = favorisSets.size;
+}
+
+// ---------------- SETS ÉCARTÉS DU CLASSEUR ----------------
+// Les decks d'énergies et les planches de promos ne se collectionnent pas comme une
+// extension : ce sont des cartes de complément, souvent sans numérotation continue, qui
+// noient les vraies extensions dans la liste. On les écarte par défaut, sans les supprimer
+// — ils restent accessibles d'un bouton, et cherchables depuis Identifier.
+// Pas de \b autour des motifs. Le \b FINAL exigeait une fin de mot : « énerg » est
+// suivi de « ie », « promo » de « tional », et aucune des deux ne correspondait. Le \b
+// INITIAL echouait en plus devant « É », qui n est pas un caractere de mot au sens ASCII
+// des expressions regulieres JavaScript. On teste donc la sous-chaine, assez discriminante
+// ici : aucun nom d extension ne contient « energ » ou « promo » par accident.
+const SET_ANNEXE = /(énerg|energ|promo|black star|\bkits?\b|deck de d[ée]marrage|starter)/i;
+let afficherAnnexes = localStorage.getItem('afficherAnnexes') === '1';
+// Sets sans aucune carte possédée : affichés par défaut — on parcourt justement le
+// classeur pour voir ce qu'il reste à trouver.
+let masquerVides = localStorage.getItem('masquerVides') === '1';
+// L'onglet Favoris réutilise la même liste et le même rendu, filtrés : une seconde vue
+// dupliquerait la mise en page des sets, qui divergerait à la première retouche.
+let vueFavoris = false;
+
+function setPossede(setId){
+  return batch.some(e => e.setId === setId) ||
+    (typeof collection !== 'undefined' && Array.isArray(collection)
+      ? collection.some(e => e.setId === setId) : false);
+}
+
+// Le compteur de l onglet doit refleter les favoris deja enregistres au chargement, pas
+// seulement ceux poses pendant la session. Appel place ICI et non dans l amorcage general :
+// favorisSets est un let declare quelques lignes plus haut, donc encore dans sa zone
+// morte temporelle a l endroit ou demarre le reste de l application.
+majCompteurFavoris();
+
 function renderSeriesList(){
   const box = $('series-list');
   if(!box || !seriesIndex) return;
@@ -9427,11 +9528,20 @@ function renderSeriesList(){
     // Un filtre qui matche le nom de la SÉRIE garde tous ses sets (on cherche
     // "Écarlate" pour voir la série entière, pas pour n'avoir aucun résultat).
     const serieMatches = !q || serie.name.toLowerCase().includes(q);
-    const sets = serie.sets.filter(st => serieMatches || st.name.toLowerCase().includes(q) || st.id.toLowerCase().includes(q));
+    let sets = serie.sets.filter(st => serieMatches || st.name.toLowerCase().includes(q) || st.id.toLowerCase().includes(q));
+    // Les annexes et les sets vides ne sont écartés QUE hors recherche : quand on tape un
+    // nom, on veut le trouver, même s'il fait partie de ce qu'on masque d'habitude.
+    if(!q){
+      if(!afficherAnnexes) sets = sets.filter(st => !SET_ANNEXE.test(st.name) || favorisSets.has(st.id));
+      if(masquerVides) sets = sets.filter(st => setPossede(st.id) || favorisSets.has(st.id));
+    }
+    if(vueFavoris) sets = sets.filter(st => favorisSets.has(st.id));
     if(!sets.length) return '';
     shownSets += sets.length;
     const cards = sets.map(st => `
       <div class="set-card" data-set-id="${esc(st.id)}">
+        <button class="set-fav${favorisSets.has(st.id) ? ' on' : ''}" data-favset="${esc(st.id)}"
+                title="${favorisSets.has(st.id) ? 'Retirer des favoris' : 'Mettre ce set en favori'}">${favorisSets.has(st.id) ? '★' : '☆'}</button>
         <span class="cache-dot ${cachedSetIds.has(st.id) ? 'cached' : ''}" title="${cachedSetIds.has(st.id) ? 'Liste de cartes en cache local' : 'Pas encore en cache'}"></span>
         ${st.logo
           ? `<img class="set-logo" src="${esc(st.logo)}.webp" alt="" loading="lazy">`
@@ -9454,19 +9564,30 @@ function renderSeriesList(){
     </div>`;
   }).join('');
 
-  box.innerHTML = html || '<p class="empty-state">Aucun set ne correspond à ce filtre.</p>';
+  box.innerHTML = html || (vueFavoris
+    ? '<p class="empty-state">Aucun set en favori. Survole un set et clique son étoile pour l\'épingler ici.</p>'
+    : '<p class="empty-state">Aucun set ne correspond à ce filtre.</p>');
   // Le décompte porte sur ce qui est RÉELLEMENT affiché : annoncer « 200 sets » alors que
   // la vue en montre 145 laisserait croire à un bug d'affichage.
   const totalSets = ordonnees.reduce((n,s)=> n + s.sets.length, 0);
   const ecartees = seriesIndex.filter(s => !serieRetenue(s));
   const nEcartes = ecartees.reduce((n,s)=> n + s.sets.length, 0);
-  $('sets-status').innerHTML = `${ordonnees.length} série(s), ${totalSets} set(s) — ` +
-    `<b>${cachedSetIds.size}</b> avec leur liste de cartes en cache local` +
-    (q ? ` · ${shownSets} affiché(s)` : '') +
-    (nEcartes
-      ? ` · ${nEcartes} set(s) hors extensions masqué(s) (Pocket, McDonald's, kits, POP)
-         <button class="link-btn" id="btn-hors-serie">afficher quand même</button>`
-      : (afficherHorsSerie ? ` · <button class="link-btn" id="btn-hors-serie">masquer les hors-extensions</button>` : ''));
+  // Des boutons-icônes plutôt qu'une phrase : l'ancienne ligne énonçait chaque filtre en
+  // toutes lettres et occupait deux lignes pour des réglages qu'on active une fois. Le
+  // titre au survol garde l'explication pour qui la cherche.
+  $('sets-status').innerHTML = `<div class="cl-outils">
+      <span class="grandir hint" style="margin:0;">${ordonnees.length} série(s) · ${shownSets} set(s) affiché(s)
+        · <b>${cachedSetIds.size}</b> en cache</span>
+      <button class="cl-bouton${afficherAnnexes ? ' on' : ''}" id="cl-annexes"
+        title="Decks d'énergies, planches de promos et kits : des cartes de complément qui noient les extensions dans la liste">
+        ⚡ Annexes</button>
+      <button class="cl-bouton${masquerVides ? ' on' : ''}" id="cl-vides"
+        title="N'afficher que les extensions dont tu possèdes au moins une carte">
+        📥 Entamés seulement</button>
+      <button class="cl-bouton${afficherHorsSerie ? ' on' : ''}" id="btn-hors-serie"
+        title="Pocket, McDonald's, kits, POP — hors extensions principales">
+        🧩 Hors extensions${nEcartes ? ` <span class="pastille">${nEcartes}</span>` : ''}</button>
+    </div>`;
 
   const bh = $('btn-hors-serie');
   if(bh) bh.addEventListener('click', ()=>{
@@ -9474,7 +9595,22 @@ function renderSeriesList(){
     localStorage.setItem('afficherHorsSerie', afficherHorsSerie ? '1' : '0');
     renderSeriesList();
   });
+  const ba = $('cl-annexes');
+  if(ba) ba.addEventListener('click', ()=>{
+    afficherAnnexes = !afficherAnnexes;
+    localStorage.setItem('afficherAnnexes', afficherAnnexes ? '1' : '0');
+    renderSeriesList();
+  });
+  const bv = $('cl-vides');
+  if(bv) bv.addEventListener('click', ()=>{
+    masquerVides = !masquerVides;
+    localStorage.setItem('masquerVides', masquerVides ? '1' : '0');
+    renderSeriesList();
+  });
 
+  box.querySelectorAll('[data-favset]').forEach(b=>{
+    b.addEventListener('click', (e)=>{ e.stopPropagation(); basculerFavoriSet(b.dataset.favset); });
+  });
   box.querySelectorAll('[data-fav]').forEach(b=>{
     b.addEventListener('click', (e)=>{ e.stopPropagation(); basculerFavori(b.dataset.fav); });
   });
