@@ -6582,6 +6582,30 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
   try{
     const r = await workerCall('ocr', {bitmap:nameBmp}, [nameBmp]);
     const text = (r && r.text) || '';
+
+    // Trois issues, et non deux :
+    //  - le nom concorde        -> certain, la carte part au lot ;
+    //  - le nom CONTREDIT       -> vrai doute, la carte reste à vérifier ;
+    //  - le nom est ILLISIBLE   -> aucune information. On s'en remet alors au numéro, qui
+    //    a été lu, lui, et qui suffisait déjà à désigner la carte. La marquer « à vérifier »
+    //    reviendrait à demander à l'utilisateur de trancher une question que personne n'a
+    //    posée.
+    //
+    // Le repli sur le numéro n'est PAS silencieux : la note le dit, et l'entrée reste
+    // relisible dans le lot. Un numéro mal lu passera donc, mais il passera visiblement —
+    // ce qui vaut mieux que bloquer chaque carte au reflet mal placé.
+    if(!cardNameAppearsInText(card, text) && !texteUtile(text)
+       && item._analysis && item._analysis.number && item._analysis.status !== 'ok'){
+      item._analysis.status = 'ok';
+      item._analysis.note = (item._analysis.note || '').replace('nom à relire', 'nom illisible, numéro retenu');
+      if(mySeq === liveResultSeq) showLiveResultDone(card, 'high');
+      if(validationAuto && pendingQueue.includes(item)){
+        const rr = validerAutomatiquement(card, item);
+        noterAutoValidee(card, rr);
+      }
+      return;
+    }
+
     if(cardNameAppearsInText(card, text)){
       if(item._analysis){
         item._analysis.status = 'ok';
@@ -6960,10 +6984,18 @@ function majProposition(){
   const wrap = $('identify-photo-wrap');
   if(wrap) wrap.style.display = 'none';
   $('prop-photo').src = item.photo || '';
+  // Le champ s'appelle images.small, PAS image. normalizeCard ne conserve jamais le champ
+  // brut de l'API sous ce nom : elle produit `images.small` (déjà suffixé en /low.webp) et
+  // `imageBase` (la base sans suffixe). En lisant `card.image`, cette ligne obtenait
+  // undefined pour absolument toutes les cartes venant de l'API, et la vignette restait
+  // vide. Le défaut avait survécu à mes tests parce que je les faisais sur un objet carte
+  // fabriqué à la main, avec les champs que je croyais exister.
+  //
   // low.webp et non high.webp : la vignette fait 168 px de large, l'image d'impression
-  // pèse plusieurs centaines de kilo-octets pour un résultat identique à l'écran. C'est
-  // ce chargement, répété à chaque carte, qui rendait la fenêtre de validation lente.
-  $('prop-carte').src = a.card.image ? a.card.image + '/low.webp' : (a.card.imageUrl || '');
+  // pèse plusieurs centaines de kilo-octets pour un résultat identique à l'écran.
+  $('prop-carte').src = a.card.images?.small
+    || (a.card.imageBase ? a.card.imageBase + '/low.webp' : '')
+    || a.card.imageUrl || '';
   $('prop-nom').textContent = a.card.name || '—';
   $('prop-detail').textContent = [a.card.set?.name, a.card.localId ? '#' + a.card.localId : '', a.card.rarity]
     .filter(Boolean).join(' · ');
