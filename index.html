@@ -2118,7 +2118,25 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 // correctif n'est pas arrivé jusqu'à l'appareil » — et sur une application installée
 // servie par un service worker, la seconde hypothèse est au moins aussi probable que la
 // première. Plusieurs allers-retours ont été perdus faute de pouvoir trancher.
-const BUILD_VERSION = '2026-08-29 13:44';
+const BUILD_VERSION = (()=>{
+  // DÉDUITE, jamais écrite à la main. La première version de ce marqueur était une chaîne
+  // estampillée au moment où je générais le correctif — donc figée dès que j'oubliais de
+  // la régénérer, ce qui est arrivé au commit suivant. Un marqueur de version qui demande
+  // qu'on pense à l'incrémenter finit toujours par mentir, et il ment précisément quand on
+  // a besoin de lui : en plein doute sur ce qui tourne réellement.
+  //
+  // document.lastModified vient de l'en-tête Last-Modified de la réponse. Vérifié sur le
+  // déploiement : il vaut l'heure exacte de mise en ligne. Et quand la page est servie
+  // depuis le cache du service worker, il porte celle de la réponse MISE EN CACHE — c'est
+  // exactement ce qu'on veut savoir, puisque la question est « quel code s'exécute ici ».
+  try{
+    const d = new Date(document.lastModified);
+    if(isNaN(d.getTime())) return 'inconnue';
+    const p = (n)=> String(n).padStart(2, '0');
+    return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) +
+           ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  }catch(e){ return 'inconnue'; }
+})();
 
 // ---------------- STATE ----------------
 let pendingQueue = [];   // {id, photo(dataUrl)}
