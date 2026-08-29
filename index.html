@@ -5739,6 +5739,8 @@ async function detectLoop(){
         // pas se reporter sur la suivante et déclencher un secours immédiat sur une carte
         // qui n'a même pas encore eu sa chance.
         echecsConsecutifs = 0;
+        blocageDepuis = 0;
+        secoursDejaFait = false;
       }
     } else {
       lowScoreStreak = 0;
@@ -5775,11 +5777,21 @@ async function detectLoop(){
         // nomme la cause) au lieu de subir une tentative qui échouera de toute façon.
         const cond = conditionsReunies();
         if(cond.ok){
+          blocageDepuis = 0;
           lastReadAttemptAt = now;
           attemptRead(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
         } else {
           setAimHint(indiceVisee('Ajuste la prise de vue'));
-          diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score});
+          if(!blocageDepuis){
+            blocageDepuis = now;
+            diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score});
+          } else if(now - blocageDepuis >= SECOURS_BLOCAGE_MS){
+            // Quatre secondes à refuser la même carte : le filtre a beau avoir raison sur
+            // la qualité, il a tort de laisser l'utilisateur sans issue. On capture, il
+            // tranchera dans « À vérifier ».
+            blocageDepuis = 0;
+            tenterSecours(null, 'blocage ' + cond.raison);
+          }
         }
       }
     }
@@ -5892,9 +5904,17 @@ async function attemptRead(corners, score){
   // sortie, succès comme échecs, présents et à venir.
   let captureFaite = false;
   let redressement = null;
+  // Trois issues possibles, et non deux. Un refus délibéré (carte déjà capturée) et une
+  // lecture ratée sortent tous deux par un return, mais ne veulent pas dire la même chose :
+  // le premier signifie que la carte est traitée, le second qu'elle ne l'est pas.
+  let refusVolontaire = false;
+  // Vrai seulement à partir du moment où une vraie tentative commence. Les sorties
+  // anticipées (flux pas encore prêt) ne sont pas des échecs de lecture non plus.
+  let tentativeReelle = false;
   try{
     const video = $('video');
     if(!video || !video.videoWidth) return;
+    tentativeReelle = true;
 
     // Pré-filtre de forme, bon marché, AVANT le redressement complet (qui coûte
     // ~100ms de calcul sur le fil principal — la seule partie du pipeline qui ne
@@ -6165,6 +6185,7 @@ async function attemptRead(corners, score){
       && !cardConfirmedNewSinceCapture;
     if(visuallyDuplicate || sameNumberNeverConfirmedNew){
       setAimHint('Même carte — présente la suivante');
+      refusVolontaire = true;
       if(r.carte && r.carte.close) r.carte.close();
       return;
     }
@@ -6229,26 +6250,17 @@ async function attemptRead(corners, score){
     readInFlight = false;
     // Bilan de la tentative, en un seul endroit plutôt qu'à chacun des cinq points
     // d'échec : impossible d'en oublier un, aujourd'hui ou plus tard.
-    if(captureFaite){
-      echecsConsecutifs = 0;
+    if(captureFaite || refusVolontaire || !tentativeReelle){
+      // Capturée, ou volontairement refusée parce que déjà connue : dans les deux cas la
+      // carte est traitée, il n'y a rien à secourir.
+      if(captureFaite || refusVolontaire) echecsConsecutifs = 0;
     } else {
       echecsConsecutifs++;
       if(echecsConsecutifs >= ECHECS_AVANT_SECOURS){
         // Le redressement quand on l'a (meilleur cadrage, déjà calculé), sinon le contenu
         // du cadre de visée — pour que la sortie de secours fonctionne AUSSI quand l'échec
         // survient avant le redressement, ce qui est justement le cas le plus désespéré.
-        const video = $('video');
-        let source = redressement;
-        if(!source && video && video.videoWidth){
-          const g = guideRect(video);
-          const W = 600, H = Math.round(W*CARD_RATIO);
-          source = document.createElement('canvas');
-          source.width = W; source.height = H;
-          source.getContext('2d').drawImage(video,
-            g.x*video.videoWidth, g.y*video.videoHeight,
-            g.w*video.videoWidth, g.h*video.videoHeight, 0, 0, W, H);
-        }
-        if(source) capturerSansLecture(source, 'après ' + echecsConsecutifs + ' échecs');
+        tenterSecours(redressement, 'après ' + echecsConsecutifs + ' échecs');
       }
     }
   }
@@ -6290,6 +6302,7 @@ function capturerSansLecture(canvas, raison){
     cardConfirmedAbsentSinceCapture = true;
     lastCaptureAt = Date.now();
     echecsConsecutifs = 0;
+    secoursDejaFait = true;
 
     capturedThisSession++;
     flashScreen();
@@ -6300,6 +6313,39 @@ function capturerSansLecture(canvas, raison){
     diagPush('err', {msg:'capture de secours : ' + e.message});
   }
 }
+
+
+// Source d'image la plus fidèle disponible, et capture de secours. Partagée entre les deux
+// situations qui bloquent l'utilisateur : la lecture qui échoue, et la prise de vue jugée
+// inexploitable. Du point de vue de celui qui tient la carte, c'est le même problème —
+// l'application ne fait rien et ne dit pas quoi changer.
+function tenterSecours(redressement, raison){
+  if(secoursDejaFait) return false;
+  const video = $('video');
+  let source = redressement;
+  if(!source && video && video.videoWidth){
+    const g = guideRect(video);
+    const W = 600, H = Math.round(W*CARD_RATIO);
+    source = document.createElement('canvas');
+    source.width = W; source.height = H;
+    source.getContext('2d').drawImage(video,
+      g.x*video.videoWidth, g.y*video.videoHeight,
+      g.w*video.videoWidth, g.h*video.videoHeight, 0, 0, W, H);
+  }
+  if(!source) return false;
+  capturerSansLecture(source, raison);
+  return true;
+}
+
+// Durée de blocage tolérée avant de capturer quand même, quand c'est le FILTRE qui refuse.
+// Exprimée en temps et non en nombre de refus : le filtre est évalué à la cadence de la
+// détection (6 à 8 fois par seconde), où cinq refus représenteraient moins d'une seconde —
+// bien trop court pour laisser à quiconque le temps d'ajuster sa prise de vue.
+const SECOURS_BLOCAGE_MS = 4000;
+let blocageDepuis = 0;
+// Un seul secours par carte présentée. Remis à zéro quand la carte quitte réellement le
+// champ (voir detectLoop), c'est-à-dire quand il y a de nouveau quelque chose à décider.
+let secoursDejaFait = false;
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
