@@ -1529,6 +1529,49 @@
     background:radial-gradient(circle at 88% 12%, rgba(255,255,255,.10), transparent 46%);
   }
   .jeu-banniere > *{position:relative; z-index:1;}
+  /* ---- Banniere de jeu dans la barre ----
+     La pastille ronde disait « il y a une categorie ici » sans rien evoquer. Une vraie
+     petite banniere, avec le nom sur un fond aux couleurs du jeu et un personnage qui
+     deborde du cadre, se reconnait avant meme d'etre lue — ce qui est exactement le role
+     d'une entree de menu qu'on parcourt des dizaines de fois par jour.
+
+     Le personnage depasse volontairement en bas et a droite : un sujet parfaitement
+     contenu dans son cadre parait colle dessus, alors qu'un debordement leger lui donne
+     l'air d'y etre pose. */
+  .lat-banniere{
+    position:relative; overflow:hidden; display:flex; align-items:center;
+    height:46px; margin:10px 2px 4px; padding:0 12px;
+    border-radius:12px; border:1px solid rgba(255,255,255,.10);
+  }
+  .lat-banniere b{font-size:14px; letter-spacing:-.2px; position:relative; z-index:2;
+    text-shadow:0 1px 4px rgba(0,0,0,.55);}
+  .lat-banniere .etat{
+    position:relative; z-index:2; margin-left:7px;
+    font-size:8px; font-weight:800; letter-spacing:.4px; text-transform:uppercase;
+    padding:2px 5px; border-radius:5px;
+    background:rgba(0,0,0,.34); color:rgba(255,255,255,.8);
+  }
+  .lat-banniere .perso{
+    position:absolute; right:-6px; bottom:-9px; height:52px; width:auto; z-index:1;
+    /* L'ombre portee detache le personnage du degrade, sans quoi les aplats sombres de
+       l'illustration se confondent avec le fond. */
+    filter:drop-shadow(0 2px 5px rgba(0,0,0,.5));
+    pointer-events:none;
+  }
+  .lat-banniere .embleme{
+    position:absolute; right:4px; bottom:-4px; font-size:34px; z-index:1; opacity:.92;
+    filter:drop-shadow(0 2px 5px rgba(0,0,0,.5)); pointer-events:none; line-height:1;
+  }
+  /* Degrade coupe avant le personnage : le nom reste lisible sur la partie sombre, le
+     sujet occupe la partie claire. */
+  .lat-banniere.pokemon{
+    background:linear-gradient(100deg, #b3121a 0%, #7d1a2e 46%, #2b1c3a 100%);
+    border-color:rgba(238,21,21,.42);
+  }
+  .lat-banniere.onepiece{
+    background:linear-gradient(100deg, #a8412c 0%, #7a3a24 48%, #241a2e 100%);
+    border-color:rgba(224,85,63,.42);
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1891,13 +1934,13 @@
   </div>
 
   <div id="lat-collection" style="display:none;">
-    <div class="lat-jeu"><span class="pastille" style="background:rgba(238,21,21,.20);">🔴</span><b>Pokémon</b></div>
+    <div class="lat-banniere pokemon"><b>Pokémon</b><img class="perso" alt="" loading="lazy" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" onerror="this.remove()"></div>
     <div class="lat-groupe pokemon">
       <button class="lat-lien" data-tab="collection"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" fill="var(--t2)" opacity=".28"/><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Accueil</span></button>
       <button class="lat-lien" data-tab="sets"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Classeur</span></button>
       <button class="lat-lien" data-tab="scelle"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" fill="var(--t2)" opacity=".28"/><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.6 7 12 10.8 20.4 7M12 10.8v10" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scellé</span><span class="lat-badge scelle-badge zero">0</span></button>
     </div>
-    <div class="lat-jeu"><span class="pastille" style="background:rgba(224,85,63,.22);">🏴‍☠️</span><b>One Piece</b><span class="etat">Bientôt</span></div>
+    <div class="lat-banniere onepiece"><b>One Piece</b><span class="etat">Bientôt</span><span class="embleme">🏴‍☠️</span></div>
     <div class="lat-groupe onepiece">
       <button class="lat-lien" data-tab="onepiece"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Classeur</span></button>
     </div>
