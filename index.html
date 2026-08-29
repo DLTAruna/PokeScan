@@ -1589,7 +1589,9 @@
         <img id="identify-photo" class="identify-photo" style="display:none;">
         <div class="no-photo-placeholder" id="identify-placeholder">
           <img class="empty-icon" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png" alt="" aria-hidden="true">
-          Aucune photo en attente.<br>Tu peux quand même chercher une carte et l'ajouter sans photo, ou aller dans l'onglet Capture.
+          <div id="identify-vide-texte">Aucune photo en attente.</div>
+          <div class="hint" style="margin-top:8px; max-width:34em;">Tu peux quand même chercher une carte
+          et l'ajouter sans photo, ou aller dans l'onglet Capture.</div>
         </div>
         <div class="confirm-overlay" id="confirm-overlay"><div class="confirm-check">✅</div></div>
       </div>
@@ -6836,6 +6838,21 @@ function accepterProposition(){
   toast(fusionnee ? `🔁 ${p.card.name} — quantité ${cible.qty}` : `✅ ${p.card.name} ajouté`);
 }
 
+
+// Explique POURQUOI la file est vide, au lieu de constater qu'elle l'est.
+function majTexteFileVide(){
+  const el = $('identify-vide-texte');
+  if(!el) return;
+  if(autoValideesSession > 0){
+    // Le cas le plus déroutant : l'utilisateur vient de scanner et ne voit rien arriver.
+    // Rien n'est perdu, tout est parti au Lot — mais il n'a aucun moyen de le deviner.
+    el.innerHTML = `✅ Rien à vérifier : les <b>${autoValideesSession}</b> carte(s) lues
+      cette session étaient certaines et sont allées directement dans le Lot.`;
+  } else {
+    el.textContent = 'Aucune photo en attente.';
+  }
+}
+
 function renderIdentify(){
   const myToken = ++identifyToken;
   updateQueueBadges();
@@ -6862,6 +6879,7 @@ function renderIdentify(){
   highlightedIndex = -1;
   $('search-name').focus();
 
+  majTexteFileVide();
   majProposition();
   renderQueueOverview();
   processQueueAnalysis();
