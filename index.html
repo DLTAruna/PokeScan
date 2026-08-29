@@ -992,6 +992,119 @@
     margin:10px 0; padding:9px 12px; border-radius:10px; font-size:12.5px;
     background:rgba(59,165,93,.12); border:1px solid rgba(59,165,93,.32);
   }
+  /* ---- Barre laterale (bureau) ----
+     La barre du bas reste la navigation du telephone : elle est a portee de pouce et
+     l'application se scanne debout, une carte dans une main. Sur un ecran large elle
+     devient au contraire un mauvais compromis — cinq entrees pour une douzaine de pages,
+     et une largeur laissee vide sur les cotes. Les deux coexistent donc, chacune sur le
+     format ou elle a un sens : la laterale apparait a partir de 1024 px, la barre du bas
+     disparait au meme point. */
+  .lateral{display:none;}
+  @media (min-width: 1024px){
+    .lateral{
+      display:flex; flex-direction:column; gap:2px;
+      position:fixed; left:0; top:0; bottom:0; width:256px; z-index:150;
+      background:linear-gradient(180deg, rgba(14,17,26,.98), rgba(9,11,18,.98));
+      border-right:1px solid var(--border); padding:14px 12px;
+      overflow-y:auto;
+    }
+    .navbar{display:none;}
+    body{padding-left:256px;}
+    /* La colonne de 900 px etait un bon choix quand la page occupait tout l'ecran : au-dela,
+       une ligne de texte devient penible a lire. Mais une fois 256 px pris par la barre, la
+       meme contrainte laisse le contenu tasse au milieu d'un large vide. On elargit donc, sans
+       aller jusqu'a la pleine largeur : les tableaux et les grilles de cartes en profitent,
+       le texte reste sous une longueur de ligne raisonnable. */
+    main{max-width:1180px; padding:20px 26px;}
+    /* L'en-tete repetait le nom de l'application, desormais present en haut de la barre
+       laterale. Sur telephone il reste la seule identification de la page, on ne le retire
+       donc qu'ici. */
+    header{display:none;}
+    main{padding-bottom:26px !important;}
+  }
+  .lat-logo{display:flex; align-items:center; gap:9px; padding:4px 6px 14px; font-weight:800;}
+  .lat-logo img{width:26px; height:26px;}
+
+  /* Bascule Vendeur / Collection. Deux metiers distincts dans la meme application :
+     preparer des ventes, et suivre ce qu'on possede. Melanger leurs pages dans une seule
+     liste obligeait a relire tout le menu a chaque fois pour retrouver la bonne. */
+  .lat-modes{display:flex; gap:4px; background:var(--panel2); border-radius:10px; padding:3px; margin-bottom:14px;}
+  .lat-mode{
+    flex:1; border:0; background:transparent; color:var(--muted); cursor:pointer;
+    font:inherit; font-size:11px; font-weight:800; letter-spacing:.06em;
+    padding:7px 4px; border-radius:8px; text-transform:uppercase;
+  }
+  .lat-mode.on{background:var(--accent); color:#1a1206;}
+  .lat-mode.on[data-mode="collection"]{background:#7c5cff; color:#fff;}
+
+  .lat-titre{
+    font-size:9.5px; font-weight:800; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--muted); padding:10px 8px 6px;
+  }
+  .lat-lien{
+    display:flex; align-items:center; gap:11px; width:100%;
+    border:0; background:transparent; color:var(--text); cursor:pointer;
+    font:inherit; font-size:13.5px; text-align:left;
+    padding:9px 10px; border-radius:9px; position:relative;
+    transition:background .14s;
+  }
+  .lat-lien:hover{background:rgba(255,255,255,.05);}
+  .lat-lien.active{background:rgba(255,255,255,.08); font-weight:700;}
+  /* Le liseret marque la page courante sans deplacer le texte : un simple gras suffirait
+     a la distinguer, mais pas a la reperer d'un coup d'oeil dans une liste de six. */
+  .lat-lien.active::before{
+    content:''; position:absolute; left:0; top:22%; bottom:22%; width:3px;
+    border-radius:2px; background:var(--accent);
+  }
+  .lat-lien .ico{width:19px; height:19px; flex:none;}
+  .lat-lien .lat-badge{
+    margin-left:auto; background:var(--danger,#e5484d); color:#fff;
+    font-size:10px; font-weight:800; padding:1px 6px; border-radius:9px;
+  }
+  .lat-lien .lat-badge.zero{display:none;}
+  .lat-pied{margin-top:auto; padding-top:12px; border-top:1px solid var(--border);}
+
+  /* ---- Tableau de bord ---- */
+  .tb-grille{display:grid; gap:12px; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); margin-bottom:14px;}
+  .tb-carte{
+    background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:14px 16px;
+  }
+  .tb-carte .lbl{font-size:10px; font-weight:800; letter-spacing:.1em; text-transform:uppercase; color:var(--muted);}
+  .tb-carte .val{font-size:26px; font-weight:800; margin-top:6px; font-variant-numeric:tabular-nums;}
+  .tb-carte .sub{font-size:12px; color:var(--muted); margin-top:3px;}
+  .tb-carte.or .val{color:var(--accent);}
+  .tb-carte.vert .val{color:#3ba55d;}
+
+  /* ---- Accueil Collection : les trois portes d'entree ---- */
+  .col-portes{display:grid; gap:14px; grid-template-columns:repeat(auto-fit, minmax(250px, 1fr));}
+  .col-porte{
+    position:relative; overflow:hidden; cursor:pointer; text-align:left;
+    border:1px solid var(--border); border-radius:14px; padding:18px;
+    background:var(--panel); color:var(--text); font:inherit;
+    min-height:210px; display:flex; flex-direction:column;
+    transition:transform .16s ease, border-color .16s ease;
+  }
+  .col-porte:hover{transform:translateY(-3px); border-color:var(--accent2);}
+  .col-porte .chapeau{font-size:9.5px; font-weight:800; letter-spacing:.11em; text-transform:uppercase; color:var(--muted);}
+  .col-porte h3{font-size:21px; margin:8px 0 6px;}
+  .col-porte p{font-size:12.5px; color:var(--muted); margin:0 0 14px; line-height:1.5;}
+  .col-porte .cta{
+    align-self:flex-start; margin-top:auto; font-size:12.5px; font-weight:700;
+    color:#1a1206; background:var(--accent); border-radius:9px; padding:7px 13px;
+  }
+  .col-porte.serie{background:linear-gradient(150deg, rgba(224,85,63,.16), var(--panel));}
+  .col-porte.scan{background:linear-gradient(150deg, rgba(255,203,5,.16), var(--panel));}
+  .col-porte.scelle{background:linear-gradient(150deg, rgba(124,92,255,.18), var(--panel));}
+  .col-vignettes{display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;}
+  .col-vignettes img{height:34px; width:auto; max-width:96px; object-fit:contain; opacity:.9;}
+  .col-entete{
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    background:var(--panel); border:1px solid var(--border); border-radius:12px;
+    padding:12px 16px; margin-bottom:16px;
+  }
+  .col-entete .titre{font-size:18px; font-weight:800;}
+  .col-entete .stats{margin-left:auto; display:flex; gap:18px; font-size:12.5px; color:var(--muted);}
+  .col-entete .stats b{color:var(--text); font-variant-numeric:tabular-nums;}
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -1334,6 +1447,36 @@
   <p class="hint" id="revue-aide">Flèches ← → ou touches 1 / 2 · Échap pour quitter</p>
 </div>
 
+<aside class="lateral" id="lateral">
+  <div class="lat-logo"><img src="icone-192.png" alt=""><span>PokéScan</span></div>
+
+  <div class="lat-modes" role="tablist">
+    <button class="lat-mode on" data-mode="vendeur">Vendeur</button>
+    <button class="lat-mode" data-mode="collection">Collection</button>
+  </div>
+
+  <div id="lat-vendeur">
+    <div class="lat-titre">Navigation</div>
+      <button class="lat-lien" data-tab="dashboard"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3.5" width="8" height="7" rx="1.8" fill="var(--t2)" opacity=".3"/><rect x="3" y="3.5" width="8" height="7" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="3.5" width="8" height="11" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="3" y="13" width="8" height="7.5" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Dashboard</span></button>
+      <button class="lat-lien" data-tab="batch"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" fill="var(--t2)" opacity=".28"/><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M9 8.2V5.6a1.6 1.6 0 0 1 1.6-1.6h2.8A1.6 1.6 0 0 1 15 5.6v2.6" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.5 12.6h17" stroke="var(--t1)" stroke-width="1.7" opacity=".6"/></svg><span>Portfolio</span><span class="lat-badge lot-badge zero">0</span></button>
+      <button class="lat-lien" data-tab="capture"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 8V5.6a2 2 0 0 1 2-2H8M16 3.6h2.6a2 2 0 0 1 2 2V8M20.6 16v2.4a2 2 0 0 1-2 2H16M8 20.4H5.4a2 2 0 0 1-2-2V16" stroke="var(--t1)" stroke-width="1.7"/><rect x="7.6" y="7.8" width="8.8" height="8.4" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="7.6" y="7.8" width="8.8" height="8.4" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scanner</span></button>
+      <button class="lat-lien" data-tab="identify"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="2.8" width="11.4" height="15" rx="2" stroke="var(--t1)" stroke-width="1.7"/><circle cx="15.6" cy="15" r="4.6" fill="var(--t2)" opacity=".32"/><circle cx="15.6" cy="15" r="4.6" stroke="var(--t1)" stroke-width="1.7"/><path d="m19 18.4 2.3 2.3" stroke="var(--t1)" stroke-width="1.7"/></svg><span>À vérifier</span><span class="lat-badge queue-badge zero">0</span></button>
+      <button class="lat-lien" data-tab="ventes"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 6.4h2.2l2.2 9.6h9.2l2.2-7.2H7.2" stroke="var(--t1)" stroke-width="1.7"/><circle cx="10" cy="19.2" r="1.5" fill="var(--t2)"/><circle cx="16.4" cy="19.2" r="1.5" fill="var(--t2)"/><path d="M13.6 3.4v4.4m-2.2-2.2h4.4" stroke="var(--t1)" stroke-width="1.7" opacity=".7"/></svg><span>Ventes</span></button>
+      <button class="lat-lien" data-tab="export"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5" fill="var(--t2)" opacity=".26"/><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5" stroke="var(--t1)" stroke-width="1.7"/><path d="M12 3v11.5m-4.4-4L12 15l4.4-4.5" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Export</span></button>
+  </div>
+
+  <div id="lat-collection" style="display:none;">
+    <div class="lat-titre">Pokémon</div>
+      <button class="lat-lien" data-tab="collection"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" fill="var(--t2)" opacity=".28"/><path d="M4 10.4 12 4l8 6.4V19a1.8 1.8 0 0 1-1.8 1.8H5.8A1.8 1.8 0 0 1 4 19Z" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Accueil</span></button>
+      <button class="lat-lien" data-tab="sets"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Par série</span></button>
+      <button class="lat-lien" data-tab="scelle"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" fill="var(--t2)" opacity=".28"/><path d="M12 3.2 20.4 7v10L12 20.8 3.6 17V7Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.6 7 12 10.8 20.4 7M12 10.8v10" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scellé</span><span class="lat-badge scelle-badge zero">0</span></button>
+  </div>
+
+  <div class="lat-pied">
+      <button class="lat-lien" data-tab="settings"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="16" cy="7.2" r="2.9" fill="var(--t2)" opacity=".3"/><circle cx="9" cy="16.8" r="2.9" fill="var(--t2)" opacity=".3"/><path d="M3.5 7.2h9.6M18.9 7.2h1.6M3.5 16.8h2.6M11.9 16.8h8.6" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16" cy="7.2" r="2.9" stroke="var(--t1)" stroke-width="1.7"/><circle cx="9" cy="16.8" r="2.9" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Réglages</span></button>
+  </div>
+</aside>
+
 <nav class="navbar" id="navbar">
   <button class="nav-item" data-tab="sets">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/><path d="M6.4 11.2h5.2M6.4 14.4h3.4" stroke="var(--t1)" stroke-width="1.7" opacity=".7"/></svg></span><span class="nav-lbl">Collection</span>
@@ -1369,6 +1512,57 @@
 <main>
 
   <!-- CAPTURE TAB -->
+  <section class="section" id="section-dashboard">
+    <div class="panel">
+      <h2>Tableau de bord</h2>
+      <p class="sub">Où en est le stock, et ce qu'il reste à faire.</p>
+      <div class="tb-grille" id="tb-grille"></div>
+      <div class="tb-grille" id="tb-actions"></div>
+    </div>
+  </section>
+
+  <section class="section" id="section-ventes">
+    <div class="panel">
+      <h2>Ventes</h2>
+      <p class="sub">Ce qui est parti, et ce que ça a rapporté.</p>
+      <div id="ventes-corps"></div>
+    </div>
+  </section>
+
+  <section class="section" id="section-collection">
+    <div class="col-entete">
+      <span class="titre">🔴 Collection Pokémon</span>
+      <div class="stats">
+        <span><b id="col-cartes">0</b> cartes</span>
+        <span><b id="col-sets">0</b> séries entamées</span>
+        <span><b id="col-valeur">0 €</b></span>
+      </div>
+    </div>
+    <div class="col-portes">
+      <button class="col-porte serie" data-tab="sets">
+        <span class="chapeau">Toutes les ères</span>
+        <h3>Par série</h3>
+        <p>De la Base 1999 aux dernières extensions, bloc par bloc.</p>
+        <div class="col-vignettes" id="col-vignettes-series"></div>
+        <span class="cta">Parcourir les séries →</span>
+      </button>
+      <button class="col-porte scan" data-tab="capture">
+        <span class="chapeau">Appareil photo</span>
+        <h3>Scanner</h3>
+        <p>Ajoute une carte à ta collection en la présentant à l'objectif.</p>
+        <div class="col-vignettes" id="col-vignettes-scan"></div>
+        <span class="cta">Ouvrir le scanner →</span>
+      </button>
+      <button class="col-porte scelle" data-tab="scelle">
+        <span class="chapeau">Produits fermés</span>
+        <h3>Scellé</h3>
+        <p>Coffrets, displays et ETB, avec leur cote et leur plus-value.</p>
+        <div class="col-vignettes" id="col-vignettes-scelle"></div>
+        <span class="cta">Explorer le scellé →</span>
+      </button>
+    </div>
+  </section>
+
   <section class="section active" id="section-capture">
       <div class="bandeau-install" id="bandeau-install" style="display:none;">
         <div>
@@ -2161,6 +2355,129 @@ const $ = (id) => document.getElementById(id);
 // Bascule d'onglet : la barre basse, le menu et l'ancien jeu d'onglets partagent le même
 // attribut data-tab, donc un seul chemin de code les pilote tous. Les états actifs sont
 // synchronisés partout, sinon deux barres afficheraient deux sections différentes.
+
+// ---------------- DEUX MÉTIERS, DEUX NAVIGATIONS ----------------
+// Préparer des ventes et suivre ce qu'on possède sont deux usages distincts, avec des pages
+// distinctes. Les mélanger dans une seule liste obligeait à relire tout le menu à chaque
+// fois pour retrouver la bonne — et la barre du bas, limitée à cinq entrées, ne pouvait de
+// toute façon pas en exposer une douzaine.
+//
+// Le mode est mémorisé : on ne bascule pas entre vendre et collectionner toutes les cinq
+// minutes, c'est plutôt une session entière passée dans l'un ou dans l'autre.
+const ONGLETS_MODE = {
+  vendeur: ['dashboard', 'batch', 'capture', 'identify', 'ventes', 'export'],
+  collection: ['collection', 'sets', 'scelle']
+};
+let modeActuel = localStorage.getItem('modeNav') === 'collection' ? 'collection' : 'vendeur';
+
+function appliquerMode(mode, allerAccueil){
+  modeActuel = mode;
+  localStorage.setItem('modeNav', mode);
+  document.querySelectorAll('.lat-mode').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  const v = $('lat-vendeur'), c = $('lat-collection');
+  if(v) v.style.display = mode === 'vendeur' ? '' : 'none';
+  if(c) c.style.display = mode === 'collection' ? '' : 'none';
+  // On ne déplace l'utilisateur QUE s'il a lui-même changé de mode. Au chargement, la page
+  // courante est restaurée telle quelle : le renvoyer à l'accueil effacerait ce qu'il était
+  // en train de faire.
+  if(allerAccueil) activerOnglet(mode === 'vendeur' ? 'dashboard' : 'collection');
+}
+
+// Un onglet ouvert depuis ailleurs (barre du bas, raccourci, bouton d'une page) doit
+// aligner le mode sur lui, sinon la barre latérale afficherait une liste qui ne contient
+// pas la page affichée.
+function synchroniserMode(nom){
+  const attendu = ONGLETS_MODE.collection.includes(nom) ? 'collection'
+                : ONGLETS_MODE.vendeur.includes(nom) ? 'vendeur' : null;
+  if(attendu && attendu !== modeActuel) appliquerMode(attendu, false);
+}
+
+// ---------------- TABLEAU DE BORD ----------------
+// Répond aux trois questions qu'on se pose en ouvrant l'application : combien ça vaut,
+// combien il y en a, et qu'est-ce qui attend une action de ma part. La dernière est la plus
+// utile et c'est celle qu'aucun écran ne donnait : le travail en attente était réparti
+// entre trois onglets qu'il fallait ouvrir un par un pour en faire le tour.
+function rendreDashboard(){
+  const g = $('tb-grille');
+  if(!g) return;
+
+  const valeurLot = batch.reduce((s,e) => s + (parseFloat(e.price)||0) * (parseInt(e.qty)||1), 0);
+  const nbLot = batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
+  const sansPrix = batch.filter(e => !parseFloat(e.price)).length;
+  const sansImage = batch.filter(e => !e.imageUrl).length;
+  const nbScelle = (typeof scelle !== 'undefined' && Array.isArray(scelle))
+    ? scelle.reduce((s,p) => s + (parseInt(p.qty)||1), 0) : 0;
+  const valeurScelle = (typeof scelle !== 'undefined' && Array.isArray(scelle))
+    ? scelle.reduce((s,p) => s + (parseFloat(p.cote)||0) * (parseInt(p.qty)||1), 0) : 0;
+
+  const carte = (lbl, val, sub, cls) =>
+    `<div class="tb-carte ${cls||''}"><div class="lbl">${lbl}</div><div class="val">${val}</div><div class="sub">${sub||''}</div></div>`;
+
+  g.innerHTML =
+    carte('Valeur du stock', (valeurLot + valeurScelle).toFixed(2) + ' €',
+          `${nbLot} carte(s) · ${nbScelle} scellé(s)`, 'or') +
+    carte('Prêt à vendre', valeurLot.toFixed(2) + ' €',
+          `${nbLot - sansPrix} ligne(s) avec un prix`, 'vert') +
+    carte('Scellé', valeurScelle.toFixed(2) + ' €', `${nbScelle} produit(s)`) +
+    carte('À vérifier', String(pendingQueue.length),
+          pendingQueue.length ? 'cartes en attente de ta décision' : 'rien en attente');
+
+  // Ce qui BLOQUE une vente, chiffré et cliquable. Ces défauts existaient déjà dans le lot,
+  // mais il fallait les découvrir soi-même en parcourant la liste.
+  const a = $('tb-actions');
+  if(!a) return;
+  const actions = [];
+  if(pendingQueue.length) actions.push({t:'identify', lbl:'Cartes à vérifier', n:pendingQueue.length,
+    sub:'Elles n\'entreront pas dans l\'export tant qu\'elles sont ici.'});
+  if(sansPrix) actions.push({t:'batch', lbl:'Lignes sans prix', n:sansPrix,
+    sub:'eBay refuse une annonce sans prix de départ.'});
+  if(sansImage) actions.push({t:'batch', lbl:'Lignes sans image', n:sansImage,
+    sub:'eBay refuse aussi les lignes sans URL d\'image.'});
+  a.innerHTML = actions.length
+    ? actions.map(x => `<button class="tb-carte" data-tab="${x.t}" style="cursor:pointer; text-align:left; width:100%;">
+        <div class="lbl">${x.lbl}</div><div class="val">${x.n}</div><div class="sub">${x.sub}</div></button>`).join('')
+    : `<div class="tb-carte vert"><div class="lbl">Rien à corriger</div>
+       <div class="val">✓</div><div class="sub">Toutes les lignes sont exportables.</div></div>`;
+}
+
+// ---------------- VENTES ----------------
+function rendreVentes(){
+  const z = $('ventes-corps');
+  if(!z) return;
+  // Page volontairement honnête sur son état : rien n'est encore connecté, et afficher des
+  // chiffres à zéro laisserait croire à un suivi qui n'existe pas.
+  z.innerHTML = `<div class="tb-carte">
+      <div class="lbl">Pas encore connecté</div>
+      <div class="sub" style="margin-top:8px; line-height:1.6;">
+        Cette page affichera les ventes réalisées sur eBay et Cardmarket, une fois leurs API
+        reliées. En attendant, l'export CSV reste le chemin pour déposer les annonces.
+      </div>
+      <button class="btn-gold btn-sm" data-tab="export" style="margin-top:12px;">Aller à l'export</button>
+    </div>`;
+}
+
+// ---------------- ACCUEIL COLLECTION ----------------
+function rendreAccueilCollection(){
+  const nb = batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
+  const sets = new Set(batch.map(e => e.setId).filter(Boolean));
+  const val = batch.reduce((s,e) => s + (parseFloat(e.marketPrice)||0) * (parseInt(e.qty)||1), 0);
+  if($('col-cartes')) $('col-cartes').textContent = nb;
+  if($('col-sets')) $('col-sets').textContent = sets.size;
+  if($('col-valeur')) $('col-valeur').textContent = val.toFixed(2) + ' €';
+
+  // Vignettes : les logos des séries réellement présentes dans le lot, pas une liste
+  // décorative. Une porte d'entrée qui montre TES séries dit quelque chose ; une qui montre
+  // trois logos choisis d'avance ne dit rien.
+  const z = $('col-vignettes-series');
+  if(z && !z.dataset.rempli){
+    const ids = [...sets].slice(0, 3);
+    if(ids.length){
+      z.innerHTML = ids.map(id => `<img src="https://assets.tcgdex.net/fr/${id.split('-')[0]}/${id}/logo.webp" alt="" onerror="this.remove()">`).join('');
+      z.dataset.rempli = '1';
+    }
+  }
+}
+
 function activerOnglet(nom){
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   const sec = $('section-' + nom);
@@ -2171,6 +2488,10 @@ function activerOnglet(nom){
   if(nom === 'batch') renderBatch();
   if(nom === 'identify') renderIdentify();
   if(nom === 'sets') renderSetsTab();
+  if(nom === 'dashboard') rendreDashboard();
+  if(nom === 'ventes') rendreVentes();
+  if(nom === 'collection') rendreAccueilCollection();
+  synchroniserMode(nom);
 
   fermerMenu();
   // Retour en haut : sans ça, on arrive au milieu de la nouvelle section, à la hauteur où
@@ -2197,9 +2518,20 @@ function majBadgesNav(){
   });
 }
 
-document.querySelectorAll('[data-tab]').forEach(btn=>{
+document.querySelectorAll('.navbar [data-tab], .menu-item[data-tab]').forEach(btn=>{
   btn.addEventListener('click', ()=> activerOnglet(btn.dataset.tab));
 });
+// La barre latérale et les cartes de page partagent le même attribut data-tab que la barre
+// du bas : un seul écouteur délégué suffit, et tout nouveau bouton fonctionne sans code.
+document.addEventListener('click', (e)=>{
+  const mode = e.target.closest('.lat-mode');
+  if(mode){ appliquerMode(mode.dataset.mode, true); return; }
+  const lien = e.target.closest('.lat-lien[data-tab], .col-porte[data-tab], .tb-carte[data-tab], [data-tab].btn-gold');
+  if(lien) activerOnglet(lien.dataset.tab);
+});
+
+appliquerMode(modeActuel, false);
+
 
 $('btn-menu').addEventListener('click', ouvrirMenu);
 $('btn-menu-fermer').addEventListener('click', fermerMenu);
