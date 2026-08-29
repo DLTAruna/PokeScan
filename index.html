@@ -4419,6 +4419,7 @@ function renderZoomButtons(track, caps){
         diagPush('err', {msg:'caméra: zoom manuel -> ' + z + '×'});
       }catch(e){
         diagPush('err', {msg:'caméra: zoom manuel ' + z + '× échoué (' + e.message + ')'});
+        toast('⚠️ Cet objectif refuse le zoom ' + z + '× — essaie une autre valeur.');
       }
     });
   });
@@ -6290,6 +6291,13 @@ async function attemptRead(corners, score){
       const roughInv = 1/CARD_RATIO;
       const roughlyPortrait  = Math.abs(estRatio - CARD_RATIO) / CARD_RATIO <= 0.35;
       const roughlyLandscape = Math.abs(estRatio - roughInv) / roughInv <= 0.35;
+      // Coins collés au bord de l'image : le quadrilatère détecté n'est pas la carte mais
+      // ce qu'il en reste dans le champ. C'est la forme tronquée qui produit ces ratios
+      // aberrants, pas un chevauchement.
+      const MARGE_BORD = 0.015;
+      const auBord = [corners.tl, corners.tr, corners.br, corners.bl]
+        .filter(c => c[0] <= MARGE_BORD || c[0] >= 1 - MARGE_BORD
+                  || c[1] <= MARGE_BORD || c[1] >= 1 - MARGE_BORD).length;
       if(!roughlyPortrait && !roughlyLandscape){
         // Cause fréquente, signalée par un retour utilisateur : en empilant les cartes
         // déjà scannées, le bord de la carte du dessous peut dépasser et se glisser
@@ -6299,8 +6307,24 @@ async function attemptRead(corners, score){
         // déjà ce qu'il faut en rejetant plutôt que de risquer une lecture mélangeant
         // les deux — la seule chose à corriger ici est le silence : dire à
         // l'utilisateur ce qui se passe probablement plutôt que de ne rien afficher.
-        setAimHint('Écarte les autres cartes du cadre');
-        diagPush('try', {ok:false, hint:'forme incompatible (pré-filtre)', score, ratio:+estRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
+        // Trois causes distinctes, trois gestes différents à demander. Le motif est
+        // consigné pour pouvoir vérifier, au prochain relevé, laquelle domine réellement
+        // plutôt que de le déduire des ratios après coup.
+        let motif, conseil;
+        if(auBord >= 2){
+          motif = 'déborde';
+          conseil = 'Éloigne le téléphone — la carte dépasse du cadre';
+        } else if(estRatio < 0.45 || estRatio > 3){
+          motif = 'dégénéré';
+          conseil = 'Pose la carte bien à plat, sur un fond uni';
+        } else {
+          motif = 'chevauchement';
+          conseil = 'Écarte les autres cartes du cadre';
+        }
+        setAimHint(conseil);
+        diagPush('try', {ok:false, hint:'forme incompatible (pré-filtre)', score,
+                         ratio:+estRatio.toFixed(2), motif, auBord,
+                         ocrMs:Math.round(performance.now()-t0)});
         return;
       }
     }
