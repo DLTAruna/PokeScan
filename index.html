@@ -525,20 +525,27 @@
   /* Le Pokemon phare : grand, debordant, fondu sur les bords. Non masque, l'image se
      lirait comme une carte collee sur la couverture ; le degrade de masque efface le
      cadre et il ne reste que l'illustration, marquee dans le cuir. */
+  /* Dans le flux et centre, au-dessus du logo et du nom : le filigrane en coin se lisait
+     comme un decor pose a cote du titre, alors que c'est LUI qui identifie le classeur —
+     on reconnait une extension a son Pokemon avant de lire son nom. Il prend donc la place
+     centrale, et le reste de la couverture se range dessous. */
   .cl-couv-phare{
-    position:absolute; right:-9%; bottom:-5%; width:76%; aspect-ratio:1/1; z-index:0;
+    width:min(62%, 240px); aspect-ratio:1/1; margin:0 auto 4px;
     overflow:hidden; pointer-events:none;
-    transform:rotate(-6deg); transform-origin:100% 100%;
-    mix-blend-mode:luminosity; opacity:.42;
-    -webkit-mask-image:radial-gradient(closest-side at 52% 42%, #000 32%, transparent 84%);
-    mask-image:radial-gradient(closest-side at 52% 42%, #000 32%, transparent 84%);
+    mix-blend-mode:luminosity; opacity:.58;
+    -webkit-mask-image:radial-gradient(closest-side at 50% 44%, #000 40%, transparent 88%);
+    mask-image:radial-gradient(closest-side at 50% 44%, #000 40%, transparent 88%);
   }
   /* Cadre carre + image au ratio de la carte : on ne voit que les 70 % superieurs, soit
-     l'illustration seule. La marge negative fait sortir la bordure haute du cadre. */
+     l'illustration seule, sans le bloc de texte du bas. La marge negative fait sortir la
+     bordure haute du cadre. */
   .cl-couv-phare img{
     width:100%; height:auto; display:block; margin-top:-5%;
     filter:grayscale(1) contrast(1.1);
   }
+  /* Le logo retrecit : a taille egale il entrait en concurrence avec l'illustration juste
+     au-dessus, et la couverture n'avait plus de point d'entree unique. */
+  .cl-couv-contenu .cl-couv-logo{width:min(58%, 190px); margin-bottom:10px; opacity:.55;}
   /* Reglage d'habillage : discret, dans le coin, il n'a pas a disputer l'attention au
      contenu de la couverture. */
   .cl-couv-reglage{
@@ -603,21 +610,83 @@
   }
   .cl-couv-jauge i{display:block; height:100%; background:rgba(255,255,255,.6); border-radius:3px;}
   /* ---- Mode classeur ---- */
-  .classeur-pages{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
+  /* Trois colonnes et non deux : la reliure est un element a part entiere, entre les deux
+     pages. Dessinee sur le bord de chaque page (comme avant), elle se dedoublait — deux
+     demi-reliures separees par une gouttiere vide. */
+  .classeur-pages{display:grid; grid-template-columns:1fr 30px 1fr; gap:0;}
   .classeur-page{
     display:grid; grid-template-columns:repeat(var(--cols,3), 1fr); gap:6px;
-    padding:10px; border-radius:8px;
-    /* Grain et teinte d'un classeur physique : c'est ce qui fait la difference entre une
-       grille en deux colonnes et la sensation d'une double page. */
-    background:linear-gradient(160deg,#1d2130,#141824);
-    border:1px solid var(--border); box-shadow:inset 0 0 26px rgba(0,0,0,.55);
+    padding:12px 14px; position:relative; overflow:hidden;
+    /* Meme matiere que la couverture, en plus sombre et moins sature : c'est l'interieur
+       du meme classeur. Les pages restaient auparavant grises quelle que soit la couleur
+       choisie, ce qui cassait l'illusion des qu'on ouvrait la premiere double page. */
+    background:
+      radial-gradient(90% 55% at 28% 0%, rgba(255,255,255,.055), rgba(255,255,255,0) 62%),
+      linear-gradient(162deg, hsl(var(--t,220) 15% 16%), hsl(var(--t,220) 17% 9%));
+    border:1px solid hsl(var(--t,220) 16% 21%);
+    box-shadow:inset 0 0 30px rgba(0,0,0,.5);
   }
+  /* Coins arrondis a l'exterieur, presque droits cote reliure : une page reliee ne s'arrondit
+     pas du cote ou elle est prise dans les anneaux. */
+  .classeur-pages > .classeur-page:first-child{border-radius:10px 3px 3px 10px; border-right:0;}
+  .classeur-pages > .classeur-page:last-child{border-radius:3px 10px 10px 3px; border-left:0;}
+
+  /* ---- Reliure ---- */
+  .cl-reliure{
+    position:relative;
+    background:linear-gradient(90deg,
+      rgba(0,0,0,.55) 0%, rgba(0,0,0,.82) 42%, rgba(0,0,0,.82) 58%, rgba(0,0,0,.55) 100%);
+    border-top:1px solid hsl(var(--t,220) 16% 21%);
+    border-bottom:1px solid hsl(var(--t,220) 16% 21%);
+  }
+  /* Anneau metallique : quatre couleurs de bordure plutot qu'une seule. Un cercle d'une
+     teinte unique se lit comme un rond dessine ; c'est l'ecart entre le haut-gauche clair
+     et le bas-droite sombre qui donne le metal. */
+  .cl-anneau{
+    position:absolute; left:50%; width:24px; height:24px; margin-left:-12px;
+    transform:translateY(-50%); border-radius:50%; border:3px solid;
+    border-color:#d8dee9 #939bab #626977 #b3bbc9;
+    box-shadow:0 2px 4px rgba(0,0,0,.75), inset 0 0 3px rgba(255,255,255,.45);
+  }
+  /* Bande de reliure sur chaque page : le renfort perfore ou passent les anneaux, avec
+     l'ombre du pli juste a cote. Les trous sont alignes sur les anneaux (18/50/82 %). */
+  .classeur-page::before{
+    content:''; position:absolute; top:0; bottom:0; width:17px; z-index:2; pointer-events:none;
+    background:
+      radial-gradient(circle 4.5px at 50% 18%, rgba(0,0,0,.9) 0 4.5px, rgba(0,0,0,0) 4.5px),
+      radial-gradient(circle 4.5px at 50% 50%, rgba(0,0,0,.9) 0 4.5px, rgba(0,0,0,0) 4.5px),
+      radial-gradient(circle 4.5px at 50% 82%, rgba(0,0,0,.9) 0 4.5px, rgba(0,0,0,0) 4.5px),
+      linear-gradient(90deg, rgba(255,255,255,.05), rgba(0,0,0,.30));
+  }
+  .classeur-pages > .classeur-page:first-child::before{right:0; background-position:0 0;}
+  .classeur-pages > .classeur-page:last-child::before{left:0; transform:scaleX(-1);}
+  /* Le pli : la page s'enfonce vers la reliure. Une ombre interieure d'un seul cote suffit
+     a donner la courbure, la ou une page parfaitement plate reste un rectangle. */
+  .classeur-pages > .classeur-page:first-child{
+    box-shadow:inset 0 0 30px rgba(0,0,0,.5), inset -26px 0 26px -22px rgba(0,0,0,.9);
+  }
+  .classeur-pages > .classeur-page:last-child{
+    box-shadow:inset 0 0 30px rgba(0,0,0,.5), inset 26px 0 26px -22px rgba(0,0,0,.9);
+  }
+  /* Defs SVG partagees : un seul filtre pour les trois pages. Le dupliquer donnerait trois
+     fois le meme identifiant, et seul le premier compterait de toute facon. */
+  .cl-defs{position:absolute; width:0; height:0; overflow:hidden;}
+  .classeur-page:not(.couverture) > .cl-cuir{opacity:.34;}
   .classeur-nav{display:flex; align-items:center; justify-content:center; gap:14px; margin-top:12px; flex-wrap:wrap;}
   .classeur-pos{font-size:12px; color:var(--muted);}
   @media (max-width:760px){
     /* Une double page cote a cote sur un ecran de telephone donnerait des vignettes
        illisibles : les deux pages passent l'une sous l'autre. */
-    .classeur-pages{grid-template-columns:1fr;}
+    .classeur-pages{grid-template-columns:1fr; gap:12px;}
+    /* Empilees, les pages ne se font plus face : la reliure n'a plus de sens entre elles,
+       et les coins redeviennent symetriques. */
+    .cl-reliure{display:none;}
+    .classeur-pages > .classeur-page:first-child,
+    .classeur-pages > .classeur-page:last-child{
+      border-radius:10px; border:1px solid hsl(var(--t,220) 16% 21%);
+      box-shadow:inset 0 0 30px rgba(0,0,0,.5);
+    }
+    .classeur-page::before{display:none;}
     /* Empilee, la couverture n'a plus de page en face pour lui donner sa hauteur : sans
        proportions imposees elle s'aplatissait en bandeau. */
     .classeur-page.couverture{aspect-ratio:3/4; max-height:62vh; margin:0 auto;}
@@ -634,18 +703,9 @@
   .seg button.on{background:var(--accent); color:#1a1206; font-weight:700;}
   .seg button b{margin-left:5px; opacity:.75; font-size:11px;}
 
-  /* Anneaux du classeur : la reliure dessinee sur le bord interieur des deux pages. Un
-     detail purement decoratif, mais c'est lui qui fait basculer la lecture de « deux
-     colonnes de vignettes » a « une double page de classeur ». */
-  .classeur-page{position:relative;}
-  .classeur-page::before{
-    content:''; position:absolute; top:14px; bottom:14px; width:3px;
-    background:repeating-linear-gradient(to bottom, var(--accent) 0 7px, transparent 7px 22px);
-    opacity:.5; border-radius:2px;
-  }
-  .classeur-page:first-child::before{right:4px;}
-  .classeur-page:last-child::before{left:4px;}
-  @media (max-width:760px){ .classeur-page::before{left:4px; right:auto;} }
+  /* Le pointille jaune qui tenait lieu de reliure a laisse la place a de vrais anneaux,
+     dans une gouttiere entre les deux pages (voir .cl-reliure plus haut). Un trait
+     discontinu ne ressemblait a rien de physique : ni a un anneau, ni a une perforation. */
   /* Panneau de versions */
   .versions-modal{
     position:fixed; inset:0; z-index:320; display:none; align-items:center; justify-content:center;
@@ -11139,26 +11199,28 @@ function enregistrerStyleClasseur(champ, valeur){
   if($('style-modal').classList.contains('open')) rendreStyleClasseur();
 }
 
+// Le filtre de cuir vit dans un SVG unique, hors ecran, et les trois pages y renvoient.
+// L'inscrire dans chaque page donnerait trois fois le meme identifiant — seul le premier
+// compterait, et le jour ou l'un des trois divergerait, il serait ignore en silence.
+const DEFS_CUIR = `<svg class="cl-defs" aria-hidden="true"><defs>
+  <filter id="cl-cuir-f" x="0" y="0" width="100%" height="100%">
+    <feTurbulence type="fractalNoise" baseFrequency="1.05" numOctaves="3" seed="11" result="bruit"/>
+    <feDiffuseLighting in="bruit" lighting-color="#ffffff" surfaceScale="2.2" result="relief">
+      <feDistantLight azimuth="228" elevation="46"/>
+    </feDiffuseLighting>
+  </filter>
+</defs></svg>`;
+const GRAIN_CUIR = '<svg class="cl-cuir" aria-hidden="true"><rect width="100%" height="100%" filter="url(#cl-cuir-f)"/></svg>';
+
 function faceCouverture(){
-  const t = teinteDuClasseur(setCourantId);
   const prog = progressionSet(cartesSetCourant);
   const nom = setCourantMeta?.name || setCourantId || '';
   const logo = setCourantMeta?.logo;
   const phare = cartePhare();
-  return `<div class="classeur-page couverture" style="--t:${t}">
-    <svg class="cl-cuir" aria-hidden="true">
-      <defs>
-        <filter id="cl-cuir-f" x="0" y="0" width="100%" height="100%">
-          <feTurbulence type="fractalNoise" baseFrequency="1.05" numOctaves="3" seed="11" result="bruit"/>
-          <feDiffuseLighting in="bruit" lighting-color="#ffffff" surfaceScale="2.2" result="relief">
-            <feDistantLight azimuth="228" elevation="46"/>
-          </feDiffuseLighting>
-        </filter>
-      </defs>
-      <rect width="100%" height="100%" filter="url(#cl-cuir-f)"/>
-    </svg>
-    ${phare ? `<div class="cl-couv-phare"><img src="${esc(phare.image)}/high.webp" alt="" loading="lazy"></div>` : ''}
+  return `<div class="classeur-page couverture">
+    ${GRAIN_CUIR}
     <div class="cl-couv-contenu">
+      ${phare ? `<div class="cl-couv-phare"><img src="${esc(phare.image)}/high.webp" alt=""></div>` : ''}
       ${logo ? `<img class="cl-couv-logo" src="${esc(logo)}.webp" alt="" loading="lazy">` : ''}
       <div class="cl-couv-nom">${esc(nom)}</div>
       <div class="cl-couv-sous">${prog.possedees} / ${prog.total} carte(s) · ${prog.pct} %</div>
@@ -11307,17 +11369,27 @@ function rendreCartesSet(){
     // pleine montre ainsi ses pochettes vides au lieu d'un blanc, et le nombre
     // d'emplacements reste le meme d'une page a l'autre.
     const rendreFace = (f)=>{
-      if(!f) return '<div class="classeur-page" style="--cols:' + cols + '"></div>';
+      if(!f) return `<div class="classeur-page" style="--cols:${cols}">${GRAIN_CUIR}</div>`;
       if(f.couverture) return faceCouverture();
       let slots = '';
       for(let i = 0; i < cols * rangs; i++)
         slots += '<div class="cl-slot">' + POCHE_SVG + (f.cartes[i] ? rendreTuile(f.cartes[i]) : '') + '</div>';
-      return `<div class="classeur-page" style="--cols:${cols}">${slots}</div>`;
+      // Le grain est pose sur la page comme sur la couverture : c'est l'interieur du meme
+      // classeur, et une page grise a cote d'une couverture teintee cassait l'illusion.
+      return `<div class="classeur-page" style="--cols:${cols}">${GRAIN_CUIR}${slots}</div>`;
     };
+    // Trois anneaux plutot qu'un trait discontinu, et alignes sur les perforations dessinees
+    // par .classeur-page::before (18 / 50 / 82 %).
+    const reliure = '<div class="cl-reliure">'
+      + '<i class="cl-anneau" style="top:18%"></i>'
+      + '<i class="cl-anneau" style="top:50%"></i>'
+      + '<i class="cl-anneau" style="top:82%"></i></div>';
     grid.className = 'classeur';
     grid.innerHTML = `
-      <div class="classeur-pages">
+      ${DEFS_CUIR}
+      <div class="classeur-pages" style="--t:${teinteDuClasseur(setCourantId)}">
         ${rendreFace(faces[pageClasseur * 2])}
+        ${reliure}
         ${rendreFace(faces[pageClasseur * 2 + 1])}
       </div>
       <div class="classeur-nav">

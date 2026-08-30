@@ -13,9 +13,13 @@
 //
 // Séparés, la version de la COQUILLE peut être incrémentée à chaque correctif sans rien
 // coûter, et le cache des ressources externes n'est jamais purgé.
-const VERSION_COQUILLE = 'pokescan-coquille-v3';
+const VERSION_COQUILLE = 'pokescan-coquille-v4';
 const VERSION_EXTERNE = 'pokescan-externe-v1';
 const CACHES_ACTIFS = [VERSION_COQUILLE, VERSION_EXTERNE];
+
+// Au-delà de ce délai on sert la version en cache — sans pour autant abandonner le
+// téléchargement en cours, qui rafraîchira le cache pour la fois suivante.
+const DELAI_RESEAU_MS = 4000;
 
 const COQUILLE = [
   './',
@@ -67,20 +71,38 @@ self.addEventListener('fetch', (e) => {
     // Le réseau est borné dans le temps : sans ça, une connexion très lente (et non
     // coupée) fait attendre l'utilisateur devant une page blanche au lieu de lui servir
     // la version en cache, qui s'affiche instantanément.
-    e.respondWith(
-      Promise.race([
-        fetch(req),
-        new Promise((_, rejeter) => setTimeout(() => rejeter(new Error('réseau trop lent')), 3500))
-      ])
-        .then((rep) => {
-          if (rep && rep.ok) {
-            const copie = rep.clone();
-            caches.open(VERSION_COQUILLE).then((c) => c.put(req, copie));
-          }
-          return rep;
-        })
-        .catch(() => caches.match(req).then((r) => r || caches.match('./index.html')))
-    );
+    // La requête réseau est lancée UNE fois et menée à son terme quoi qu'il arrive, même
+    // quand on ne l'attend pas : c'est elle qui met le cache à jour. La version précédente
+    // rejetait la promesse au bout de 3,5 s et abandonnait la réponse en cours — sur une
+    // connexion mobile, télécharger les 740 Ko de l'application dépasse régulièrement ce
+    // délai, et le cache n'était alors JAMAIS rafraîchi. L'appareil restait bloqué sur une
+    // version ancienne, rechargement après rechargement, sans aucun moyen d'en sortir.
+    //
+    // Désormais : on sert le cache si le réseau tarde, mais le téléchargement continue et
+    // la version suivante est à jour. Un chargement de retard au pire, au lieu d'un blocage
+    // définitif.
+    e.respondWith((async () => {
+      const reseau = fetch(req).then((rep) => {
+        if (rep && rep.ok) {
+          const copie = rep.clone();
+          caches.open(VERSION_COQUILLE).then((c) => c.put(req, copie));
+        }
+        return rep;
+      });
+      reseau.catch(() => {});   // sans quoi un échec réseau remonte comme rejet non géré
+
+      const cachee = await caches.match(req);
+      if (!cachee) {
+        // Rien en cache : on n'a pas le choix, on attend le réseau aussi longtemps qu'il faut.
+        try { return await reseau; }
+        catch (err) { return caches.match('./index.html'); }
+      }
+      const gagnant = await Promise.race([
+        reseau.catch(() => null),
+        new Promise((r) => setTimeout(() => r(null), DELAI_RESEAU_MS))
+      ]);
+      return gagnant || cachee;
+    })());
     return;
   }
 
