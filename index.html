@@ -195,7 +195,16 @@
        plein écran : hors de là, la page doit continuer à défiler normalement. */
     touch-action:none;
   }
-  #cam-fullscreen-area.fs video{width:100%; height:100%; max-height:none;}
+  /* `cover` en plein écran, `contain` ailleurs. Un flux 9:16 sur un écran de téléphone
+     plus étroit laissait deux bandes noires d'environ 70 px en haut et en bas — près de
+     18 % de la hauteur perdue sur l'écran où l'on vise. En `cover` l'image remplit la
+     surface et déborde sur les côtés ; le cadre de visée est borné en conséquence (voir
+     majCadrageVisible) pour rester ENTIÈREMENT visible, sans quoi on demanderait de
+     cadrer une carte sur des bords sortis de l'écran. */
+  #cam-fullscreen-area.fs video{width:100%; height:100%; max-height:none; object-fit:cover;}
+  /* La mire doit subir exactement le même cadrage que l'image : même format, même mode,
+     donc même découpe — le tracé reste aligné au pixel près sur la vidéo. */
+  #cam-fullscreen-area.fs .aim-overlay{object-fit:cover;}
 
   /* Barre de resultat : posee sur le bas de la video, compacte. */
   #cam-fullscreen-area.fs .live-result{
@@ -262,27 +271,34 @@
   .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none;}
   .flash.show{opacity:.22; transition:opacity 0s;}
   .flash:not(.show){transition:opacity .16s ease-out;}
+  /* Tout le dessin est dans le SVG : le bouton n'est plus qu'un cadre rond. Le halo doré
+     léger le détache de n'importe quelle image sans l'entourer d'un liseré épais. */
   .capture-fab{
-    position:absolute; bottom:16px; left:50%; transform:translateX(-50%); width:64px; height:64px;
-    border-radius:50%; border:3px solid var(--accent); font-size:22px;
-    background:radial-gradient(circle at center, #fff 0 33%, transparent 34%),
-               linear-gradient(#ee1515 0 46%, #16181d 46% 54%, #fff 54% 100%);
-    display:flex; align-items:center; justify-content:center; box-shadow:0 4px 14px rgba(0,0,0,.4);
-    transition:transform .12s ease;
+    position:absolute; bottom:16px; left:50%; transform:translateX(-50%);
+    width:64px; height:64px; padding:0; border:none; border-radius:50%;
+    background:transparent; overflow:visible;
+    display:flex; align-items:center; justify-content:center;
+    box-shadow:0 4px 16px rgba(0,0,0,.5), 0 0 0 1px rgba(230,194,92,.28);
+    transition:transform .12s ease, box-shadow .12s ease;
   }
+  .capture-fab svg{width:100%; height:100%; display:block;}
   .capture-fab:active{transform:translateX(-50%) scale(.94);}
+  .capture-fab:active{box-shadow:0 2px 8px rgba(0,0,0,.5), 0 0 0 3px rgba(230,194,92,.42);}
   /* Sélecteur d'impression posé dans le cadre camera, juste au-dessus du bouton de prise :
      c'est la zone du pouce, et c'est un reglage qu'on change en scannant. Fond opaque et
      non un simple voile : il doit rester lisible sur n'importe quelle image. */
+  /* Aligné sur la rangée basse : import à gauche, impression au centre, déclencheur à
+     droite. Volontairement compact — il doit tenir ENTRE les deux boutons ronds, sinon
+     il passerait dessous et l'alignement demandé n'aurait plus lieu d'être. */
   .imp-cam{
-    position:absolute; bottom:126px; left:50%; transform:translateX(-50%); z-index:23;
+    position:absolute; bottom:34px; left:50%; transform:translateX(-50%); z-index:23;
     background:rgba(0,0,0,.72); border-color:rgba(255,255,255,.22);
     backdrop-filter:none;
   }
-  .imp-cam button{padding:6px 13px; font-size:12px; color:rgba(255,255,255,.72);}
+  .imp-cam button{padding:6px 9px; font-size:11.5px; color:rgba(255,255,255,.72); white-space:nowrap;}
   .imp-cam button.on{background:var(--accent); color:#1a1206;}
-  #cam-fullscreen-area.fs .imp-cam{bottom:calc(150px + env(safe-area-inset-bottom));}
-  @media (max-width:420px){ .imp-cam button{padding:6px 10px; font-size:11.5px;} }
+  #cam-fullscreen-area.fs .imp-cam{bottom:126px;}
+  @media (max-width:360px){ .imp-cam button{padding:5px 7px; font-size:11px;} }
 
   /* Destination des cartes scannées */
   .dest-scan{display:flex; flex-direction:column; gap:8px; margin-top:6px;}
@@ -334,6 +350,81 @@
   /* ---- Feuille de reglages, montee du bas ----
      Le geste attendu quand la camera occupe tout l'ecran : une feuille qu'on tire, pas
      une sortie du plein ecran pour retrouver un panneau replie en haut de page. */
+  /* ---- Liste des cartes de la session ---- */
+  .popup-lot{position:fixed; inset:0; z-index:270; display:none;}
+  .popup-lot.ouvert{display:block;}
+  /* Image figée et floutée, peinte dans un canvas. Elle recouvre la vidéo, qui continue
+     de tourner dessous sans qu'aucun filtre ne s'applique à sa couche. */
+  .pl-fond{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
+  .pl-voile{position:absolute; inset:0; background:rgba(6,8,12,.55);}
+  .pl-panneau{
+    position:absolute; left:0; right:0; bottom:0; top:max(48px, 12vh);
+    display:flex; flex-direction:column;
+    background:rgba(14,17,24,.94); border-top:1px solid var(--border);
+    border-radius:18px 18px 0 0; box-shadow:0 -10px 34px rgba(0,0,0,.55);
+    animation:frMonte .22s cubic-bezier(.22,.9,.3,1);
+  }
+  .pl-tete{
+    display:flex; align-items:flex-start; justify-content:space-between; gap:12px;
+    padding:14px 14px 11px; border-bottom:1px solid var(--border); flex:none;
+  }
+  .pl-tete h3{margin:0; font-size:15px;}
+  .pl-tete p{margin:3px 0 0; font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums;}
+  .pl-liste{
+    flex:1; min-height:0; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    padding:6px 10px calc(16px + env(safe-area-inset-bottom));
+  }
+  .pl-vide{padding:28px 14px; text-align:center; color:var(--muted); font-size:13px;}
+  .pl-ligne{
+    display:flex; align-items:center; gap:10px; padding:8px 4px;
+    border-bottom:1px solid rgba(255,255,255,.06);
+  }
+  .pl-ligne:last-child{border-bottom:none;}
+  .pl-vign{
+    width:38px; height:53px; flex:none; border-radius:5px; object-fit:cover;
+    background:#0a0d13; border:1px solid rgba(255,255,255,.10);
+  }
+  .pl-info{flex:1; min-width:0; display:flex; flex-direction:column; gap:3px;}
+  .pl-nom{
+    font-size:13px; font-weight:650; line-height:1.2;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .pl-meta{display:flex; align-items:center; gap:6px; flex-wrap:wrap; font-size:11px; color:var(--muted);}
+  .pl-tag{
+    padding:1px 6px; border-radius:6px; font-size:9.5px; font-weight:800;
+    letter-spacing:.04em; text-transform:uppercase; white-space:nowrap;
+  }
+  .pl-tag.imp{background:rgba(255,255,255,.10); color:rgba(255,255,255,.72);}
+  .pl-tag.imp.reverse{background:rgba(126,110,220,.24); color:#bcb2ff;}
+  .pl-tag.imp.holo{background:rgba(61,125,202,.24); color:#9ecbff;}
+  /* Impression imposée par la carte et non par le réglage : à signaler, c'est la seule
+     ligne dont le prix ne vient pas du choix fait sur la caméra. */
+  .pl-tag.forcee{background:rgba(224,161,42,.22); color:#ffce70;}
+  .pl-tag.dest-stock{background:rgba(255,203,5,.16); color:var(--accent);}
+  .pl-tag.dest-classeur{background:rgba(59,165,93,.20); color:#7ee2a0;}
+  .pl-tag.dest-vrac{background:rgba(224,85,63,.20); color:#ff9d8a;}
+  .pl-prix{
+    font-size:13px; font-weight:700; font-variant-numeric:tabular-nums;
+    white-space:nowrap; color:var(--accent); flex:none;
+  }
+  .pl-qte{display:flex; align-items:center; gap:2px; flex:none;}
+  .pl-qte button svg{width:15px; height:15px;}
+  .pl-qte button.sup{color:#ff9d8a; border-color:rgba(224,85,63,.45);}
+  .pl-qte button.sup:active{background:rgba(224,85,63,.7); color:#fff;}
+  .pl-qte button{
+    width:30px; height:30px; padding:0; border-radius:8px; font-size:16px; line-height:1;
+    background:var(--panel2); color:var(--text); border:1px solid var(--border);
+    display:flex; align-items:center; justify-content:center;
+  }
+  .pl-qte button:active{background:var(--accent); color:#1a1206;}
+  .pl-qte .q{
+    min-width:26px; text-align:center; font-size:13px; font-weight:700;
+    font-variant-numeric:tabular-nums;
+  }
+  @media (max-width:359px){
+    .pl-prix{display:none;}   /* la cote reste lisible dans la ligne de métadonnées */
+  }
+
   .feuille-reglages{position:fixed; inset:0; z-index:260; display:none;}
   .feuille-reglages.ouverte{display:block;}
   .fr-voile{position:absolute; inset:0; background:rgba(0,0,0,.55);}
@@ -376,26 +467,40 @@
      flex avec deux marges automatiques le decalerait des que le total apparait). */
   .cam-topbar{
     position:absolute; top:0; left:0; right:0; z-index:20;
-    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:8px;
+    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:6px;
     padding:calc(9px + env(safe-area-inset-top)) 10px 6px;
     /* La barre laisse passer les gestes : seuls ses boutons les captent, pour ne pas
        manger le haut de l'image ou l'on vise. */
     pointer-events:none;
   }
   .cam-topbar > *{pointer-events:auto;}
+  .ct-gauche{justify-self:start; display:flex; align-items:center; min-width:0;}
   .ct-droite{justify-self:end; display:flex; align-items:center; gap:8px;}
-  .cam-gear{
-    width:34px; height:34px; border-radius:50%; padding:0; flex:none;
+  /* Arrêt du scan : une croix rouge translucide, pas un bandeau plein. C'est une sortie,
+     pas une action à encourager — elle doit se trouver sans se voir. Fond simplement
+     teinté et JAMAIS de backdrop-filter : au-dessus du <video>, un filtre d'arrière-plan
+     rend l'aperçu noir sur plusieurs GPU Android. */
+  .cam-stop{
+    width:42px; height:42px; border-radius:50%; padding:0; flex:none;
     display:flex; align-items:center; justify-content:center;
-    background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.22);
+    background:rgba(224,85,63,.20); color:#ff9d8a;
+    border:1px solid rgba(224,85,63,.55);
   }
-  .cam-gear svg{width:19px; height:19px;}
+  .cam-stop svg{width:22px; height:22px;}
+  .cam-stop:active{background:rgba(224,85,63,.42); color:#fff;}
+  .cam-gear{
+    width:42px; height:42px; border-radius:50%; padding:0; flex:none;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(0,0,0,.6); color:#fff; border:1px solid rgba(255,255,255,.26);
+  }
+  .cam-gear svg{width:25px; height:25px;}
   .cam-gear:active{background:rgba(0,0,0,.85);}
   .auto-toggle{
-    justify-self:center;
+    justify-self:center; display:flex; align-items:center; gap:6px;
     background:rgba(0,0,0,.65); color:#fff; border:1px solid rgba(255,255,255,.3);
-    border-radius:16px; padding:5px 12px; font-size:12px;
+    border-radius:21px; padding:0 13px; height:42px; font-size:12.5px; font-weight:600;
   }
+  .auto-toggle svg{width:17px; height:17px; flex:none;}
   .auto-toggle.on{background:var(--good); border-color:var(--good);}
   .cam-counter{
     position:absolute; top:calc(50px + env(safe-area-inset-top)); left:10px; background:rgba(0,0,0,.6); color:#fff;
@@ -405,10 +510,12 @@
      session de plusieurs centaines de cartes, c'est l'information qui dit s'il vaut la
      peine de continuer, et la chercher dans l'onglet Lot casse le rythme du scan. */
   .cam-total{
+    display:flex; align-items:center; gap:6px;
     background:rgba(212,175,55,.92); color:#1a1206;
-    padding:5px 11px; border-radius:14px; font-size:13px; font-weight:700;
+    padding:6px 12px 6px 10px; border-radius:16px; font-size:13px; font-weight:700;
     box-shadow:0 2px 8px rgba(0,0,0,.4); white-space:nowrap;
   }
+  .cam-total .ct-ico{width:16px; height:16px; flex:none; opacity:.85;}
   /* Masqué par défaut, affiché seulement si l'appareil expose plusieurs objectifs
      distincts (voir startCamera) — pas de bouton qui ne ferait rien. Il a quitté l'image
      pour les réglages : on change d'objectif une fois par téléphone, pas par carte. */
@@ -424,7 +531,6 @@
     font-size:11px; white-space:nowrap; pointer-events:none; max-width:92%;
     overflow:hidden; text-overflow:ellipsis; opacity:.85;
   }
-  .cam-stop{justify-self:start; background:rgba(0,0,0,.6); color:#fff; border:none; border-radius:14px; padding:6px 12px; font-size:12px;}
   /* Score de détection en direct — jusqu'ici calculé à chaque frame mais seulement
      visible après coup dans le diagnostic exporté. L'afficher pendant la visée permet
      de voir en direct si un cadrage qui "semble net" est juste sous MIN_SCORE (proche
@@ -1481,15 +1587,15 @@
      affichait « Vise la carte » et l'utilisateur recommencait sans savoir quoi corriger.
      Trois jauges continues valent mieux qu'un message d'erreur apres coup, parce qu'on
      les corrige EN VISANT, avant meme d'avoir declenche. */
-  /* Disposées en bandeau vertical sur le bord gauche, à la façon d'un vumètre : trois
-     barres qui montent, légendes tournées à 90 degrés sous chacune. La version
-     précédente empilait trois barres HORIZONTALES de 42 px avec leur titre au-dessus,
-     ce qui mordait sur la largeur utile de l'image — celle qui sert à cadrer la carte. */
+  /* Empilées de haut en bas, et réduites au strict nécessaire : 46 x 60 px environ,
+     contre 59 x 122 pour la disposition en colonnes qui a précédé. Ce bandeau est posé
+     sur le bord gauche de la carte visée — chaque pixel qu'il occupe est un pixel de
+     moins pour cadrer, et une jauge se lit d'un coup d'œil ou ne sert à rien. */
   .jauges{
     position:absolute; left:6px; top:50%; transform:translateY(-50%);
-    display:flex; flex-direction:row; align-items:flex-start; gap:6px;
+    display:flex; flex-direction:column; align-items:stretch; gap:6px;
     pointer-events:none; z-index:3;
-    padding:8px 6px 9px; border-radius:10px;
+    padding:7px 7px 8px; border-radius:9px;
     /* PAS de backdrop-filter ici. Cet élément est superposé au <video> de la caméra, et
        un filtre d'arrière-plan par-dessus une couche vidéo fait basculer le compositeur
        sur un chemin de rendu où, sur plusieurs GPU Android, la vidéo se rend NOIRE. Le
@@ -1498,19 +1604,13 @@
     background:rgba(8,10,16,.74);
     border:1px solid rgba(255,255,255,.09);
   }
-  .jauge{display:flex; flex-direction:column; align-items:center; gap:4px;}
-  /* vertical-rl + rotation : le texte se lit du bas vers le haut, sens naturel d'une
-     légende d'axe, et non de haut en bas comme le fait vertical-rl seul. */
+  .jauge{display:flex; flex-direction:column; gap:2px;}
   .jauge .jl{
-    writing-mode:vertical-rl; transform:rotate(180deg);
-    font-size:8px; font-weight:800; letter-spacing:.09em; color:rgba(255,255,255,.62);
-    text-shadow:0 1px 3px rgba(0,0,0,.9);
+    font-size:7.5px; font-weight:800; letter-spacing:.06em; color:rgba(255,255,255,.6);
+    text-shadow:0 1px 3px rgba(0,0,0,.9); line-height:1;
   }
-  /* Remplissage par le BAS : align-items:flex-end pousse la barre intérieure en bas de
-     la gouttière, et c'est sa hauteur que la boucle d'animation fait varier. */
   .jauge .jt{
-    display:flex; align-items:flex-end;
-    width:5px; height:54px; border-radius:3px;
+    display:block; width:32px; height:3.5px; border-radius:2px;
     background:rgba(255,255,255,.16); overflow:hidden;
     box-shadow:0 1px 3px rgba(0,0,0,.55);
   }
@@ -1519,7 +1619,7 @@
      qu'AJOUTER son propre retard a une valeur deja lissee — les deux se cumulent, et la
      jauge devient mollassonne au lieu d'etre fluide. */
   .jauge .jt i{
-    display:block; width:100%; height:0%; border-radius:3px;
+    display:block; height:100%; width:0%; border-radius:2px;
   }
   /* Bloc de proposition : la question posee en grand, avant le champ de recherche. */
   .proposition{
@@ -3029,14 +3129,10 @@
         <select id="capture-set">
           <option value="">Auto — détecter le set à chaque carte</option>
         </select>
-        <label style="display:flex; align-items:center; gap:8px; margin-top:12px; cursor:pointer;">
-          <input type="checkbox" id="chk-validation-auto" checked style="width:auto; margin:0;">
-          <span>Ajouter au lot automatiquement quand la lecture est certaine</span>
-        </label>
-        <p class="hint" style="margin:4px 0 0;">
-          Une lecture « certaine » est une carte dont le NOM a été confirmé par une seconde
-          lecture, indépendante de celle du numéro. Décoche si tu préfères tout valider à la
-          main — les cartes passeront alors toutes par « À vérifier ».
+        <p class="hint" style="margin:10px 0 0;">
+          Une carte dont la lecture est <b>certaine</b> — nom confirmé par une seconde lecture,
+          indépendante de celle du numéro — part directement à sa destination. Les autres
+          attendent dans « À vérifier ».
         </p>
         <p class="hint" id="capture-set-hint" style="margin-top:6px;">
           Laisse sur « Auto » si tu scannes des cartes mélangées. Si tu dépouilles un
@@ -3061,14 +3157,30 @@
              Le changement d'objectif a rejoint les réglages : on y touche une fois par
              téléphone, pas une fois par carte. -->
         <div class="cam-topbar">
-          <button class="cam-stop" id="btn-stop-cam">✕ Terminer</button>
-          <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
+          <!-- Valeur cumulée, à gauche : c'est de l'information, et l'œil commence par là.
+               La pile de pièces dit ce que le chiffre représente — un total qui grossit —
+               là où un montant nu pouvait passer pour le prix de la dernière carte lue. -->
+          <div class="ct-gauche">
+            <button class="cam-total" id="cam-total" style="display:none" title="Voir les cartes de cette session" aria-label="Voir les cartes de cette session">
+              <svg class="ct-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <ellipse cx="10" cy="5.2" rx="6.3" ry="2.6"/>
+                <path d="M3.7 5.2v4.3c0 1.44 2.82 2.6 6.3 2.6s6.3-1.16 6.3-2.6V5.2"/>
+                <path d="M3.7 9.5v4.3c0 1.44 2.82 2.6 6.3 2.6s6.3-1.16 6.3-2.6V9.5"/>
+              </svg>
+              <span id="cam-total-val"></span>
+            </button>
+          </div>
+          <button class="auto-toggle on" id="btn-auto-capture" aria-label="Déclenchement automatique"></button>
           <div class="ct-droite">
-            <div class="cam-total" id="cam-total" style="display:none"></div>
             <button class="cam-gear" id="btn-cam-reglages" aria-label="Réglages de scan" title="Réglages de scan">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
                 <circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2.4"/>
                 <path d="M12 6V3.6M12 20.4V18M18 12h2.4M3.6 12H6M16.24 7.76l1.7-1.7M6.06 17.94l1.7-1.7M16.24 16.24l1.7 1.7M6.06 6.06l1.7 1.7"/>
+              </svg>
+            </button>
+            <button class="cam-stop" id="btn-stop-cam" aria-label="Terminer le scan" title="Terminer le scan">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true">
+                <path d="M7.4 7.4l9.2 9.2M16.6 7.4l-9.2 9.2"/>
               </svg>
             </button>
           </div>
@@ -3103,7 +3215,32 @@
             <circle cx="9" cy="9.6" r="1.3"/>
           </svg>
         </button>
-        <button class="capture-fab" id="btn-capture-frame">📸</button>
+        <button class="capture-fab" id="btn-capture-frame" aria-label="Prendre la photo" title="Prendre la photo">
+          <svg viewBox="0 0 64 64" aria-hidden="true">
+            <defs>
+              <linearGradient id="fabOr" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#ffeaa7"/><stop offset=".42" stop-color="#e6c25c"/><stop offset="1" stop-color="#9a7620"/>
+              </linearGradient>
+              <radialGradient id="fabCorps" cx=".34" cy=".26" r=".86">
+                <stop offset="0" stop-color="#44516d"/><stop offset=".55" stop-color="#1d2431"/><stop offset="1" stop-color="#0a0d14"/>
+              </radialGradient>
+              <linearGradient id="fabDome" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+              </linearGradient>
+              <radialGradient id="fabVerre" cx=".36" cy=".3" r=".78">
+                <stop offset="0" stop-color="#8fc4e8"/><stop offset=".48" stop-color="#2f6d96"/><stop offset="1" stop-color="#0d1c2c"/>
+              </radialGradient>
+            </defs>
+            <circle cx="32" cy="32" r="29.6" fill="url(#fabCorps)"/>
+            <path d="M32 5.2A26.8 26.8 0 0 1 57.6 24.4 26.8 26.8 0 0 0 32 15.6 26.8 26.8 0 0 0 6.4 24.4 26.8 26.8 0 0 1 32 5.2Z" fill="url(#fabDome)"/>
+            <path d="M4.6 32h12.2M47.2 32h12.2" stroke="url(#fabOr)" stroke-width="3" stroke-linecap="round"/>
+            <circle cx="32" cy="32" r="15" fill="#0d1119" stroke="url(#fabOr)" stroke-width="2.4"/>
+            <circle cx="32" cy="32" r="9.4" fill="url(#fabVerre)"/>
+            <circle cx="32" cy="32" r="9.4" fill="none" stroke="rgba(255,255,255,.26)"/>
+            <path d="M26.4 27.4a7.6 7.6 0 0 1 5.4-2.8" stroke="rgba(255,255,255,.8)" stroke-width="2" stroke-linecap="round" fill="none"/>
+            <circle cx="32" cy="32" r="29.6" fill="none" stroke="url(#fabOr)" stroke-width="2.6"/>
+          </svg>
+        </button>
         <!-- Zoom : un seul repère, qui affiche la valeur pendant le pincement et bascule
              1x/2x au toucher. Masqué tant que l'appareil ne déclare pas savoir zoomer. -->
         <button class="zoom-indic" id="zoom-indic" style="display:none;">1×</button>
@@ -3142,6 +3279,26 @@
            de contrôles : le corps des réglages y est DÉPLACÉ (appendChild) puis remis dans
            son <details> à la fermeture. Deux jeux de cases pour les mêmes réglages
            finiraient par diverger — ici il n'y a rien à synchroniser. -->
+      <!-- Liste des cartes de la session, ouverte depuis la pastille du total. Le fond
+           n'est PAS un backdrop-filter : au-dessus du <video>, un filtre d'arrière-plan
+           rend l'aperçu noir sur plusieurs GPU Android (c'est ce qui avait déjà été
+           retiré du cadre de visée). L'image est figée dans un canvas et floutée là,
+           par réduction puis agrandissement — aucun filtre ne touche la couche vidéo. -->
+      <div class="popup-lot" id="popup-lot">
+        <canvas class="pl-fond" id="pl-fond"></canvas>
+        <div class="pl-voile" id="pl-voile"></div>
+        <div class="pl-panneau">
+          <div class="pl-tete">
+            <div>
+              <h3>Cartes de la session</h3>
+              <p id="pl-bilan"></p>
+            </div>
+            <button class="btn-ghost btn-sm" id="btn-fermer-popup">Fermer</button>
+          </div>
+          <div class="pl-liste" id="pl-liste"></div>
+        </div>
+      </div>
+
       <div class="feuille-reglages" id="feuille-reglages">
         <div class="fr-voile" id="fr-voile"></div>
         <div class="fr-panneau">
@@ -3924,6 +4081,10 @@ let ocrEnabled = true;
 // contre la liste des impressions connues se fait dans majImpressionScan, qui s'exécute
 // une fois cette liste définie.
 let impressionScan = localStorage.getItem('impressionScan') || 'normal';
+// Déclenchement automatique. Déclaré ici, avec l'état général : le bouton qui l'affiche
+// est construit bien avant le code de visée qui le modifie, et le lire trop tôt arrêtait
+// le script entier.
+let autoCaptureEnabled = true;
 // Où partent les cartes scannées. Les deux par défaut : une carte scannée compte dans la
 // collection ET part en vente, ce qui est le cas d'usage réel — on dépouille un classeur
 // pour savoir ce qu'on a autant que pour vendre.
@@ -6469,11 +6630,22 @@ $('btn-diag-show').addEventListener('click', ()=>{
   if(v.style.display === 'none'){ v.textContent = buildDiagReport(); v.style.display = 'block'; }
   else v.style.display = 'none';
 });
+// Dessinés plutôt qu'écrits en emoji : sur cet écran tous les autres repères sont des
+// tracés, et un emoji change de style d'un système à l'autre.
+const ICO_ECLAIR = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.6 2.2 5.9 13.4a.6.6 0 0 0 .5.95h4.2l-1.3 7.2a.6.6 0 0 0 1.1.44l7.9-11.3a.6.6 0 0 0-.5-.95h-4.3l1.4-7a.6.6 0 0 0-1.1-.5Z"/></svg>';
+const ICO_MAIN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.1 11.4V5.5a1.55 1.55 0 0 1 3.1 0v5.2m0-2.1a1.5 1.5 0 0 1 3 0v2.1m0-1.3a1.5 1.5 0 0 1 3 0v5.2c0 3.1-2.2 5.5-5.4 5.5h-.9a4.9 4.9 0 0 1-4-2.05l-2.6-3.6a1.55 1.55 0 0 1 2.35-2l1.45 1.5V11.4"/></svg>';
+function majBoutonAuto(){
+  const b = $('btn-auto-capture');
+  if(!b) return;
+  b.classList.toggle('on', autoCaptureEnabled);
+  b.innerHTML = (autoCaptureEnabled ? ICO_ECLAIR : ICO_MAIN) +
+                '<span>' + (autoCaptureEnabled ? 'Auto' : 'Manuel') + '</span>';
+}
 $('btn-auto-capture').addEventListener('click', ()=>{
   autoCaptureEnabled = !autoCaptureEnabled;
-  $('btn-auto-capture').classList.toggle('on', autoCaptureEnabled);
-  $('btn-auto-capture').textContent = autoCaptureEnabled ? '⚡ Auto' : '✋ Manuel';
+  majBoutonAuto();
 });
+majBoutonAuto();
 
 // ---------------- ZOOM : PINCEMENT, ET UN SEUL REPÈRE ----------------
 // La rangée de quatre paliers demandait de viser un bouton de 38 px avec le pouce pendant
@@ -6870,6 +7042,10 @@ async function startCamera(){
     $('cam-start-row').style.display = 'none';
     $('cam-fullscreen-area').classList.add('fs');
     document.documentElement.style.overflow = 'hidden';
+    // Après la bascule en plein écran ET une fois la vidéo dimensionnée : c'est la
+    // combinaison des deux qui décide de la part visible de l'image.
+    majCadrageVisible();
+    $('video').addEventListener('loadedmetadata', majCadrageVisible, {once: false});
     showLiveResultWaiting();
     capturedThisSession = 0;
     resetTotalSession();
@@ -7010,7 +7186,6 @@ $('btn-switch-lens').addEventListener('click', switchLens);
 // le numéro ou le nom — et le résultat est réutilisé tel quel pour l'entrée de la file,
 // donc rien n'est réanalysé ensuite.
 let detectRunning = false;
-let autoCaptureEnabled = true;
 // Bug préexistant trouvé en testant le diagnostic (pas introduit aujourd'hui, voir
 // commit cb494cb) : cette variable n'était jamais déclarée, seulement assignée dans
 // startAimLoop() — en mode non strict ça crée une globale implicite, mais SEULEMENT
@@ -7511,11 +7686,47 @@ async function copyDiagReport(){
 // Placeholder affiché tant qu'aucune carte n'est détectée (et utilisé par la capture
 // manuelle 📸, qui n'a pas besoin d'attendre une détection).
 const GUIDE_H = 0.62;   // hauteur du cadre, en fraction de la hauteur de l'image
+
+// Part de l'image réellement à l'écran. Vaut 1 x 1 en `contain` (tout est visible) et se
+// réduit sur un axe en `cover`, où l'image déborde du cadre. Mise en cache et non
+// recalculée à chaque image : guideRect est appelée à chaque rendu de la mire, et lire
+// une position dans le document y forcerait un recalcul de mise en page soixante fois
+// par seconde.
+let cadrageVisible = {w: 1, h: 1};
+function majCadrageVisible(){
+  const video = $('video');
+  const plein = $('cam-fullscreen-area')?.classList.contains('fs');
+  if(!video || !video.videoWidth || !plein){ cadrageVisible = {w: 1, h: 1}; return; }
+  const b = video.getBoundingClientRect();
+  if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; return; }
+  const rEl = b.width / b.height, rIm = video.videoWidth / video.videoHeight;
+  cadrageVisible = rEl > rIm ? {w: 1, h: rIm / rEl} : {w: rEl / rIm, h: 1};
+}
+addEventListener('resize', majCadrageVisible);
+addEventListener('orientationchange', ()=> setTimeout(majCadrageVisible, 250));
+
 function guideRect(video){
   const vw = video.videoWidth, vh = video.videoHeight;
   let h = GUIDE_H, w = (h*vh/CARD_RATIO)/vw;
   if(w > 0.92){ w = 0.92; h = (w*vw*CARD_RATIO)/vh; }
+  // Bornage au visible. La marge de 6 % évite que le cadre affleure exactement le bord de
+  // l'écran : on doit voir un peu d'image autour de la carte pour savoir qu'on la cadre.
+  const wMax = cadrageVisible.w * 0.94, hMax = cadrageVisible.h * 0.94;
+  if(w > wMax){ w = wMax; h = (w*vw*CARD_RATIO)/vh; }
+  if(h > hMax){ h = hMax; w = (h*vh/CARD_RATIO)/vw; }
   return { x:(1-w)/2, y:(1-h)/2, w, h };
+}
+
+// Boîte occupée à l'écran par l'image elle-même (hors bandes noires en `contain`, hors
+// débordement en `cover`). Sert aux animations posées sur la vidéo.
+function boiteImage(video){
+  const b = video.getBoundingClientRect();
+  const couvre = $('cam-fullscreen-area')?.classList.contains('fs');
+  const ech = couvre
+    ? Math.max(b.width / video.videoWidth, b.height / video.videoHeight)
+    : Math.min(b.width / video.videoWidth, b.height / video.videoHeight);
+  const iw = video.videoWidth * ech, ih = video.videoHeight * ech;
+  return {x: b.left + (b.width - iw)/2, y: b.top + (b.height - ih)/2, w: iw, h: ih};
 }
 
 // Trace un polygone à coins arrondis (rayon adapté à chaque coin, jamais plus grand que
@@ -7612,7 +7823,7 @@ function drawGuideOverlay(video, state, corners){
   // démontrer absent sur un appareil qu'on n'a pas. Un fond simplement plus sombre
   // écarte déjà l'arrière-plan sans rien risquer.
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,.55)';
+  ctx.fillStyle = 'rgba(0,0,0,.46)';
   ctx.beginPath();
   ctx.rect(0, 0, OW, OH);
   rectCartePath(ctx, R, radius);
@@ -7962,14 +8173,12 @@ function rendreJauges(){
     if(!el) continue;
     // Plancher visuel à 4 % : une barre totalement vide ne se distingue pas d'une jauge
     // en panne, alors qu'un liseré rouge se lit comme « mesuré, et mauvais ».
-    // Hauteur et non largeur : les barres sont verticales depuis qu'elles ont été
-    // regroupées en bandeau sur le bord gauche.
     const largeur = Math.round(Math.max(0.04, v) * 100) + '%';
     const couleur = couleurJauge(v);
     // Écriture seulement si le rendu change RÉELLEMENT. Une valeur interpolée bouge à
     // chaque image, mais son arrondi au pour-cent ne change que quelques fois par
     // transition : écrire les autres fois ne fait que déclencher des recalculs de style.
-    if(el.dataset.l !== largeur){ el.style.height = largeur; el.dataset.l = largeur; }
+    if(el.dataset.l !== largeur){ el.style.width = largeur; el.dataset.l = largeur; }
     if(el.dataset.c !== couleur){ el.style.backgroundColor = couleur; el.dataset.c = couleur; }
   }
 }
@@ -9003,6 +9212,7 @@ let totalSession = { EUR: 0, USD: 0, valorisees: 0, sansPrix: 0 };
 
 function resetTotalSession(){
   totalSession = { EUR: 0, USD: 0, valorisees: 0, sansPrix: 0 };
+  reinitialiserJournalScan();
   renderTotalSession();
 }
 
@@ -9026,8 +9236,10 @@ function renderTotalSession(){
   if(!bouts.length){ el.style.display = 'none'; return; }
   el.style.display = '';
   // Le compte de cartes rejoint la valeur dans la MÊME pastille : le bilan de session
-  // occupait 72 px de hauteur pour trois chiffres dont deux tiennent ici.
-  el.textContent = (sessionAjoutees ? sessionAjoutees + ' · ' : '💰 ') + bouts.join(' + ');
+  // occupait 72 px de hauteur pour trois chiffres dont deux tiennent ici. Le texte va
+  // dans son propre élément — l'écrire sur la pastille effacerait le pictogramme.
+  const val = $('cam-total-val');
+  if(val) val.textContent = (sessionAjoutees ? sessionAjoutees + ' · ' : '') + bouts.join(' + ');
   // Le détail va dans l'infobulle plutôt que dans le badge : sur un écran de téléphone
   // en mode scan, le badge doit rester lisible d'un coup d'œil.
   el.title = totalSession.sansPrix
@@ -9354,6 +9566,8 @@ function stopCamera(){
   $('cam-fullscreen-area').classList.remove('fs');
   document.documentElement.style.overflow = '';
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
+  cadrageVisible = {w: 1, h: 1};
+  fermerPopupLot();
   reinitialiserZoom();
   // Les réglages doivent regagner la page : laissés dans la feuille, ils auraient
   // disparu de l'onglet Scanner jusqu'au prochain démarrage de la caméra.
@@ -9412,15 +9626,12 @@ function animerCaptureVersRecents(dataUrl){
     : ($('cam-total')?.offsetParent ? $('cam-total') : document.querySelector('.navbar [data-tab="batch"]'));
   if(!video || !video.videoWidth || !arrivee) return;
 
-  // Le cadre de visée est exprimé en fractions de l'IMAGE, pas de l'élément : avec
-  // object-fit:contain, les deux ne coïncident que si le flux a exactement le format de
-  // l'élément. On reconstruit donc la boîte réellement occupée par l'image.
-  const b = video.getBoundingClientRect();
-  const ech = Math.min(b.width / video.videoWidth, b.height / video.videoHeight);
-  const iw = video.videoWidth * ech, ih = video.videoHeight * ech;
-  const ix = b.left + (b.width - iw)/2, iy = b.top + (b.height - ih)/2;
+  // Le cadre de visée est exprimé en fractions de l'IMAGE, pas de l'élément : les deux ne
+  // coïncident que si le flux a exactement le format de l'élément. boiteImage rend la
+  // surface réellement occupée, quel que soit le mode de cadrage en vigueur.
+  const bi = boiteImage(video);
   const g = guideRect(video);
-  const d = {left: ix + g.x*iw, top: iy + g.y*ih, width: g.w*iw, height: g.h*ih};
+  const d = {left: bi.x + g.x*bi.w, top: bi.y + g.y*bi.h, width: g.w*bi.w, height: g.h*bi.h};
   if(d.width < 8 || d.height < 8) return;
 
   const a = arrivee.getBoundingClientRect();
@@ -9550,7 +9761,7 @@ function majResumeReglagesScan(){
   if(!el) return;
   const sel = $("capture-set");
   const set = (sel && sel.value) ? (sel.options[sel.selectedIndex]?.textContent || "").replace(/ \(.*$/, "") : "Auto";
-  const auto = $("chk-validation-auto")?.checked;
+
   const imp = impressionScan && impressionScan !== 'normal'
     ? ' · ' + (NOM_VARIANTE[impressionScan] || impressionScan) : '';
   // La destination est le réglage qu'on regrette le plus d'avoir oublié : scanner deux
@@ -9560,8 +9771,7 @@ function majResumeReglagesScan(){
     : null;
   const dest = [stockTxt, versClasseur ? 'classeur' : null]
     .filter(Boolean).join(' + ') || 'pile vrac';
-  el.textContent = "Réglages de scan — vers " + dest + " · set : " + set + imp
-    + " · validation " + (auto ? "automatique" : "manuelle");
+  el.textContent = "Réglages de scan — vers " + dest + " · set : " + set + imp;
 }
 // ---------------- RÉGLAGES : PANNEAU DE PAGE OU FEUILLE MONTANTE ----------------
 // Un SEUL jeu de contrôles, déplacé d'un contenant à l'autre. Dupliquer les cases pour
@@ -9604,7 +9814,6 @@ $('btn-import-cam')?.addEventListener('click', ()=>{
 });
 
 $("capture-set")?.addEventListener("change", majResumeReglagesScan);
-$("chk-validation-auto")?.addEventListener("change", majResumeReglagesScan);
 // Premier affichage laissé à majImpressionScan et majDestinations, plus bas : appelé ici,
 // il s'exécuterait avant la déclaration de la moitié des réglages qu'il lit.
 
@@ -10177,7 +10386,11 @@ function majCoteGlobale(){
 // Les cartes concernées partent donc directement au lot. Celles qui restent — les 🤔, les
 // introuvables, les floues — vont dans « À vérifier », dont le compteur devient enfin une
 // information exploitable : ce qui a besoin de l'utilisateur, et rien d'autre.
-let validationAuto = localStorage.getItem('validationAuto') !== '0';
+// Toujours vrai depuis le retrait du réglage correspondant : une lecture certaine part
+// à sa destination. La constante est conservée plutôt qu'effacée aux quatre points
+// d'appel — c'est elle qui nomme la règle, et la faire disparaître rendrait ces lignes
+// muettes sur la raison pour laquelle elles ajoutent sans demander.
+const validationAuto = true;
 let derniereEntreeAuto = null;   // dernière ligne ajoutée automatiquement, pour les +/−
 
 
@@ -10407,6 +10620,206 @@ $('btn-vrac-vider')?.addEventListener('click', async ()=>{
 });
 chargerVrac();
 
+// ---------------- JOURNAL DE LA SESSION DE SCAN ----------------
+// Ce qui a été lu depuis le démarrage de la caméra, ET où c'est parti. La pastille dorée
+// n'annonçait qu'un total : impossible de savoir ce qu'il recouvrait sans quitter la
+// caméra, alors que c'est précisément en scannant qu'on s'aperçoit d'une erreur — deux
+// fois le même exemplaire, une carte passée en reverse par mégarde.
+//
+// Les lignes pointent vers leur destination réelle plutôt que d'en recopier l'état : une
+// quantité corrigée ici doit l'être dans le lot, dans la collection ou dans la pile, et
+// non dans une quatrième liste qui divergerait des trois autres.
+let journalScan = [];
+let autoAvantPopup = null;
+
+function reinitialiserJournalScan(){
+  journalScan = [];
+  if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
+}
+
+function noterJournalScan(card, entry, dest, ligneStock){
+  if(!card || !card.id) return;
+  const {variante, force} = impressionRetenue(card, impressionScan);
+  const cle = card.id + '|' + variante;
+  const deja = journalScan.find(j => j.cle === cle);
+  if(deja){
+    deja.qte++;
+    deja.at = Date.now();
+    if(ligneStock) deja.entryId = ligneStock.id;
+    if(dest.classeur) deja.classeur = true;
+    if(dest.vrac) deja.vrac = true;
+  } else {
+    journalScan.push({
+      cle, cardId: card.id, setId: card.set?.id || '', setNom: card.set?.name || '',
+      nom: card.name || '?', numero: card.number || '', impression: variante, forcee: !!force,
+      image: entry?.photo || entry?.cardImage || '',
+      prix: entry?.prixMarche ?? null, qte: 1, at: Date.now(),
+      entryId: ligneStock ? ligneStock.id : null,
+      classeur: !!dest.classeur, vrac: !!dest.vrac
+    });
+  }
+  if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
+}
+
+// La ligne de lot correspondante, ou null si elle a été retirée entre-temps depuis
+// l'onglet Stock. On n'en garde pas la référence directe : une entrée supprimée ailleurs
+// laisserait ici un objet fantôme que plus rien ne relie au lot.
+function ligneLotDe(j){
+  return j.entryId ? (batch.find(e => e.id === j.entryId) || null) : null;
+}
+
+// Applique le même écart à TOUTES les destinations où la carte est partie. Corriger la
+// quantité au stock sans corriger la collection créerait une divergence silencieuse entre
+// deux chiffres censés décrire le même carton de cartes.
+async function ajusterJournal(j, delta){
+  const cible = Math.max(0, j.qte + delta);
+  const ecart = cible - j.qte;
+  if(!ecart) return;
+
+  const ligne = ligneLotDe(j);
+  if(ligne){
+    const q = (parseInt(ligne.qty) || 1) + ecart;
+    if(q < 1){
+      const i = batch.indexOf(ligne);
+      if(i >= 0) batch.splice(i, 1);
+      if(derniereEntreeAuto === ligne) derniereEntreeAuto = null;
+      j.entryId = null;
+    } else ligne.qty = q;
+  }
+  if(j.classeur && j.setId){
+    await majPossession(j.cardId, j.setId, j.numero, ecart, j.impression).catch(()=>{});
+  }
+  if(j.vrac){
+    try{
+      const v = await idbGet('vrac', j.cle);
+      if(v){
+        const q = (v.qte || 1) + ecart;
+        if(q < 1) await idbDelete('vrac', j.cle);
+        else { v.qte = q; await idbSet('vrac', v); }
+        vracTotal = Math.max(0, vracTotal + ecart);
+        rendreVrac();
+      }
+    }catch(e){}
+  }
+
+  j.qte = cible;
+  if(cible === 0) journalScan = journalScan.filter(x => x !== j);
+  // Le total doit suivre : il porte la valeur de ce que la liste vient de corriger.
+  totalSession.EUR = Math.max(0, totalSession.EUR + (j.prix || 0) * ecart);
+  sessionAjoutees = Math.max(0, sessionAjoutees + ecart);
+  renderTotalSession();
+  renderBatchStatsOnly();
+  majQuantiteLive();
+  rendreRecents();
+  rendrePopupLot();
+}
+
+// ---------------- LISTE DES CARTES DE LA SESSION ----------------
+// Fond figé et flouté par réduction puis agrandissement, dans un canvas. Un
+// backdrop-filter poserait un filtre d'arrière-plan AU-DESSUS de la couche vidéo : c'est
+// exactement la configuration qui rend l'aperçu noir sur plusieurs GPU Android, et qui a
+// déjà dû être retirée du cadre de visée. Ici aucun filtre ne touche la vidéo, qui
+// continue de tourner intacte sous une image d'elle-même.
+function figerFondPopup(){
+  const video = $('video'), cvs = $('pl-fond');
+  if(!cvs) return;
+  if(!video || !video.videoWidth){ cvs.width = cvs.height = 1; return; }
+  const ratio = video.videoHeight / video.videoWidth;
+  const petit = document.createElement('canvas');
+  petit.width = 48; petit.height = Math.max(1, Math.round(48 * ratio));
+  petit.getContext('2d').drawImage(video, 0, 0, petit.width, petit.height);
+  cvs.width = 420; cvs.height = Math.max(1, Math.round(420 * ratio));
+  const ctx = cvs.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(petit, 0, 0, cvs.width, cvs.height);
+}
+
+const ICO_CORBEILLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.6 6.6h14.8M9.4 6.6V5.2a1.4 1.4 0 0 1 1.4-1.4h2.4a1.4 1.4 0 0 1 1.4 1.4v1.4M6.4 6.6l.8 12a1.6 1.6 0 0 0 1.6 1.5h6.4a1.6 1.6 0 0 0 1.6-1.5l.8-12"/></svg>';
+
+function rendrePopupLot(){
+  const z = $('pl-liste'), bilan = $('pl-bilan');
+  if(!z) return;
+  const lignes = journalScan.slice().sort((a, b)=> b.at - a.at);
+  if(bilan){
+    const total = lignes.reduce((s, j)=> s + (j.prix || 0) * j.qte, 0);
+    const n = lignes.reduce((s, j)=> s + j.qte, 0);
+    bilan.textContent = n
+      ? n + ' carte(s) · ' + total.toFixed(2).replace('.', ',') + ' €'
+      : 'Rien de scanné pour l’instant';
+  }
+  if(!lignes.length){
+    z.innerHTML = '<div class="pl-vide">Les cartes lues pendant cette session apparaîtront ici,<br>'
+      + 'avec leur quantité, pour les corriger sans quitter la caméra.</div>';
+    return;
+  }
+  const NOM_DEST = {stock: 'Stock', classeur: 'Classeur', vrac: 'Vrac'};
+  z.innerHTML = lignes.map((j, i)=>{
+    const dest = ligneLotDe(j) ? 'stock' : (j.classeur ? 'classeur' : (j.vrac ? 'vrac' : 'stock'));
+    const imp = NOM_VARIANTE[j.impression] || j.impression;
+    const prix = j.prix != null ? (j.prix * j.qte).toFixed(2).replace('.', ',') + ' €' : '—';
+    const sup = j.qte <= 1;
+    return '<div class="pl-ligne">'
+      + (j.image ? '<img class="pl-vign" src="' + j.image + '" alt="">' : '<div class="pl-vign"></div>')
+      + '<div class="pl-info">'
+        + '<div class="pl-nom">' + escapeHtml(j.nom) + '</div>'
+        + '<div class="pl-meta">'
+          + '<span>#' + escapeHtml(j.numero) + '</span>'
+          + '<span class="pl-tag imp ' + j.impression + '">' + escapeHtml(imp) + '</span>'
+          + (j.forcee ? '<span class="pl-tag forcee" title="Cette carte n’existe pas dans l’impression choisie sur la caméra">imposée</span>' : '')
+          + '<span class="pl-tag dest-' + dest + '">' + NOM_DEST[dest] + '</span>'
+        + '</div>'
+      + '</div>'
+      + '<div class="pl-prix">' + prix + '</div>'
+      + '<div class="pl-qte">'
+        + '<button data-pl="' + i + '" data-d="-1"' + (sup ? ' class="sup"' : '') + ' title="'
+          + (sup ? 'Retirer cette carte' : 'Retirer un exemplaire') + '">'
+          + (sup ? ICO_CORBEILLE : '−') + '</button>'
+        + '<span class="q">' + j.qte + '</span>'
+        + '<button data-pl="' + i + '" data-d="1" title="Ajouter un exemplaire">+</button>'
+      + '</div>'
+    + '</div>';
+  }).join('');
+  z.querySelectorAll('button[data-pl]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const j = lignes[parseInt(b.dataset.pl, 10)];
+      if(j) ajusterJournal(j, parseInt(b.dataset.d, 10));
+    });
+  });
+}
+
+function ouvrirPopupLot(){
+  const p = $('popup-lot');
+  if(!p) return;
+  figerFondPopup();
+  rendrePopupLot();
+  p.classList.add('ouvert');
+  // Le déclenchement automatique est suspendu : la caméra continue de filmer sous la
+  // liste, et prendre une photo pendant qu'on corrige une quantité ne pourrait
+  // qu'embrouiller le compte qu'on est justement en train de rectifier.
+  if(autoAvantPopup === null){
+    autoAvantPopup = autoCaptureEnabled;
+    autoCaptureEnabled = false;
+    majBoutonAuto();
+  }
+}
+
+function fermerPopupLot(){
+  const p = $('popup-lot');
+  if(!p || !p.classList.contains('ouvert')) return;
+  p.classList.remove('ouvert');
+  if(autoAvantPopup !== null){
+    autoCaptureEnabled = autoAvantPopup;
+    autoAvantPopup = null;
+    majBoutonAuto();
+  }
+}
+
+$('cam-total')?.addEventListener('click', ouvrirPopupLot);
+$('btn-fermer-popup')?.addEventListener('click', fermerPopupLot);
+$('pl-voile')?.addEventListener('click', fermerPopupLot);
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerPopupLot(); });
+
+
 function validerAutomatiquement(card, item){
   // L'entrée est construite dans tous les cas : elle porte le nom, l'impression et la cote
   // qui servent au bilan de session et au fil des cartes récentes, même quand rien ne part
@@ -10425,6 +10838,7 @@ function validerAutomatiquement(card, item){
   }
   if(dest.classeur) enregistrerAuClasseur(card);
   if(dest.vrac) ajouterAuVrac(card, entry);
+  noterJournalScan(card, entry, dest, dest.stock ? cible : null);
 
   // La photo est consommée : elle a servi, la carte est traitée. La laisser dans la file
   // ferait réapparaître dans « À vérifier » une carte déjà rangée — c'est exactement le
@@ -14397,6 +14811,7 @@ function quickAdd(card){
   if(dest.stock){ const r = ajouterAuLot(entry); cible = r.entry; fusionnee = r.fusionnee; }
   const impClasseur = dest.classeur ? enregistrerAuClasseur(card) : null;
   if(dest.vrac) ajouterAuVrac(card, entry);
+  noterJournalScan(card, entry, dest, dest.stock ? cible : null);
 
   if(hadPhoto) pendingQueue.shift();
 
@@ -15544,12 +15959,6 @@ remplirTypesScelle();
 // donc appelee apres, et non a la suite de chacun.
 Promise.all([chargerCollection(), chargerScelle(), chargerMastersets()])
   .then(()=>{ renderScelle(); majCoteGlobale(); demarrerCalculMastersets(); });
-
-$('chk-validation-auto').checked = validationAuto;
-$('chk-validation-auto').addEventListener('change', (e)=>{
-  validationAuto = e.target.checked;
-  localStorage.setItem('validationAuto', validationAuto ? '1' : '0');
-});
 
 
 $('pastille-recents').addEventListener('click', basculerBandeRecents);
