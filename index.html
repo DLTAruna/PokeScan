@@ -25,6 +25,12 @@
      clé « service_role », qui, elle, contourne toute sécurité.
      ------------------------------------------------------------------------ */
   window.POKESCAN_SUPABASE_URL = 'https://zmrduqkfwthxwyfnhabc.supabase.co';
+  /* Connexion Google. À laisser sur false tant que le fournisseur n'est pas configuré des
+     DEUX côtés — client OAuth créé dans Google Cloud, identifiant et secret recopiés dans
+     Supabase. Un bouton visible qui mène à une page d'erreur coûte plus cher qu'un bouton
+     absent : le premier fait douter du site, le second ne manque à personne. */
+  window.POKESCAN_GOOGLE = false;
+
   window.POKESCAN_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InptcmR1cWtmd3RoeHd5Zm5oYWJjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgxMTgxNDQsImV4cCI6MjEwMzY5NDE0NH0.6V0C7CeO19vroBmYMlPSNW_S6TLHUTh7Fp7cGjSjGZs';
 </script>
 <script type="importmap">
@@ -2473,6 +2479,7 @@
     font-size:11.5px; color:var(--muted); text-transform:uppercase; letter-spacing:.1em;
   }
   .pub-ou::before, .pub-ou::after{content:''; flex:1; height:1px; background:var(--border);}
+  .pub-ou[hidden], .pub-google[hidden]{display:none;}
   .pub-champ{display:block; margin-bottom:12px;}
   .pub-champ span{display:block; font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:5px;}
   .pub-champ input{width:100%;}
@@ -19129,6 +19136,10 @@ function ouvrirModaleCompte(mode){
   if(!m) return;
   document.querySelector('#pub-onglets button[data-mode="' + mode + '"]')?.click();
   messageCompte('');
+  if(!window.POKESCAN_GOOGLE){
+    $('btn-google')?.setAttribute('hidden', '');
+    document.querySelector('#modal-compte .pub-ou')?.setAttribute('hidden', '');
+  }
   if(!compteConfigure()){
     // Message tourne vers ce que la personne peut faire, pas vers la cause technique. Le
     // detail exact part dans la console, ou celui qui installe le site ira le chercher.
