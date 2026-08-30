@@ -1610,12 +1610,17 @@
      vient faire, ca ne doit jamais demander de chercher. */
   .nav-fab{
     display:flex; align-items:center; justify-content:center;
-    width:52px; height:52px; margin-top:-20px; border-radius:50%; font-size:23px;
+    width:60px; height:60px; margin-top:-30px; border-radius:50%;
     background:linear-gradient(145deg,#ffe066,var(--accent)); color:#1a1206;
-    box-shadow:0 6px 18px rgba(212,175,55,.42), 0 2px 6px rgba(0,0,0,.5);
-    border:3px solid rgba(10,13,22,.55); transition:transform .16s ease;
+    box-shadow:0 8px 22px rgba(212,175,55,.46), 0 2px 6px rgba(0,0,0,.55);
+    border:4px solid var(--fond); transition:transform .16s ease;
   }
-  .nav-item.active .nav-fab{transform:scale(1.06);}
+  /* Il deborde franchement de la barre : a -20 px il l'effleurait et se lisait comme un
+     bouton de plus, un peu plus gros. A -30 px avec sa collerette de la couleur du fond, il
+     se detache de la barre au lieu d'y etre pose — c'est ce qui le designe comme l'action
+     principale plutot que comme la troisieme des cinq. */
+  .nav-central .nav-lbl{margin-top:1px;}
+  .nav-item.active .nav-fab{transform:scale(1.05);}
   /* Bandeau d'alerte en tete du stock. Il remplace un onglet : une file qui doit se vider
      n'a pas sa place a cote de lieux permanents, mais elle doit sauter aux yeux la ou l'on
      travaille. Jaune plutot que rouge — c'est du travail en attente, pas une erreur. */
@@ -1741,7 +1746,7 @@
      toutes les icones, et l'etat inactif se contente de les desaturer. */
   .ico{width:20px; height:20px; display:block; flex:none; --t1:currentColor; --t2:currentColor;}
   .nav-item .ico{width:23px; height:23px;}
-  .nav-fab .ico{width:26px; height:26px;}
+  .nav-fab .ico{width:29px; height:29px;}
   .menu-item .ico{width:23px; height:23px;}
   .btn-menu .ico{width:19px; height:19px; margin:0 auto;}
 
@@ -2414,6 +2419,20 @@
   .col-porte.scan{background:linear-gradient(150deg, rgba(255,203,5,.16), var(--panel));}
   .col-porte.scelle{background:linear-gradient(150deg, rgba(124,92,255,.18), var(--panel));}
   .col-porte.gradee{background:linear-gradient(150deg, rgba(61,125,202,.18), var(--panel));}
+  /* Porte a venir : blanche, sans teinte de famille, et volontairement en retrait — elle
+     annonce sans demander qu'on essaie de cliquer. */
+  .col-porte.bientot{
+    background:linear-gradient(150deg, rgba(255,255,255,.09), var(--panel));
+    border-style:dashed; cursor:default;
+  }
+  .col-porte.bientot:hover{transform:none;}
+  .col-porte.bientot h3, .col-porte.bientot .porte-fond{color:rgba(255,255,255,.82);}
+  .col-porte.bientot .cta.verrou{
+    display:inline-flex; align-items:center; gap:7px;
+    color:var(--muted); background:rgba(255,255,255,.07);
+    border:1px solid rgba(255,255,255,.16); border-radius:9px; padding:6px 11px;
+  }
+  .col-porte.bientot .cta.verrou svg{width:14px; height:14px; flex:none;}
   .col-vignettes{display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; align-items:center;}
   /* Vignettes de CARTES : format portrait, coins arrondis, legerement chevauchees comme des
      cartes posees en eventail. (Une premiere regle pour des logos vivait juste au-dessus,
@@ -2476,6 +2495,7 @@
        et quatre miniatures de CARTES, hautes de 58 px, ne tiennent pas à côté d'un texte sur
        deux lignes. */
     .col-porte .col-vignettes, .col-porte .cta{display:none;}
+    .col-porte.bientot .cta.verrou{display:inline-flex; grid-column:2; margin-top:6px; justify-self:start;}
     /* Les logos de séries et les pastilles de gradeurs, eux, tiennent : 24 px de haut contre
        58 pour un éventail de cartes. La raison qui cachait les vignettes ne vaut donc pas
        pour eux, et ils reviennent — sur leur propre rangée, sous le texte. */
@@ -2933,11 +2953,11 @@
     background:
       radial-gradient(circle at 27% 33%, rgba(238,21,21,.34), transparent 43%),
       radial-gradient(circle at 69% 63%, rgba(61,125,202,.32), transparent 47%);
-    animation:banniereDerive 16s ease-in-out infinite alternate;
+    animation:banniereDerive 11s ease-in-out infinite alternate;
   }
   @keyframes banniereDerive{
-    from{transform:translate3d(-4%, -3%, 0) scale(1);}
-    to{transform:translate3d(5%, 4%, 0) scale(1.14);}
+    from{transform:translate3d(-15%, -9%, 0) scale(1) rotate(-7deg);}
+    to{transform:translate3d(16%, 10%, 0) scale(1.3) rotate(7deg);}
   }
   @media (prefers-reduced-motion: reduce){
     .jeu-banniere.pokemon::before{animation:none;}
@@ -3544,8 +3564,9 @@
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" fill="var(--t2)" opacity=".28"/><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16.3" cy="7.7" r="1.45" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Stock</span>
     <span class="nav-badge" id="nav-lot-badge" data-zero="masquer">0</span>
   </button>
-  <button class="nav-item nav-central active" data-tab="capture" aria-label="Capture">
-    <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="var(--t2)" opacity=".22"/><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="12" cy="14" r="3.9" fill="var(--t2)" opacity=".45"/><circle cx="12" cy="14" r="3.9" stroke="var(--t1)" stroke-width="1.7"/><path d="M10.3 12.6a2.4 2.4 0 0 1 1.7-1" stroke="var(--t1)" stroke-width="1.7" opacity=".9"/></svg></span>
+  <button class="nav-item nav-central active" data-tab="capture" aria-label="Scanner une carte">
+    <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.9 8.4V5.5A2.6 2.6 0 0 1 5.5 2.9h2.9M15.6 2.9h2.9a2.6 2.6 0 0 1 2.6 2.6v2.9M21.1 15.6v2.9a2.6 2.6 0 0 1-2.6 2.6h-2.9M8.4 21.1H5.5a2.6 2.6 0 0 1-2.6-2.6v-2.9"/><circle cx="12" cy="12" r="5.5"/><path d="M6.5 12h2.6M14.9 12h2.6"/><circle cx="12" cy="12" r="2.2"/></svg></span>
+    <span class="nav-lbl">Scanner</span>
   </button>
   <button class="nav-item" data-mode="vendeur" data-tab="listes">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Listes</span>
@@ -3778,6 +3799,20 @@
         <p>Coffrets, displays et ETB, avec leur cote et leur plus-value.</p>
         <div class="col-vignettes" id="col-vignettes-scelle"></div>
         <span class="cta">Explorer le scellé →</span>
+      </button>
+      <!-- Quatrieme porte, encore fermee. Elle est annoncee plutot que cachee : une
+           fonctionnalite qu'on decouvre le jour ou elle sort n'est jamais attendue, et une
+           porte verrouillee dit mieux qu'un texte de changelog ce qui se prepare.
+           Volontairement blanche et sans teinte de famille : elle n'appartient encore ni au
+           collectionneur ni au vendeur. -->
+      <button class="col-porte bientot" id="porte-partage" aria-disabled="true">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><circle cx="30" cy="30" r="13" fill="none" stroke="currentColor" stroke-width="4.5"/><path d="M9 63c0-11 9.4-18 21-18s21 7 21 18" fill="none" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><circle cx="66" cy="42" r="11" fill="none" stroke="currentColor" stroke-width="4" opacity=".62"/><path d="M48 72c0-10 8-16 18-16s18 6 18 16" fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".62"/></svg>
+        <span class="chapeau">Communauté</span>
+        <h3>Partage entre amis</h3>
+        <p>Montrer son classeur, comparer les manques, organiser un échange.</p>
+        <span class="cta verrou">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.6" y="10.4" width="14.8" height="10.4" rx="2.4"/><path d="M8.2 10.4V7.6a3.8 3.8 0 0 1 7.6 0v2.8"/></svg>
+          Bientôt disponible</span>
       </button>
     </div>
   </section>
