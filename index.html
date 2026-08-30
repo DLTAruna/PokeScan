@@ -2258,56 +2258,55 @@
     position:relative; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
     background:transparent; border:0; border-radius:0; padding:0; gap:10px;
   }
-  /* Le curseur glissant n'a plus lieu d'etre : deux boutons distincts ne partagent pas de
-     rail. Chacun s'allume chez lui. */
-  .modes-curseur{display:none;}
-  .modes-curseur{
-    position:absolute; top:3px; bottom:3px; left:3px; width:calc(50% - 3px);
-    border-radius:8px; z-index:0; pointer-events:none;
-    transition:transform .3s cubic-bezier(.4,0,.2,1),
-               background .3s cubic-bezier(.4,0,.2,1),
-               box-shadow .3s cubic-bezier(.4,0,.2,1);
-  }
-  /* translateX(100%) deplace le curseur de SA propre largeur, soit 50% - 3px : son bord
-     gauche atterrit donc exactement a 50% du conteneur. */
-  .modes-bascule[data-actif="vendeur"] .modes-curseur{
-    transform:translateX(0);
-    background:linear-gradient(135deg, #ffe066, var(--mode-vendeur));
-    box-shadow:0 2px 12px rgba(255,203,5,.34);
-  }
-  .modes-bascule[data-actif="collection"] .modes-curseur{
-    transform:translateX(100%);
-    background:linear-gradient(135deg, #a08cff, var(--mode-collec));
-    box-shadow:0 2px 12px rgba(124,92,255,.42);
-  }
   .modes-bascule .lat-mode{
     position:relative; z-index:1; display:flex; align-items:center; justify-content:center;
-    gap:8px; cursor:pointer; font:inherit; font-weight:800;
-    background:var(--panel2); border:1.5px solid var(--border); border-radius:12px;
+    gap:8px; cursor:pointer; font:inherit; font-weight:700;
+    border:1.5px solid var(--border); border-radius:12px;
     color:var(--muted); padding:11px 10px;
-    transition:color .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
+    transition:color .2s ease, background .2s ease, border-color .2s ease,
+               box-shadow .2s ease, font-weight .2s ease;
   }
-  .modes-bascule .lat-mode:hover{color:var(--text); border-color:var(--accent2);}
-  /* Allume : la teinte du monde, en plein, avec le contraste que chacune impose —
-     texte fonce sur l'or, clair sur le violet. */
-  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]{
-    color:#221a05; border-color:var(--mode-vendeur);
-    background:linear-gradient(135deg, #ffe066, var(--mode-vendeur));
-    box-shadow:0 2px 12px rgba(255,203,5,.30);
+
+  /* ETEINT — mais pas anonyme. Les deux boutons etaient gris a l'identique : rien ne disait
+     lequel menait a quoi avant de l'avoir essaye. Chacun garde donc un fond et une bordure
+     a peine teintes de sa famille, et surtout son PICTOGRAMME en couleur, qui suffit a le
+     reconnaitre d'un coup d'oeil sans jamais concurrencer le bouton allume. */
+  .modes-bascule .lat-mode[data-mode="collection"]{
+    border-color:rgba(150,120,255,.22);
+    background:linear-gradient(150deg, rgba(150,120,255,.07), rgba(150,120,255,.015));
   }
+  .modes-bascule .lat-mode[data-mode="collection"] .mico{color:rgba(158,124,255,.62);}
+  .modes-bascule .lat-mode[data-mode="vendeur"]{
+    border-color:rgba(240,185,42,.20);
+    background:linear-gradient(150deg, rgba(240,185,42,.07), rgba(240,185,42,.015));
+  }
+  .modes-bascule .lat-mode[data-mode="vendeur"] .mico{color:rgba(240,196,70,.62);}
+  .modes-bascule .lat-mode:hover{color:var(--text);}
+
+  /* ALLUME — un fond teinte, une bordure franche et un halo, plutot que l'aplat sature
+     d'avant. L'aplat criait, et surtout il parlait une autre langue que tout ce qui le suit
+     sur la page : les carres de la mosaique sont des fonds teintes a bordure coloree. La
+     bascule adopte le meme vocabulaire, et l'ecran redevient d'une seule piece. */
   .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"]{
-    color:#fff; border-color:var(--mode-collec);
-    background:linear-gradient(135deg, #a08cff, var(--mode-collec));
-    box-shadow:0 2px 12px rgba(124,92,255,.38);
+    color:#d6c6ff; font-weight:800; border-color:rgba(150,120,255,.85);
+    background:linear-gradient(150deg, rgba(150,120,255,.26), rgba(150,120,255,.09));
+    box-shadow:0 0 0 1px rgba(150,120,255,.24), 0 5px 18px rgba(124,92,255,.20);
   }
+  .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"] .mico{color:#c9b4ff;}
+  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]{
+    color:#f8d873; font-weight:800; border-color:rgba(240,185,42,.85);
+    background:linear-gradient(150deg, rgba(240,185,42,.24), rgba(240,185,42,.08));
+    box-shadow:0 0 0 1px rgba(240,185,42,.24), 0 5px 18px rgba(240,185,42,.18);
+  }
+  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"] .mico{color:#f0c85a;}
   .mico{width:16px; height:16px; flex:none; display:block;}
   /* Un mouvement qui traverse l'ecran est exactement ce que ce reglage demande d'eviter :
      la bascule reste instantanee, seule la couleur change. */
   @media (prefers-reduced-motion: reduce){
-    .modes-curseur{transition:none;}
+    .modes-bascule .lat-mode{transition:none;}
   }
   .lat-modes{margin-bottom:14px;}
-  .lat-modes .lat-mode{font-size:11px; font-weight:800; padding:8px 3px;}
+  .lat-modes .lat-mode{font-size:11px; padding:8px 3px;}
   .lat-modes .mico{width:14px; height:14px;}
   .modes-bascule .lat-mode span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
   .barre-mode .modes-bascule .lat-mode{font-size:14.5px; padding:12px 10px;}
@@ -3391,9 +3390,8 @@
   <div class="lat-logo"><img src="icone-192.png" alt=""><span>PokéScan</span></div>
 
   <div class="lat-modes modes-bascule" data-actif="vendeur" role="tablist">
-    <span class="modes-curseur" aria-hidden="true"></span>
-    <button class="lat-mode" data-mode="vendeur" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.4" y="6" width="19.2" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 9.4v5.2M18.4 9.4v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Vendeur</span></button>
     <button class="lat-mode" data-mode="collection" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(11 14.6 11.9)" opacity=".55"/><rect x="4.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7.2 8.6h4.8M7.2 11.4h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".75"/></svg><span>Collectionneur</span></button>
+    <button class="lat-mode" data-mode="vendeur" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.4" y="6" width="19.2" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 9.4v5.2M18.4 9.4v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Vendeur</span></button>
   </div>
 
   <div id="lat-vendeur">
@@ -3479,9 +3477,8 @@
      latérale porte déjà le même choix, au même endroit relatif. -->
 <div class="barre-mode" id="barre-mode">
   <div class="modes-bascule" data-actif="vendeur" role="tablist">
-    <span class="modes-curseur" aria-hidden="true"></span>
-    <button class="lat-mode" data-mode="vendeur" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.4" y="6" width="19.2" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 9.4v5.2M18.4 9.4v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Vendeur</span></button>
     <button class="lat-mode" data-mode="collection" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(11 14.6 11.9)" opacity=".55"/><rect x="4.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7.2 8.6h4.8M7.2 11.4h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".75"/></svg><span>Collectionneur</span></button>
+    <button class="lat-mode" data-mode="vendeur" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.4" y="6" width="19.2" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 9.4v5.2M18.4 9.4v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Vendeur</span></button>
   </div>
 </div>
 
