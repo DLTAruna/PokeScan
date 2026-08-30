@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<!-- Sans cette déclaration, Samsung Internet et Chrome Android appliquent leur propre
+     assombrissement automatique par-dessus la page : l’or vire au marron et les fonds
+     s’écrasent. La déclarer suffit à s’en exclure — c’est ce que le navigateur cherche
+     pour savoir si la page sait se rendre sombre toute seule. -->
+<meta name="color-scheme" content="dark">
 <title>PokéScan → eBay Lister</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script type="importmap">
@@ -20,6 +25,10 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14.5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3Cpath d='M2 16a14 14 0 0 1 28 0z' fill='%23ee1515' stroke='%2316181d' stroke-width='2'/%3E%3Crect x='2' y='14.5' width='28' height='3' fill='%2316181d'/%3E%3Ccircle cx='16' cy='16' r='5' fill='white' stroke='%2316181d' stroke-width='2'/%3E%3C/svg%3E">
 <style>
   :root{
+    /* Voir la balise color-scheme dans le <head> : sans elle, le navigateur repeint la
+       page a sa facon. Ici en plus, elle donne leur apparence sombre aux controles natifs
+       — cases a cocher, listes deroulantes, curseurs. */
+    color-scheme: dark;
     --bg:#0a0d16; --panel:#151a24; --panel2:#1c2331; --border:#2a3244;
     --text:#f1f3f8; --muted:#93a0b7; --accent:#ffcb05; --accent-dark:#e0a900; --accent2:#3d7dca; --accent2-dark:#2f68a8;
     --red:#ee1515; --good:#3ba55d; --warn:#e0a12a; --bad:#e85b45; --radius:16px;
@@ -580,20 +589,21 @@
   }
   .aim-hint{
     position:absolute; z-index:22; bottom:74px; left:50%; transform:translateX(-50%);
-    display:flex; align-items:center; gap:7px;
-    background:rgba(0,0,0,.7); color:#fff; padding:6px 14px; border-radius:16px;
-    font-size:13px; white-space:nowrap; pointer-events:none; max-width:92%; overflow:hidden;
+    display:flex; align-items:center; gap:6px;
+    background:rgba(0,0,0,.66); color:#fff; padding:5px 11px; border-radius:14px;
+    font-size:11.5px; white-space:nowrap; pointer-events:none; max-width:92%; overflow:hidden;
+    text-shadow:0 1px 3px rgba(0,0,0,.9);
   }
   .aim-hint > span{overflow:hidden; text-overflow:ellipsis;}
   /* Un conseil de prise de vue n'est pas un compte rendu : il se distingue par la couleur,
      et il s'ouvre. Le bleu est celui des propositions ailleurs dans l'écran — ce qui
      invite à agir, par opposition au vert de ce qui est acquis. */
   .aim-hint.conseil{
-    background:rgba(29,72,130,.86); color:#e8f2ff;
-    border:1px solid rgba(126,183,255,.55); pointer-events:auto;
+    background:rgba(24,58,105,.58); color:#dcebff;
+    border:1px solid rgba(126,183,255,.34); pointer-events:auto;
   }
-  .aim-hint.conseil:active{background:rgba(43,101,178,.94);}
-  .aim-hint .ah-i{display:none; width:14px; height:14px; flex:none; opacity:.9;}
+  .aim-hint.conseil:active{background:rgba(43,101,178,.88);}
+  .aim-hint .ah-i{display:none; width:12px; height:12px; flex:none; opacity:.75;}
   .aim-hint.conseil .ah-i{display:block;}
     /* ---- Barre du haut de la camera ----
      Six elements s'y empilaient sur trois niveaux, et aucun ne respectait la zone sure :
@@ -7407,6 +7417,7 @@ async function startCamera(){
     $('cam-start-row').style.display = 'none';
     $('cam-fullscreen-area').classList.add('fs');
     document.documentElement.style.overflow = 'hidden';
+    demanderPleinEcran();
     // Après la bascule en plein écran ET une fois la vidéo dimensionnée : c'est la
     // combinaison des deux qui décide de la part visible de l'image.
     majCadrageVisible();
@@ -9416,7 +9427,7 @@ async function attemptRead(corners, score){
     const sameNumberNeverConfirmedNew = (memeCarteParId || memeCarteParNumero)
       && !cardConfirmedNewSinceCapture;
     if(visuallyDuplicate || sameNumberNeverConfirmedNew){
-      setAimHint('Même carte — présente la suivante');
+      setAimHint('Même carte — présente la suivante', true);
       refusVolontaire = true;
       if(r.carte && r.carte.close) r.carte.close();
       return;
@@ -9950,7 +9961,7 @@ function startAimLoop(){
     .catch(err=>{
       workerBroken = true;
       diagPush('err', {msg:'worker indisponible ('+err.message+')'});
-      setAimHint('⚠️ Lecture auto indisponible — utilise 📸');
+      setAimHint('⚠️ Lecture auto indisponible — utilise 📸', true);
       if($('cam-error')) $('cam-error').textContent =
         '⚠️ Le moteur de lecture n\'a pas pu démarrer dans un fil séparé ('+err.message+
         '). La capture automatique est désactivée ; le bouton 📸 reste utilisable.';
@@ -9979,7 +9990,38 @@ function stopAimLoop(){
 }
 
 
+// Plein écran natif, en plus du calque CSS. Toujours appelée depuis un geste (démarrage
+// de la caméra) : sans lui, la demande est refusée par principe.
+async function demanderPleinEcran(){
+  const el = $('cam-fullscreen-area');
+  if(!el || document.fullscreenElement) return;
+  const demande = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
+  if(!demande) return;   // Safari iOS sur un élément quelconque : le calque CSS suffira
+  try{
+    // navigationUI:'hide' n'est honoré que par certains moteurs ; ailleurs il est ignoré,
+    // jamais une erreur.
+    await demande.call(el, {navigationUI: 'hide'});
+    diagPush('err', {msg: 'caméra: plein écran natif obtenu'});
+  }catch(e){
+    // Refusé (iOS, permission, geste trop ancien) : on continue en plein écran CSS.
+    diagPush('err', {msg: 'caméra: plein écran natif refusé (' + e.message + ')'});
+  }
+}
+
+function quitterPleinEcran(){
+  if(!document.fullscreenElement && !document.webkitFullscreenElement) return;
+  const sortie = document.exitFullscreen || document.webkitExitFullscreen;
+  try{ sortie && sortie.call(document); }catch(e){}
+}
+
+// Sortie par le bouton système ou le geste de retour : la caméra doit s'arrêter avec,
+// sinon on se retrouve avec un flux allumé derrière une page redevenue normale.
+document.addEventListener('fullscreenchange', ()=>{
+  if(!document.fullscreenElement && cameraStream) stopCamera();
+});
+
 function stopCamera(){
+  quitterPleinEcran();
   stopAimLoop();
   if(cameraStream){
     cameraStream.getTracks().forEach(t=>t.stop());
