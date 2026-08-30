@@ -2851,8 +2851,8 @@
      la page sans avoir regarde la barre. */
   .jeu-banniere{
     position:relative; overflow:hidden; border-radius:18px; margin-bottom:16px;
-    padding:22px 24px; border:1px solid var(--border);
-    display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:15px 20px; border:1px solid var(--border);
+    display:flex; align-items:center; gap:14px; flex-wrap:wrap;
   }
   .jeu-banniere.pokemon{
     background:linear-gradient(120deg, rgba(238,21,21,.30), rgba(61,125,202,.22) 52%, rgba(21,26,36,.9));
@@ -2869,9 +2869,22 @@
   }
   .jeu-banniere h2{margin:0; font-size:25px; letter-spacing:-.6px;}
   .jeu-banniere .accroche{font-size:12.5px; color:rgba(255,255,255,.72); margin-top:3px;}
-  .jeu-banniere .stats{margin-left:auto; display:flex; gap:22px; text-align:right;}
+  .jeu-banniere .stats{margin-left:auto; display:flex; gap:18px; text-align:right;}
   .jeu-banniere .stats b{display:block; font-size:19px; font-weight:800;
     font-variant-numeric:tabular-nums; margin-top:3px;}
+  @media (max-width:640px){
+    .jeu-banniere .stats{
+      margin-left:0; width:100%; display:grid; grid-template-columns:auto auto auto 1fr;
+      gap:6px; text-align:left;
+    }
+    .jeu-banniere .stats .micro{font-size:8.5px; line-height:1.25; display:block;}
+    .jeu-banniere .stats b{font-size:16px; margin-top:2px; white-space:nowrap;}
+    /* Le titre et l'accroche occupaient toute la largeur pour deux lignes de texte : sur un
+       bandeau qu'on veut plus court, c'est la premiere chose a resserrer. */
+    .jeu-banniere h2{font-size:21px;}
+    .jeu-banniere .accroche{font-size:11.5px; line-height:1.35;}
+    .jeu-banniere{padding:13px 16px; gap:10px;}
+  }
   /* Motif discret, purement decoratif : il donne de la matiere au bandeau sans jamais
      passer devant le texte, qui reste sur sa propre couche. */
   .jeu-banniere::after{
@@ -3635,13 +3648,13 @@
         <circle cx="50" cy="50" r="17" fill="none" stroke="#fff" stroke-width="4"/>
         <circle cx="50" cy="50" r="7" fill="#fff"/>
       </svg>
-      <span class="emb"><svg  viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="46" fill="none" stroke="currentColor" stroke-width="4"/><path d="M4 50h29M67 50h29" stroke="currentColor" stroke-width="4"/><path d="M50 4a46 46 0 0 1 46 46H67a17 17 0 0 0-34 0H4A46 46 0 0 1 50 4Z" fill="currentColor" opacity=".55"/><circle cx="50" cy="50" r="17" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="50" cy="50" r="7" fill="currentColor"/></svg></span>
       <div>
         <h2>Pokémon</h2>
         <div class="accroche">Le jeu de cartes à collectionner, de la Base 1999 aux dernières extensions.</div>
       </div>
       <div class="stats">
         <div><span class="micro">Cartes</span><b id="col-cartes">0</b></div>
+        <div><span class="micro">Cartes rares</span><b id="col-rares">0</b></div>
         <div><span class="micro">Séries entamées</span><b id="col-sets">0</b></div>
         <div><span class="micro">Valeur</span><b id="col-valeur">0 €</b></div>
       </div>
@@ -5549,9 +5562,15 @@ function rendreAccueilCollection(){
   const nb = batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
   const sets = new Set(batch.map(e => e.setId).filter(Boolean));
   const val = batch.reduce((s,e) => s + (parseFloat(e.marketPrice)||0) * (parseInt(e.qty)||1), 0);
+  // Meme seuil que l'accueil : SEUIL_RARE separe, dans un tas de mille cartes, celles qu'on
+  // vend a l'unite de celles qu'on met en lot. La cote du marche est retenue, pas le prix
+  // demande — une carte n'est pas rare parce qu'on l'affiche cher.
+  const rares = batch.reduce((s,e) =>
+    s + ((parseFloat(e.marketPrice) || parseFloat(e.price) || 0) >= SEUIL_RARE ? (parseInt(e.qty)||1) : 0), 0);
   if($('col-cartes')) $('col-cartes').textContent = nb;
+  if($('col-rares')) $('col-rares').textContent = rares;
   if($('col-sets')) $('col-sets').textContent = sets.size;
-  if($('col-valeur')) $('col-valeur').textContent = val.toFixed(2) + ' €';
+  if($('col-valeur')) $('col-valeur').textContent = val.toFixed(2).replace('.', ',') + ' €';
 
   // Vignettes : TES cartes, pas une illustration décorative. Une porte d'entrée qui montre
   // ce qu'on possède déjà dit quelque chose ; trois images choisies d'avance ne disent rien.
