@@ -2252,22 +2252,43 @@
      Colle sous l'en-tete : il doit rester lisible pendant qu'on fait defiler, sinon on
      perd de vue dans quel monde on se trouve des le premier ecran passe. */
   /* ===================== PAGE PUBLIQUE ===================== */
-  /* Elle occupe l'écran seule : tant qu'il n'y a pas de session, il n'y a rien d'autre à
-     montrer, et laisser dépasser un morceau de l'application derrière donnerait envie de
-     cliquer sur ce qui n'est pas encore accessible. */
   .public{
     position:fixed; inset:0; z-index:400; overflow-y:auto; overscroll-behavior:contain;
-    background:
-      radial-gradient(circle at 15% 0%, rgba(238,21,21,.16), transparent 46%),
-      radial-gradient(circle at 88% 8%, rgba(124,92,255,.16), transparent 44%),
-      var(--bg);
+    background:var(--bg);
   }
   .public[hidden]{display:none;}
-  .public > *{max-width:1040px; margin:0 auto; padding-left:20px; padding-right:20px;}
-  .pub-tete{
-    display:flex; align-items:center; justify-content:space-between;
-    padding-top:18px; padding-bottom:8px;
+  /* Trois halos de couleur qui derivent lentement derriere toute la page. En position fixe :
+     ils font une ambiance, pas un decor qui defile — et l'oeil percoit un mouvement continu
+     meme quand la page ne bouge pas. Transform seul, donc aucune repeinture. */
+  .public::before{
+    content:''; position:fixed; inset:-35%; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(circle at 24% 20%, rgba(238,21,21,.34), transparent 34%),
+      radial-gradient(circle at 76% 14%, rgba(124,92,255,.32), transparent 36%),
+      radial-gradient(circle at 52% 78%, rgba(255,203,5,.20), transparent 38%);
+    animation:pubDerive 19s ease-in-out infinite alternate;
   }
+  @keyframes pubDerive{
+    from{transform:translate3d(-6%, -4%, 0) scale(1) rotate(-5deg);}
+    to{transform:translate3d(7%, 5%, 0) scale(1.22) rotate(5deg);}
+  }
+  .public > *{position:relative; z-index:1; max-width:1040px; margin:0 auto; padding-left:20px; padding-right:20px;}
+
+  /* Entree en cascade. Une page qui se pose element par element se lit comme vivante ;
+     la meme, posee d'un bloc, se lit comme une capture d'ecran. */
+  .pub-anim{opacity:0; transform:translateY(16px); animation:pubEntree .62s cubic-bezier(.2,.8,.3,1) forwards;}
+  @keyframes pubEntree{to{opacity:1; transform:none;}}
+  .pub-hero .pub-anim:nth-child(1){animation-delay:.05s;}
+  .pub-hero .pub-anim:nth-child(2){animation-delay:.15s;}
+  .pub-hero .pub-anim:nth-child(3){animation-delay:.26s;}
+  .pub-hero .pub-anim:nth-child(4){animation-delay:.37s;}
+  .pub-hero .pub-anim:nth-child(5){animation-delay:.47s;}
+  .pub-atouts .pub-anim:nth-child(1){animation-delay:.5s;}
+  .pub-atouts .pub-anim:nth-child(2){animation-delay:.6s;}
+  .pub-atouts .pub-anim:nth-child(3){animation-delay:.68s;}
+  .pub-atouts .pub-anim:nth-child(4){animation-delay:.76s;}
+
+  .pub-tete{display:flex; align-items:center; justify-content:space-between; padding-top:18px; padding-bottom:8px;}
   .pub-marque{display:flex; align-items:center; gap:10px; font-size:17px; font-weight:800;}
   .pub-lien{
     background:none; border:0; color:var(--muted); font:inherit; font-size:13.5px;
@@ -2275,49 +2296,140 @@
   }
   .pub-lien:hover{color:var(--text);}
 
-  .pub-hero{padding-top:38px; padding-bottom:34px; text-align:center;}
+  .pub-hero{padding-top:44px; padding-bottom:38px; text-align:center;}
   .pub-chapeau{
-    display:inline-block; font-size:11px; font-weight:800; letter-spacing:.16em;
-    text-transform:uppercase; color:var(--accent); margin-bottom:14px;
+    display:inline-flex; align-items:center; gap:8px; font-size:11px; font-weight:800;
+    letter-spacing:.14em; text-transform:uppercase; color:var(--accent); margin-bottom:16px;
+    padding:6px 13px; border-radius:20px;
+    border:1px solid rgba(255,203,5,.3); background:rgba(255,203,5,.09);
   }
+  .pub-pouls{
+    width:7px; height:7px; border-radius:50%; background:var(--accent); flex:none;
+    animation:pubPouls 1.9s ease-in-out infinite;
+  }
+  @keyframes pubPouls{0%,100%{opacity:.35; transform:scale(.82);} 50%{opacity:1; transform:scale(1);}}
+
   .pub-hero h1{
-    margin:0; font-size:clamp(28px, 7vw, 52px); line-height:1.08; letter-spacing:-1px;
+    margin:0; font-size:clamp(31px, 8.4vw, 62px); line-height:1.04; letter-spacing:-1.4px;
+    color:var(--text);
   }
-  .pub-accroche{
-    max-width:620px; margin:16px auto 0; font-size:15px; line-height:1.6; color:var(--muted);
+  /* Reflet qui balaie le titre. Sous @supports : sans le rognage sur le texte, la couleur
+     transparente laisserait un titre invisible plutot qu'un titre sans effet. */
+  @supports ((-webkit-background-clip: text) or (background-clip: text)){
+    .pub-hero h1{
+      background:linear-gradient(100deg, #f1f3f8 34%, #ffe066 44%, #fff 50%, #f1f3f8 60%);
+      background-size:300% 100%;
+      -webkit-background-clip:text; background-clip:text;
+      -webkit-text-fill-color:transparent; color:transparent;
+      animation:pubEntree .62s cubic-bezier(.2,.8,.3,1) forwards, pubEclat 7s ease-in-out 1.2s infinite;
+    }
   }
-  .pub-actions{display:flex; gap:11px; justify-content:center; flex-wrap:wrap; margin-top:26px;}
-  .pub-cta{font-size:15px; padding:13px 26px;}
+  @keyframes pubEclat{0%{background-position:100% 0;} 55%,100%{background-position:0 0;}}
+
+  .pub-accroche{max-width:620px; margin:18px auto 0; font-size:15.5px; line-height:1.62; color:var(--muted);}
+  .pub-actions{display:flex; gap:11px; justify-content:center; flex-wrap:wrap; margin-top:28px;}
+  .pub-cta{
+    font-size:15.5px; padding:14px 28px; position:relative; overflow:hidden;
+    box-shadow:0 6px 26px rgba(255,203,5,.30);
+  }
+  /* Eclat qui traverse le bouton principal, de loin en loin. Assez rare pour attirer l'oeil
+     sans jamais devenir un clignotement. */
+  .pub-cta::after{
+    content:''; position:absolute; top:0; bottom:0; width:38%;
+    background:linear-gradient(100deg, transparent, rgba(255,255,255,.55), transparent);
+    animation:pubBalai 4.6s ease-in-out infinite; pointer-events:none;
+  }
+  @keyframes pubBalai{0%{left:-45%;} 42%,100%{left:115%;}}
   .pub-secondaire{
     background:transparent; border:1.5px solid var(--border); border-radius:11px;
-    color:var(--text); font:inherit; font-size:15px; font-weight:700;
-    padding:13px 22px; cursor:pointer;
+    color:var(--text); font:inherit; font-size:15.5px; font-weight:700; padding:14px 22px; cursor:pointer;
   }
-  .pub-secondaire:hover{border-color:var(--accent2);}
-  .pub-note{margin-top:14px; font-size:12px; color:var(--muted);}
+  .pub-secondaire:hover{border-color:var(--accent); color:var(--accent);}
+  .pub-note{margin-top:15px; font-size:12px; color:var(--muted);}
 
   .pub-atouts{
-    display:grid; grid-template-columns:repeat(auto-fit, minmax(230px, 1fr)); gap:14px;
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:14px;
     padding-top:14px; padding-bottom:34px;
   }
   .pub-atouts article{
-    background:var(--panel); border:1px solid var(--border); border-radius:15px; padding:20px 18px;
+    position:relative; overflow:hidden;
+    background:var(--panel); border:1px solid var(--border); border-radius:16px; padding:22px 20px;
+    transition:border-color .2s ease, transform .2s ease;
   }
-  .pub-atouts svg{width:26px; height:26px; color:var(--accent); margin-bottom:11px;}
-  .pub-atouts h3{margin:0 0 6px; font-size:15.5px;}
-  .pub-atouts p{margin:0; font-size:13px; line-height:1.55; color:var(--muted);}
+  .pub-atouts article:hover{border-color:rgba(255,203,5,.34); transform:translateY(-3px);}
+  .pub-atouts svg{display:block; width:27px; height:27px; color:var(--accent); margin-bottom:12px; position:relative; z-index:1;}
+  .pub-atouts h3{margin:0 0 7px; font-size:16.5px; position:relative; z-index:1;}
+  .pub-atouts p{margin:0; font-size:13.4px; line-height:1.58; color:var(--muted); position:relative; z-index:1;}
 
-  .pub-etapes{padding-bottom:34px;}
-  .pub-etapes h2{font-size:21px; margin:0 0 14px;}
-  .pub-etapes ol{margin:0; padding-left:20px; display:grid; gap:9px;}
-  .pub-etapes li{font-size:14px; line-height:1.6; color:var(--muted);}
-  .pub-etapes li b{color:var(--text);}
-
-  .pub-compte{padding-bottom:40px;}
-  .pub-carte{
-    max-width:400px; margin:0 auto; background:var(--panel);
-    border:1px solid var(--border); border-radius:17px; padding:20px;
+  /* La vedette : deux colonnes quand la place le permet, un halo anime, une bordure teintee.
+     C'est la seule chose de cette page qu'on ne trouve pas ailleurs, elle ne peut pas etre
+     une tuile parmi quatre. */
+  .pub-vedette{
+    grid-column:span 2;
+    border-color:rgba(255,203,5,.38) !important;
+    background:linear-gradient(150deg, rgba(255,203,5,.13), rgba(124,92,255,.09) 60%, var(--panel)) !important;
   }
+  .pub-vedette::before{
+    content:''; position:absolute; inset:-50% -30%; z-index:0; pointer-events:none;
+    background:linear-gradient(112deg, transparent 30%, rgba(255,203,5,.20) 50%, transparent 70%);
+    animation:caseDerive 9s ease-in-out infinite alternate;
+  }
+  .pub-vedette svg{width:36px; height:36px;}
+  .pub-vedette h3{font-size:21px;}
+  .pub-vedette p{font-size:14.5px;}
+  .pub-etiquette{
+    display:inline-block; font-size:10px; font-weight:800; letter-spacing:.14em;
+    text-transform:uppercase; color:#1a1206; background:var(--accent);
+    padding:4px 10px; border-radius:20px; margin-bottom:14px; position:relative; z-index:1;
+  }
+  .pub-preuve{
+    display:inline-block; margin-top:14px; font-size:12.5px; font-weight:700;
+    color:var(--accent); position:relative; z-index:1;
+  }
+
+  .pub-bande{
+    display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px;
+    padding-top:18px; padding-bottom:34px; border-top:1px solid var(--border);
+  }
+  .pub-bande div{display:flex; flex-direction:column; gap:2px;}
+  .pub-bande b{font-size:14.5px;}
+  .pub-bande span{font-size:12px; color:var(--muted);}
+
+  .pub-final{text-align:center; padding-top:14px; padding-bottom:44px;}
+  .pub-final h2{margin:0; font-size:clamp(21px, 5vw, 30px); line-height:1.2;}
+  .pub-final > p{margin:9px 0 22px; font-size:15px; color:var(--muted);}
+  .pub-local{margin:16px 0 0; font-size:12px; color:var(--muted); line-height:1.5;}
+  .pub-local[hidden]{display:none;}
+  .pub-pied{
+    padding-top:18px; padding-bottom:28px; border-top:1px solid var(--border);
+    font-size:11.5px; color:var(--muted); text-align:center;
+  }
+
+  /* ---------------------- la fenetre de compte ---------------------- */
+  .modal-compte{position:fixed; inset:0; z-index:460;}
+  .modal-compte[hidden]{display:none;}
+  .mco-voile{position:absolute; inset:0; background:rgba(4,6,12,.78);}
+  .mco-panneau{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:min(420px, calc(100vw - 28px)); max-height:calc(100vh - 40px); overflow-y:auto;
+    background:var(--panel); border:1px solid var(--border); border-radius:18px; padding:24px 22px;
+    box-shadow:0 24px 70px rgba(0,0,0,.62);
+    animation:mcoEntree .24s cubic-bezier(.2,.9,.3,1);
+  }
+  /* Keyframes dediees : une entree generique ecraserait le translate qui centre le panneau,
+     et la fenetre partirait dans le coin haut-gauche. */
+  @keyframes mcoEntree{
+    from{opacity:0; transform:translate(-50%,-46%) scale(.96);}
+    to{opacity:1; transform:translate(-50%,-50%) scale(1);}
+  }
+  .mco-fermer{
+    position:absolute; top:12px; right:13px; width:30px; height:30px; border-radius:50%;
+    background:transparent; border:1px solid var(--border); color:var(--muted);
+    font-size:13px; line-height:1; cursor:pointer; padding:0;
+  }
+  .mco-fermer:hover{color:var(--text); border-color:var(--accent2);}
+  .mco-panneau h2{margin:0 0 5px; font-size:21px;}
+  .mco-sous{margin:0 0 18px; font-size:13px; color:var(--muted); line-height:1.5;}
   .pub-onglets{width:100%; margin-bottom:16px;}
   .pub-onglets button{flex:1; padding:9px 6px; font-size:13px; font-weight:700;}
   .pub-google{
@@ -2333,9 +2445,7 @@
   }
   .pub-ou::before, .pub-ou::after{content:''; flex:1; height:1px; background:var(--border);}
   .pub-champ{display:block; margin-bottom:12px;}
-  .pub-champ span{
-    display:block; font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:5px;
-  }
+  .pub-champ span{display:block; font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:5px;}
   .pub-champ input{width:100%;}
   .pub-valider{width:100%; margin-top:4px; padding:12px; font-size:14.5px;}
   .pub-oubli{
@@ -2343,28 +2453,32 @@
     color:var(--muted); font:inherit; font-size:12.5px; cursor:pointer;
   }
   .pub-oubli:hover{color:var(--text);}
-  /* Un message qui remplace le bouton dirait « il s'est passé quelque chose » sans dire
-     quoi. Il se pose au-dessus, garde sa couleur selon la nature, et le formulaire reste
-     utilisable dessous. */
   .pub-message{
     margin:0 0 12px; padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.45;
     border:1px solid rgba(232,117,109,.4); background:rgba(232,117,109,.12); color:#f0a29c;
   }
-  .pub-message.ok{
-    border-color:rgba(111,202,154,.42); background:rgba(111,202,154,.12); color:#8fdcb4;
-  }
+  .pub-message.ok{border-color:rgba(111,202,154,.42); background:rgba(111,202,154,.12); color:#8fdcb4;}
   .pub-message[hidden]{display:none;}
-  .pub-local{margin:14px 0 0; font-size:12px; color:var(--muted); line-height:1.5; text-align:center;}
-  .pub-local[hidden]{display:none;}
-  .pub-pied{
-    padding-top:18px; padding-bottom:26px; border-top:1px solid var(--border);
-    font-size:11.5px; color:var(--muted); text-align:center;
+
+  @media (max-width:700px){
+    .pub-vedette{grid-column:span 1;}
   }
   @media (max-width:560px){
     .public > *{padding-left:15px; padding-right:15px;}
-    .pub-hero{padding-top:26px; padding-bottom:26px;}
+    .pub-hero{padding-top:30px; padding-bottom:28px;}
     .pub-actions .pub-cta, .pub-actions .pub-secondaire{flex:1 1 100%;}
+    .pub-atouts article{padding:18px 16px;}
+    .pub-vedette h3{font-size:18.5px;}
   }
+  /* Tout ce qui bouge s'arrete d'un bloc si l'appareil le demande — y compris l'entree en
+     cascade, qui laisserait sinon la page a opacite zero. */
+  @media (prefers-reduced-motion: reduce){
+    .public::before, .pub-pouls, .pub-cta::after, .pub-vedette::before{animation:none;}
+    .pub-anim{opacity:1; transform:none; animation:none;}
+    .pub-hero h1{animation:none;}
+    .mco-panneau{animation:none;}
+  }
+
 
   /* Bandeau de synchronisation. Il ne se montre que lorsqu'il a quelque chose à dire :
      une pastille verte permanente sur « tout va bien » finit par ne plus être lue, et
@@ -3772,6 +3886,11 @@
      Elle ne s'affiche que sans session. L'application entière est masquée derrière elle :
      rien de ce qu'on voit ici ne demande de compte, mais tout ce qui suit en demande un,
      et une porte d'entrée qui montre l'outil vide n'explique rien. -->
+<!-- ================= PAGE PUBLIQUE (déconnecté) =================
+     C'est le premier écran, et souvent le seul qu'on regarde avant de décider. Il ne
+     décrit donc pas le fonctionnement — personne ne s'inscrit pour un mode d'emploi — il
+     dit ce qu'on y gagne. La reconnaissance à la caméra passe devant tout le reste : c'est
+     la seule chose ici qu'on ne trouve pas ailleurs. -->
 <div class="public" id="page-publique" hidden>
   <header class="pub-tete">
     <div class="pub-marque">
@@ -3782,96 +3901,114 @@
   </header>
 
   <section class="pub-hero">
-    <span class="pub-chapeau">Scanner · Estimer · Vendre</span>
-    <h1>Mille cartes triées,<br>sans en saisir une seule.</h1>
-    <p class="pub-accroche">
-      Passe tes cartes devant l'appareil photo. PokéScan lit le numéro, retrouve la carte,
-      récupère sa cote du marché et range tout : ce que tu gardes d'un côté, ce que tu vends
-      de l'autre. À la fin, un fichier prêt pour une mise en vente groupée.
+    <span class="pub-chapeau pub-anim"><i class="pub-pouls" aria-hidden="true"></i>Reconnaissance IA · Cotes en direct</span>
+    <h1 class="pub-anim">Mille cartes triées.<br>Zéro saisie.</h1>
+    <p class="pub-accroche pub-anim">
+      Fais défiler tes cartes devant l'objectif. L'IA les reconnaît au vol, va chercher leur
+      cote et range tout à sa place. Ce que tu gardes d'un côté, ce que tu vends de l'autre —
+      et le tri d'un carton entier tient dans une soirée.
     </p>
-    <div class="pub-actions">
-      <button class="btn-gold pub-cta" id="pub-creer">Créer mon compte</button>
+    <div class="pub-actions pub-anim">
+      <button class="btn-gold pub-cta" id="pub-creer">Créer mon compte — c'est gratuit</button>
       <button class="pub-secondaire" id="pub-connexion-2">J'ai déjà un compte</button>
     </div>
-    <p class="pub-note">Gratuit. Tes données restent les tiennes, exportables à tout moment.</p>
+    <p class="pub-note pub-anim">Sans carte bancaire. Tes données t'appartiennent, exportables quand tu veux.</p>
   </section>
 
   <section class="pub-atouts">
-    <article>
+    <!-- La vedette occupe deux colonnes : hiérarchiser par la taille dit ce qui compte
+         mieux que de le placer en premier dans une rangée de quatre égales. -->
+    <article class="pub-vedette pub-anim">
+      <span class="pub-etiquette">Le cœur de PokéScan</span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.9 8.4V5.5A2.6 2.6 0 0 1 5.5 2.9h2.9M15.6 2.9h2.9a2.6 2.6 0 0 1 2.6 2.6v2.9M21.1 15.6v2.9a2.6 2.6 0 0 1-2.6 2.6h-2.9M8.4 21.1H5.5a2.6 2.6 0 0 1-2.6-2.6v-2.9"/><circle cx="12" cy="12" r="5.5"/><path d="M6.5 12h2.6M14.9 12h2.6"/><circle cx="12" cy="12" r="2.2"/></svg>
-      <h3>Reconnaissance à la caméra</h3>
-      <p>Le numéro imprimé en bas de carte est lu directement, et la carte est retrouvée dans
-         le catalogue complet — de l'édition de base 1999 aux dernières extensions.</p>
+      <h3>Elle reconnaît tes cartes toute seule</h3>
+      <p>Présente la carte, c'est fini. Nom, extension, numéro, version : tout est rempli avant
+         que tu aies posé la suivante. Plus de recherche, plus de faute de frappe, plus de
+         doublon qui passe entre les mailles.</p>
+      <span class="pub-preuve">Une carte à la seconde, sans toucher au clavier</span>
     </article>
-    <article>
+
+    <article class="pub-anim">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 17.6 9 11.2l3.7 3.6 7.9-8.8"/><path d="M15.8 6h4.8v4.8"/><path d="M3.4 20.8h17.2"/></svg>
-      <h3>La cote, pas une estimation</h3>
-      <p>Chaque carte porte son prix du marché Cardmarket, avec sa tendance sur trente jours.
-         Tu vois ce que vaut ta collection, et ce qui bouge dedans.</p>
+      <h3>Tu sais enfin ce que ça vaut</h3>
+      <p>Chaque carte arrive avec sa cote du marché, et ta collection avec son total. Tu vois ce
+         qui grimpe, ce qui décroche, et ce qu'il ne faut surtout pas vendre au prix du lot.</p>
     </article>
-    <article>
+
+    <article class="pub-anim">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="3.4" width="17.2" height="17.2" rx="2.4"/><path d="M8.6 3.4v17.2M3.4 9h5.2M3.4 15h5.2"/></svg>
-      <h3>Un classeur qui montre les trous</h3>
-      <p>Chaque série se parcourt comme un vrai classeur, page après page, emplacements vides
-         compris. C'est là qu'on voit ce qui manque pour finir un set.</p>
+      <h3>Ta collection, enfin belle à regarder</h3>
+      <p>Tes séries se rangent dans un vrai classeur qui se feuillette. On voit sa collection
+         grandir page après page — et ce qu'il reste à trouver pour boucler un set.</p>
     </article>
-    <article>
+
+    <article class="pub-anim">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5"/><path d="M12 3v11.5m-4.4-4L12 15l4.4-4.5"/></svg>
-      <h3>Export prêt pour la vente</h3>
-      <p>Titre, état, prix, photo : le fichier sort au format attendu par une mise en vente
-         groupée. Mille cartes en ligne sans mille formulaires.</p>
+      <h3>Mets tout en vente d'un coup</h3>
+      <p>Titres, états, prix, photos : le fichier sort prêt à être déposé. Ce qui prenait un
+         week-end de formulaires se règle en un export.</p>
     </article>
   </section>
 
-  <section class="pub-etapes">
-    <h2>Comment ça marche</h2>
-    <ol>
-      <li><b>Tu scannes.</b> Une carte devant l'objectif, elle est identifiée et ajoutée.</li>
-      <li><b>Tu répartis.</b> Classeur ou stock de vente, selon un seuil de prix que tu fixes.</li>
-      <li><b>Tu vends.</b> Export du lot, et la collection continue de vivre de son côté.</li>
-    </ol>
+  <section class="pub-bande">
+    <div><b>Toutes les séries</b><span>de 1999 à aujourd'hui</span></div>
+    <div><b>Cotes du marché</b><span>mises à jour en continu</span></div>
+    <div><b>Hors ligne</b><span>ça marche sans réseau</span></div>
+    <div><b>Sauvegardé</b><span>retrouvé sur tous tes appareils</span></div>
   </section>
 
-  <!-- Formulaire de compte. Sous la présentation plutôt qu'en écran de garde : on décide de
-       s'inscrire APRÈS avoir compris à quoi ça sert, pas avant. -->
-  <section class="pub-compte" id="pub-compte">
-    <div class="pub-carte">
-      <div class="seg pub-onglets" id="pub-onglets">
-        <button class="on" data-mode="inscription">Créer un compte</button>
-        <button data-mode="connexion">Se connecter</button>
-      </div>
-
-      <button class="pub-google" id="btn-google">
-        <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h11.8c-.5 2.7-2.1 5-4.4 6.6v5.5h7.1c4.2-3.8 6.6-9.5 6.6-16.1Z"/><path fill="#34A853" d="M24 46c6 0 11-2 14.6-5.4l-7.1-5.5c-2 1.3-4.5 2.1-7.5 2.1-5.8 0-10.7-3.9-12.4-9.1H4.3v5.7C7.9 41.1 15.4 46 24 46Z"/><path fill="#FBBC05" d="M11.6 28.1c-.4-1.3-.7-2.7-.7-4.1s.3-2.8.7-4.1v-5.7H4.3A22 22 0 0 0 2 24c0 3.6.9 6.9 2.3 9.8l7.3-5.7Z"/><path fill="#EA4335" d="M24 10.8c3.3 0 6.2 1.1 8.5 3.3l6.3-6.3C35 4.1 30 2 24 2 15.4 2 7.9 6.9 4.3 14.1l7.3 5.7c1.7-5.2 6.6-9 12.4-9Z"/></svg>
-        <span>Continuer avec Google</span>
-      </button>
-
-      <div class="pub-ou"><span>ou</span></div>
-
-      <form id="form-compte" autocomplete="on">
-        <label class="pub-champ">
-          <span>Adresse e-mail</span>
-          <input type="email" id="compte-email" required autocomplete="email" placeholder="toi@exemple.fr">
-        </label>
-        <label class="pub-champ">
-          <span>Mot de passe</span>
-          <input type="password" id="compte-mdp" required minlength="8" autocomplete="current-password" placeholder="8 caractères minimum">
-        </label>
-        <p class="pub-message" id="compte-message" hidden></p>
-        <button type="submit" class="btn-gold pub-valider" id="compte-valider">Créer mon compte</button>
-      </form>
-
-      <button class="pub-oubli" id="btn-oubli">Mot de passe oublié ?</button>
-      <p class="pub-local" id="pub-local" hidden>
-        La sauvegarde en ligne n'est pas configurée sur cette installation.
-        <button class="pub-lien" id="btn-sans-compte">Continuer sans compte</button>
-      </p>
-    </div>
+  <section class="pub-final">
+    <h2>Ton carton de cartes attend depuis des années.</h2>
+    <p>Il te faut une soirée.</p>
+    <button class="btn-gold pub-cta" id="pub-creer-2">Commencer maintenant</button>
+    <p class="pub-local" id="pub-local" hidden>
+      La sauvegarde en ligne n'est pas encore configurée sur cette installation.
+      <button class="pub-lien" id="btn-sans-compte">Continuer sans compte</button>
+    </p>
   </section>
 
   <footer class="pub-pied">
     <span>PokéScan — outil indépendant, sans lien avec Nintendo, Creatures ou GAME FREAK.</span>
   </footer>
+</div>
+
+<!-- Fenêtre de compte. Elle remplace le glissement vers un formulaire en bas de page : on
+     cliquait « Créer mon compte » et l'écran partait ailleurs, ce qui donne l'impression
+     d'avoir raté sa cible. Une fenêtre répond au clic là où il a eu lieu. -->
+<div class="modal-compte" id="modal-compte" hidden>
+  <div class="mco-voile" id="mco-voile"></div>
+  <div class="mco-panneau" role="dialog" aria-modal="true" aria-labelledby="mco-titre">
+    <button class="mco-fermer" id="mco-fermer" aria-label="Fermer">✕</button>
+    <h2 id="mco-titre">Créer mon compte</h2>
+    <p class="mco-sous" id="mco-sous">Ta collection sauvegardée, retrouvée sur tous tes appareils.</p>
+
+    <div class="seg pub-onglets" id="pub-onglets">
+      <button class="on" data-mode="inscription">Créer un compte</button>
+      <button data-mode="connexion">Se connecter</button>
+    </div>
+
+    <button class="pub-google" id="btn-google">
+      <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#4285F4" d="M45.1 24.5c0-1.6-.1-3.1-.4-4.5H24v8.5h11.8c-.5 2.7-2.1 5-4.4 6.6v5.5h7.1c4.2-3.8 6.6-9.5 6.6-16.1Z"/><path fill="#34A853" d="M24 46c6 0 11-2 14.6-5.4l-7.1-5.5c-2 1.3-4.5 2.1-7.5 2.1-5.8 0-10.7-3.9-12.4-9.1H4.3v5.7C7.9 41.1 15.4 46 24 46Z"/><path fill="#FBBC05" d="M11.6 28.1c-.4-1.3-.7-2.7-.7-4.1s.3-2.8.7-4.1v-5.7H4.3A22 22 0 0 0 2 24c0 3.6.9 6.9 2.3 9.8l7.3-5.7Z"/><path fill="#EA4335" d="M24 10.8c3.3 0 6.2 1.1 8.5 3.3l6.3-6.3C35 4.1 30 2 24 2 15.4 2 7.9 6.9 4.3 14.1l7.3 5.7c1.7-5.2 6.6-9 12.4-9Z"/></svg>
+      <span>Continuer avec Google</span>
+    </button>
+
+    <div class="pub-ou"><span>ou</span></div>
+
+    <form id="form-compte" autocomplete="on">
+      <label class="pub-champ">
+        <span>Adresse e-mail</span>
+        <input type="email" id="compte-email" required autocomplete="email" placeholder="toi@exemple.fr">
+      </label>
+      <label class="pub-champ">
+        <span>Mot de passe</span>
+        <input type="password" id="compte-mdp" required minlength="8" autocomplete="new-password" placeholder="8 caractères minimum">
+      </label>
+      <p class="pub-message" id="compte-message" hidden></p>
+      <button type="submit" class="btn-gold pub-valider" id="compte-valider">Créer mon compte</button>
+    </form>
+
+    <button class="pub-oubli" id="btn-oubli">Mot de passe oublié ?</button>
+  </div>
 </div>
 
 <div class="barre-mode" id="barre-mode">
@@ -18877,6 +19014,7 @@ function appliquerSession(session){
   utilisateur = session && session.user ? {id: session.user.id, email: session.user.email} : null;
   const pub = $('page-publique');
   if(pub) pub.hidden = !!utilisateur;
+  if(utilisateur) fermerModaleCompte();
   majMenuCompte();
   if(utilisateur && utilisateur.id !== avant){
     // Premiere synchronisation de la session. Elle DESCEND avant de monter : si ce
@@ -18930,28 +19068,51 @@ function messageLisible(err){
   return 'Échec : ' + (err && err.message ? err.message : 'erreur inconnue');
 }
 
+function ouvrirModaleCompte(mode){
+  const m = $('modal-compte');
+  if(!m) return;
+  document.querySelector('#pub-onglets button[data-mode="' + mode + '"]')?.click();
+  messageCompte('');
+  m.hidden = false;
+  empilerRetour('modal-compte', fermerModaleCompte);
+  // Le focus part sur le premier champ, sauf sur écran tactile : y poser le curseur ferait
+  // surgir le clavier par-dessus la fenêtre avant qu'on ait pu la lire.
+  if(matchMedia('(hover: hover)').matches) setTimeout(()=> $('compte-email')?.focus(), 60);
+}
+
+function fermerModaleCompte(){
+  const m = $('modal-compte');
+  if(!m || m.hidden) return;
+  m.hidden = true;
+  depilerRetour('modal-compte');
+}
+
+// Connecté, la fenêtre n'a plus lieu d'être ouverte.
 function brancherCompte(){
   $('pub-onglets')?.addEventListener('click', (e)=>{
     const b = e.target.closest('button[data-mode]');
     if(!b) return;
     modeCompte = b.dataset.mode;
     document.querySelectorAll('#pub-onglets button').forEach(x => x.classList.toggle('on', x === b));
-    $('compte-valider').textContent = modeCompte === 'inscription' ? 'Créer mon compte' : 'Se connecter';
-    $('compte-mdp').setAttribute('autocomplete', modeCompte === 'inscription' ? 'new-password' : 'current-password');
+    const inscription = modeCompte === 'inscription';
+    $('compte-valider').textContent = inscription ? 'Créer mon compte' : 'Se connecter';
+    $('compte-mdp').setAttribute('autocomplete', inscription ? 'new-password' : 'current-password');
+    if($('mco-titre')) $('mco-titre').textContent = inscription ? 'Créer mon compte' : 'Content de te revoir';
+    if($('mco-sous')) $('mco-sous').textContent = inscription
+      ? 'Ta collection sauvegardée, retrouvée sur tous tes appareils.'
+      : 'Reprends là où tu t’étais arrêté.';
     messageCompte('');
   });
 
-  const versCompte = ()=> $('pub-compte')?.scrollIntoView({behavior: 'smooth', block: 'center'});
-  const versConnexion = ()=>{
-    document.querySelector('#pub-onglets button[data-mode="connexion"]')?.click();
-    versCompte();
-  };
-  $('pub-creer')?.addEventListener('click', ()=>{
-    document.querySelector('#pub-onglets button[data-mode="inscription"]')?.click();
-    versCompte();
-  });
-  $('pub-vers-connexion')?.addEventListener('click', versConnexion);
-  $('pub-connexion-2')?.addEventListener('click', versConnexion);
+  // La fenêtre remplace le glissement vers un formulaire en bas de page : on cliquait
+  // « Créer mon compte » et l'écran partait ailleurs, ce qui se lit comme un clic raté.
+  $('pub-creer')?.addEventListener('click', ()=> ouvrirModaleCompte('inscription'));
+  $('pub-creer-2')?.addEventListener('click', ()=> ouvrirModaleCompte('inscription'));
+  $('pub-vers-connexion')?.addEventListener('click', ()=> ouvrirModaleCompte('connexion'));
+  $('pub-connexion-2')?.addEventListener('click', ()=> ouvrirModaleCompte('connexion'));
+  $('mco-fermer')?.addEventListener('click', fermerModaleCompte);
+  $('mco-voile')?.addEventListener('click', fermerModaleCompte);
+  addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerModaleCompte(); });
   $('btn-sans-compte')?.addEventListener('click', ()=>{
     try{ localStorage.setItem('pokescanSansCompte', '1'); }catch(e){}
     $('page-publique').hidden = true;
