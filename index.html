@@ -3409,10 +3409,6 @@
           classeur d'une seule extension, choisis-la : le numéro suffit alors à identifier
           la carte, sans avoir à deviner le set.
         </p>
-        <label style="display:flex; align-items:flex-start; gap:8px; margin-top:14px; cursor:pointer;">
-          <input type="checkbox" id="chk-plein-ecran" style="width:auto; margin:2px 0 0;">
-          <span>Plein écran total<small style="display:block; font-size:11.5px; color:var(--muted); line-height:1.45; margin-top:2px;">Masque la barre d’adresse et les boutons du système. En contrepartie, la page est rendue à la définition complète de l’écran : sur un téléphone très dense, la lecture peut passer du simple au triple. À essayer, et à décocher si le scan ralentit.</small></span>
-        </label>
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Changer d’objectif</button>
         </div>
       </details>
@@ -4504,11 +4500,25 @@ let impressionScan = localStorage.getItem('impressionScan') || 'normal';
 // est construit bien avant le code de visée qui le modifie, et le lire trop tôt arrêtait
 // le script entier.
 let autoCaptureEnabled = true;
-// Plein écran natif : masque la barre du navigateur, mais fait rendre la page à la
-// définition pleine de l'appareil. Mesuré coûteux sur un téléphone dense (lecture de 473
-// à 1463 ms, worker de 303 à 1514), sans effet sur un autre. Décoché par défaut : on
-// n'impose pas un coût que seul l'appareil peut révéler.
-let pleinEcranNatif = localStorage.getItem('pleinEcranNatif') === '1';
+// Plein écran natif : il masque la barre du navigateur, mais fait rendre la page à la
+// définition COMPLÈTE de l'appareil. Mesuré sur deux téléphones réels : sur l'un (écran
+// dense) la lecture passait de 473 à 1463 ms et le worker de 303 à 1514 ; sur l'autre,
+// aucun effet. Le coût dépend donc de la surface à composer, pas de la puissance — et
+// aucune règle écrite d'avance ne peut le savoir pour un appareil qu'on n'a pas.
+//
+// D'où deux temps. Une PREMIÈRE ESTIMATION au nombre de pixels de l'écran, pour ne faire
+// subir à personne une mauvaise première session. Puis la MESURE tranche : l'application
+// compare les durées de lecture obtenues dans les deux modes, sur cet appareil, et
+// corrige son estimation si elle s'est trompée. Rien à régler, et le verdict est écrit
+// dans le diagnostic.
+const SEUIL_PIXELS_PLEIN_ECRAN = 3.0e6;   // au-delà, la composition commence à se payer
+function estimationPleinEcran(){
+  const d = window.devicePixelRatio || 1;
+  return (screen.width * d) * (screen.height * d) < SEUIL_PIXELS_PLEIN_ECRAN;
+}
+let pleinEcranNatif = localStorage.getItem('pleinEcranNatif') != null
+  ? localStorage.getItem('pleinEcranNatif') === '1'
+  : estimationPleinEcran();
 // Source d'image des annonces. Déclarée ici, avec l'état général : le tableau de bord la
 // consulte au démarrage, bien avant l'onglet Stock qui la règle.
 const CLE_SRC_PHOTO = 'sourcePhoto';
@@ -4751,7 +4761,65 @@ function rendreAccueilCollection(){
   poser('col-vignettes-scelle', visuelsScelle, []);
 }
 
+// ---------------- BOUTON RETOUR DU TÉLÉPHONE ----------------
+// Sur Android, « précédent » quittait l'application : l'onglet n'avait qu'une seule entrée
+// d'historique, donc revenir en arrière revenait à sortir. Avec une liste ouverte ou une
+// feuille de réglages par-dessus l'écran, le geste naturel — retour — fermait tout le site.
+//
+// Chaque couche ouverte pose donc son entrée d'historique et la façon de la refermer. Le
+// bouton retour dépile : il ferme la liste, puis la feuille, puis revient à l'onglet
+// précédent, et ne quitte l'application qu'une fois qu'il n'y a plus rien à défaire.
+//
+// Les fermetures sont toutes idempotentes (elles vérifient l'état avant d'agir), ce qui
+// rend l'aller-retour sûr : fermer à la main déclenche history.back(), qui rappelle la même
+// fermeture — sans effet la seconde fois.
+let pileRetour = [];
+let retourEnCours = false;
+
+function empilerRetour(nom, fermer){
+  // Pendant qu'on defait une etape, on n'en cree pas une nouvelle : sinon deux onglets se
+  // renverraient l'un a l'autre indefiniment.
+  if(retourEnCours) return;
+  pileRetour.push({nom, fermer});
+  try{ history.pushState({pokescan: nom}, ''); }catch(e){}
+}
+
+// À appeler quand une couche est fermée AUTREMENT que par le bouton retour : l'entrée
+// d'historique correspondante doit partir avec elle, sinon un retour ultérieur ne ferait
+// rien de visible et se lirait comme un bouton en panne.
+function depilerRetour(nom){
+  if(retourEnCours) return;
+  const i = pileRetour.map(x => x.nom).lastIndexOf(nom);
+  if(i < 0) return;
+  pileRetour.splice(i, 1);
+  retourEnCours = true;
+  try{ history.back(); }catch(e){}
+  setTimeout(()=>{ retourEnCours = false; }, 0);
+}
+
+addEventListener('popstate', ()=>{
+  const couche = pileRetour.pop();
+  if(couche){
+    retourEnCours = true;
+    try{ couche.fermer(); }catch(e){}
+    retourEnCours = false;
+    return;
+  }
+  // Plus rien à défermer : on laisse le navigateur faire, c'est-à-dire quitter. Une entrée
+  // sentinelle est reposée pour que le retour SUIVANT ait de nouveau quelque chose à
+  // consommer si l'utilisateur rouvre une couche entre-temps.
+  try{ history.pushState({pokescan: 'racine'}, ''); }catch(e){}
+});
+
+// Entrée sentinelle posée au chargement : sans elle, le tout premier retour sort de
+// l'application avant même d'avoir pu être intercepté.
+try{ history.replaceState({pokescan: 'racine'}, ''); history.pushState({pokescan: 'racine'}, ''); }catch(e){}
+
 function activerOnglet(nom){
+  const precedent = document.querySelector('.section.active')?.id.replace('section-', '');
+  if(precedent && precedent !== nom){
+    empilerRetour('onglet:' + precedent, ()=> activerOnglet(precedent));
+  }
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
   const sec = $('section-' + nom);
   if(sec) sec.classList.add('active');
@@ -9571,6 +9639,9 @@ async function attemptRead(corners, score){
     //  - r.tSharp    : calcul de netteté dans le Worker
     //  - r.tEnsure   : ré-initialisation du service OCR (0 sauf 1er appel jamais réussi)
     //  - r.tRecognize: l'appel recognize() lui-même — le vrai plancher du moteur OCR
+    // Alimente le calibrage du plein écran : c'est cette durée-là qui s'allonge quand le
+    // compositeur prend le processeur, et elle ne dépend ni de la lumière ni du cadrage.
+    noterMesureLecture(tWorker);
     const timing = {tExtract, tCardBmp, tWorker, tPrep:r.tPrep, tSharp:r.tSharp, tEnsure:r.tEnsure, tRecognize:r.tRecognize,
                     tChoix, imgChoisie: choix.choisie, ecartNettete: choix.ecart};
 
@@ -10258,6 +10329,71 @@ function stopAimLoop(){
 
 // Plein écran natif, en plus du calque CSS. Toujours appelée depuis un geste (démarrage
 // de la caméra) : sans lui, la demande est refusée par principe.
+// ---------------- CALIBRAGE DU PLEIN ÉCRAN ----------------
+// On retient la durée médiane du worker OCR par mode, sur cet appareil. Le worker plutôt
+// que la durée totale : c'est lui qui s'allonge quand le compositeur prend le processeur,
+// et il ne dépend ni de la lumière ni du cadrage, contrairement au nombre de tentatives.
+const CLE_MESURES_PE = 'pleinEcranMesures';
+const MESURES_MIN = 10;        // en deçà, une médiane ne veut rien dire
+const ECART_DECISIF = 0.25;    // 25 % : en deçà on ne bouge pas, le bruit suffirait
+const MESURES_MAX = 40;
+let mesuresSession = [];
+
+function chargerMesuresPE(){
+  try{ return JSON.parse(localStorage.getItem(CLE_MESURES_PE)) || {avec: [], sans: []}; }
+  catch(e){ return {avec: [], sans: []}; }
+}
+
+function noterMesureLecture(ms){
+  if(typeof ms === 'number' && ms > 0) mesuresSession.push(ms);
+}
+
+function medianeDe(a){
+  if(!a.length) return null;
+  const x = [...a].sort((m, n)=> m - n);
+  return x[Math.floor(x.length / 2)];
+}
+
+// Appelée à l'arrêt de la caméra : la session vient de se dérouler ENTIÈREMENT dans un
+// seul mode, sa médiane est donc attribuable sans ambiguïté.
+function cloreMesurePleinEcran(){
+  const med = medianeDe(mesuresSession);
+  mesuresSession = [];
+  if(med == null) return;
+  const m = chargerMesuresPE();
+  const cle = pleinEcranNatif ? 'avec' : 'sans';
+  m[cle] = [...m[cle], med].slice(-MESURES_MAX);
+  try{ localStorage.setItem(CLE_MESURES_PE, JSON.stringify(m)); }catch(e){}
+
+  const a = medianeDe(m.avec), s = medianeDe(m.sans);
+  if(m.avec.length < MESURES_MIN || m.sans.length < MESURES_MIN){
+    diagPush('err', {msg: 'plein écran: calibrage en cours (' + m.avec.length + ' session(s) avec, '
+      + m.sans.length + ' sans) — médiane du worker ' + Math.round(med) + ' ms en mode '
+      + (pleinEcranNatif ? 'plein écran' : 'fenêtré')});
+    // Tant qu'un des deux modes manque de données, on alterne pour aller les chercher.
+    if(m.avec.length < MESURES_MIN && m.sans.length >= MESURES_MIN) definirPleinEcran(true, 'calibrage');
+    else if(m.sans.length < MESURES_MIN && m.avec.length >= MESURES_MIN) definirPleinEcran(false, 'calibrage');
+    else definirPleinEcran(!pleinEcranNatif, 'calibrage');
+    return;
+  }
+
+  // Les deux modes sont documentés : on garde le plus rapide, mais seulement si l'écart
+  // est franc. Sinon on préfère le plein écran, plus agréable, et on cesse d'alterner.
+  const meilleur = (s < a * (1 - ECART_DECISIF)) ? false
+                 : (a < s * (1 - ECART_DECISIF)) ? true
+                 : true;
+  diagPush('err', {msg: 'plein écran: verdict — worker médian ' + Math.round(a) + ' ms avec, '
+    + Math.round(s) + ' ms sans → ' + (meilleur ? 'plein écran conservé' : 'plein écran abandonné')});
+  definirPleinEcran(meilleur, 'mesure');
+}
+
+function definirPleinEcran(actif, raison){
+  if(pleinEcranNatif === actif) return;
+  pleinEcranNatif = actif;
+  try{ localStorage.setItem('pleinEcranNatif', actif ? '1' : '0'); }catch(e){}
+  diagPush('err', {msg: 'plein écran: ' + (actif ? 'activé' : 'désactivé') + ' (' + raison + ')'});
+}
+
 async function demanderPleinEcran(){
   if(!pleinEcranNatif) return;
   // Le DOCUMENT, et non la zone caméra : un élément en plein écran passe dans la couche
@@ -10292,6 +10428,9 @@ document.addEventListener('fullscreenchange', ()=>{
 });
 
 function stopCamera(){
+  // La session s'est déroulée entièrement dans un seul mode : sa médiane lui est
+  // attribuable sans ambiguïté. C'est le moment de la verser au calibrage.
+  cloreMesurePleinEcran();
   quitterPleinEcran();
   stopAimLoop();
   if(cameraStream){
@@ -10587,7 +10726,8 @@ const detailsReglages = document.querySelector('.reglages-scan');
 
 function ouvrirFeuilleReglages(){
   const f = $('feuille-reglages'), cible = $('fr-corps');
-  if(!f || !cible || !corpsReglages) return;
+  if(!f || !cible || !corpsReglages || f.classList.contains('ouverte')) return;
+  empilerRetour('feuille-reglages', fermerFeuilleReglages);
   cible.appendChild(corpsReglages);
   f.classList.add('ouverte');
 }
@@ -10595,6 +10735,7 @@ function ouvrirFeuilleReglages(){
 function fermerFeuilleReglages(){
   const f = $('feuille-reglages');
   if(!f) return;
+  if(f.classList.contains('ouverte')) depilerRetour('feuille-reglages');
   f.classList.remove('ouverte');
   // Retour au <details> de la page, systématiquement : la feuille refermée ne doit rien
   // retenir, sinon les réglages disparaîtraient de l'onglet Scanner sur ordinateur.
@@ -11797,7 +11938,8 @@ function rendrePopupLot(){
 
 function ouvrirPopupLot(){
   const p = $('popup-lot');
-  if(!p) return;
+  if(!p || p.classList.contains('ouvert')) return;
+  empilerRetour('popup-lot', fermerPopupLot);
   figerFondPopup();
   rendrePopupLot();
   p.classList.add('ouvert');
@@ -11815,6 +11957,7 @@ function fermerPopupLot(){
   const p = $('popup-lot');
   if(!p || !p.classList.contains('ouvert')) return;
   p.classList.remove('ouvert');
+  depilerRetour('popup-lot');
   if(autoAvantPopup !== null){
     autoCaptureEnabled = autoAvantPopup;
     autoAvantPopup = null;
@@ -11824,8 +11967,18 @@ function fermerPopupLot(){
 
 // Conseils de prise de vue. Le voile ET la croix ferment ; la fenêtre elle-même ne se
 // referme pas quand on la touche, on doit pouvoir y faire défiler du texte.
-function ouvrirPopupConseils(){ $('popup-conseils')?.classList.add('ouvert'); }
-function fermerPopupConseils(){ $('popup-conseils')?.classList.remove('ouvert'); }
+function ouvrirPopupConseils(){
+  const p = $('popup-conseils');
+  if(!p || p.classList.contains('ouvert')) return;
+  empilerRetour('popup-conseils', fermerPopupConseils);
+  p.classList.add('ouvert');
+}
+function fermerPopupConseils(){
+  const p = $('popup-conseils');
+  if(!p || !p.classList.contains('ouvert')) return;
+  p.classList.remove('ouvert');
+  depilerRetour('popup-conseils');
+}
 $('btn-conseils')?.addEventListener('click', ouvrirPopupConseils);
 $('pc-fermer')?.addEventListener('click', fermerPopupConseils);
 $('pc-voile')?.addEventListener('click', fermerPopupConseils);
@@ -16166,21 +16319,6 @@ function appliquerSourcePhoto(){
     r.checked = (r.value === sourcePhoto);
   });
 }
-// Prend effet au prochain démarrage de la caméra : basculer en plein écran pendant qu'on
-// vise ferait sauter le cadrage, et sortir du plein écran demande de toute façon un geste
-// que le navigateur n'accorde qu'à l'utilisateur.
-function majPleinEcranUI(){
-  const c = $('chk-plein-ecran');
-  if(c) c.checked = pleinEcranNatif;
-}
-$('chk-plein-ecran')?.addEventListener('change', (e)=>{
-  pleinEcranNatif = e.target.checked;
-  localStorage.setItem('pleinEcranNatif', pleinEcranNatif ? '1' : '0');
-  if(!pleinEcranNatif) quitterPleinEcran();
-  else if(cameraStream) toast('Le plein écran prendra effet au prochain démarrage de la caméra.');
-});
-majPleinEcranUI();
-
 $('src-photo')?.addEventListener('change', (e)=>{
   const v = e.target?.value;
   if(!v) return;
