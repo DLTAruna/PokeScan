@@ -215,7 +215,7 @@
     margin:0 8px calc(22px + env(safe-area-inset-bottom));
     /* Pas de backdrop-filter au-dessus de la video : voir le commentaire de .jauges,
        c'est ce qui rendait l'apercu noir sur certains GPU Android. */
-    background:rgba(8,10,16,.88); border-color:rgba(255,255,255,.12);
+    background:rgba(8,10,16,.70); border-color:rgba(255,255,255,.14);
   }
   #cam-fullscreen-area.fs .live-result img{width:38px; height:53px;}
   #cam-fullscreen-area.fs .live-result-info{font-size:12px;}
@@ -375,6 +375,38 @@
     padding:6px 10px calc(16px + env(safe-area-inset-bottom));
   }
   .pl-vide{padding:28px 14px; text-align:center; color:var(--muted); font-size:13px;}
+  /* En-tête de groupe. La liste répond à deux questions différentes — ce qui est rangé,
+     et ce qui attend encore un geste — et les mélanger laissait croire que tout était
+     traité. */
+  .pl-groupe{padding:12px 4px 8px;}
+  .pl-groupe h4{
+    margin:0; font-size:11px; font-weight:800; letter-spacing:.08em;
+    text-transform:uppercase; color:var(--muted);
+  }
+  .pl-groupe p{margin:5px 0 0; font-size:11.5px; line-height:1.5; color:var(--muted);}
+  .pl-groupe.attente{
+    margin-top:6px; padding:11px 12px; border-radius:10px;
+    background:rgba(224,161,42,.08); border:1px solid rgba(224,161,42,.32);
+  }
+  .pl-groupe.attente h4{color:#ffce70;}
+  .pl-groupe.attente button{margin-top:9px;}
+  .pl-ligne.att .pl-vign{border-color:rgba(224,161,42,.35);}
+  .pl-ligne.att .pl-meta{color:rgba(255,206,112,.85);}
+
+  /* Pastille de fiabilité, collée au nom : c'est du même ordre que le nom lui-même —
+     « quelle carte » et « à quel point on en est sûr » se lisent ensemble. */
+  .pl-fia{
+    display:inline-flex; align-items:center; justify-content:center;
+    width:15px; height:15px; margin-right:5px; vertical-align:-2px; flex:none;
+  }
+  .pl-fia svg{width:100%; height:100%;}
+  .pl-fia.vert{color:#5ed48a;}
+  .pl-fia.ambre{color:#e9b44c;}
+  .pl-fia.or{color:var(--accent);}
+  .pl-fia.doute{
+    color:#ffce70; font-size:11px; font-weight:900;
+    border:1.5px solid currentColor; border-radius:50%;
+  }
   .pl-ligne{
     display:flex; align-items:center; gap:10px; padding:8px 4px;
     border-bottom:1px solid rgba(255,255,255,.06);
@@ -1592,10 +1624,10 @@
      sur le bord gauche de la carte visée — chaque pixel qu'il occupe est un pixel de
      moins pour cadrer, et une jauge se lit d'un coup d'œil ou ne sert à rien. */
   .jauges{
-    position:absolute; left:6px; top:50%; transform:translateY(-50%);
-    display:flex; flex-direction:column; align-items:stretch; gap:6px;
+    position:absolute; left:5px; top:50%; transform:translateY(-50%);
+    display:flex; flex-direction:column; align-items:flex-start; gap:7px;
     pointer-events:none; z-index:3;
-    padding:7px 7px 8px; border-radius:9px;
+    padding:7px 6px 8px; border-radius:9px;
     /* PAS de backdrop-filter ici. Cet élément est superposé au <video> de la caméra, et
        un filtre d'arrière-plan par-dessus une couche vidéo fait basculer le compositeur
        sur un chemin de rendu où, sur plusieurs GPU Android, la vidéo se rend NOIRE. Le
@@ -1604,13 +1636,22 @@
     background:rgba(8,10,16,.74);
     border:1px solid rgba(255,255,255,.09);
   }
-  .jauge{display:flex; flex-direction:column; gap:2px;}
+  .jauge{display:flex; flex-direction:row; align-items:center; gap:4px;}
+  /* Légende tournée : c'est le mot « LUMIÈRE » qui fixait la largeur du bandeau, pas la
+     barre. À la verticale il n'occupe plus que sa hauteur de ligne, et l'ensemble passe
+     sous les 32 px — assez étroit pour tenir à GAUCHE de la carte visée au lieu de mordre
+     dessus. vertical-rl + rotation : le texte se lit du bas vers le haut, sens naturel
+     d'une légende d'axe. */
   .jauge .jl{
-    font-size:7.5px; font-weight:800; letter-spacing:.06em; color:rgba(255,255,255,.6);
+    writing-mode:vertical-rl; transform:rotate(180deg);
+    font-size:7px; font-weight:800; letter-spacing:.05em; color:rgba(255,255,255,.6);
     text-shadow:0 1px 3px rgba(0,0,0,.9); line-height:1;
   }
+  /* Remplissage par le bas : align-items:flex-end colle la barre intérieure au fond de
+     la gouttière, et c'est sa hauteur que la boucle d'animation fait varier. */
   .jauge .jt{
-    display:block; width:32px; height:3.5px; border-radius:2px;
+    display:flex; align-items:flex-end;
+    width:4px; height:38px; border-radius:2px;
     background:rgba(255,255,255,.16); overflow:hidden;
     box-shadow:0 1px 3px rgba(0,0,0,.55);
   }
@@ -1619,7 +1660,7 @@
      qu'AJOUTER son propre retard a une valeur deja lissee — les deux se cumulent, et la
      jauge devient mollassonne au lieu d'etre fluide. */
   .jauge .jt i{
-    display:block; height:100%; width:0%; border-radius:2px;
+    display:block; width:100%; height:0%; border-radius:2px;
   }
   /* Bloc de proposition : la question posee en grand, avant le champ de recherche. */
   .proposition{
@@ -3221,8 +3262,12 @@
               <linearGradient id="fabOr" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0" stop-color="#ffeaa7"/><stop offset=".42" stop-color="#e6c25c"/><stop offset="1" stop-color="#9a7620"/>
               </linearGradient>
-              <radialGradient id="fabCorps" cx=".34" cy=".26" r=".86">
-                <stop offset="0" stop-color="#44516d"/><stop offset=".55" stop-color="#1d2431"/><stop offset="1" stop-color="#0a0d14"/>
+              <clipPath id="fabRond"><circle cx="32" cy="32" r="29.6"/></clipPath>
+              <radialGradient id="fabRouge" cx=".36" cy=".2" r=".95">
+                <stop offset="0" stop-color="#ff7a63"/><stop offset=".45" stop-color="#e0301f"/><stop offset="1" stop-color="#8d150c"/>
+              </radialGradient>
+              <radialGradient id="fabArgent" cx=".36" cy=".9" r=".95">
+                <stop offset="0" stop-color="#f3f6fa"/><stop offset=".55" stop-color="#c3ccd9"/><stop offset="1" stop-color="#8b95a5"/>
               </radialGradient>
               <linearGradient id="fabDome" x1="0" y1="0" x2="0" y2="1">
                 <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
@@ -3231,13 +3276,20 @@
                 <stop offset="0" stop-color="#8fc4e8"/><stop offset=".48" stop-color="#2f6d96"/><stop offset="1" stop-color="#0d1c2c"/>
               </radialGradient>
             </defs>
-            <circle cx="32" cy="32" r="29.6" fill="url(#fabCorps)"/>
-            <path d="M32 5.2A26.8 26.8 0 0 1 57.6 24.4 26.8 26.8 0 0 0 32 15.6 26.8 26.8 0 0 0 6.4 24.4 26.8 26.8 0 0 1 32 5.2Z" fill="url(#fabDome)"/>
-            <path d="M4.6 32h12.2M47.2 32h12.2" stroke="url(#fabOr)" stroke-width="3" stroke-linecap="round"/>
+            <g clip-path="url(#fabRond)">
+              <path d="M2.4 32a29.6 29.6 0 0 1 59.2 0Z" fill="url(#fabRouge)"/>
+              <path d="M2.4 32a29.6 29.6 0 0 0 59.2 0Z" fill="url(#fabArgent)"/>
+              <rect x="2" y="28.4" width="60" height="7.2" fill="#12161f"/>
+              <rect x="2" y="28.4" width="60" height="1.1" fill="url(#fabOr)" opacity=".85"/>
+              <rect x="2" y="34.5" width="60" height="1.1" fill="url(#fabOr)" opacity=".85"/>
+              <!-- Reflet de verre sur la calotte : c'est lui qui donne le volume, une
+                   moitié rouge plate aurait l'air d'un autocollant. -->
+              <path d="M32 4.4A27.6 27.6 0 0 1 58.4 24 27.6 27.6 0 0 0 32 14.4 27.6 27.6 0 0 0 5.6 24 27.6 27.6 0 0 1 32 4.4Z" fill="url(#fabDome)"/>
+            </g>
             <circle cx="32" cy="32" r="15" fill="#0d1119" stroke="url(#fabOr)" stroke-width="2.4"/>
             <circle cx="32" cy="32" r="9.4" fill="url(#fabVerre)"/>
             <circle cx="32" cy="32" r="9.4" fill="none" stroke="rgba(255,255,255,.26)"/>
-            <path d="M26.4 27.4a7.6 7.6 0 0 1 5.4-2.8" stroke="rgba(255,255,255,.8)" stroke-width="2" stroke-linecap="round" fill="none"/>
+            <path d="M26.4 27.4a7.6 7.6 0 0 1 5.4-2.8" stroke="rgba(255,255,255,.85)" stroke-width="2" stroke-linecap="round" fill="none"/>
             <circle cx="32" cy="32" r="29.6" fill="none" stroke="url(#fabOr)" stroke-width="2.6"/>
           </svg>
         </button>
@@ -7693,14 +7745,28 @@ const GUIDE_H = 0.62;   // hauteur du cadre, en fraction de la hauteur de l'imag
 // une position dans le document y forcerait un recalcul de mise en page soixante fois
 // par seconde.
 let cadrageVisible = {w: 1, h: 1};
+// Remontée du cadre, en fraction de la hauteur d'image. Centré sur l'IMAGE, il tombait
+// visuellement trop bas : la barre du haut occupe une soixantaine de pixels, la rangée
+// basse et le panneau de résultat près de deux cents. Ce qu'on veut centrer, c'est la
+// place réellement libre entre les deux — pas la surface totale.
+let decalageGuideY = 0;
 function majCadrageVisible(){
   const video = $('video');
   const plein = $('cam-fullscreen-area')?.classList.contains('fs');
-  if(!video || !video.videoWidth || !plein){ cadrageVisible = {w: 1, h: 1}; return; }
+  if(!video || !video.videoWidth || !plein){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; return; }
   const b = video.getBoundingClientRect();
-  if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; return; }
+  if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; return; }
   const rEl = b.width / b.height, rIm = video.videoWidth / video.videoHeight;
   cadrageVisible = rEl > rIm ? {w: 1, h: rIm / rEl} : {w: rEl / rIm, h: 1};
+
+  const barre = document.querySelector('.cam-topbar')?.getBoundingClientRect();
+  const fab = $('btn-capture-frame')?.getBoundingClientRect();
+  if(!barre || !fab || !fab.height){ decalageGuideY = 0; return; }
+  const centreLibre = (barre.bottom + fab.top) / 2;
+  const centreImage = b.top + b.height / 2;
+  // Le facteur cadrageVisible.h convertit des pixels d'écran en fraction d'IMAGE : quand
+  // l'image déborde verticalement, la hauteur de l'élément ne couvre qu'une partie d'elle.
+  decalageGuideY = ((centreImage - centreLibre) * cadrageVisible.h) / b.height;
 }
 addEventListener('resize', majCadrageVisible);
 addEventListener('orientationchange', ()=> setTimeout(majCadrageVisible, 250));
@@ -7714,7 +7780,11 @@ function guideRect(video){
   const wMax = cadrageVisible.w * 0.94, hMax = cadrageVisible.h * 0.94;
   if(w > wMax){ w = wMax; h = (w*vw*CARD_RATIO)/vh; }
   if(h > hMax){ h = hMax; w = (h*vh/CARD_RATIO)/vw; }
-  return { x:(1-w)/2, y:(1-h)/2, w, h };
+  // Bornée : le cadre remonte, mais jamais au point de sortir de l'image — on capture ce
+  // qu'il délimite, un débordement donnerait une bande vide en haut de la photo.
+  const bordHaut = (1 - cadrageVisible.h) / 2;
+  const y = Math.min(1 - bordHaut - h, Math.max(bordHaut, (1-h)/2 - decalageGuideY));
+  return { x:(1-w)/2, y, w, h };
 }
 
 // Boîte occupée à l'écran par l'image elle-même (hors bandes noires en `contain`, hors
@@ -8178,7 +8248,7 @@ function rendreJauges(){
     // Écriture seulement si le rendu change RÉELLEMENT. Une valeur interpolée bouge à
     // chaque image, mais son arrondi au pour-cent ne change que quelques fois par
     // transition : écrire les autres fois ne fait que déclencher des recalculs de style.
-    if(el.dataset.l !== largeur){ el.style.width = largeur; el.dataset.l = largeur; }
+    if(el.dataset.l !== largeur){ el.style.height = largeur; el.dataset.l = largeur; }
     if(el.dataset.c !== couleur){ el.style.backgroundColor = couleur; el.dataset.c = couleur; }
   }
 }
@@ -9044,7 +9114,7 @@ async function attemptRead(corners, score){
         };
         showLiveResultDone(hashShortcut.card, 'high');
         ajouterAuTotalSession(hashShortcut.card);
-        if(validationAuto) validerAutomatiquement(hashShortcut.card, item);
+        if(validationAuto) validerAutomatiquement(hashShortcut.card, item, 'visuel');
       } else {
         resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp, liveHash);
       }
@@ -9247,6 +9317,9 @@ function renderTotalSession(){
     : totalSession.valorisees + ' carte(s) valorisée(s)';
 }
 function showLiveResultDone(card, confidence){
+  // Le panneau de résultat occupe le bas de l'écran : son apparition réduit la place
+  // libre, donc déplace le centre sur lequel le cadre doit se caler.
+  setTimeout(majCadrageVisible, 0);
   // Même cote que celle qui partira au stock : afficher un prix « toutes impressions »
   // puis en enregistrer un autre ferait douter du chiffre à chaque carte.
   const {variante, force} = impressionRetenue(card, impressionScan);
@@ -9390,7 +9463,7 @@ async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrT
 
       // Certitude : la carte part au lot sans passer par l'écran d'identification.
       if(validationAuto && result.confidence === 'high'){
-        const r = validerAutomatiquement(result.card, item);
+        const r = validerAutomatiquement(result.card, item, 'lecture');
         setAimHint(r.fusionnee
           ? `🔁 ${result.card.name} — 2e exemplaire, quantité ${r.cible.qty}`
           : `✅ ${result.card.name} — ajouté au lot`);
@@ -9445,7 +9518,8 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
       item._analysis.note = (item._analysis.note || '').replace('nom à relire', 'nom illisible, numéro retenu');
       if(mySeq === liveResultSeq) showLiveResultDone(card, 'high');
       if(validationAuto && pendingQueue.includes(item)){
-        const rr = validerAutomatiquement(card, item);
+        // Le nom n'a pas été lu : seul le numéro porte l'identification.
+        const rr = validerAutomatiquement(card, item, 'numero');
         noterAutoValidee(card, rr);
       }
       return;
@@ -9472,7 +9546,7 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
       // pas encore certaine, elle n'a donc pas été validée automatiquement. Maintenant
       // qu'elle l'est, il n'y a aucune raison de la laisser attendre un geste humain.
       if(validationAuto && pendingQueue.includes(item)){
-        const r = validerAutomatiquement(card, item);
+        const r = validerAutomatiquement(card, item, 'lecture');
         toast(r.fusionnee
           ? `🔁 ${card.name} — 2e exemplaire, quantité ${r.cible.qty}`
           : `✅ ${card.name} — confirmé et ajouté au lot`);
@@ -10008,7 +10082,7 @@ function validerSiCertain(item){
   const a = item && item._analysis;
   if(!a || a.status !== 'ok' || !a.card) return false;
   if(!pendingQueue.includes(item)) return false;
-  const r = validerAutomatiquement(a.card, item);
+  const r = validerAutomatiquement(a.card, item, 'lecture');
   noterAutoValidee(a.card, r);
   return true;
 }
@@ -10637,7 +10711,9 @@ function reinitialiserJournalScan(){
   if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
 }
 
-function noterJournalScan(card, entry, dest, ligneStock){
+// `fiabilite` dit PAR QUEL CHEMIN la carte a été identifiée. Les quatre ne se valent pas,
+// et une fois la carte rangée l'utilisateur n'avait plus aucun moyen de les distinguer.
+function noterJournalScan(card, entry, dest, ligneStock, fiabilite){
   if(!card || !card.id) return;
   const {variante, force} = impressionRetenue(card, impressionScan);
   const cle = card.id + '|' + variante;
@@ -10648,12 +10724,14 @@ function noterJournalScan(card, entry, dest, ligneStock){
     if(ligneStock) deja.entryId = ligneStock.id;
     if(dest.classeur) deja.classeur = true;
     if(dest.vrac) deja.vrac = true;
+    // La lecture la plus faible l'emporte : c'est celle qui mérite d'être revérifiée.
+    if(fiabilite === 'numero') deja.fiabilite = 'numero';
   } else {
     journalScan.push({
       cle, cardId: card.id, setId: card.set?.id || '', setNom: card.set?.name || '',
       nom: card.name || '?', numero: card.number || '', impression: variante, forcee: !!force,
       image: entry?.photo || entry?.cardImage || '',
-      prix: entry?.prixMarche ?? null, qte: 1, at: Date.now(),
+      prix: entry?.prixMarche ?? null, qte: 1, at: Date.now(), fiabilite: fiabilite || 'lecture',
       entryId: ligneStock ? ligneStock.id : null,
       classeur: !!dest.classeur, vrac: !!dest.vrac
     });
@@ -10734,56 +10812,127 @@ function figerFondPopup(){
   ctx.drawImage(petit, 0, 0, cvs.width, cvs.height);
 }
 
+// Fiabilité de l'identification. Une carte peut être arrivée au lot par quatre chemins qui
+// ne se valent pas, et l'utilisateur n'avait aucun moyen de les distinguer une fois la
+// carte rangée. Le rang sert au tri visuel, pas à un calcul.
+const FIABILITE = {
+  main:    {texte: 'Validée à la main', ton: 'or'},
+  lecture: {texte: 'Nom et numéro confirmés', ton: 'vert'},
+  visuel:  {texte: 'Doublon reconnu à l’image', ton: 'vert'},
+  numero:  {texte: 'Numéro seul — nom illisible', ton: 'ambre'}
+};
+const ICO_FIABILITE = {
+  // Double coche : deux signaux indépendants concordent.
+  vert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 12.6l3.6 3.6 7-7"/><path d="M10.4 16.2l3.6 3.6 7.2-7.2"/></svg>',
+  // Coche simple : un seul signal a suffi.
+  ambre: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.6 12.8l4.6 4.6 10.2-10.2"/></svg>',
+  // Main : c'est l'utilisateur qui a tranché, la plus sûre des quatre.
+  or: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.1 11.4V5.5a1.55 1.55 0 0 1 3.1 0v5.2m0-2.1a1.5 1.5 0 0 1 3 0v2.1m0-1.3a1.5 1.5 0 0 1 3 0v5.2c0 3.1-2.2 5.5-5.4 5.5h-.9a4.9 4.9 0 0 1-4-2.05l-2.6-3.6a1.55 1.55 0 0 1 2.35-2l1.45 1.5V11.4"/></svg>'
+};
+
 const ICO_CORBEILLE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.6 6.6h14.8M9.4 6.6V5.2a1.4 1.4 0 0 1 1.4-1.4h2.4a1.4 1.4 0 0 1 1.4 1.4v1.4M6.4 6.6l.8 12a1.6 1.6 0 0 0 1.6 1.5h6.4a1.6 1.6 0 0 0 1.6-1.5l.8-12"/></svg>';
 
 function rendrePopupLot(){
   const z = $('pl-liste'), bilan = $('pl-bilan');
   if(!z) return;
   const lignes = journalScan.slice().sort((a, b)=> b.at - a.at);
+  // Les photos encore dans la file : elles ne sont parties NULLE PART, et c'est justement
+  // ce que la pastille du total ne disait pas. Une carte scannée qui n'apparaît dans aucune
+  // liste passe pour perdue.
+  const attente = pendingQueue.slice().reverse();
+
   if(bilan){
     const total = lignes.reduce((s, j)=> s + (j.prix || 0) * j.qte, 0);
     const n = lignes.reduce((s, j)=> s + j.qte, 0);
-    bilan.textContent = n
-      ? n + ' carte(s) · ' + total.toFixed(2).replace('.', ',') + ' €'
-      : 'Rien de scanné pour l’instant';
+    const bouts = [];
+    if(n) bouts.push(n + ' rangée(s) · ' + total.toFixed(2).replace('.', ',') + ' €');
+    if(attente.length) bouts.push(attente.length + ' à confirmer');
+    bilan.textContent = bouts.length ? bouts.join('  ·  ') : 'Rien de scanné pour l’instant';
   }
-  if(!lignes.length){
+
+  if(!lignes.length && !attente.length){
     z.innerHTML = '<div class="pl-vide">Les cartes lues pendant cette session apparaîtront ici,<br>'
       + 'avec leur quantité, pour les corriger sans quitter la caméra.</div>';
     return;
   }
+
   const NOM_DEST = {stock: 'Stock', classeur: 'Classeur', vrac: 'Vrac'};
-  z.innerHTML = lignes.map((j, i)=>{
-    const dest = ligneLotDe(j) ? 'stock' : (j.classeur ? 'classeur' : (j.vrac ? 'vrac' : 'stock'));
-    const imp = NOM_VARIANTE[j.impression] || j.impression;
-    const prix = j.prix != null ? (j.prix * j.qte).toFixed(2).replace('.', ',') + ' €' : '—';
-    const sup = j.qte <= 1;
-    return '<div class="pl-ligne">'
-      + (j.image ? '<img class="pl-vign" src="' + j.image + '" alt="">' : '<div class="pl-vign"></div>')
-      + '<div class="pl-info">'
-        + '<div class="pl-nom">' + escapeHtml(j.nom) + '</div>'
-        + '<div class="pl-meta">'
-          + '<span>#' + escapeHtml(j.numero) + '</span>'
-          + '<span class="pl-tag imp ' + j.impression + '">' + escapeHtml(imp) + '</span>'
-          + (j.forcee ? '<span class="pl-tag forcee" title="Cette carte n’existe pas dans l’impression choisie sur la caméra">imposée</span>' : '')
-          + '<span class="pl-tag dest-' + dest + '">' + NOM_DEST[dest] + '</span>'
+  let html = '';
+
+  if(lignes.length){
+    html += '<div class="pl-groupe"><h4>Rangées</h4>'
+      + '<p>Identification confirmée : ces cartes sont déjà parties à leur destination.</p></div>';
+    html += lignes.map((j, i)=>{
+      const dest = ligneLotDe(j) ? 'stock' : (j.classeur ? 'classeur' : (j.vrac ? 'vrac' : 'stock'));
+      const imp = NOM_VARIANTE[j.impression] || j.impression;
+      const prix = j.prix != null ? (j.prix * j.qte).toFixed(2).replace('.', ',') + ' €' : '—';
+      const sup = j.qte <= 1;
+      const f = FIABILITE[j.fiabilite] || FIABILITE.lecture;
+      return '<div class="pl-ligne">'
+        + (j.image ? '<img class="pl-vign" src="' + j.image + '" alt="">' : '<div class="pl-vign"></div>')
+        + '<div class="pl-info">'
+          + '<div class="pl-nom">'
+            + '<span class="pl-fia ' + f.ton + '" title="' + f.texte + '">' + ICO_FIABILITE[f.ton] + '</span>'
+            + escapeHtml(j.nom) + '</div>'
+          + '<div class="pl-meta">'
+            + '<span>#' + escapeHtml(j.numero) + '</span>'
+            + '<span class="pl-tag imp ' + j.impression + '">' + escapeHtml(imp) + '</span>'
+            + (j.forcee ? '<span class="pl-tag forcee" title="Cette carte n’existe pas dans l’impression choisie sur la caméra">imposée</span>' : '')
+            + '<span class="pl-tag dest-' + dest + '">' + NOM_DEST[dest] + '</span>'
+          + '</div>'
         + '</div>'
-      + '</div>'
-      + '<div class="pl-prix">' + prix + '</div>'
-      + '<div class="pl-qte">'
-        + '<button data-pl="' + i + '" data-d="-1"' + (sup ? ' class="sup"' : '') + ' title="'
-          + (sup ? 'Retirer cette carte' : 'Retirer un exemplaire') + '">'
-          + (sup ? ICO_CORBEILLE : '−') + '</button>'
-        + '<span class="q">' + j.qte + '</span>'
-        + '<button data-pl="' + i + '" data-d="1" title="Ajouter un exemplaire">+</button>'
-      + '</div>'
-    + '</div>';
-  }).join('');
+        + '<div class="pl-prix">' + prix + '</div>'
+        + '<div class="pl-qte">'
+          + '<button data-pl="' + i + '" data-d="-1"' + (sup ? ' class="sup"' : '') + ' title="'
+            + (sup ? 'Retirer cette carte' : 'Retirer un exemplaire') + '">'
+            + (sup ? ICO_CORBEILLE : '−') + '</button>'
+          + '<span class="q">' + j.qte + '</span>'
+          + '<button data-pl="' + i + '" data-d="1" title="Ajouter un exemplaire">+</button>'
+        + '</div>'
+      + '</div>';
+    }).join('');
+  }
+
+  if(attente.length){
+    html += '<div class="pl-groupe attente"><h4>À confirmer — ' + attente.length + '</h4>'
+      + '<p>La lecture n’a pas été assez sûre pour ranger ces cartes toute seule. Elles '
+      + 'attendent dans l’onglet <b>À vérifier</b>, avec leur photo : un appui par carte '
+      + 'suffit à les valider.</p>'
+      + '<button class="btn-ghost btn-sm" id="pl-aller-verifier">Aller les confirmer</button></div>';
+    html += attente.map(it=>{
+      const a = it._analysis;
+      let titre = 'Analyse en cours…', detail = 'La lecture tourne en arrière-plan.';
+      if(a && a.card){
+        titre = a.card.name;
+        detail = 'Proposition à confirmer' + (a.number ? ' · #' + escapeHtml(a.number) : '');
+      } else if(a){
+        titre = 'Carte non lue';
+        detail = a.number ? 'Numéro lu : #' + escapeHtml(a.number) : 'Ni le nom ni le numéro n’ont pu être lus.';
+      }
+      return '<div class="pl-ligne att">'
+        + (it.photo ? '<img class="pl-vign" src="' + it.photo + '" alt="">' : '<div class="pl-vign"></div>')
+        + '<div class="pl-info">'
+          + '<div class="pl-nom"><span class="pl-fia doute" title="Identification incertaine">?</span>'
+          + escapeHtml(titre) + '</div>'
+          + '<div class="pl-meta"><span>' + detail + '</span></div>'
+        + '</div>'
+      + '</div>';
+    }).join('');
+  }
+
+  z.innerHTML = html;
   z.querySelectorAll('button[data-pl]').forEach(b=>{
     b.addEventListener('click', ()=>{
       const j = lignes[parseInt(b.dataset.pl, 10)];
       if(j) ajusterJournal(j, parseInt(b.dataset.d, 10));
     });
+  });
+  // La caméra est coupée avant de changer d'onglet : en plein écran elle recouvre toute la
+  // page, on se retrouverait devant l'objectif au lieu de la file d'attente.
+  $('pl-aller-verifier')?.addEventListener('click', ()=>{
+    fermerPopupLot();
+    stopCamera();
+    document.querySelector('.navbar [data-tab="identify"]')?.click();
   });
 }
 
@@ -10820,7 +10969,7 @@ $('pl-voile')?.addEventListener('click', fermerPopupLot);
 document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerPopupLot(); });
 
 
-function validerAutomatiquement(card, item){
+function validerAutomatiquement(card, item, fiabilite){
   // L'entrée est construite dans tous les cas : elle porte le nom, l'impression et la cote
   // qui servent au bilan de session et au fil des cartes récentes, même quand rien ne part
   // au stock.
@@ -10838,7 +10987,7 @@ function validerAutomatiquement(card, item){
   }
   if(dest.classeur) enregistrerAuClasseur(card);
   if(dest.vrac) ajouterAuVrac(card, entry);
-  noterJournalScan(card, entry, dest, dest.stock ? cible : null);
+  noterJournalScan(card, entry, dest, dest.stock ? cible : null, fiabilite);
 
   // La photo est consommée : elle a servi, la carte est traitée. La laisser dans la file
   // ferait réapparaître dans « À vérifier » une carte déjà rangée — c'est exactement le
@@ -14811,7 +14960,7 @@ function quickAdd(card){
   if(dest.stock){ const r = ajouterAuLot(entry); cible = r.entry; fusionnee = r.fusionnee; }
   const impClasseur = dest.classeur ? enregistrerAuClasseur(card) : null;
   if(dest.vrac) ajouterAuVrac(card, entry);
-  noterJournalScan(card, entry, dest, dest.stock ? cible : null);
+  noterJournalScan(card, entry, dest, dest.stock ? cible : null, 'main');
 
   if(hadPhoto) pendingQueue.shift();
 
