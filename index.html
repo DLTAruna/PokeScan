@@ -234,8 +234,9 @@
      par la pastille doree du haut, la suggestion flotte sur la video quand elle sort. */
   #cam-fullscreen-area.fs #bilan-session{display:none !important;}
   #cam-fullscreen-area.fs #suggestion-set{
-    position:absolute; top:calc(66px + env(safe-area-inset-top)); left:8px; right:8px;
-    z-index:22; margin:0;
+    position:absolute; top:calc(58px + env(safe-area-inset-top));
+    left:50%; transform:translateX(-50%);
+    z-index:22; margin:0; max-width:calc(100% - 24px);
   }
   /* Le compteur fait doublon avec la pastille doree, qui porte desormais les deux
      chiffres ; le rappel de prise en main est un conseil de premiere carte, il n'a pas
@@ -499,7 +500,7 @@
      flex avec deux marges automatiques le decalerait des que le total apparait). */
   .cam-topbar{
     position:absolute; top:0; left:0; right:0; z-index:20;
-    display:grid; grid-template-columns:1fr auto 1fr; align-items:center; gap:6px;
+    display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:6px;
     padding:calc(9px + env(safe-area-inset-top)) 10px 6px;
     /* La barre laisse passer les gestes : seuls ses boutons les captent, pour ne pas
        manger le haut de l'image ou l'on vise. */
@@ -534,6 +535,15 @@
   }
   .auto-toggle svg{width:17px; height:17px; flex:none;}
   .auto-toggle.on{background:var(--good); border-color:var(--good);}
+  @media (max-width:379px){
+    .auto-toggle span{display:none;}
+    .auto-toggle{width:42px; padding:0; justify-content:center;}
+  }
+  /* Dernier filet : si le total reste trop long malgré tout, il se coupe proprement au
+     lieu de passer sous le bouton voisin. */
+  .ct-gauche{min-width:0; max-width:100%;}
+  .cam-total{min-width:0; max-width:100%;}
+  .cam-total #cam-total-val{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;}
   .cam-counter{
     position:absolute; top:calc(50px + env(safe-area-inset-top)); left:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
@@ -542,12 +552,13 @@
      session de plusieurs centaines de cartes, c'est l'information qui dit s'il vaut la
      peine de continuer, et la chercher dans l'onglet Lot casse le rythme du scan. */
   .cam-total{
-    display:flex; align-items:center; gap:6px;
-    background:rgba(212,175,55,.92); color:#1a1206;
-    padding:6px 12px 6px 10px; border-radius:16px; font-size:13px; font-weight:700;
+    display:flex; align-items:center; gap:8px;
+    background:#d4af37; color:#1a1206;
+    padding:7px 15px 7px 12px; border-radius:17px; font-size:13px; font-weight:700;
     box-shadow:0 2px 8px rgba(0,0,0,.4); white-space:nowrap;
   }
-  .cam-total .ct-ico{width:16px; height:16px; flex:none; opacity:.85;}
+  .cam-total .ct-ico{width:19px; height:19px; flex:none;}
+  .cam-total:active{background:#c19c2c;}
   /* Masqué par défaut, affiché seulement si l'appareil expose plusieurs objectifs
      distincts (voir startCamera) — pas de bouton qui ne ferait rien. Il a quitté l'image
      pour les réglages : on change d'objectif une fois par téléphone, pas par carte. */
@@ -1594,13 +1605,33 @@
   }
   .recent button:hover{background:rgba(192,57,43,.72); color:#fff;}
 
-  /* Suggestion de verrouillage de set */
+  /* Suggestion de verrouillage de set — une pastille, pas un bandeau. */
   .suggestion-set{
-    display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px;
-    padding:9px 12px; border-radius:10px; font-size:12.5px;
-    background:rgba(61,125,202,.12); border:1px solid rgba(61,125,202,.34);
+    display:flex; align-items:center; gap:2px; margin-bottom:10px;
+    padding:0; border-radius:16px; font-size:12px; width:max-content; max-width:100%;
+    background:rgba(8,10,16,.88); border:1px solid rgba(61,125,202,.55);
+    overflow:hidden;
   }
-  .suggestion-set .actions{margin-left:auto; display:flex; gap:9px; align-items:center;}
+  .suggestion-set .sug-oui{
+    display:flex; align-items:center; gap:7px; min-width:0;
+    background:transparent; border:none; color:var(--text);
+    padding:7px 4px 7px 11px; font-size:12px; text-align:left;
+  }
+  .suggestion-set .sug-oui svg{width:14px; height:14px; flex:none; color:#8fbdf0;}
+  /* Le compteur porte tout le « pourquoi » : six cartes d'affilée du même set. */
+  .suggestion-set .sug-n{
+    flex:none; font-weight:800; font-size:10.5px; color:#8fbdf0;
+    background:rgba(61,125,202,.22); border-radius:5px; padding:1px 5px;
+  }
+  .suggestion-set .sug-txt{overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;}
+  .suggestion-set .sug-txt b{color:var(--accent);}
+  .suggestion-set .sug-non{
+    flex:none; width:30px; height:30px; padding:0; margin-right:2px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:transparent; border:none; color:var(--muted);
+  }
+  .suggestion-set .sug-non svg{width:14px; height:14px;}
+  .suggestion-set .sug-non:active{color:#fff;}
 
   /* Bilan de session */
   .bilan-session{
@@ -3202,10 +3233,10 @@
                là où un montant nu pouvait passer pour le prix de la dernière carte lue. -->
           <div class="ct-gauche">
             <button class="cam-total" id="cam-total" style="display:none" title="Voir les cartes de cette session" aria-label="Voir les cartes de cette session">
-              <svg class="ct-ico" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-                <ellipse cx="10" cy="5.2" rx="6.3" ry="2.6"/>
-                <path d="M3.7 5.2v4.3c0 1.44 2.82 2.6 6.3 2.6s6.3-1.16 6.3-2.6V5.2"/>
-                <path d="M3.7 9.5v4.3c0 1.44 2.82 2.6 6.3 2.6s6.3-1.16 6.3-2.6V9.5"/>
+              <svg class="ct-ico" viewBox="0 0 24 24" fill="#d4af37" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+                <rect x="2.4" y="6.6" width="9.4" height="13.4" rx="1.8" transform="rotate(-16 7.1 13.3)"/>
+                <rect x="12.2" y="6.6" width="9.4" height="13.4" rx="1.8" transform="rotate(16 16.9 13.3)"/>
+                <rect x="7.3" y="4.4" width="9.4" height="13.4" rx="1.8"/>
               </svg>
               <span id="cam-total-val"></span>
             </button>
@@ -7768,6 +7799,8 @@ function majCadrageVisible(){
   decalageGuideY = ((centreImage - centreLibre) * cadrageVisible.h) / b.height;
 }
 addEventListener('resize', majCadrageVisible);
+// La pastille du total abrège son contenu sous 380 px : une rotation change ce verdict.
+addEventListener('resize', ()=> renderTotalSession());
 addEventListener('orientationchange', ()=> setTimeout(majCadrageVisible, 250));
 
 function guideRect(video){
@@ -9299,16 +9332,21 @@ function ajouterAuTotalSession(card){
 function renderTotalSession(){
   const el = $('cam-total');
   if(!el) return;
+  // Au-delà de cent euros les centimes n'apprennent rien, et coûtent une trentaine de
+  // pixels sur la barre la plus disputée de l'écran. L'espace fine insécable sépare les
+  // milliers sans risquer un retour à la ligne.
+  const somme = (v)=> v >= 100 ? Math.round(v).toLocaleString('fr-FR').replace(/ | /g, ' ') : v.toFixed(2).replace('.', ',');
   const bouts = [];
-  if(totalSession.EUR > 0) bouts.push(totalSession.EUR.toFixed(2) + ' €');
-  if(totalSession.USD > 0) bouts.push('$' + totalSession.USD.toFixed(2));
+  if(totalSession.EUR > 0) bouts.push(somme(totalSession.EUR) + ' €');
+  if(totalSession.USD > 0) bouts.push('$' + somme(totalSession.USD));
   if(!bouts.length){ el.style.display = 'none'; return; }
   el.style.display = '';
   // Le compte de cartes rejoint la valeur dans la MÊME pastille : le bilan de session
   // occupait 72 px de hauteur pour trois chiffres dont deux tiennent ici. Le texte va
   // dans son propre élément — l'écrire sur la pastille effacerait le pictogramme.
   const val = $('cam-total-val');
-  if(val) val.textContent = (sessionAjoutees ? sessionAjoutees + ' · ' : '') + bouts.join(' + ');
+  const etroit = window.matchMedia && window.matchMedia('(max-width: 379px)').matches;
+  if(val) val.textContent = (sessionAjoutees && !etroit ? sessionAjoutees + ' · ' : '') + bouts.join(' + ');
   // Le détail va dans l'infobulle plutôt que dans le badge : sur un écran de téléphone
   // en mode scan, le badge doit rester lisible d'un coup d'œil.
   el.title = totalSession.sansPrix
@@ -11335,12 +11373,21 @@ function majSuggestionSet(){
   }
   const nom = (metaSetsRecherche && metaSetsRecherche[s]?.nom) || s;
   z.style.display = '';
-  z.innerHTML = `<span>🎯 Tes ${SUGGESTION_SEUIL} dernières cartes viennent de <b>${escapeHtml(nom)}</b>.
-    Verrouiller ce set rendra les lectures plus sûres.</span>
-    <span class="actions">
-      <button class="link-btn" id="sug-non">Non</button>
-      <button class="btn-gold btn-sm" id="sug-oui">Verrouiller</button>
-    </span>`;
+  // Le motif tient dans le compteur (« 6× »), l'action dans le verbe, la raison longue
+  // dans l'infobulle. Sur un écran de visée, une phrase de deux lignes n'est pas lue :
+  // elle est contournée du regard, et elle masque la carte.
+  z.innerHTML = `<button class="sug-oui" id="sug-oui"
+      title="Tes ${SUGGESTION_SEUIL} dernières cartes viennent de ${escapeHtml(nom)}. Verrouiller ce set rend les lectures plus sûres : le numéro suffit alors à identifier la carte.">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="4.6" y="10.4" width="14.8" height="10.2" rx="2.2"/>
+        <path d="M8.4 10.4V7.6a3.6 3.6 0 0 1 7.2 0v2.8"/>
+      </svg>
+      <span class="sug-n">${SUGGESTION_SEUIL}×</span>
+      <span class="sug-txt">Verrouiller <b>${escapeHtml(nom)}</b></span>
+    </button>
+    <button class="sug-non" id="sug-non" aria-label="Ignorer cette suggestion" title="Ignorer">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M7.6 7.6l8.8 8.8M16.4 7.6l-8.8 8.8"/></svg>
+    </button>`;
   $('sug-oui').addEventListener('click', ()=>{
     $('capture-set').value = s;
     // remplirListeSets alimente la liste à la demande : si elle est vide, la valeur ne
