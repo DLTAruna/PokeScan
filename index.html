@@ -19605,7 +19605,14 @@ remplirTypesScelle();
 // La cote globale ne peut etre calculee qu'une fois les trois registres charges : elle est
 // donc appelee apres, et non a la suite de chacun.
 Promise.all([chargerCollection(), chargerScelle(), chargerMastersets()])
-  .then(()=>{ renderScelle(); majCoteGlobale(); demarrerCalculMastersets(); });
+  .then(()=>{
+    renderScelle(); majCoteGlobale(); demarrerCalculMastersets();
+    // L'accueil AUSSI. Il se dessine dans la micro-tache de fin de script, donc AVANT que
+    // ces trois lectures d'IndexedDB n'aient rendu la main : il affichait une collection
+    // vide et rien ne le redessinait ensuite. La page Collection, elle, paraissait juste —
+    // parce qu'on n'y arrive qu'apres, en naviguant.
+    rendreAccueil();
+  });
 
 
 $('pastille-recents').addEventListener('click', basculerBandeRecents);
