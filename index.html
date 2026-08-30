@@ -18829,17 +18829,40 @@ function etatSync(texte, genre){
   if(genre === 'ok') setTimeout(()=>{ if(z.classList.contains('ok')) z.hidden = true; }, 2600);
 }
 
+// Indice de session, lu SYNCHRONIQUEMENT. Supabase range son jeton dans localStorage sous
+// une cle « sb-<ref>-auth-token » ; le lire directement permet de decider avant le premier
+// rendu s'il faut montrer la page publique. getSession() est asynchrone : l'attendre ferait
+// clignoter l'un ou l'autre ecran a chaque ouverture. Ce n'est qu'un indice — la verite
+// reste ce que renvoie getSession(), qui corrige l'affichage juste apres.
+function sessionProbable(){
+  try{
+    for(let i = 0; i < localStorage.length; i++){
+      const k = localStorage.key(i);
+      if(k && k.startsWith('sb-') && k.endsWith('-auth-token') && localStorage.getItem(k)) return true;
+    }
+  }catch(e){}
+  return false;
+}
+
 // ------------------------------------------------------------------ le demarrage
 function initCompte(){
   const pub = $('page-publique');
   if(!compteConfigure()){
-    // Sans cles, l'application fonctionne comme avant : tout en local, aucune porte
-    // fermee. Mieux vaut un outil qui marche sans sauvegarde qu'un outil bloque par une
-    // configuration absente.
-    if(pub) pub.hidden = true;
+    // Sans cles, la page publique se montre QUAND MEME : elle explique le projet, et sauter
+    // par-dessus donnait l'application ouverte a quelqu'un qui n'est pas connecte — ce qui
+    // se lit comme un bug, parce que c'en est un. Elle reste traversable, sans quoi une
+    // installation non configuree serait murée ; et le choix est retenu, sans quoi il
+    // faudrait le refaire a chaque ouverture.
+    if(pub) pub.hidden = localStorage.getItem('pokescanSansCompte') === '1';
     $('pub-local')?.removeAttribute('hidden');
+    // Le bloc compte du menu doit exister ici AUSSI : c'est lui qui porte le chemin de
+    // retour vers la presentation, et il n'etait rempli que par appliquerSession, qui ne
+    // tourne jamais sans client. Le choix « sans compte » devenait donc irreversible.
+    majMenuCompte();
     return;
   }
+  // Decide immediatement d'apres le jeton en localStorage, puis getSession() confirme.
+  if(pub) pub.hidden = sessionProbable();
   sb = window.supabase.createClient(window.POKESCAN_SUPABASE_URL, window.POKESCAN_SUPABASE_ANON, {
     auth: {persistSession: true, autoRefreshToken: true, detectSessionInUrl: true}
   });
@@ -18866,11 +18889,18 @@ function appliquerSession(session){
 function majMenuCompte(){
   const z = $('menu-compte');
   if(!z) return;
-  if(utilisateur){
-    z.hidden = false;
-    $('menu-compte-mail').textContent = utilisateur.email || 'Compte connecté';
-  } else {
-    z.hidden = true;
+  z.hidden = false;
+  const connecte = !!utilisateur;
+  // Déconnecté, le bloc ne disparaît pas : c'est le SEUL chemin de retour vers la page de
+  // présentation pour qui a choisi « continuer sans compte ». Sans lui, ce choix serait
+  // définitif, et l'inscription deviendrait inatteignable.
+  $('menu-compte-mail').textContent = connecte
+    ? (utilisateur.email || 'Compte connecté')
+    : 'Aucun compte — données locales uniquement';
+  const b = $('menu-deconnexion');
+  if(b){
+    b.textContent = connecte ? 'Se déconnecter' : 'Créer un compte ou se connecter';
+    b.dataset.action = connecte ? 'sortir' : 'entrer';
   }
 }
 
@@ -18922,7 +18952,10 @@ function brancherCompte(){
   });
   $('pub-vers-connexion')?.addEventListener('click', versConnexion);
   $('pub-connexion-2')?.addEventListener('click', versConnexion);
-  $('btn-sans-compte')?.addEventListener('click', ()=>{ $('page-publique').hidden = true; });
+  $('btn-sans-compte')?.addEventListener('click', ()=>{
+    try{ localStorage.setItem('pokescanSansCompte', '1'); }catch(e){}
+    $('page-publique').hidden = true;
+  });
 
   $('form-compte')?.addEventListener('submit', async (e)=>{
     e.preventDefault();
@@ -18973,7 +19006,13 @@ function brancherCompte(){
     }catch(err){ messageCompte(messageLisible(err)); }
   });
 
-  $('menu-deconnexion')?.addEventListener('click', async ()=>{
+  $('menu-deconnexion')?.addEventListener('click', async (e)=>{
+    if(e.currentTarget.dataset.action === 'entrer'){
+      try{ localStorage.removeItem('pokescanSansCompte'); }catch(err){}
+      $('page-publique').hidden = false;
+      fermerMenu();
+      return;
+    }
     if(!sb) return;
     // La derniere synchronisation part AVANT de fermer la session : sans elle, ce qui a ete
     // ajoute depuis la derniere passe ne serait plus rattachable a personne.
