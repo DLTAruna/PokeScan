@@ -487,6 +487,49 @@
   .cl-slot > .card-thumb{position:absolute; inset:0; z-index:1;}
   .cl-slot > .card-thumb img{height:100%;}
 
+  /* Vue du classeur FERME : un objet pose devant soi, et non une page dans une double
+     page. Il flotte au centre avec son ombre portee, dos a gauche — l'exterieur d'un
+     classeur se regarde de face, pas depuis la reliure. */
+  .classeur-pages.ferme{grid-template-columns:1fr; justify-items:center; padding:16px 0 22px;}
+  .classeur-pages.ferme .classeur-page.couverture{
+    width:min(66%, 440px); aspect-ratio:3/4; max-height:none;
+    padding:26px 24px 26px 52px;
+    /* Arrondi franc du cote tranche, presque droit du cote dos : c'est la que la couverture
+       se plie, elle n'y a pas de coin. */
+    border-radius:4px 14px 14px 4px;
+    box-shadow:
+      inset 0 0 70px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.13),
+      0 26px 54px -18px rgba(0,0,0,.85), 0 6px 16px rgba(0,0,0,.45);
+  }
+  /* Aucune perforation sur un classeur ferme : les anneaux sont dedans. */
+  .classeur-pages.ferme .classeur-page::before{display:none;}
+
+  /* Dos du classeur, avec le relief des trois anneaux au travers de la matiere. */
+  .cl-dos{
+    position:absolute; left:0; top:0; bottom:0; width:32px; z-index:2; pointer-events:none;
+    background:linear-gradient(90deg,
+      rgba(0,0,0,.5) 0%, rgba(255,255,255,.08) 38%, rgba(0,0,0,.08) 72%, rgba(0,0,0,.42) 100%);
+    border-right:1px solid rgba(0,0,0,.42);
+  }
+  .cl-dos i{
+    position:absolute; left:5px; right:5px; height:17px; border-radius:9px;
+    background:linear-gradient(180deg, rgba(255,255,255,.12), rgba(0,0,0,.32));
+    box-shadow:0 1px 0 rgba(255,255,255,.07), inset 0 0 4px rgba(0,0,0,.3);
+    transform:translateY(-50%);
+  }
+  .cl-dos i:nth-child(1){top:18%;}
+  .cl-dos i:nth-child(2){top:50%;}
+  .cl-dos i:nth-child(3){top:82%;}
+
+  /* Logo de la SERIE en fond. Debordant et tres pale, il donne de la matiere a une
+     couverture qui restait large et vide ; reduit a sa silhouette il habille sans jamais
+     entrer en concurrence avec le logo du set, qui lui reste lisible. */
+  .cl-couv-serie{
+    position:absolute; left:50%; top:50%; z-index:0; pointer-events:none;
+    width:155%; max-width:none; height:auto;
+    transform:translate(-50%, -50%) rotate(-5deg);
+    filter:brightness(0) invert(1); opacity:.09;
+  }
   /* ---- Couverture ---- */
   /* Un classeur ne s'ouvre pas sur des cartes. Sans cette page, la carte 1 se retrouvait
      seule a gauche face a la carte 2, alors que dans un classeur reel la premiere double
@@ -530,7 +573,7 @@
      on reconnait une extension a son Pokemon avant de lire son nom. Il prend donc la place
      centrale, et le reste de la couverture se range dessous. */
   .cl-couv-phare{
-    width:min(62%, 240px); aspect-ratio:1/1; margin:0 auto 4px;
+    width:min(72%, 300px); aspect-ratio:1/1; margin:0 auto 2px;
     overflow:hidden; pointer-events:none;
     mix-blend-mode:luminosity; opacity:.58;
     -webkit-mask-image:radial-gradient(closest-side at 50% 44%, #000 40%, transparent 88%);
@@ -689,7 +732,7 @@
     .classeur-page::before{display:none;}
     /* Empilee, la couverture n'a plus de page en face pour lui donner sa hauteur : sans
        proportions imposees elle s'aplatissait en bandeau. */
-    .classeur-page.couverture{aspect-ratio:3/4; max-height:62vh; margin:0 auto;}
+    .classeur-pages.ferme .classeur-page.couverture{width:min(92%, 340px); max-height:none;}
   }
   /* Groupe de boutons segmentes — un seul choix actif, comme les bascules de TCG Crew.
      Preferable a un <select> ici : les options sont peu nombreuses et on veut les compter
@@ -9946,7 +9989,7 @@ async function renderSetsTab(){
 function findSetMeta(setId){
   for(const serie of (seriesIndex || [])){
     const st = serie.sets.find(x => x.id === setId);
-    if(st) return {...st, serieName: serie.name};
+    if(st) return {...st, serieName: serie.name, serieLogo: serie.logo};
   }
   return null;
 }
@@ -11216,9 +11259,14 @@ function faceCouverture(){
   const prog = progressionSet(cartesSetCourant);
   const nom = setCourantMeta?.name || setCourantId || '';
   const logo = setCourantMeta?.logo;
+  // Le logo de la SERIE (l'ere entiere) sert de fond, celui du SET reste le titre : deux
+  // niveaux differents, comme la collection et le volume sur le dos d'un livre.
+  const logoSerie = setCourantMeta?.serieLogo;
   const phare = cartePhare();
   return `<div class="classeur-page couverture">
     ${GRAIN_CUIR}
+    ${logoSerie ? `<img class="cl-couv-serie" src="${esc(logoSerie)}.webp" alt="">` : ''}
+    <div class="cl-dos" aria-hidden="true"><i></i><i></i><i></i></div>
     <div class="cl-couv-contenu">
       ${phare ? `<div class="cl-couv-phare"><img src="${esc(phare.image)}/high.webp" alt=""></div>` : ''}
       ${logo ? `<img class="cl-couv-logo" src="${esc(logo)}.webp" alt="" loading="lazy">` : ''}
@@ -11282,15 +11330,19 @@ function rendreCartesSet(){
   const grid = $('set-cards-grid');
   const affichees = developper(cartesFiltrees());
   const parPage = tailleClasseur();
-  // Une « face » = une page simple. La face 0 est la couverture, les suivantes portent
-  // les cartes par paquets de `parPage`.
-  const faces = [{couverture: true}];
+  // La couverture occupe une vue A ELLE SEULE : c'est le classeur FERME, avant de
+  // l'ouvrir. La poser en page de gauche face a des cartes revenait a montrer dans la meme
+  // image l'exterieur du classeur (couverture, dos, tranche) et son interieur (pages
+  // ouvertes, anneaux) — une position qui n'existe pas. Fermee puis ouverte, la sequence
+  // redevient celle du geste reel.
+  const faces = [];
   for(let i = 0; i < affichees.length; i += parPage) faces.push({cartes: affichees.slice(i, i + parPage)});
   // Le dos de la derniere page existe physiquement, meme vide : sans lui la double page
   // finale n'aurait qu'un cote et le classeur paraitrait coupe en deux.
   if(faces.length % 2) faces.push({cartes: []});
-  const nbPages = faces.length / 2;
-  pageClasseur = Math.min(Math.max(0, pageClasseur), nbPages - 1);
+  const nbDoubles = Math.max(1, faces.length / 2);
+  const nbVues = nbDoubles + 1;   // les doubles pages, plus la couverture
+  pageClasseur = Math.min(Math.max(0, pageClasseur), nbVues - 1);
 
   // Les compteurs portent toujours sur le SET ENTIER, jamais sur la vue filtrée : sinon
   // « Manquantes 0 » s'afficherait dès qu'on filtre sur les possédées, ce qui serait faux.
@@ -11384,18 +11436,22 @@ function rendreCartesSet(){
       + '<i class="cl-anneau" style="top:18%"></i>'
       + '<i class="cl-anneau" style="top:50%"></i>'
       + '<i class="cl-anneau" style="top:82%"></i></div>';
+    const ferme = pageClasseur === 0;
+    const d = (pageClasseur - 1) * 2;   // premiere face de la double page courante
     grid.className = 'classeur';
     grid.innerHTML = `
       ${DEFS_CUIR}
-      <div class="classeur-pages" style="--t:${teinteDuClasseur(setCourantId)}">
-        ${rendreFace(faces[pageClasseur * 2])}
-        ${reliure}
-        ${rendreFace(faces[pageClasseur * 2 + 1])}
-      </div>
+      ${ferme
+        ? `<div class="classeur-pages ferme" style="--t:${teinteDuClasseur(setCourantId)}">${faceCouverture()}</div>`
+        : `<div class="classeur-pages" style="--t:${teinteDuClasseur(setCourantId)}">
+            ${rendreFace(faces[d])}
+            ${reliure}
+            ${rendreFace(faces[d + 1])}
+          </div>`}
       <div class="classeur-nav">
-        <button class="btn-ghost btn-sm" id="cl-prec" ${pageClasseur === 0 ? 'disabled' : ''}>← Page précédente</button>
-        <span class="classeur-pos">Pages ${pageClasseur*2+1}–${pageClasseur*2+2} sur ${nbPages*2}</span>
-        <button class="btn-ghost btn-sm" id="cl-suiv" ${pageClasseur >= nbPages-1 ? 'disabled' : ''}>Page suivante →</button>
+        <button class="btn-ghost btn-sm" id="cl-prec" ${ferme ? 'disabled' : ''}>← ${pageClasseur === 1 ? 'Couverture' : 'Page précédente'}</button>
+        <span class="classeur-pos">${ferme ? 'Couverture — classeur fermé' : `Pages ${d+1}–${d+2} sur ${nbDoubles*2}`}</span>
+        <button class="btn-ghost btn-sm" id="cl-suiv" ${pageClasseur >= nbVues-1 ? 'disabled' : ''}>${ferme ? 'Ouvrir le classeur →' : 'Page suivante →'}</button>
       </div>`;
     // Le bouton d'habillage nait avec la couverture, donc a chaque rendu : il faut le
     // relier ici et non une fois pour toutes au demarrage.
