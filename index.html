@@ -2064,30 +2064,39 @@
      phrase d'explication : sur un carre il reste une icone, un nom, un compteur. C'est
      assez pour un accueil, dont le role est d'aiguiller et non de raconter. */
   .acc-mosaique{display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:12px;}
+  /* Le contenu est cale en bas a GAUCHE et le compteur file dans le coin oppose. Centre et
+     empile, le texte etait a la fois trop gros pour tenir et trop petit pour se lire :
+     chaque ligne devait rester courte, donc rien ne pouvait etre nomme correctement. Aligne
+     a gauche, un titre a le droit de passer sur deux lignes, ce qui rend l'espace du carre
+     utilisable au lieu de le contraindre. */
   .acc-case{
-    aspect-ratio:1; display:flex; flex-direction:column; align-items:center;
-    justify-content:center; gap:7px; padding:10px 6px; border-radius:15px;
+    aspect-ratio:1; display:flex; flex-direction:column; align-items:flex-start;
+    justify-content:flex-end; padding:11px 11px 12px; border-radius:15px;
     border:1px solid var(--border); background:var(--fond2); color:var(--txt);
-    font:inherit; cursor:pointer; position:relative; overflow:hidden;
-    transition:border-color .18s ease, background .18s ease, transform .12s ease;
+    font:inherit; text-align:left; cursor:pointer; position:relative; overflow:hidden;
+    transition:border-color .18s ease, transform .12s ease;
   }
   /* Le pictogramme passe en filigrane : sorti du flux, il peut etre bien plus grand, et il
      libere la place qu'il occupait — c'est ce qui permet d'ajouter la ligne de description
      sans etouffer un carre de 110 px. Debordant en bas a droite, il se lit comme une
      matiere et non comme un element de plus a dechiffrer. */
+  /* Le filigrane remonte en haut a gauche, la ou le texte n'est plus : au coin bas droit il
+     passait maintenant derriere les descriptions. */
   .acc-case-fond{
-    position:absolute; right:-14%; bottom:-16%; width:74%; line-height:0;
+    position:absolute; left:-10%; top:-12%; width:70%; line-height:0;
     color:#fff; opacity:.09; pointer-events:none; z-index:0;
   }
   .acc-case-fond svg{width:100%; height:auto; display:block;}
-  .acc-case-txt{
-    position:relative; z-index:2; display:flex; flex-direction:column;
-    align-items:center; gap:3px; text-align:center;
-  }
-  .acc-case b{font-size:12.5px; font-weight:700; line-height:1.2;}
+  .acc-case-txt{position:relative; z-index:2; display:flex; flex-direction:column; gap:2px; width:100%;}
+  .acc-case b{font-size:12.5px; font-weight:750; line-height:1.16; letter-spacing:-.1px;}
   .acc-case small{font-size:9.5px; color:var(--muted); line-height:1.25;}
-  .acc-case-n{font-size:15px; font-weight:800; line-height:1; margin-top:3px;}
-  .acc-case-n.zero{opacity:.32;}
+  /* Le compteur devient une pastille de coin : dans la pile de texte il volait une ligne a
+     un carre qui n'en a que trois. */
+  .acc-case-n{
+    position:absolute; top:8px; right:10px; z-index:2;
+    font-size:17px; font-weight:800; line-height:1;
+  }
+  .acc-case-n.zero{opacity:.28;}
   .acc-case:active{transform:scale(.97);}
 
   /* Lueur qui derive lentement en travers du carre. Une seule propriete animee, transform,
@@ -2096,19 +2105,25 @@
      boucle lineaire laisse au moment ou elle repart. */
   .acc-case::before{
     content:''; position:absolute; inset:-45% -60%; z-index:1; pointer-events:none;
-    background:linear-gradient(112deg, transparent 26%, var(--lueur) 50%, transparent 74%);
-    animation:caseDerive 7.5s ease-in-out infinite alternate;
+    background:linear-gradient(var(--angle, 112deg), transparent 26%, var(--lueur) 50%, transparent 74%);
+    animation:caseDerive var(--duree, 8s) ease-in-out infinite alternate;
+    animation-delay:var(--retard, 0s);
   }
   @keyframes caseDerive{
     from{transform:translate3d(-26%, 0, 0);}
     to{transform:translate3d(26%, 0, 0);}
   }
-  /* Decalees, les six cases respirent au lieu de clignoter ensemble. */
-  .acc-case:nth-child(2)::before{animation-delay:-1.2s;}
-  .acc-case:nth-child(3)::before{animation-delay:-2.4s;}
-  .acc-case:nth-child(4)::before{animation-delay:-3.6s;}
-  .acc-case:nth-child(5)::before{animation-delay:-4.8s;}
-  .acc-case:nth-child(6)::before{animation-delay:-6s;}
+  /* Des durees differentes et sans rapport simple entre elles, plutot que six decalages sur
+     une meme duree : decalees seulement, les cases finissaient par se rattraper et le motif
+     se voyait. Avec 8,3 s et 11,7 s cote a cote, les deux lueurs ne repassent jamais deux
+     fois dans la meme configuration — le hasard n'est pas necessaire pour ne pas se repeter.
+     L'angle change aussi, ce qui suffit a ce qu'aucune case n'ait l'air de copier sa voisine. */
+  .acc-case:nth-child(1)::before{--duree:8.3s;  --retard:-1.1s; --angle:104deg;}
+  .acc-case:nth-child(2)::before{--duree:11.7s; --retard:-5.3s; --angle:126deg;}
+  .acc-case:nth-child(3)::before{--duree:9.1s;  --retard:-2.7s; --angle:96deg;}
+  .acc-case:nth-child(4)::before{--duree:13.3s; --retard:-8.9s; --angle:118deg;}
+  .acc-case:nth-child(5)::before{--duree:10.7s; --retard:-4.1s; --angle:88deg;}
+  .acc-case:nth-child(6)::before{--duree:12.1s; --retard:-7.3s; --angle:134deg;}
   @media (prefers-reduced-motion: reduce){
     .acc-case::before{animation:none;}
   }
@@ -2116,11 +2131,11 @@
      regle la poussait a 254 px : une icone perdue au milieu de beaucoup de vide. Au-dela
      de 760 px la hauteur est fixee et la case s’allonge, ce qui reste lisible. */
   @media (min-width:760px){
-    .acc-case{aspect-ratio:auto; height:132px;}
-    .acc-case-fond{width:36%; right:-4%; bottom:-14%;}
-    .acc-case b{font-size:14px;}
-    .acc-case small{font-size:11px;}
-    .acc-case-n{font-size:17px;}
+    .acc-case{aspect-ratio:auto; height:126px; padding:14px 15px 15px;}
+    .acc-case-fond{width:34%; left:-3%; top:-10%;}
+    .acc-case b{font-size:15px;}
+    .acc-case small{font-size:11.5px;}
+    .acc-case-n{font-size:20px; top:11px; right:14px;}
   }
   /* Deux familles, deux teintes : ce qu'on garde et ce qu'on vend. */
   .acc-case.col{
@@ -2139,10 +2154,10 @@
   .acc-case.verif.pleine{border-color:rgba(240,185,42,.55); background:rgba(240,185,42,.14);}
   @media (max-width:400px){
     .acc-mosaique{gap:7px;}
-    .acc-case{border-radius:13px; padding:8px 4px;}
+    .acc-case{border-radius:13px; padding:9px 9px 10px;}
     .acc-case b{font-size:11px;}
     .acc-case small{font-size:8.5px;}
-    .acc-case-n{font-size:13px; margin-top:2px;}
+    .acc-case-n{font-size:15px; top:7px; right:8px;}
   }
 
   /* Variations : une ligne par carte, le pourcentage à droite. La valeur d'avant et
@@ -3728,51 +3743,33 @@
     <div class="acc-mosaique">
       <button class="acc-case col" data-tab="sets">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="10" width="70" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="30" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><rect x="60" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="30" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="60" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><circle cx="13" cy="26" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="50" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="74" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/></svg></span>
-        <span class="acc-case-txt">
-          <b>Classeur</b>
-          <small>Tes séries</small>
-          <span class="acc-case-n" id="acc-n-classeur">0</span>
-        </span>
+        <span class="acc-case-n" id="acc-n-classeur">0</span>
+        <span class="acc-case-txt"><b>Mes cartes et classeurs</b><small>Séries et doublons</small></span>
       </button>
       <button class="acc-case col" data-tab="scelle">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><path d="M12 42h76v44a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="currentColor" opacity=".3"/><path d="M12 42h76v44a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="none" stroke="currentColor" stroke-width="5"/><rect x="24" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><rect x="43" y="9" width="14" height="37" rx="2" fill="currentColor" opacity=".75"/><rect x="62" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/></svg></span>
-        <span class="acc-case-txt">
-          <b>Scellé</b>
-          <small>Boîtes fermées</small>
-          <span class="acc-case-n" id="acc-n-scelle">0</span>
-        </span>
+        <span class="acc-case-n" id="acc-n-scelle">0</span>
+        <span class="acc-case-txt"><b>Mon stock scellé</b><small>Boosters et coffrets</small></span>
       </button>
       <button class="acc-case col" data-tab="gradees">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="6" width="60" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="5"/><rect x="29" y="31" width="42" height="54" rx="3" fill="currentColor" opacity=".38"/><rect x="29" y="31" width="42" height="54" rx="3" fill="none" stroke="currentColor" stroke-width="3.5"/><rect x="29" y="14" width="42" height="11" rx="2.5" fill="currentColor" opacity=".72"/></svg></span>
-        <span class="acc-case-txt">
-          <b>Gradées</b>
-          <small>Sous coque</small>
-          <span class="acc-case-n" id="acc-n-gradees">0</span>
-        </span>
+        <span class="acc-case-n" id="acc-n-gradees">0</span>
+        <span class="acc-case-txt"><b>Mes cartes gradées</b><small>PSA, PCA, CGC</small></span>
       </button>
       <button class="acc-case vd" data-tab="batch">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="8" y="28" width="56" height="64" rx="6" fill="currentColor" opacity=".24"/><rect x="8" y="28" width="56" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="26" y="12" width="56" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><path d="M38 34h32M38 48h32M38 62h20" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" opacity=".62"/></svg></span>
-        <span class="acc-case-txt">
-          <b>Stock</b>
-          <small>En vente</small>
-          <span class="acc-case-n" id="acc-n-stock">0</span>
-        </span>
+        <span class="acc-case-n" id="acc-n-stock">0</span>
+        <span class="acc-case-txt"><b>Gestion du stock</b><small>Prêt pour la vente</small></span>
       </button>
       <button class="acc-case vd" data-tab="listes">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="12" width="72" height="76" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><path d="M42 31h30M42 50h30M42 69h30" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="29" cy="31" r="5" fill="currentColor"/><circle cx="29" cy="50" r="5" fill="currentColor" opacity=".62"/><circle cx="29" cy="69" r="5" fill="currentColor" opacity=".4"/></svg></span>
-        <span class="acc-case-txt">
-          <b>Listes</b>
-          <small>Lots et envois</small>
-          <span class="acc-case-n" id="acc-n-listes">0</span>
-        </span>
+        <span class="acc-case-n" id="acc-n-listes">0</span>
+        <span class="acc-case-txt"><b>Listes</b><small>Lots, envois, échanges</small></span>
       </button>
       <button class="acc-case vd verif" data-tab="identify">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="10" y="9" width="46" height="60" rx="5" fill="currentColor" opacity=".26"/><rect x="10" y="9" width="46" height="60" rx="5" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="64" cy="62" r="20" fill="none" stroke="currentColor" stroke-width="5"/><path d="m79 77 12 12" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg></span>
-        <span class="acc-case-txt">
-          <b>À vérifier</b>
-          <small>Scans incertains</small>
-          <span class="acc-case-n" id="acc-n-verif">0</span>
-        </span>
+        <span class="acc-case-n" id="acc-n-verif">0</span>
+        <span class="acc-case-txt"><b>À vérifier</b><small>Scans à confirmer</small></span>
       </button>
     </div>
 
