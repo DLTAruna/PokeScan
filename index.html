@@ -2070,8 +2070,8 @@
      a gauche, un titre a le droit de passer sur deux lignes, ce qui rend l'espace du carre
      utilisable au lieu de le contraindre. */
   .acc-case{
-    aspect-ratio:1; display:flex; flex-direction:column; align-items:flex-start;
-    justify-content:flex-end; padding:11px 11px 12px; border-radius:15px;
+    aspect-ratio:1 / .84; display:flex; flex-direction:column; align-items:flex-start;
+    justify-content:flex-end; padding:10px 11px 11px; border-radius:15px;
     border:1px solid var(--border); background:var(--fond2); color:var(--txt);
     font:inherit; text-align:left; cursor:pointer; position:relative; overflow:hidden;
     transition:border-color .18s ease, transform .12s ease;
@@ -2094,7 +2094,7 @@
      un carre qui n'en a que trois. */
   .acc-case-n{
     position:absolute; top:8px; right:10px; z-index:2;
-    font-size:17px; font-weight:800; line-height:1;
+    font-size:21px; font-weight:800; line-height:1;
   }
   .acc-case-n.zero{opacity:.28;}
   .acc-case:active{transform:scale(.97);}
@@ -2131,11 +2131,11 @@
      regle la poussait a 254 px : une icone perdue au milieu de beaucoup de vide. Au-dela
      de 760 px la hauteur est fixee et la case s’allonge, ce qui reste lisible. */
   @media (min-width:760px){
-    .acc-case{aspect-ratio:auto; height:126px; padding:14px 15px 15px;}
+    .acc-case{aspect-ratio:auto; height:112px; padding:12px 15px 14px;}
     .acc-case-fond{width:34%; left:-3%; top:-10%;}
     .acc-case b{font-size:15px;}
     .acc-case small{font-size:11.5px;}
-    .acc-case-n{font-size:20px; top:11px; right:14px;}
+    .acc-case-n{font-size:25px; top:10px; right:14px;}
   }
   /* Deux familles, deux teintes : ce qu'on garde et ce qu'on vend. */
   .acc-case.col{
@@ -2157,7 +2157,7 @@
     .acc-case{border-radius:13px; padding:9px 9px 10px;}
     .acc-case b{font-size:11px;}
     .acc-case small{font-size:8.5px;}
-    .acc-case-n{font-size:15px; top:7px; right:8px;}
+    .acc-case-n{font-size:19px; top:6px; right:8px;}
   }
 
   /* Variations : une ligne par carte, le pourcentage à droite. La valeur d'avant et
@@ -3607,6 +3607,18 @@
       <div id="tb-hero"></div>
       <div class="tb-sections" id="tb-sections"></div>
     </div>
+
+    <!-- Plus fortes variations. Calculées sur avg1 contre avg30, les deux seules bornes que
+         Cardmarket expose par carte : aucune API supplémentaire, et c'est la seule lecture
+         temporelle par carte qu'on puisse produire honnêtement aujourd'hui.
+         Ici plutôt qu'à l'accueil : une cote qui bouge est une information de vendeur. -->
+    <div class="panel acc-mouvements" id="acc-mouvements" hidden>
+      <div class="entete">
+        <span class="micro">Plus fortes variations</span>
+        <span class="acc-mv-note">sur 30 jours</span>
+      </div>
+      <div class="acc-mv" id="acc-mv"></div>
+    </div>
   </section>
 
   <section class="section" id="section-ventes">
@@ -3744,44 +3756,33 @@
       <button class="acc-case col" data-tab="sets">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="10" width="70" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="30" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><rect x="60" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="30" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="60" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><circle cx="13" cy="26" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="50" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="74" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/></svg></span>
         <span class="acc-case-n" id="acc-n-classeur">0</span>
-        <span class="acc-case-txt"><b>Mes cartes et classeurs</b><small>Séries et doublons</small></span>
+        <span class="acc-case-txt"><b>Classeurs</b><small>Gestion de vos cartes</small></span>
       </button>
       <button class="acc-case col" data-tab="scelle">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><path d="M12 42h76v44a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="currentColor" opacity=".3"/><path d="M12 42h76v44a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="none" stroke="currentColor" stroke-width="5"/><rect x="24" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><rect x="43" y="9" width="14" height="37" rx="2" fill="currentColor" opacity=".75"/><rect x="62" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/></svg></span>
         <span class="acc-case-n" id="acc-n-scelle">0</span>
-        <span class="acc-case-txt"><b>Mon stock scellé</b><small>Boosters et coffrets</small></span>
+        <span class="acc-case-txt"><b>Stock scellé</b><small>Displays, ETB et coffrets</small></span>
       </button>
       <button class="acc-case col" data-tab="gradees">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="6" width="60" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="5"/><rect x="29" y="31" width="42" height="54" rx="3" fill="currentColor" opacity=".38"/><rect x="29" y="31" width="42" height="54" rx="3" fill="none" stroke="currentColor" stroke-width="3.5"/><rect x="29" y="14" width="42" height="11" rx="2.5" fill="currentColor" opacity=".72"/></svg></span>
         <span class="acc-case-n" id="acc-n-gradees">0</span>
-        <span class="acc-case-txt"><b>Mes cartes gradées</b><small>PSA, PCA, CGC</small></span>
+        <span class="acc-case-txt"><b>Cartes gradées</b><small>PSA, PCA, CCC, CollectAura</small></span>
       </button>
       <button class="acc-case vd" data-tab="batch">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="8" y="28" width="56" height="64" rx="6" fill="currentColor" opacity=".24"/><rect x="8" y="28" width="56" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="26" y="12" width="56" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><path d="M38 34h32M38 48h32M38 62h20" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" opacity=".62"/></svg></span>
         <span class="acc-case-n" id="acc-n-stock">0</span>
-        <span class="acc-case-txt"><b>Gestion du stock</b><small>Prêt pour la vente</small></span>
+        <span class="acc-case-txt"><b>Gestion du stock</b><small>Prix, photos et export</small></span>
       </button>
       <button class="acc-case vd" data-tab="listes">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="12" width="72" height="76" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><path d="M42 31h30M42 50h30M42 69h30" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="29" cy="31" r="5" fill="currentColor"/><circle cx="29" cy="50" r="5" fill="currentColor" opacity=".62"/><circle cx="29" cy="69" r="5" fill="currentColor" opacity=".4"/></svg></span>
         <span class="acc-case-n" id="acc-n-listes">0</span>
-        <span class="acc-case-txt"><b>Listes</b><small>Lots, envois, échanges</small></span>
+        <span class="acc-case-txt"><b>Listes</b><small>Créer pour ventes, gradation, échange</small></span>
       </button>
       <button class="acc-case vd verif" data-tab="identify">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="10" y="9" width="46" height="60" rx="5" fill="currentColor" opacity=".26"/><rect x="10" y="9" width="46" height="60" rx="5" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="64" cy="62" r="20" fill="none" stroke="currentColor" stroke-width="5"/><path d="m79 77 12 12" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg></span>
         <span class="acc-case-n" id="acc-n-verif">0</span>
-        <span class="acc-case-txt"><b>À vérifier</b><small>Scans à confirmer</small></span>
+        <span class="acc-case-txt"><b>À vérifier</b><small>Vos scans de cartes à confirmer</small></span>
       </button>
-    </div>
-
-    <!-- Plus fortes variations. Calculées sur avg1 contre avg30, les deux seules bornes que
-         Cardmarket expose par carte : aucune API supplémentaire, et c'est la seule lecture
-         temporelle par carte qu'on puisse produire honnêtement aujourd'hui. -->
-    <div class="panel acc-mouvements" id="acc-mouvements" hidden>
-      <div class="entete">
-        <span class="micro">Plus fortes variations</span>
-        <span class="acc-mv-note">sur 30 jours</span>
-      </div>
-      <div class="acc-mv" id="acc-mv"></div>
     </div>
 
     <!-- Trois portes, au même gabarit que celles de l'accueil Collection : hautes plutôt
@@ -5386,21 +5387,6 @@ async function rendreAccueil(){
   const zp = $('acc-progres');
   if(zp) zp.textContent = nouvelles ? '+' + nouvelles + (nouvelles > 1 ? ' cartes' : ' carte') + ' cette semaine' : '';
 
-  // --- Plus fortes variations ---
-  const mv = mouvementsDuMois();
-  const zoneMv = $('acc-mv'), blocMv = $('acc-mouvements');
-  if(zoneMv && blocMv){
-    const lignes = mv.hausse.concat(mv.baisse);
-    blocMv.hidden = !lignes.length;
-    zoneMv.innerHTML = lignes.map(x =>
-      '<div class="acc-mv-l">'
-      + (x.img ? '<img src="' + escapeHtml(x.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '')
-      + '<span class="acc-mv-i"><b>' + escapeHtml(x.nom) + '</b><small>'
-      + eur(x.avant) + ' → ' + eur(x.apres) + '</small></span>'
-      + '<span class="acc-mv-p ' + (x.ecart > 0 ? 'up' : 'down') + '">'
-      + (x.ecart > 0 ? '+' : '') + x.ecart.toFixed(1).replace('.', ',') + ' %</span></div>').join('');
-  }
-
   // --- Les six compteurs de la mosaïque ---
   // Chaque case dit combien elle contient : c'est ce qui décide où l'on va en ouvrant
   // l'application. Un compteur à zéro reste lisible mais s'efface.
@@ -5526,6 +5512,23 @@ function rendreDashboard(){
     bloc('faire', '📦', 'Scellé', 'Produits fermés',
       ligne('Cote estimée', valeurScelle.toFixed(2) + ' €', 'or') +
       ligne('Produits', String(nbScelle)), 'scelle');
+
+  // --- Plus fortes variations sur trente jours ---
+  // Le formateur local : rendreAccueil avait le sien, cette fonction n'en avait pas.
+  const eur = (v)=> (v || 0).toFixed(2).replace('.', ',') + ' €';
+  const mv = mouvementsDuMois();
+  const zoneMv = $('acc-mv'), blocMv = $('acc-mouvements');
+  if(zoneMv && blocMv){
+    const lignesMv = mv.hausse.concat(mv.baisse);
+    blocMv.hidden = !lignesMv.length;
+    zoneMv.innerHTML = lignesMv.map(x =>
+      '<div class="acc-mv-l">'
+      + (x.img ? '<img src="' + escapeHtml(x.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '')
+      + '<span class="acc-mv-i"><b>' + escapeHtml(x.nom) + '</b><small>'
+      + eur(x.avant) + ' → ' + eur(x.apres) + '</small></span>'
+      + '<span class="acc-mv-p ' + (x.ecart > 0 ? 'up' : 'down') + '">'
+      + (x.ecart > 0 ? '+' : '') + x.ecart.toFixed(1).replace('.', ',') + ' %</span></div>').join('');
+  }
 }
 
 // ---------------- VENTES ----------------
