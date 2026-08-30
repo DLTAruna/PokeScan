@@ -5144,6 +5144,75 @@ const CARD_DETAIL_MAX_AGE_MS = 14*24*3600*1000;
 // A incrementer des qu'un champ est ajoute a normalizeCard : sans ca, les fiches deja en
 // cache restent incompletes pendant toute la duree de validite du cache.
 const FORME_FICHE = 2;
+
+// ---------------- RARETÉS EN FRANÇAIS ----------------
+// TCGdex renvoie du francais en locale `fr`, mais un francais irregulier : des majuscules
+// flottantes (« Peu Commune », « Ultra Rare »), des restes d'anglais sur les vieux sets
+// (« Holo Rare », « Shiny rare », « Radieux Rare »), et des libelles qui varient d'une ere
+// a l'autre pour la meme rarete. Resultat : « Rare Holo » et « Holo Rare » comptaient pour
+// deux raretes distinctes dans le filtre du classeur comme dans les lots.
+//
+// Une seule table canonique, appliquee des la lecture de la fiche. Tout le reste de
+// l'application — filtre, remplissage, lots, titres d'annonce, export — hérite du meme
+// libelle sans avoir a s'en occuper.
+const RARETE_FR = {
+  'commune': 'Commune',
+  'common': 'Commune',
+  'peu commune': 'Peu commune',
+  'uncommon': 'Peu commune',
+  'rare': 'Rare',
+  'rare holo': 'Rare holo',
+  'holo rare': 'Rare holo',
+  'rare holo ex': 'Rare holo ex',
+  'rare holo v': 'Rare holo V',
+  'rare holo vmax': 'Rare holo VMAX',
+  'rare holo vstar': 'Rare holo VSTAR',
+  'double rare': 'Double rare',
+  'ultra rare': 'Ultra rare',
+  'illustration rare': 'Illustration rare',
+  'art rare': 'Illustration rare',
+  'special illustration rare': 'Illustration spéciale rare',
+  'illustration spéciale rare': 'Illustration spéciale rare',
+  'hyper rare': 'Hyper rare',
+  'méga hyper rare': 'Méga hyper rare',
+  'chromatique rare': 'Chromatique rare',
+  'shiny rare': 'Chromatique rare',
+  'chromatique ultra rare': 'Chromatique ultra rare',
+  'shiny ultra rare': 'Chromatique ultra rare',
+  'radieux rare': 'Radieuse rare',
+  'radiant rare': 'Radieuse rare',
+  'magnifique rare': 'Magnifique rare',
+  'amazing rare': 'Rare éclatante',
+  'rare secrète': 'Rare secrète',
+  'secret rare': 'Rare secrète',
+  'rare brillante': 'Rare brillante',
+  'shining rare': 'Rare brillante',
+  'legend': 'Légende',
+  'légende': 'Légende',
+  'promo': 'Promo',
+  'classic collection': 'Collection classique',
+  'trainer gallery rare holo': 'Rare holo galerie',
+  'sans rareté': 'Sans rareté',
+  'none': 'Sans rareté'
+};
+
+function raretteFr(r){
+  const k = String(r || '').trim().toLowerCase();
+  if(!k) return 'Sans rareté';
+  // Libelle inconnu : on le garde tel quel plutot que de le ranger sous « Sans rareté ».
+  // Une rarete nouvelle doit apparaitre, meme mal orthographiee — la masquer donnerait un
+  // set qui parait incomplet sans qu'on sache pourquoi.
+  return RARETE_FR[k] || String(r).trim();
+}
+
+// Applique la table a une fiche, au retour du reseau comme au retour du cache. Les fiches
+// deja en cache portent l'ancien libelle : les normaliser a la lecture evite de devoir
+// retelecharger vingt mille fiches pour un changement d'affichage.
+function normaliserRareteFiche(d){
+  if(d && d.rarity) d.rarity = raretteFr(d.rarity);
+  return d;
+}
+
 async function getCardDetailCached(id, maxAge){
   const cached = await idbGet('cardDetail', id);
   // Marqueur de forme plutot qu'un test sur tel ou tel champ. Chaque fois qu'un champ a
@@ -5152,13 +5221,13 @@ async function getCardDetailCached(id, maxAge){
   // la fonctionnalite paraissait alors cassee sur les cartes deja consultees. Incrementer
   // FORME_FICHE suffit desormais a forcer un rechargement unique.
   const complet = cached && cached.detail && cached.formeFiche === FORME_FICHE;
-  if(complet && (Date.now() - cached.fetchedAt) < (maxAge || CARD_DETAIL_MAX_AGE_MS)) return cached.detail;
+  if(complet && (Date.now() - cached.fetchedAt) < (maxAge || CARD_DETAIL_MAX_AGE_MS)) return normaliserRareteFiche(cached.detail);
   try{
     const r = await fetchWithRetry(`https://api.tcgdex.net/v2/fr/cards/${id}`, {}, {maxRetries:1, baseDelay:400});
     if(r.ok){
       const card = normalizeCard(await r.json());
       await idbSet('cardDetail', {cardId:id, detail:card, formeFiche:FORME_FICHE, fetchedAt:Date.now()});
-      return card;
+      return normaliserRareteFiche(card);
     }
   } catch(e){ /* réseau indisponible */ }
   return cached ? cached.detail : null;
@@ -10619,6 +10688,12 @@ function demarrerCalculMastersets(){
 //   4. Le scelle        chaque piece vaut une annonce, il n'y en a jamais des centaines,
 //                       et sa cote est connue. Rien a filtrer.
 
+// Seules ces quatre raretes partent en lot. Une illustration rare ne s'y retrouve JAMAIS,
+// meme cotee sous le seuil : ce qu'on achete sur ces cartes c'est l'illustration, elles
+// trouvent preneur a l'unite, et les noyer dans un tas de communes revient a les brader
+// sans que personne ne les voie. Le lot est fait pour le fond de bac, rien d'autre.
+const RARETES_EN_LOT = new Set(['Commune', 'Peu commune', 'Rare', 'Rare holo']);
+
 const CLE_SEUIL_VENTE = 'seuilVente';
 let seuilVente = parseFloat(localStorage.getItem(CLE_SEUIL_VENTE));
 if(!isFinite(seuilVente) || seuilVente < 0) seuilVente = 2;
@@ -10656,7 +10731,7 @@ async function indexerCollection(){
       cle: e.cle, cardId: e.cardId, variante: e.variante, setId: e.setId,
       localId: e.localId, qty: parseInt(e.qty) || 1,
       prix: d ? (prixRetenu(d, e.variante) || 0) : 0,
-      rarete: (d && d.rarity) || 'Sans rareté',
+      rarete: raretteFr(d && d.rarity),
       nom: (d && d.name) || ('#' + e.localId),
       image: (d && (d.imageBase || d.image)) || '',
       setName: (d && d.set && d.set.name) || findSetMeta(e.setId)?.name || e.setId
@@ -10684,7 +10759,7 @@ function propositionsVente(){
       // depasserait ce qu'on possede.
       const surplus = i.qty - 1;
       if(surplus > 0) doubles.push({info: i, qte: surplus});
-      if(i.prix >= seuilVente) cotees.push({info: i, qte: 1});
+      if(i.prix >= seuilVente || !RARETES_EN_LOT.has(i.rarete)) cotees.push({info: i, qte: 1});
       else {
         const cle = i.setId + '|' + i.rarete + '|' + i.variante;
         let g = parLot.get(cle);
@@ -10856,8 +10931,8 @@ async function rendrePasserelle(){
         ? '<p class="hint" style="margin:4px 0 0;">Tout ce que tu possèdes est déjà au stock, ou ta collection est vide.</p>'
         : `
         ${bloc('doubles', 'Doubles', p.doubles.nb + ' exemplaire(s) en trop — le premier reste au classeur', p.doubles.valeur, p.doubles.nb)}
-        ${bloc('cotees', 'Cartes à l’unité', p.cotees.nb + ' carte(s) à ' + seuilVente.toFixed(2) + ' € ou plus, ou trop isolées pour former un lot', p.cotees.valeur, p.cotees.nb)}
-        ${bloc('lots', 'Lots', p.lots.nb + ' lot(s) · ' + p.lots.cartes + ' cartes sous le seuil, groupées par extension, rareté et impression', p.lots.valeur, p.lots.nb)}
+        ${bloc('cotees', 'Cartes à l’unité', p.cotees.nb + ' carte(s) à ' + seuilVente.toFixed(2) + ' € ou plus, illustrations rares et cartes trop isolées pour un lot', p.cotees.valeur, p.cotees.nb)}
+        ${bloc('lots', 'Lots', p.lots.nb + ' lot(s) · ' + p.lots.cartes + ' cartes sous le seuil — communes, peu communes et rares, groupées par extension, rareté et impression', p.lots.valeur, p.lots.nb)}
         ${bloc('scelles', 'Scellé', p.scelles.nb + ' produit(s) pas encore au stock', p.scelles.valeur, p.scelles.nb)}
         <div class="ps-seuil">
           <label for="ps-seuil-input">Seuil de vente à l’unité</label>
@@ -10991,7 +11066,7 @@ let masseSel = {raretes: new Set(), impressions: new Set()};
 
 function rareteDe(c){
   const d = detailsCartes.get(c.id);
-  return (d && d.rarity) || 'Sans rareté';
+  return raretteFr(d && d.rarity);
 }
 
 // Les cartes du set groupees par rarete, les plus nombreuses d'abord : les communes en
@@ -11286,7 +11361,7 @@ function raretesDuSet(){
   for(const c of cartesSetCourant){
     const d = detailsCartes.get(c.id);
     if(!d) continue;
-    const r = d.rarity || 'Sans rareté';
+    const r = raretteFr(d.rarity);
     compte.set(r, (compte.get(r) || 0) + 1);
   }
   // Les plus fréquentes d'abord : les communes en tête, les secrètes en fin de barre, ce
@@ -11331,12 +11406,20 @@ function rendreFiltreRarete(){
 
 // Libellés abrégés : « Illustration spéciale rare » sur une pastille pousserait la barre
 // hors de l'écran. Le nom complet reste en infobulle.
+// Les sigles employes par les joueurs, et non des initiales inventees : AR pour une
+// illustration rare, SAR pour une illustration speciale rare, RR pour une double rare.
+// Ce sont ceux qu'on lit sur les annonces et dans les listes d'echange — mettre « IR » la
+// ou tout le monde ecrit « AR » obligerait a traduire mentalement a chaque coup d'oeil.
 const ABREGE_RARETE = {
-  'Commune': 'C', 'Peu Commune': 'PC', 'Rare': 'R', 'Rare Holo': 'RH', 'Holo Rare': 'RH',
-  'Double rare': 'RR', 'Ultra Rare': 'UR', 'Illustration rare': 'IR',
-  'Illustration spéciale rare': 'ISR', 'Hyper rare': 'HR', 'Chromatique ultra rare': 'CUR',
-  'Shiny rare': 'SR', 'Radieux Rare': 'RAD', 'Magnifique rare': 'MAG', 'Promo': 'PROMO',
-  'Sans rareté': '—'
+  'Commune': 'C', 'Peu commune': 'PC', 'Rare': 'R', 'Rare holo': 'RH',
+  'Rare holo ex': 'RH ex', 'Rare holo V': 'RH V', 'Rare holo VMAX': 'RH VMAX',
+  'Rare holo VSTAR': 'RH VSTAR', 'Rare holo galerie': 'TG',
+  'Double rare': 'RR', 'Ultra rare': 'UR', 'Illustration rare': 'AR',
+  'Illustration spéciale rare': 'SAR', 'Hyper rare': 'HR', 'Méga hyper rare': 'MHR',
+  'Chromatique rare': 'S', 'Chromatique ultra rare': 'SSR',
+  'Radieuse rare': 'RAD', 'Magnifique rare': 'MAG', 'Rare éclatante': 'ECL',
+  'Rare brillante': 'BRI', 'Rare secrète': 'SEC', 'Légende': 'LEG',
+  'Collection classique': 'CC', 'Promo': 'PROMO', 'Sans rareté': '—'
 };
 function abregerRarete(r){
   if(ABREGE_RARETE[r]) return ABREGE_RARETE[r];
@@ -11517,7 +11600,7 @@ function cartesFiltrees(){
   // l'impression qu'elle n'appartient pas au set, alors qu'on ignore seulement sa rareté.
   if(filtreRarete) l = l.filter(c => {
     const d = detailsCartes.get(c.id);
-    return !d || (d.rarity || 'Sans rareté') === filtreRarete;
+    return !d || raretteFr(d.rarity) === filtreRarete;
   });
   return l;
 }
@@ -12562,7 +12645,7 @@ function openCardViewer(imageBase, label, cardId){
       if(!v.classList.contains('open') || $('cv-img').src.indexOf(imageBase) < 0) return;
       cvCardIsSpecial = cvEstSpeciale(card);
       cvMajHolo();
-      if(cvCardIsSpecial && card?.rarity) $('cv-badge-holo').textContent = '✨ ' + card.rarity;
+      if(cvCardIsSpecial && card?.rarity) $('cv-badge-holo').textContent = '✨ ' + raretteFr(card.rarity);
     }).catch(()=>{ /* pas de rareté connue : la carte reste mate, sans conséquence */ });
   }
 
@@ -12856,7 +12939,7 @@ async function remplirOptionsFiltres(){
       }
       for(const nom of (raretes?.liste || [])){
         const o = document.createElement('option');
-        o.value = nom; o.textContent = nom;
+        o.value = nom; o.textContent = raretteFr(nom);
         sel.appendChild(o);
       }
     }
@@ -13039,7 +13122,7 @@ async function afficherPageResultats(myToken, totalBrut){
     const details = await Promise.all(lot.map(b => getCardDetailCached(b.id).catch(()=>null)));
     if(myToken !== searchToken) return;
     for(const c of details.filter(Boolean)){
-      if(f.rarete && (c.rarity || '') !== f.rarete){ ecartesRarete++; continue; }
+      if(f.rarete && raretteFr(c.rarity) !== raretteFr(f.rarete)){ ecartesRarete++; continue; }
       ajoutes.push(c);
     }
     if(!f.rarete) break; // sans filtre de rareté, un seul lot suffit toujours
@@ -13096,7 +13179,7 @@ function normalizeCard(detail){
     id: detail.id, // conservé pour le cache d'empreinte visuelle (getCardImageHash) et le raccourci hash-first
     name: detail.name,
     number: detail.localId,
-    rarity: detail.rarity,
+    rarity: raretteFr(detail.rarity),
     set: { id: detail.set?.id, name: detail.set?.name },
     images: { small: detail.image ? detail.image + '/low.webp' : '' },
     imageBase: detail.image || '', // base brute (sans suffixe), nécessaire à getCardImageHash
@@ -13884,7 +13967,7 @@ async function ouvrirFiche(id){
   $('fi-chips').innerHTML = [
     e.setName && `<span class="fi-chip">${escapeHtml(e.setName)}</span>`,
     e.number && `<span class="fi-chip">#${escapeHtml(e.number)}</span>`,
-    e.rarity && `<span class="fi-chip">${escapeHtml(e.rarity)}</span>`,
+    e.rarity && `<span class="fi-chip">${escapeHtml(raretteFr(e.rarity))}</span>`,
     `<span class="fi-chip re-${e.condition}">${e.condition || 'NM'}</span>`
   ].filter(Boolean).join('');
 
