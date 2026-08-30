@@ -7205,7 +7205,9 @@ function drawGuideOverlay(video, state, corners){
   const cvs = $('aim-overlay');
   if(!cvs || !video.videoWidth) return;
   const OW = 640, OH = Math.max(1, Math.round(video.videoHeight * (OW/video.videoWidth)));
-  if(cvs.width !== OW || cvs.height !== OH){ cvs.width = OW; cvs.height = OH; }
+  // Redimensionner un canvas l'EFFACE. Sans réarmer le dessin, un changement d'objectif
+  // en cours de session laisserait la mire disparue jusqu'à la détection suivante.
+  if(cvs.width !== OW || cvs.height !== OH){ cvs.width = OW; cvs.height = OH; overlayADessiner = true; }
 
   const ctx = cvs.getContext('2d');
   ctx.clearRect(0,0,OW,OH);
@@ -7627,6 +7629,9 @@ let imagesDessinees = 0, imagesSautees = 0;
 let overlayTargetState = 'attente', overlayTargetCorners = null;
 let overlayCurrentState = 'attente', overlayCurrentCorners = null;
 let overlayRenderRunning = false;
+// Force le prochain passage à dessiner, quoi qu'en dise la détection de changement.
+// Armé au démarrage de la boucle, puisque le tout premier dessin ne peut pas y échapper.
+let overlayADessiner = true;
 
 // Constante de temps du lissage, en millisecondes, et non plus un coefficient par image.
 // L'ancien « 0,3 par frame » rendait la vitesse de rattrapage dépendante de l'écran :
@@ -7722,12 +7727,14 @@ function renderOverlayLoop(now){
     // l'écran. Continuer à redessiner pour ça, c'est payer une composition plein écran
     // pour un résultat que personne ne peut voir.
     const pulseActive = (now - pulseCaptureAt) < PULSE_DUREE_MS;
-    const change = etatPrecedent !== overlayCurrentState
+    const change = overlayADessiner
+      || etatPrecedent !== overlayCurrentState
       || pulseActive
       || (!avant) !== (!overlayCurrentCorners)
       || (avant && overlayCurrentCorners && maxCornerShift(avant, overlayCurrentCorners) > 0.0004);
 
     if(change){
+      overlayADessiner = false;
       const t0 = performance.now();
       drawGuideOverlay(video, overlayCurrentState, overlayCurrentCorners);
       msCadre += performance.now() - t0;
@@ -8830,8 +8837,10 @@ function startAimLoop(){
   camStartedAt = Date.now(); // origine de temps pour l'instrumentation session (voir diagPush)
   setAimHint('Préparation de la lecture…');
 
-  const video = $('video');
-  if(video) drawGuideOverlay(video, 'attente', null);
+  // Pas de dessin immédiat ici : au moment où startAimLoop est appelée, srcObject vient
+  // d'être affecté et la vidéo n'a pas encore de dimensions — l'appel sortait sans rien
+  // peindre. C'est la boucle qui dessine, dès la première frame où l'image existe.
+  overlayADessiner = true;
   overlayRenderRunning = true;
   requestAnimationFrame(renderOverlayLoop);
   demarrerQualite();
