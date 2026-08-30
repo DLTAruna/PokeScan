@@ -16217,6 +16217,11 @@ function construireEntree(card, photo){
   const decote = DECOTE_ETAT[stickyCondition] ?? 1;
   const suggestedPrice = price.market ? (price.market*pct/100*decote).toFixed(2) : '';
 
+  // Trois points rétroactifs tirés des moyennes 1/7/30 jours, posés dès la première
+  // rencontre de la carte : sans eux, sa courbe ne dirait rien avant demain. Sans await —
+  // une écriture IndexedDB ne doit pas retenir une rafale de scan.
+  amorcerHistorique(card);
+
   const tmpl = $('title-template-input').value;
   const descTmpl = $('desc-template-input').value;
   const vars = {
@@ -16941,6 +16946,42 @@ async function chargerHistoriqueCotes(){
   return historiqueCotes;
 }
 
+// ---------------- HISTORIQUE AMORCÉ ----------------
+// Cardmarket ne publie aucune série temporelle : six nombres décrivant l'instant présent,
+// et rien de daté. L'application construit donc le sien, un relevé par jour — d'où une
+// courbe qui commence le jour où l'on découvre la carte, et ne dit rien avant.
+//
+// Trois de ces six nombres portent pourtant du passé : les moyennes à 1, 7 et 30 jours.
+// On peut donc poser trois points rétroactifs et démarrer avec un mois de recul au lieu de
+// rien. Ce sont des MOYENNES et non des prix relevés ces jours-là : la courbe est lissée
+// sur cette portion et ne montre pas les à-coups qu'un vrai relevé aurait vus. Les points
+// sont marqués (a:1) pour que l'affichage puisse le dire plutôt que de laisser croire à
+// une mesure.
+function pointsApproches(card){
+  const v = (card && card.variantsDetailed) || [];
+  let cm = null;
+  for(const x of v){ if(x.pricing && x.pricing.cardmarket){ cm = x.pricing.cardmarket; break; } }
+  if(!cm) return [];
+  const jour = (recul)=> new Date(Date.now() - recul * 86400000).toISOString().slice(0, 10);
+  return [[30, cm.avg30], [7, cm.avg7], [1, cm.avg1]]
+    .filter(([, val]) => typeof val === 'number' && val > 0)
+    .map(([recul, val]) => ({j: jour(recul), v: val, a: 1}));
+}
+
+// Posé une seule fois par carte, à sa première rencontre : si un historique existe déjà,
+// il vient de relevés réels et vaut mieux qu'une approximation.
+async function amorcerHistorique(card){
+  if(!card || !card.id) return;
+  try{
+    const h = await chargerHistoriqueCotes();
+    if(h[card.id] && h[card.id].length) return;
+    const pts = pointsApproches(card);
+    if(!pts.length) return;
+    h[card.id] = pts;
+    await idbSet('meta', {key: CLE_HISTO_ITEM, parCarte: h, at: Date.now()});
+  }catch(e){}
+}
+
 async function noterCotesDuJour(){
   const h = await chargerHistoriqueCotes();
   const jour = new Date().toISOString().slice(0, 10);
@@ -16982,6 +17023,9 @@ function courbeTendance(cardId){
   const limite = Date.now() - TENDANCE_JOURS_TRACE * 86400000;
   const trace = pts.filter(p => new Date(p.j).getTime() >= limite);
   const recents = pts.slice(-TENDANCE_JOURS_VERDICT);
+  // Une courbe entièrement bâtie sur les moyennes rétroactives n'est pas un relevé : on
+  // le signale, sinon elle se lirait comme une mesure quotidienne qu'on n'a pas faite.
+  const approchee = trace.length > 0 && trace.every(p => p.a);
   if(trace.length < 2){
     // Rien à montrer encore. On le dit plutôt que de tracer une ligne plate, qui se lirait
     // comme « stable » alors qu'on ne sait simplement rien.
@@ -16997,7 +17041,9 @@ function courbeTendance(cardId){
   const L = 52, H = 15;
   const d = v.map((val, i) =>
     `${((i / (v.length - 1)) * L).toFixed(1)},${(H - ((val - min) / etendue) * H).toFixed(1)}`).join(' ');
-  return `<span class="pf-tendance ${cls}">
+  // Une courbe reconstituee depuis les moyennes porte la nuance dans son infobulle :
+  // l afficher en clair prendrait la place du chiffre sur une vignette de 52 px.
+  return `<span class="pf-tendance ${cls}${approchee ? ' estimee' : ''}"${approchee ? ' title="Courbe estimée : reconstituée depuis les moyennes 1, 7 et 30 jours de Cardmarket, faute de relevés quotidiens sur cette période"' : ''}>
       <svg viewBox="0 0 ${L} ${H}" preserveAspectRatio="none" aria-hidden="true">
         <polyline points="${d}" fill="none" stroke="currentColor" stroke-width="1.6"
           vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"/>
