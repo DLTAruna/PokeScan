@@ -3379,6 +3379,10 @@
           classeur d'une seule extension, choisis-la : le numéro suffit alors à identifier
           la carte, sans avoir à deviner le set.
         </p>
+        <label style="display:flex; align-items:flex-start; gap:8px; margin-top:14px; cursor:pointer;">
+          <input type="checkbox" id="chk-plein-ecran" style="width:auto; margin:2px 0 0;">
+          <span>Plein écran total<small style="display:block; font-size:11.5px; color:var(--muted); line-height:1.45; margin-top:2px;">Masque la barre d’adresse et les boutons du système. En contrepartie, la page est rendue à la définition complète de l’écran : sur un téléphone très dense, la lecture peut passer du simple au triple. À essayer, et à décocher si le scan ralentit.</small></span>
+        </label>
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Changer d’objectif</button>
         </div>
       </details>
@@ -4446,6 +4450,11 @@ let impressionScan = localStorage.getItem('impressionScan') || 'normal';
 // est construit bien avant le code de visée qui le modifie, et le lire trop tôt arrêtait
 // le script entier.
 let autoCaptureEnabled = true;
+// Plein écran natif : masque la barre du navigateur, mais fait rendre la page à la
+// définition pleine de l'appareil. Mesuré coûteux sur un téléphone dense (lecture de 473
+// à 1463 ms, worker de 303 à 1514), sans effet sur un autre. Décoché par défaut : on
+// n'impose pas un coût que seul l'appareil peut révéler.
+let pleinEcranNatif = localStorage.getItem('pleinEcranNatif') === '1';
 // Source d'image des annonces. Déclarée ici, avec l'état général : le tableau de bord la
 // consulte au démarrage, bien avant l'onglet Stock qui la règle.
 const CLE_SRC_PHOTO = 'sourcePhoto';
@@ -10050,6 +10059,7 @@ function stopAimLoop(){
 // Plein écran natif, en plus du calque CSS. Toujours appelée depuis un geste (démarrage
 // de la caméra) : sans lui, la demande est refusée par principe.
 async function demanderPleinEcran(){
+  if(!pleinEcranNatif) return;
   // Le DOCUMENT, et non la zone caméra : un élément en plein écran passe dans la couche
   // supérieure et peint par-dessus tout le reste de la page, z-index compris. Les
   // panneaux ouverts depuis cet écran (liste de session, réglages, conseils) sont des
@@ -15934,6 +15944,21 @@ function appliquerSourcePhoto(){
     r.checked = (r.value === sourcePhoto);
   });
 }
+// Prend effet au prochain démarrage de la caméra : basculer en plein écran pendant qu'on
+// vise ferait sauter le cadrage, et sortir du plein écran demande de toute façon un geste
+// que le navigateur n'accorde qu'à l'utilisateur.
+function majPleinEcranUI(){
+  const c = $('chk-plein-ecran');
+  if(c) c.checked = pleinEcranNatif;
+}
+$('chk-plein-ecran')?.addEventListener('change', (e)=>{
+  pleinEcranNatif = e.target.checked;
+  localStorage.setItem('pleinEcranNatif', pleinEcranNatif ? '1' : '0');
+  if(!pleinEcranNatif) quitterPleinEcran();
+  else if(cameraStream) toast('Le plein écran prendra effet au prochain démarrage de la caméra.');
+});
+majPleinEcranUI();
+
 $('src-photo')?.addEventListener('change', (e)=>{
   const v = e.target?.value;
   if(!v) return;
