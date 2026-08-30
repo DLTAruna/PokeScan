@@ -267,17 +267,32 @@
     transition:transform .12s ease;
   }
   .capture-fab:active{transform:translateX(-50%) scale(.94);}
-  /* Rappel de l'impression choisie, dans le cadre camera. Absent quand elle vaut
-     « normale » : c'est le cas ordinaire, l'afficher n'apprendrait rien et encombrerait
-     une image ou chaque pixel compte. */
-  .chip-impression{
-    position:absolute; top:44px; left:50%; transform:translateX(-50%); z-index:22;
-    background:var(--accent); color:#1a1206; border-radius:14px; padding:3px 11px;
-    font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
-    pointer-events:none; white-space:nowrap;
+  /* Sélecteur d'impression posé dans le cadre camera, juste au-dessus du bouton de prise :
+     c'est la zone du pouce, et c'est un reglage qu'on change en scannant. Fond opaque et
+     non un simple voile : il doit rester lisible sur n'importe quelle image. */
+  .imp-cam{
+    position:absolute; bottom:126px; left:50%; transform:translateX(-50%); z-index:23;
+    background:rgba(0,0,0,.72); border-color:rgba(255,255,255,.22);
+    backdrop-filter:none;
   }
-  #impression-scan{width:100%; margin-top:4px;}
-  #impression-scan button{flex:1;}
+  .imp-cam button{padding:6px 13px; font-size:12px; color:rgba(255,255,255,.72);}
+  .imp-cam button.on{background:var(--accent); color:#1a1206;}
+  #cam-fullscreen-area.fs .imp-cam{bottom:calc(150px + env(safe-area-inset-bottom));}
+  @media (max-width:420px){ .imp-cam button{padding:6px 10px; font-size:11.5px;} }
+
+  /* Destination des cartes scannées */
+  .dest-scan{display:flex; flex-direction:column; gap:8px; margin-top:6px;}
+  .dest-case{
+    display:flex; align-items:flex-start; gap:10px; cursor:pointer;
+    border:1px solid var(--border); border-radius:10px; padding:10px 12px;
+    background:var(--panel2); margin:0;
+  }
+  .dest-case:hover{border-color:var(--accent2);}
+  .dest-case input{width:auto; margin:2px 0 0; flex:none;}
+  .dest-case span{display:flex; flex-direction:column; gap:2px;}
+  .dest-case b{font-size:13px;}
+  .dest-case small{font-size:11.5px; color:var(--muted); line-height:1.45;}
+  .dest-case:has(input:checked){border-color:var(--accent); background:rgba(255,203,5,.06);}
   /* ---- cadre de visée : rouge = pas de carte, jaune = à ajuster, vert = prêt ---- */
   .aim-overlay{
     position:absolute; inset:0; width:100%; height:100%;
@@ -2841,17 +2856,20 @@
       <details class="reglages-scan">
         <summary id="resume-reglages-scan">Réglages de scan — set : Auto · validation automatique</summary>
         <div class="corps">
-        <label>Impression scannée</label>
-        <div class="seg" id="impression-scan">
-          <button class="on" data-imp="normal">Normale</button>
-          <button data-imp="reverse">Reverse</button>
-          <button data-imp="holo">Holo</button>
+        <label>Où vont les cartes scannées</label>
+        <div class="dest-scan">
+          <label class="dest-case">
+            <input type="checkbox" id="chk-vers-stock" checked>
+            <span><b>Le stock</b><small>Ce que tu mets en vente : prix, titre et description d’annonce.</small></span>
+          </label>
+          <label class="dest-case">
+            <input type="checkbox" id="chk-vers-classeur">
+            <span><b>Le classeur</b><small>Ta collection : la carte est cochée comme possédée dans son extension, avec l’impression choisie sur la caméra.</small></span>
+          </label>
         </div>
         <p class="hint" style="margin:4px 0 0;">
-          Le type d’impression des cartes que tu dépouilles. Il fixe la cote retenue —
-          une reverse et une normale n’ont pas la même. Les cartes qui n’existent pas dans
-          l’impression choisie (illustrations spéciales, full art…) gardent la leur :
-          le réglage ne peut pas leur coller une impression qu’elles n’ont jamais eue.
+          Les deux peuvent être cochées : une carte scannée compte alors dans ta collection
+          ET part au stock. Décocher les deux ne garderait la photo que dans « À vérifier ».
         </p>
 
         <label for="capture-set" style="margin-top:12px; display:block;">Choix du set</label>
@@ -2887,7 +2905,14 @@
         <div class="score-readout" id="score-readout">score —</div>
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Objectif</button>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
-        <span class="chip-impression" id="chip-impression" style="display:none;"></span>
+        <!-- Impression, dans le cadre : on la change en cours de session, une rangée de
+             normales puis une rangée de reverse. La reléguer dans les réglages obligeait à
+             fermer la caméra pour un geste qui appartient au scan lui-même. -->
+        <div class="seg imp-cam" id="impression-scan">
+          <button class="on" data-imp="normal">Normale</button>
+          <button data-imp="reverse">Reverse</button>
+          <button data-imp="holo">Holo</button>
+        </div>
         <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
         <div class="jauges" id="jauges" style="display:none;">
           <div class="jauge"><span class="jl">NETTETÉ</span><span class="jt"><i id="jauge-net"></i></span></div>
@@ -3676,12 +3701,30 @@ let capturedThisSession = 0;
 let lastAdd = null; // {batchIndex, requeuedPhoto}
 let undoTimeout = null;
 let identifyToken = 0;
+// Impressions d'une carte, dans l'ordre où on les présente partout. Déclarées ici, avec
+// l'état général, et non près du code qui les exploite : plusieurs écrans les lisent bien
+// avant (le résumé des réglages de scan, le sélecteur d'impression), et une constante lue
+// avant sa déclaration ne vaut pas `undefined` — elle lève, et emporte tout le script.
+const ORDRE_VARIANTES = ['normal', 'holo', 'reverse', 'firstEdition', 'wPromo'];
+const NOM_VARIANTE = {
+  normal: 'Normal', holo: 'Holo', reverse: 'Reverse',
+  firstEdition: '1re édition', wPromo: 'Promo'
+};
+// Rattachement au `type` de variants_detailed, qui n'emploie pas les mêmes libellés.
+const TYPE_VARIANTE = {normal: 'Normal', holo: 'Holo', reverse: 'Reverse',
+                       firstEdition: 'Normal', wPromo: 'Normal'};
+
 let ocrEnabled = true;
 // Impression des cartes qu'on dépouille (normale / reverse / holo). Déclarée ici et non
 // près de son code : elle est lue dès la construction de l'onglet Scanner. Sa validation
 // contre la liste des impressions connues se fait dans majImpressionScan, qui s'exécute
 // une fois cette liste définie.
 let impressionScan = localStorage.getItem('impressionScan') || 'normal';
+// Où partent les cartes scannées. Par défaut le stock seul : c'est le comportement
+// existant, et cocher le classeur écrit dans la collection, ce qui déplace les valeurs de
+// masterset. Un changement de cette portée se demande, il ne s'impose pas.
+let versStock = localStorage.getItem('versStock') !== '0';
+let versClasseur = localStorage.getItem('versClasseur') === '1';
 let setAbbrMap = null; // {CODE: setId}, construite une fois via TCGdex /sets
 let setDenominatorMap = null; // {denominateur: [setId, ...]} triés du plus récent au plus ancien
 
@@ -9101,12 +9144,17 @@ function majResumeReglagesScan(){
   const auto = $("chk-validation-auto")?.checked;
   const imp = impressionScan && impressionScan !== 'normal'
     ? ' · ' + (NOM_VARIANTE[impressionScan] || impressionScan) : '';
-  el.textContent = "Réglages de scan — set : " + set + imp + " · validation "
-    + (auto ? "automatique" : "manuelle");
+  // La destination est le réglage qu'on regrette le plus d'avoir oublié : scanner deux
+  // cents cartes vers le mauvais endroit ne se rattrape pas d'un clic.
+  const dest = [versStock ? 'stock' : null, versClasseur ? 'classeur' : null]
+    .filter(Boolean).join(' + ') || 'nulle part';
+  el.textContent = "Réglages de scan — vers " + dest + " · set : " + set + imp
+    + " · validation " + (auto ? "automatique" : "manuelle");
 }
 $("capture-set")?.addEventListener("change", majResumeReglagesScan);
 $("chk-validation-auto")?.addEventListener("change", majResumeReglagesScan);
-majResumeReglagesScan();
+// Premier affichage laissé à majImpressionScan et majDestinations, plus bas : appelé ici,
+// il s'exécuterait avant la déclaration de la moitié des réglages qu'il lit.
 
 // ---------------- DÉPÔT D'UN DOSSIER ----------------
 // Sur un ordinateur, le geste naturel quand on a un dossier de photos est de le lâcher sur
@@ -9680,19 +9728,71 @@ function majCoteGlobale(){
 let validationAuto = localStorage.getItem('validationAuto') !== '0';
 let derniereEntreeAuto = null;   // dernière ligne ajoutée automatiquement, pour les +/−
 
-function validerAutomatiquement(card, item){
-  const entry = construireEntree(card, item?.photo || null);
-  const resultat = ajouterAuLot(entry, {auto: true});
-  const {entry: cible, fusionnee} = resultat;
-  derniereEntreeAuto = cible;
 
-  // La photo est consommée : elle a servi, la carte est au lot. La laisser dans la file
-  // ferait réapparaître dans « À vérifier » une carte déjà traitée — c'est exactement le
+// ---------------- DESTINATION DES CARTES SCANNÉES ----------------
+// Une carte scannée pouvait n'aller qu'au stock. Le classeur, lui, ne se remplissait qu'à
+// la main, vignette par vignette — de sorte qu'on pouvait scanner mille cartes et garder
+// une collection vide. Les deux destinations deviennent deux cases, cochables ensemble :
+// une carte peut très bien compter dans la collection ET partir en vente.
+//
+
+function majDestinations(){
+  const s = $('chk-vers-stock'), c = $('chk-vers-classeur');
+  if(s) s.checked = versStock;
+  if(c) c.checked = versClasseur;
+  majResumeReglagesScan();
+}
+
+$('chk-vers-stock')?.addEventListener('change', (e)=>{
+  versStock = e.target.checked;
+  localStorage.setItem('versStock', versStock ? '1' : '0');
+  majResumeReglagesScan();
+});
+$('chk-vers-classeur')?.addEventListener('change', (e)=>{
+  versClasseur = e.target.checked;
+  localStorage.setItem('versClasseur', versClasseur ? '1' : '0');
+  majResumeReglagesScan();
+});
+majDestinations();
+
+// Coche la carte comme possédée dans son extension. L'impression est celle choisie sur la
+// caméra, ramenée à ce que la carte possède réellement — la même garde que pour le stock :
+// une illustration spéciale rare scannée « en reverse » entre en holo, sa seule impression.
+//
+// Volontairement sans await : pendant une rafale, faire attendre la boucle de capture sur
+// une écriture IndexedDB par carte saccaderait l'aperçu. L'écriture est idempotente et
+// l'ordre entre deux cartes n'a aucune importance.
+function enregistrerAuClasseur(card){
+  if(!card || !card.id || !card.set?.id) return null;
+  const {variante} = impressionRetenue(card, impressionScan);
+  majPossession(card.id, card.set.id, card.number, 1, variante).catch(()=>{});
+  return variante;
+}
+
+function validerAutomatiquement(card, item){
+  // L'entrée est construite dans tous les cas : elle porte le nom, l'impression et la cote
+  // qui servent au bilan de session et au fil des cartes récentes, même quand rien ne part
+  // au stock.
+  const entry = construireEntree(card, item?.photo || null);
+  let cible = entry, fusionnee = false, resultat = {};
+  if(versStock){
+    resultat = ajouterAuLot(entry, {auto: true});
+    cible = resultat.entry;
+    fusionnee = resultat.fusionnee;
+    derniereEntreeAuto = cible;
+  } else {
+    // Sans ligne de stock, le réglage de quantité du cadre n'a rien à piloter.
+    derniereEntreeAuto = null;
+  }
+  if(versClasseur) enregistrerAuClasseur(card);
+
+  // La photo est consommée : elle a servi, la carte est traitée. La laisser dans la file
+  // ferait réapparaître dans « À vérifier » une carte déjà rangée — c'est exactement le
   // doublon que l'on veut supprimer.
   const i = pendingQueue.indexOf(item);
   if(i >= 0) pendingQueue.splice(i, 1);
 
-  noterRecent(cible);
+  if(versStock) noterRecent(cible);
   noterSetRecent(card.set?.id);
   noterSession(entry, fusionnee, resultat.ignoree);
 
@@ -10442,14 +10542,6 @@ function findSetMeta(setId){
 // sur Salamèche 004/165, il contient six entrées dont trois « Reverse » à 0,09 €, 0 € et
 // 15 €, et deux « Normal » à 0,09 € et 69,60 €. Prendre la première venue afficherait un
 // prix faux avec l'aplomb d'un prix juste.
-const ORDRE_VARIANTES = ['normal', 'holo', 'reverse', 'firstEdition', 'wPromo'];
-const NOM_VARIANTE = {
-  normal: 'Normal', holo: 'Holo', reverse: 'Reverse',
-  firstEdition: '1re édition', wPromo: 'Promo'
-};
-// Rattachement au `type` de variants_detailed, qui n'emploie pas les mêmes libellés.
-const TYPE_VARIANTE = {normal: 'Normal', holo: 'Holo', reverse: 'Reverse',
-                       firstEdition: 'Normal', wPromo: 'Normal'};
 
 let detailsCartes = new Map();   // cardId -> fiche détaillée (variantes + prix)
 let chargementVariantes = null;
@@ -13533,13 +13625,6 @@ function majImpressionScan(){
   if(!ORDRE_VARIANTES.includes(impressionScan)) impressionScan = 'normal';
   document.querySelectorAll('#impression-scan button[data-imp]').forEach(b =>
     b.classList.toggle('on', b.dataset.imp === impressionScan));
-  const chip = $('chip-impression');
-  if(chip){
-    // Rien à afficher pour « normale » : c'est le cas ordinaire, le rappel n'apprendrait
-    // rien et mangerait de la place sur l'image.
-    chip.style.display = impressionScan === 'normal' ? 'none' : '';
-    chip.textContent = NOM_VARIANTE[impressionScan] || impressionScan;
-  }
   majResumeReglagesScan();
 }
 
@@ -13661,16 +13746,24 @@ function quickAdd(card){
   const hadPhoto = pendingQueue.length > 0;
   const photo = hadPhoto ? pendingQueue[0].photo : null;
   const entry = construireEntree(card, photo);
-  const {entry: cible, fusionnee} = ajouterAuLot(entry);
+  // Mêmes destinations que la validation automatique : décider à la main quelle carte
+  // c'est ne dit rien de l'endroit où elle doit aller.
+  let cible = entry, fusionnee = false;
+  if(versStock){ const r = ajouterAuLot(entry); cible = r.entry; fusionnee = r.fusionnee; }
+  const impClasseur = versClasseur ? enregistrerAuClasseur(card) : null;
 
   if(hadPhoto) pendingQueue.shift();
 
-  lastAdd = fusionnee
+  // Rien à annuler côté stock quand rien n'y est parti : proposer « annuler » sur une
+  // ligne inexistante retirerait la mauvaise carte du lot.
+  lastAdd = !versStock ? null : (fusionnee
     ? { fusionAvec: cible.id, requeuedPhoto: hadPhoto ? photo : null }
-    : { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null };
-  showUndoBar(fusionnee
-    ? `🔁 ${entry.cardName} — doublon, quantité portée à ${cible.qty}`
-    : `✅ ${entry.cardName} ajouté(e)`);
+    : { batchIndex: batch.length-1, requeuedPhoto: hadPhoto ? photo : null });
+  showUndoBar(!versStock
+    ? `📗 ${entry.cardName} — coché dans le classeur`
+    : (fusionnee
+      ? `🔁 ${entry.cardName} — doublon, quantité portée à ${cible.qty}`
+      : `✅ ${entry.cardName} ajouté(e)${impClasseur ? ' — et coché au classeur' : ''}`));
   playConfirmAnimation();
   // Le compteur du Lot ne se rafraîchissait qu'au changement d'onglet : on pouvait ajouter
   // cinquante cartes en voyant « Lot (0) ». renderBatchStatsOnly met à jour les compteurs
