@@ -267,6 +267,17 @@
     transition:transform .12s ease;
   }
   .capture-fab:active{transform:translateX(-50%) scale(.94);}
+  /* Rappel de l'impression choisie, dans le cadre camera. Absent quand elle vaut
+     « normale » : c'est le cas ordinaire, l'afficher n'apprendrait rien et encombrerait
+     une image ou chaque pixel compte. */
+  .chip-impression{
+    position:absolute; top:44px; left:50%; transform:translateX(-50%); z-index:22;
+    background:var(--accent); color:#1a1206; border-radius:14px; padding:3px 11px;
+    font-size:11px; font-weight:800; letter-spacing:.05em; text-transform:uppercase;
+    pointer-events:none; white-space:nowrap;
+  }
+  #impression-scan{width:100%; margin-top:4px;}
+  #impression-scan button{flex:1;}
   /* ---- cadre de visée : rouge = pas de carte, jaune = à ajuster, vert = prêt ---- */
   .aim-overlay{
     position:absolute; inset:0; width:100%; height:100%;
@@ -1787,6 +1798,9 @@
     display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
   .pf-sous{font-size:12px; font-weight:500; color:rgba(241,243,248,.54); margin-top:3px;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  /* Impression sur la vignette du stock : seulement quand elle n'est pas normale. La
+     mentionner partout diluerait le signal — c'est l'exception qui doit se voir. */
+  .pf-chip.imp{background:rgba(124,92,255,.18); color:#b9a6ff; border-color:rgba(124,92,255,.35);}
   .pf-chip{align-self:flex-start; margin-top:7px; font-size:9.5px; font-weight:800;
     padding:2px 7px; border-radius:6px;}
   /* Pied en deux colonnes : le prix d'achat en face de la cote, c'est le seul endroit ou
@@ -2827,7 +2841,20 @@
       <details class="reglages-scan">
         <summary id="resume-reglages-scan">Réglages de scan — set : Auto · validation automatique</summary>
         <div class="corps">
-        <label for="capture-set">Choix du set</label>
+        <label>Impression scannée</label>
+        <div class="seg" id="impression-scan">
+          <button class="on" data-imp="normal">Normale</button>
+          <button data-imp="reverse">Reverse</button>
+          <button data-imp="holo">Holo</button>
+        </div>
+        <p class="hint" style="margin:4px 0 0;">
+          Le type d’impression des cartes que tu dépouilles. Il fixe la cote retenue —
+          une reverse et une normale n’ont pas la même. Les cartes qui n’existent pas dans
+          l’impression choisie (illustrations spéciales, full art…) gardent la leur :
+          le réglage ne peut pas leur coller une impression qu’elles n’ont jamais eue.
+        </p>
+
+        <label for="capture-set" style="margin-top:12px; display:block;">Choix du set</label>
         <select id="capture-set">
           <option value="">Auto — détecter le set à chaque carte</option>
         </select>
@@ -2860,6 +2887,7 @@
         <div class="score-readout" id="score-readout">score —</div>
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Objectif</button>
         <button class="auto-toggle on" id="btn-auto-capture">⚡ Auto</button>
+        <span class="chip-impression" id="chip-impression" style="display:none;"></span>
         <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
         <div class="jauges" id="jauges" style="display:none;">
           <div class="jauge"><span class="jl">NETTETÉ</span><span class="jt"><i id="jauge-net"></i></span></div>
@@ -3459,7 +3487,7 @@ Rareté : {rarity}
 État : {condition}
 
 Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute question.</textarea>
-      <p class="hint">Variables disponibles : {name} {set} {number} {rarity} {condition}</p>
+      <p class="hint">Variables disponibles : {name} {set} {number} {rarity} {impression} {condition}</p>
     </div>
   </section>
 
@@ -3649,6 +3677,11 @@ let lastAdd = null; // {batchIndex, requeuedPhoto}
 let undoTimeout = null;
 let identifyToken = 0;
 let ocrEnabled = true;
+// Impression des cartes qu'on dépouille (normale / reverse / holo). Déclarée ici et non
+// près de son code : elle est lue dès la construction de l'onglet Scanner. Sa validation
+// contre la liste des impressions connues se fait dans majImpressionScan, qui s'exécute
+// une fois cette liste définie.
+let impressionScan = localStorage.getItem('impressionScan') || 'normal';
 let setAbbrMap = null; // {CODE: setId}, construite une fois via TCGdex /sets
 let setDenominatorMap = null; // {denominateur: [setId, ...]} triés du plus récent au plus ancien
 
@@ -8606,10 +8639,22 @@ function renderTotalSession(){
     : totalSession.valorisees + ' carte(s) valorisée(s)';
 }
 function showLiveResultDone(card, confidence){
-  const price = getBestPrice(card);
+  // Même cote que celle qui partira au stock : afficher un prix « toutes impressions »
+  // puis en enregistrer un autre ferait douter du chiffre à chaque carte.
+  const {variante, force} = impressionRetenue(card, impressionScan);
+  const pImp = prixRetenu(card, variante);
+  const price = pImp != null ? {market: pImp, currency: 'EUR'} : getBestPrice(card);
   $('live-result-name').textContent = card.name;
   $('live-result-set').textContent = card.set?.name || '—';
-  $('live-result-num').textContent = '#' + card.number;
+  // L'impression est annoncée, et signalée quand la carte l'a imposée : sans ça, scanner
+  // une illustration spéciale « en reverse » afficherait Holo sans raison visible, ce qui
+  // se lit comme un bug plutôt que comme la garde que c'est.
+  const nomImp = NOM_VARIANTE[variante] || variante;
+  $('live-result-num').textContent = '#' + card.number + ' · ' + nomImp + (force ? ' ⚠︎' : '');
+  $('live-result-num').title = force
+    ? 'Cette carte n’existe pas en ' + (NOM_VARIANTE[impressionScan] || impressionScan)
+      + ' : elle a été enregistrée en ' + nomImp + ', sa seule impression.'
+    : '';
   $('live-result-price').textContent = price.market ? formatPrice(price) : '—';
   $('live-result-badge').textContent = confidence === 'high' ? '✅' : '🤔';
 }
@@ -9054,7 +9099,9 @@ function majResumeReglagesScan(){
   const sel = $("capture-set");
   const set = (sel && sel.value) ? (sel.options[sel.selectedIndex]?.textContent || "").replace(/ \(.*$/, "") : "Auto";
   const auto = $("chk-validation-auto")?.checked;
-  el.textContent = "Réglages de scan — set : " + set + " · validation "
+  const imp = impressionScan && impressionScan !== 'normal'
+    ? ' · ' + (NOM_VARIANTE[impressionScan] || impressionScan) : '';
+  el.textContent = "Réglages de scan — set : " + set + imp + " · validation "
     + (auto ? "automatique" : "manuelle");
 }
 $("capture-set")?.addEventListener("change", majResumeReglagesScan);
@@ -13461,8 +13508,58 @@ function conditionLabel(code){
 // ---------------- QUICK ADD (with confirmation animation) ----------------
 // Construit l'entrée de lot correspondant à une carte. Extrait de quickAdd pour que la
 // capture puisse ajouter au lot directement, sans passer par l'écran d'identification.
+
+// ---------------- IMPRESSION SCANNÉE ----------------
+// On dépouille rarement un tas mélangé : c'est un classeur de normales, OU la rangée de
+// reverse d'une même extension. Le dire une fois en début de session vaut mieux que de le
+// corriger carte par carte ensuite — et surtout, ça change la cote retenue, qui n'est pas
+// la même d'une impression à l'autre.
+
+// L'impression VOULUE n'existe pas forcément sur la carte lue. Une illustration spéciale
+// rare, une full art, une hyper rare n'ont ni normale ni reverse : elles n'existent qu'en
+// une seule impression. Cocher « reverse » pour dépouiller un classeur ne doit donc surtout
+// pas étiqueter reverse une SIR qui n'en a jamais eu — la cote serait fausse et l'annonce
+// mensongère. On retient donc l'impression demandée SI la carte la possède, et sinon celle
+// qu'elle a réellement.
+function impressionRetenue(card, voulue){
+  const dispo = variantesDe(card);
+  if(dispo.includes(voulue)) return {variante: voulue, force: false};
+  return {variante: dispo[0], force: true};
+}
+
+function majImpressionScan(){
+  // Valeur mémorisée d'une version antérieure, ou trafiquée : on retombe sur « normale »
+  // plutôt que d'étiqueter tout un lot avec une impression qui n'existe pas.
+  if(!ORDRE_VARIANTES.includes(impressionScan)) impressionScan = 'normal';
+  document.querySelectorAll('#impression-scan button[data-imp]').forEach(b =>
+    b.classList.toggle('on', b.dataset.imp === impressionScan));
+  const chip = $('chip-impression');
+  if(chip){
+    // Rien à afficher pour « normale » : c'est le cas ordinaire, le rappel n'apprendrait
+    // rien et mangerait de la place sur l'image.
+    chip.style.display = impressionScan === 'normal' ? 'none' : '';
+    chip.textContent = NOM_VARIANTE[impressionScan] || impressionScan;
+  }
+  majResumeReglagesScan();
+}
+
+$('impression-scan')?.addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-imp]');
+  if(!b) return;
+  impressionScan = b.dataset.imp;
+  localStorage.setItem('impressionScan', impressionScan);
+  majImpressionScan();
+});
+majImpressionScan();
+
 function construireEntree(card, photo){
-  const price = getBestPrice(card);
+  // Cote de L'IMPRESSION retenue, et non la première trouvée : getBestPrice parcourt les
+  // impressions dans l'ordre où l'API les donne et s'arrête à la première cotée, si bien
+  // qu'une reverse héritait du prix d'une normale. On retombe dessus seulement quand
+  // Cardmarket ne cote pas cette impression-là.
+  const {variante, force: impForcee} = impressionRetenue(card, impressionScan);
+  const pImp = prixRetenu(card, variante);
+  const price = pImp != null ? {market: pImp, currency: 'EUR'} : getBestPrice(card);
   const pct = parseFloat($('price-pct-input').value)||80;
   // La décote d'état est appliquée dès la construction : sans elle, une carte marquée
   // « MP » avant le scan suivant garderait le tarif d'une Near Mint.
@@ -13476,6 +13573,7 @@ function construireEntree(card, photo){
     set: card.set?.name || '',
     number: card.number,
     rarity: card.rarity || '',
+    impression: NOM_VARIANTE[variante] || '',
     condition: conditionLabel(stickyCondition)
   };
   const fill = (str)=> str.replace(/\{(\w+)\}/g, (m,k)=> vars[k] ?? '');
@@ -13501,6 +13599,11 @@ function construireEntree(card, photo){
     // Prix marché conservé tel quel, à côté du prix de vente calculé : sans lui, une fois
     // la carte au lot on ne peut plus savoir à quel pourcentage du marché on la vend.
     cardId: card.id || '',
+    // Impression retenue, et le fait qu'elle ait été imposée par la carte plutôt que
+    // choisie : c'est ce qui permet de dire à l'écran pourquoi une SIR scannée « en
+    // reverse » est arrivée en holo, au lieu de laisser croire à une erreur.
+    variante,
+    impressionForcee: impForcee,
     marketPrice: price.market || null,
     marketCurrency: price.currency || '',
     imageUrl: '',
@@ -13516,9 +13619,15 @@ function construireEntree(card, photo){
 // Rien n'est écrasé : la première photo est conservée (elle sert de visuel d'annonce) et le
 // prix déjà fixé reste celui de la ligne. Seule la quantité change.
 function ajouterAuLot(entry, opts = {}){
+  // L'impression entre dans la clé de fusion, au même titre que l'état : une normale et
+  // une reverse de la même carte n'ont ni la même cote ni le même acheteur, les réunir
+  // sous une seule ligne en quantité 2 vendrait l'une pour l'autre. Comparaison tolérante
+  // quand l'une des deux lignes n'a pas d'impression connue (entrées d'avant ce réglage) :
+  // mieux vaut fusionner que créer un doublon silencieux.
+  const memeImpression = (e) => !e.variante || !entry.variante || e.variante === entry.variante;
   const jumelle = entry.cardId
-    ? batch.find(e => e.cardId === entry.cardId && e.condition === entry.condition)
-    : batch.find(e => e.setId === entry.setId && e.number === entry.number && e.condition === entry.condition);
+    ? batch.find(e => e.cardId === entry.cardId && e.condition === entry.condition && memeImpression(e))
+    : batch.find(e => e.setId === entry.setId && e.number === entry.number && e.condition === entry.condition && memeImpression(e));
 
   if(jumelle){
     // Fenêtre pendant laquelle un second exemplaire de la MÊME carte est physiquement
@@ -13950,6 +14059,7 @@ function rendreGrillePortfolio(){
         <span class="pf-nom">${escapeHtml(e.cardName || '—')}</span>
         <span class="pf-sous">${escapeHtml(e.setName || '')}${e.number ? ' · #' + escapeHtml(e.number) : ''}</span>
         <span class="pf-chip re-${e.condition}">${e.condition || 'NM'}</span>
+        ${e.variante && e.variante !== 'normal' ? `<span class="pf-chip imp">${escapeHtml(NOM_VARIANTE[e.variante] || e.variante)}</span>` : ''}
         ${courbeTendance(e.cardId)}
         <span class="pf-pied">
           <div><span class="l">Achat</span><span class="v">${eur(achat)}</span></div>
