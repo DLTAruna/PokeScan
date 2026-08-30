@@ -1929,6 +1929,59 @@
     margin:10px 0; padding:9px 12px; border-radius:10px; font-size:12.5px;
     background:rgba(59,165,93,.12); border:1px solid rgba(59,165,93,.32);
   }
+  /* ---- Page d'accueil ---- */
+  .acc-tete{display:flex; flex-direction:column; gap:14px;}
+  .acc-chiffres{display:grid; grid-template-columns:1fr 1fr; gap:12px;}
+  .acc-bloc{display:flex; flex-direction:column; gap:2px; min-width:0;}
+  .acc-bloc .micro{font-size:10px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);}
+  .acc-bloc b{font-size:26px; font-family:'Baloo 2','Nunito',sans-serif; line-height:1.1;}
+  /* Une couleur par monde, les mêmes que la bascule de mode : on retrouve d'un coup d'œil
+     de quel côté on lit, sans avoir à relire le titre. */
+  .acc-or{color:var(--mode-vendeur);}
+  .acc-violet{color:var(--mode-collec);}
+  .acc-sous{font-size:11.5px; color:var(--muted); line-height:1.4;}
+  .acc-courbe .entete{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;}
+  .acc-courbe .micro{font-size:10px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);}
+
+  .acc-colonnes{display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:14px;}
+  .acc-col{
+    display:flex; flex-direction:column; gap:7px; text-align:left;
+    padding:14px; border-radius:var(--radius); border:1px solid var(--border);
+    background:var(--panel); box-shadow:var(--shadow); color:var(--text); font:inherit;
+  }
+  .acc-col.vendeur{border-color:rgba(255,203,5,.34);}
+  .acc-col.collec{border-color:rgba(124,92,255,.34);}
+  .acc-col:hover{border-color:var(--accent2);}
+  .acc-col-tete{display:flex; flex-direction:column; gap:1px; margin-bottom:4px;}
+  .acc-col-tete b{font-size:15px;}
+  .acc-col-tete small{font-size:11.5px; color:var(--muted);}
+  .acc-ligne{display:flex; align-items:baseline; justify-content:space-between; gap:10px; font-size:12.5px; color:var(--muted);}
+  .acc-ligne b{color:var(--text); font-variant-numeric:tabular-nums;}
+  .acc-fleche{margin-top:6px; font-size:12px; font-weight:700; color:var(--accent2);}
+
+  .acc-tuiles{display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px;}
+  .acc-tuile{
+    display:flex; align-items:center; gap:11px; text-align:left;
+    padding:13px 12px; border-radius:12px; border:1px solid var(--border);
+    background:var(--panel2); color:var(--text); font:inherit;
+  }
+  .acc-tuile svg{width:24px; height:24px; flex:none; color:var(--accent2);}
+  .acc-tuile span{display:flex; flex-direction:column; gap:1px; min-width:0;}
+  .acc-tuile b{font-size:13.5px;}
+  .acc-tuile small{font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .acc-tuile:hover{border-color:var(--accent2);}
+  /* Une tuile qui attend quelque chose se signale : c'est elle qui décide où l'on va en
+     ouvrant l'application. */
+  .acc-tuile.urgent{border-color:rgba(224,161,42,.55); background:rgba(224,161,42,.09);}
+  .acc-tuile.urgent svg{color:var(--warn);}
+  .acc-tuile.urgent small{color:#ffce70;}
+
+  /* Sous 420 px, deux colonnes de chiffres tiennent encore ; deux colonnes de LIGNES non,
+     les libellés y passeraient tous sur deux lignes. */
+  @media (max-width:419px){
+    .acc-colonnes{grid-template-columns:1fr;}
+  }
+
   /* ---- Barre laterale (bureau) ----
      La barre du bas reste la navigation du telephone : elle est a portee de pouce et
      l'application se scanne debout, une carte dans une main. Sur un ecran large elle
@@ -3322,7 +3375,94 @@
     </div>
   </section>
 
-  <section class="section active" id="section-capture">
+  <!-- PAGE D'ACCUEIL -->
+  <!-- L'application s'ouvrait sur la caméra. C'est l'action la plus fréquente, mais une
+       porte d'entrée doit répondre à « où j'en suis », pas lancer une tâche. Cette page
+       répond aux deux questions qu'on se pose en ouvrant : combien ça vaut, et par où
+       j'entre.
+       Vendeur et collection y sont côte à côte mais JAMAIS additionnés : une même carte
+       peut être dans les deux, et un total unique serait faux tout en ayant l'air juste. -->
+  <section class="section active" id="section-accueil">
+    <div class="panel acc-tete">
+      <div class="acc-chiffres">
+        <div class="acc-bloc">
+          <span class="micro">Ce que je vends</span>
+          <b class="acc-or" id="acc-val-stock">0,00 €</b>
+          <span class="acc-sous" id="acc-sous-stock">—</span>
+        </div>
+        <div class="acc-bloc">
+          <span class="micro">Ce que je garde</span>
+          <b class="acc-violet" id="acc-val-collec">0,00 €</b>
+          <span class="acc-sous" id="acc-sous-collec">—</span>
+        </div>
+      </div>
+      <div class="acc-courbe">
+        <div class="entete">
+          <span class="micro">Évolution de la cote</span>
+          <div class="pf-seg" id="acc-periode">
+            <button data-jours="7">Semaine</button>
+            <button data-jours="30" class="on">Mois</button>
+            <button data-jours="365">Année</button>
+            <button data-jours="0">Tout</button>
+          </div>
+        </div>
+        <div class="val-graph" id="acc-graph"></div>
+      </div>
+    </div>
+
+    <!-- Les deux mondes, avec leurs propres chiffres et leur propre porte. -->
+    <div class="acc-colonnes">
+      <button class="acc-col vendeur" data-tab="batch">
+        <span class="acc-col-tete"><b>Stock</b><small>Ce que tu mets en vente</small></span>
+        <span class="acc-ligne"><span>Valeur de vente</span><b id="acc-l-valeur">—</b></span>
+        <span class="acc-ligne"><span>Cartes</span><b id="acc-l-cartes">—</b></span>
+        <span class="acc-ligne"><span>Scellés</span><b id="acc-l-scelles">—</b></span>
+        <span class="acc-fleche">Ouvrir le stock ›</span>
+      </button>
+      <button class="acc-col collec" data-tab="collection">
+        <span class="acc-col-tete"><b>Collection</b><small>Ce que tu gardes</small></span>
+        <span class="acc-ligne"><span>Cote</span><b id="acc-c-cote">—</b></span>
+        <span class="acc-ligne"><span>Cartes possédées</span><b id="acc-c-cartes">—</b></span>
+        <span class="acc-ligne"><span>Séries entamées</span><b id="acc-c-series">—</b></span>
+        <span class="acc-fleche">Ouvrir la collection ›</span>
+      </button>
+    </div>
+
+    <!-- Portes d'entrée directes. Celles qui ont quelque chose à traiter portent leur
+         compteur : c'est ce qui décide où l'on va en ouvrant l'application. -->
+    <div class="acc-tuiles">
+      <button class="acc-tuile" data-tab="sets">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 5.4A1.6 1.6 0 0 1 5.6 3.8h12.8A1.6 1.6 0 0 1 20 5.4v13.2a1.6 1.6 0 0 1-1.6 1.6H5.6A1.6 1.6 0 0 1 4 18.6Z"/>
+          <path d="M8 3.8v16.4M5.4 7.4h1.2M5.4 11.4h1.2M5.4 15.4h1.2"/>
+        </svg>
+        <span><b>Classeur</b><small id="acc-t-classeur">tes séries</small></span>
+      </button>
+      <button class="acc-tuile" data-tab="scelle">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3.6 8.2 12 4l8.4 4.2v7.6L12 20l-8.4-4.2Z"/>
+          <path d="m3.6 8.2 8.4 4.2 8.4-4.2M12 12.4V20"/>
+        </svg>
+        <span><b>Scellé</b><small id="acc-t-scelle">boosters et coffrets</small></span>
+      </button>
+      <button class="acc-tuile" data-tab="capture">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+          <path d="M3.4 8.6a1.8 1.8 0 0 1 1.8-1.8h2.1l1.3-2.1h6.8l1.3 2.1h2.1a1.8 1.8 0 0 1 1.8 1.8v8.6a1.8 1.8 0 0 1-1.8 1.8H5.2a1.8 1.8 0 0 1-1.8-1.8Z"/>
+          <circle cx="12" cy="12.8" r="3.6"/>
+        </svg>
+        <span><b>Scanner</b><small>ajouter des cartes</small></span>
+      </button>
+      <button class="acc-tuile" data-tab="identify" id="acc-tuile-verif">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
+          <rect x="3.4" y="3" width="11" height="14.4" rx="1.9"/>
+          <circle cx="15.4" cy="14.8" r="4.4"/><path d="m18.6 18 2.2 2.2"/>
+        </svg>
+        <span><b>À vérifier</b><small id="acc-t-verif">rien en attente</small></span>
+      </button>
+    </div>
+  </section>
+
+  <section class="section" id="section-capture">
       <div class="bandeau-install" id="bandeau-install" style="display:none;">
         <div>
           <b>Installer PokéScan</b>
@@ -4622,10 +4762,76 @@ function appliquerMode(mode, allerAccueil){
 // Un onglet ouvert depuis ailleurs (barre du bas, raccourci, bouton d'une page) doit
 // aligner le mode sur lui, sinon la barre latérale afficherait une liste qui ne contient
 // pas la page affichée.
+// ---------------- PAGE D'ACCUEIL ----------------
+// Vendeur et collection cote a cote, JAMAIS additionnes : une meme carte peut etre dans
+// les deux registres, et un total unique serait faux tout en ayant l'air juste. Deux
+// colonnes, deux couleurs, deux portes.
+let accueilPeriode = 30;
+
+async function rendreAccueil(){
+  if(!$('acc-val-stock')) return;
+
+  // --- Ce que je vends : le lot et le scelle, les deux registres de vente ---
+  const valLot = batch.reduce((s, e)=> s + (parseFloat(e.price) || 0) * (parseInt(e.qty) || 1), 0);
+  const nbCartes = batch.reduce((s, e)=> s + (parseInt(e.qty) || 1), 0);
+  const listeScelle = (typeof scelle !== 'undefined' && Array.isArray(scelle)) ? scelle : [];
+  const nbScelle = listeScelle.reduce((s, p)=> s + (parseInt(p.qty) || 1), 0);
+  const valScelle = listeScelle.reduce((s, p)=> s + (parseFloat(p.cote) || 0) * (parseInt(p.qty) || 1), 0);
+  const valStock = valLot + valScelle;
+
+  // --- Ce que je garde : le classeur ---
+  const coll = (typeof valeurCollection === 'function') ? valeurCollection() : {total: 0, connues: 0, inconnues: 0};
+  const possedees = (typeof collection !== 'undefined' && collection.size != null)
+    ? [...collection.values()].reduce((s, e)=> s + (parseInt(e.qty) || 1), 0) : 0;
+  const series = (typeof collection !== 'undefined' && collection.size != null)
+    ? new Set([...collection.values()].map(e => e.setId).filter(Boolean)).size : 0;
+
+  const eur = (v)=> v.toFixed(2).replace('.', ',') + ' €';
+  $('acc-val-stock').textContent = eur(valStock);
+  $('acc-sous-stock').textContent = nbCartes + ' carte(s) · ' + nbScelle + ' scellé(s)';
+  $('acc-val-collec').textContent = eur(coll.total);
+  $('acc-sous-collec').textContent = possedees + ' carte(s) · ' + series + ' série(s)'
+    + (coll.inconnues ? ' · ' + coll.inconnues + ' sans cote' : '');
+
+  $('acc-l-valeur').textContent = eur(valLot);
+  $('acc-l-cartes').textContent = String(nbCartes);
+  $('acc-l-scelles').textContent = nbScelle + (valScelle ? ' · ' + eur(valScelle) : '');
+  $('acc-c-cote').textContent = eur(coll.total);
+  $('acc-c-cartes').textContent = String(possedees);
+  $('acc-c-series').textContent = String(series);
+
+  $('acc-t-classeur').textContent = series ? series + ' série(s) entamée(s)' : 'tes séries';
+  $('acc-t-scelle').textContent = nbScelle ? nbScelle + ' produit(s)' : 'boosters et coffrets';
+  const enAttente = pendingQueue.length;
+  $('acc-t-verif').textContent = enAttente ? enAttente + ' carte(s) en attente' : 'rien en attente';
+  $('acc-tuile-verif')?.classList.toggle('urgent', enAttente > 0);
+
+  // La courbe suit la cote de la COLLECTION : c'est elle qui se construit dans le temps,
+  // le stock étant fait pour se vider.
+  try{
+    const pts = await chargerHistorique();
+    const limite = accueilPeriode ? Date.now() - accueilPeriode * 86400000 : 0;
+    tracerCourbe(accueilPeriode ? pts.filter(p => new Date(p.j).getTime() >= limite) : pts, 'acc-graph');
+  }catch(e){}
+}
+
+$('acc-periode')?.addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-jours]');
+  if(!b) return;
+  accueilPeriode = parseInt(b.dataset.jours, 10);
+  document.querySelectorAll('#acc-periode button').forEach(x => x.classList.toggle('on', x === b));
+  rendreAccueil();
+});
+
 function synchroniserMode(nom){
+  // L'accueil n'appartient à aucun des deux mondes : la bascule s'y éteint plutôt que de
+  // désigner un mode qu'on n'a pas choisi. Le mode mémorisé, lui, ne bouge pas — on le
+  // retrouve intact en entrant dans une section.
+  if(nom === 'accueil'){ document.querySelectorAll('.modes-bascule').forEach(c => c.dataset.actif = 'neutre'); return; }
   const attendu = ONGLETS_MODE.collection.includes(nom) ? 'collection'
                 : ONGLETS_MODE.vendeur.includes(nom) ? 'vendeur' : null;
   if(attendu && attendu !== modeActuel) appliquerMode(attendu, false);
+  else document.querySelectorAll('.modes-bascule').forEach(c => c.dataset.actif = modeActuel);
 }
 
 // ---------------- TABLEAU DE BORD ----------------
@@ -4829,6 +5035,7 @@ function activerOnglet(nom){
   if(nom === 'batch'){ renderBatch(); rendreVuesPortfolio(); rendrePasserelle(); }
   if(nom === 'identify') renderIdentify();
   if(nom === 'sets') renderSetsTab();
+  if(nom === 'accueil') rendreAccueil();
   if(nom === 'dashboard') rendreDashboard();
   if(nom === 'ventes') rendreVentes();
   if(nom === 'collection') rendreAccueilCollection();
@@ -4880,6 +5087,10 @@ document.addEventListener('click', (e)=>{
 });
 
 appliquerMode(modeActuel, false);
+// La page ouverte au chargement décide de l'état de la bascule : sur l'accueil elle
+// s'éteint, ailleurs elle reprend le mode mémorisé.
+synchroniserMode((document.querySelector('.section.active')?.id || '').replace('section-', ''));
+if(document.querySelector('.section.active')?.id === 'section-accueil') rendreAccueil();
 
 
 $('btn-menu').addEventListener('click', ouvrirMenu);
