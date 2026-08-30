@@ -255,7 +255,7 @@
 
   /* Les elements ancres au bas de la video se decalent au-dessus de la barre de
      resultat, qui est desormais posee par-dessus eux. */
-  #cam-fullscreen-area.fs .aim-hint{bottom:206px;}
+  #cam-fullscreen-area.fs .aim-hint{bottom:190px;}
   #cam-fullscreen-area.fs .capture-fab{
     bottom:130px; left:auto; right:14px; transform:none;
   }
@@ -568,10 +568,22 @@
     object-fit:contain; pointer-events:none;
   }
   .aim-hint{
-    position:absolute; bottom:88px; left:50%; transform:translateX(-50%);
+    position:absolute; bottom:74px; left:50%; transform:translateX(-50%);
+    display:flex; align-items:center; gap:7px;
     background:rgba(0,0,0,.7); color:#fff; padding:6px 14px; border-radius:16px;
-    font-size:13px; white-space:nowrap; pointer-events:none; max-width:92%; overflow:hidden; text-overflow:ellipsis;
+    font-size:13px; white-space:nowrap; pointer-events:none; max-width:92%; overflow:hidden;
   }
+  .aim-hint > span{overflow:hidden; text-overflow:ellipsis;}
+  /* Un conseil de prise de vue n'est pas un compte rendu : il se distingue par la couleur,
+     et il s'ouvre. Le bleu est celui des propositions ailleurs dans l'écran — ce qui
+     invite à agir, par opposition au vert de ce qui est acquis. */
+  .aim-hint.conseil{
+    background:rgba(29,72,130,.86); color:#e8f2ff;
+    border:1px solid rgba(126,183,255,.55); pointer-events:auto;
+  }
+  .aim-hint.conseil:active{background:rgba(43,101,178,.94);}
+  .aim-hint .ah-i{display:none; width:14px; height:14px; flex:none; opacity:.9;}
+  .aim-hint.conseil .ah-i{display:block;}
     /* ---- Barre du haut de la camera ----
      Six elements s'y empilaient sur trois niveaux, et aucun ne respectait la zone sure :
      en plein ecran sur un telephone a encoche, le bouton d'arret et le total passaient
@@ -3379,7 +3391,13 @@
           </button>
         </div>
         <button class="pastille-recents" id="pastille-recents" title="Voir les dernières cartes ajoutées"></button>
-        <div class="aim-hint" id="aim-hint">Démarrage…</div>
+        <div class="aim-hint" id="aim-hint">
+          <span id="aim-hint-txt">Démarrage…</span>
+          <svg class="ah-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2"/>
+            <circle cx="12" cy="7.7" r="1.05" fill="currentColor" stroke="none"/>
+          </svg>
+        </div>
         <!-- Raccourci vers l'import de photos, posé sur l'image : quand on a un dossier
              à injecter, on ne devrait pas avoir à couper la caméra, remonter la page et
              changer de mode à la main. -->
@@ -7140,7 +7158,7 @@ function surveillerNettete(){
     // Tous les paliers essayés sans succès : le problème n'est pas l'objectif. On cesse
     // d'insister plutôt que de faire tourner le zoom indéfiniment sous les doigts.
     correctionObjectifActive = false;
-    setAimHint('Toujours flou — approche ou éloigne un peu la carte');
+    setAimHint('Toujours flou — approche ou éloigne un peu la carte', true);
     diagPush('err', {msg:'caméra: paliers d\'objectif épuisés, correction abandonnée'});
     return;
   }
@@ -8463,13 +8481,16 @@ function rendreJauges(){
 // Nomme la cause la plus probable au lieu d'un « Vise la carte » qui n'apprend rien.
 // Ordre volontaire : le reflet d'abord (c'est le défaut le moins évident à l'œil, et le
 // premier tueur de lecture sur les holos), puis l'obscurité, puis le flou.
+let conseilActif = false;
 function indiceVisee(base){
+  conseilActif = true;
   if(qualite.clip > CLIP_MAX) return 'Reflet — incline un peu la carte';
   if(qualite.lumMoy && qualite.lumMoy < LUM_BONNE_MIN) return 'Trop sombre — rapproche une lampe';
   // Seuil aligné sur le rouge de la jauge, et non plus sur une valeur indépendante : les
   // deux disaient des choses différentes de la même image, ce qui n'a aucun sens pour
   // l'utilisateur — barre verte et message « Flou » en même temps.
   if(qualite.net < 0.4) return 'Flou — éloigne un peu le téléphone';
+  conseilActif = false;
   return base;
 }
 
@@ -8651,10 +8672,19 @@ function renderOverlayLoop(now){
   requestAnimationFrame(renderOverlayLoop);
 }
 
-function setAimHint(hint){
-  const el = $('aim-hint');
-  if(el && el.textContent !== hint) el.textContent = hint;
+// `conseil` distingue « voici ce qu'il faut corriger » de « voici ce qui vient de se
+// passer ». Les deux passaient par la même pastille noire, indistinguables — alors que
+// seul le premier demande quelque chose à celui qui tient la carte.
+function setAimHint(hint, conseil){
+  const el = $('aim-hint'), txt = $('aim-hint-txt');
+  if(!el || !txt) return;
+  if(txt.textContent !== hint) txt.textContent = hint;
+  el.classList.toggle('conseil', !!conseil);
 }
+// Le conseil affiché tient en une ligne ; l'appui ouvre les schémas complets.
+$('aim-hint')?.addEventListener('click', ()=>{
+  if($('aim-hint')?.classList.contains('conseil')) ouvrirPopupConseils();
+});
 
 // Score de détection affiché en direct (voir commentaire CSS .score-readout) : permet
 // de voir tout de suite si un cadrage qui "semble net" échoue juste sous MIN_SCORE
@@ -8759,7 +8789,7 @@ async function detectLoop(){
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
-      setAimHint(indiceVisee('Vise la carte'));
+      setAimHint(indiceVisee('Vise la carte'), conseilActif);
       // Un raté isolé (reflet, main qui repositionne la carte un instant) ne doit pas
       // effacer la progression déjà accumulée — seul un décrochage SOUTENU signifie
       // vraiment que la carte est sortie du champ. Avant ce compteur, un seul coup dur
@@ -8809,7 +8839,7 @@ async function detectLoop(){
         // Message à deux paliers, purement informatif désormais : un vrai signal de
         // proximité basé sur l'écart mesuré, pas une simple animation — mais qui ne
         // retient plus la tentative de lecture ci-dessous.
-        setAimHint(indiceVisee(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte'));
+        setAimHint(indiceVisee(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte'), conseilActif);
       }
 
       const now = Date.now();
@@ -8825,7 +8855,7 @@ async function detectLoop(){
           lastReadAttemptAt = now;
           attemptRead(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
         } else {
-          setAimHint(indiceVisee('Ajuste la prise de vue'));
+          setAimHint(indiceVisee('Ajuste la prise de vue'), conseilActif);
           if(!blocageDepuis){
             blocageDepuis = now;
             diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score: d.score});
@@ -9014,7 +9044,7 @@ async function attemptRead(corners, score){
           motif = 'chevauchement';
           conseil = 'Écarte les autres cartes du cadre';
         }
-        setAimHint(conseil);
+        setAimHint(conseil, true);
         diagPush('try', {ok:false, hint:'forme incompatible (pré-filtre)', score,
                          ratio:+estRatio.toFixed(2), motif, auBord,
                          ocrMs:Math.round(performance.now()-t0)});
@@ -9087,7 +9117,7 @@ async function attemptRead(corners, score){
     if(!isPortrait && !isLandscape){
       // Même cause probable qu'au pré-filtre ci-dessus (cartes empilées, bord de la
       // précédente qui dépasse) — voir ce commentaire pour le détail.
-      setAimHint('Écarte les autres cartes du cadre');
+      setAimHint('Écarte les autres cartes du cadre', true);
       diagPush('try', {ok:false, hint:'forme incompatible', score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
       return;
     }
@@ -9183,14 +9213,14 @@ async function attemptRead(corners, score){
                     tChoix, imgChoisie: choix.choisie, ecartNettete: choix.ecart};
 
     if(r.reason === 'flou'){
-      setAimHint('Stabilise — image floue');
+      setAimHint('Stabilise — image floue', true);
       diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms, rotated, ...timing});
       return;
     }
     // Le raccourci visuel renvoie volontairement number/denominator vides (voir le
     // worker) : ne pas les traiter comme un échec de lecture dans ce cas précis.
     if(!hashShortcut && (r.reason === 'illisible' || !r.number)){
-      setAimHint('Numéro non lu — rapproche-toi');
+      setAimHint('Numéro non lu — rapproche-toi', true);
       diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms,
                        hashDist: bestHashDist, raw:r.text, rotated, ...timing});
       return;
@@ -9208,7 +9238,7 @@ async function attemptRead(corners, score){
     // qui produirait une entrée inexploitable dans la file. Une tentative ratée coûte
     // quelques centaines de ms et sera immédiatement rejouée sur l'image suivante.
     if(!hashShortcut && !choisi.number){
-      setAimHint('Numéro peu sûr — réessaie');
+      setAimHint('Numéro peu sûr — réessaie', true);
       diagPush('try', {ok:false, hint:'numéro invraisemblable', sharp:r.sharp, score, ocrMs:ms,
                        hashDist: bestHashDist, raw:r.text, rotated, ...timing});
       return;
@@ -9868,18 +9898,82 @@ function stopCamera(){
 // Capture MANUELLE (bouton 📸) : force la prise même si la lecture automatique échoue,
 // pour ne jamais bloquer l'utilisateur sur une carte récalcitrante. On enregistre le
 // contenu du cadre de visée, exactement comme la capture automatique.
+// Redresse la carte à partir des coins que le détecteur vient de trouver. Rend null si
+// aucune détection n'est disponible — l'appelant retombe alors sur le contenu du cadre.
+//
+// Même chaîne que la capture automatique, qui stocke déjà une carte redressée : c'est la
+// prise MANUELLE qui faisait exception et gardait la photo telle quelle, de travers. On la
+// retrouvait ensuite penchée dans « À vérifier », dans le fil des ajouts et jusque dans
+// l'annonce — alors que la géométrie était connue au moment du déclenchement.
+async function redresserDepuisDetection(video){
+  const coins = overlayTargetCorners;
+  if(!coins || !video || !video.videoWidth) return null;
+  try{
+    const scanic = await getScanic();
+    // Réduction AVANT redressement : extractDocument tourne sur le fil principal, son coût
+    // est proportionnel à ce qu'on lui donne.
+    const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
+    const vw = Math.max(1, Math.round(video.videoWidth * ech));
+    const vh = Math.max(1, Math.round(video.videoHeight * ech));
+    const frame = document.createElement('canvas');
+    frame.width = vw; frame.height = vh;
+    frame.getContext('2d').drawImage(video, 0, 0, vw, vh);
+
+    // Même marge de 4 % que la capture automatique : le détecteur cadre le visuel de la
+    // carte plutôt que son bord physique, et sans cette homothétie le bas — donc le
+    // numéro — se retrouve rogné.
+    const cx = (coins.tl[0] + coins.tr[0] + coins.br[0] + coins.bl[0]) / 4;
+    const cy = (coins.tl[1] + coins.tr[1] + coins.br[1] + coins.bl[1]) / 4;
+    const M = 0.04;
+    const p = (c)=>({x: (cx + (c[0]-cx)*(1+M)) * vw, y: (cy + (c[1]-cy)*(1+M)) * vh});
+    const r = await scanic.extractDocument(frame, {
+      topLeft: p(coins.tl), topRight: p(coins.tr),
+      bottomRight: p(coins.br), bottomLeft: p(coins.bl)
+    }, {output:'canvas'});
+    if(!r || !r.success || !r.output) return null;
+
+    const out = r.output;
+    // Forme aberrante : ce n'était pas une carte. Mieux vaut le cadre brut qu'un
+    // redressement qui étire n'importe quoi.
+    const ratio = out.height / out.width;
+    const droit = Math.abs(ratio - CARD_RATIO) / CARD_RATIO <= 0.25;
+    const couche = Math.abs(ratio - 1/CARD_RATIO) * CARD_RATIO <= 0.25;
+    if(!droit && !couche) return null;
+    if(droit) return out;
+
+    // Redressée « de côté » : on la remet debout. Le sens exact reste une supposition,
+    // le détecteur ne connaît pas l'orientation imprimée — mais debout vaut mieux que
+    // couchée dans tous les cas.
+    const rot = document.createElement('canvas');
+    rot.width = out.height; rot.height = out.width;
+    const c2 = rot.getContext('2d');
+    c2.translate(rot.width/2, rot.height/2);
+    c2.rotate(-Math.PI/2);
+    c2.drawImage(out, -out.width/2, -out.height/2);
+    return rot;
+  }catch(e){
+    diagPush('err', {msg: 'redressement manuel impossible : ' + e.message});
+    return null;
+  }
+}
+
 async function captureFrame(){
   const video = $('video');
   if(!video || !video.videoWidth) return;
 
-  const g = guideRect(video);
-  const W = 600, H = Math.round(W*CARD_RATIO);
-  const source = document.createElement('canvas');
-  source.width = W; source.height = H;
-  source.getContext('2d').drawImage(video,
-    g.x*video.videoWidth, g.y*video.videoHeight,
-    g.w*video.videoWidth, g.h*video.videoHeight,
-    0, 0, W, H);
+  // Redressée si le détecteur tient la carte, sinon le contenu du cadre de visée.
+  let source = await redresserDepuisDetection(video);
+  const redressee = !!source;
+  if(!source){
+    const g = guideRect(video);
+    const W = 600, H = Math.round(W*CARD_RATIO);
+    source = document.createElement('canvas');
+    source.width = W; source.height = H;
+    source.getContext('2d').drawImage(video,
+      g.x*video.videoWidth, g.y*video.videoHeight,
+      g.w*video.videoWidth, g.h*video.videoHeight,
+      0, 0, W, H);
+  }
 
   // Empreinte volontairement remise à zéro : une capture manuelle ne doit pas faire
   // passer la carte suivante pour un doublon.
@@ -9895,7 +9989,7 @@ async function captureFrame(){
   capturedThisSession++;
   flashScreen(dataUrl);
   if(navigator.vibrate) navigator.vibrate(40);
-  setAimHint('📸 Ajoutée — analyse en arrière-plan');
+  setAimHint(redressee ? '📸 Ajoutée et redressée' : '📸 Ajoutée — analyse en arrière-plan');
 }
 
 // Fait voler la carte tout juste prise vers la pastille des ajouts récents. C'est la
@@ -9953,6 +10047,9 @@ function flashScreen(dataUrl){
 // ---------------- IMPORT DE PHOTOS ----------------
 async function importerPhotos(files){
   if(!files.length) return;
+  // Lancée depuis la caméra, la barre de progression du panneau d'import est hors écran :
+  // sans ce mot, rien ne dirait que quelque chose a commencé.
+  if(files.length > 3) toast('📥 ' + files.length + ' photo(s) — traitement en cours…');
   const bar = $('bulk-progress');
   const fill = $('bulk-progress-fill');
   bar.style.display = 'block';
@@ -10089,12 +10186,16 @@ document.addEventListener('keydown', (e)=>{
   if(e.key === 'Escape' && $('feuille-reglages')?.classList.contains('ouverte')) fermerFeuilleReglages();
 });
 
-// Raccourci vers l'import, posé sur l'image : couper la caméra fait partie du geste, on
-// ne va pas injecter un dossier en laissant l'objectif tourner derrière un panneau caché.
+// Raccourci vers la galerie, posé sur l'image. Le sélecteur de fichiers du système
+// s'ouvre directement : passer par le panneau d'import demandait de couper la caméra,
+// de changer de mode, puis de viser encore un bouton pour arriver au même endroit.
+//
+// La caméra continue de tourner derrière : l'analyse est de toute façon suspendue tant
+// qu'elle filme, les photos choisies attendent donc dans la file et seront traitées à
+// l'arrêt — on peut enchaîner sans rien perdre.
 $('btn-import-cam')?.addEventListener('click', ()=>{
   fermerFeuilleReglages();
-  appliquerModeScan('import');
-  $('panneau-import')?.scrollIntoView({block: 'start', behavior: 'smooth'});
+  $('bulk-input')?.click();
 });
 
 $("capture-set")?.addEventListener("change", majResumeReglagesScan);
