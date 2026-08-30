@@ -6684,22 +6684,48 @@ const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exac
 // s'analysent au fil de l'eau pendant que l'utilisateur continue de shooter dans
 // l'onglet Capture. (Avant, l'analyse était conditionnée à l'onglet Identifier actif,
 // donc rien ne se faisait pendant la prise de vue et tout s'empilait pour la fin.)
+// ---------------- ANALYSE DE FOND DANS LES CREUX ----------------
+// Cette analyse et la lecture en direct partagent le MÊME worker OCR, et un navigateur
+// sans isolation multi-thread les sérialise. Constaté sur diagnostic réel : la même carte
+// passait de 2,9 s à 15,1 s au fil de la session, les lectures live faisant la queue
+// derrière les analyses de fond. D'où la suspension totale pendant la prise de vue.
+//
+// Total, elle était pourtant excessive : entre deux cartes, le cadre est vide et le
+// worker ne fait rien. Ce temps-là n'appartient à personne. L'analyse de fond n'y touche
+// qu'à trois conditions, toutes vérifiées AVANT chaque carte et non une fois pour toutes :
+//   - aucune carte dans le cadre depuis au moins CREUX_MS ;
+//   - aucune lecture en direct en cours ;
+//   - le creux tient toujours au moment de commencer.
+// Une inférence ne s'interrompt pas : dans le pire des cas, une carte présentée juste
+// après le départ d'une analyse fait attendre la lecture live d'UNE inférence (~1,7 s au
+// lieu des 15 s mesurées quand la file entière passait devant). C'est le prix, et il est
+// borné — c'est toute la différence.
+const CREUX_MS = 900;
+let cartesEnCreux = 0;        // cartes analysées pendant un creux, caméra allumée
+let msFond = 0;               // temps total qu'elles ont pris
+let creuxInterrompus = 0;     // fois où une carte est revenue et a stoppé la boucle
+
+function creuxDisponible(){
+  if(!detectRunning) return true;        // caméra éteinte : tout le temps est disponible
+  if(readInFlight) return false;         // une lecture en direct occupe déjà le worker
+  if(!absenceDepuis) return false;       // une carte est dans le cadre
+  return (Date.now() - absenceDepuis) >= CREUX_MS;
+}
+
 async function processQueueAnalysis(){
   if(queueAnalysisRunning || !ocrEnabled) return;
-  // Suspendue tant que la caméra tourne : cette analyse et la lecture en direct
-  // partagent le MÊME worker OCR, et un navigateur sans isolation multi-thread les
-  // sérialise. Constaté sur diagnostic réel : la même carte passait de 2,9 s à 15,1 s
-  // au fil de la session, à mesure que la file grossissait et que les lectures live
-  // faisaient la queue derrière les analyses de fond. Rien n'est perdu — la file
-  // repart dès l'arrêt de la caméra (voir stopCamera), et le panneau de résultat live
-  // n'a pas besoin de cette analyse : il exploite le numéro déjà lu par la caméra.
-  if(detectRunning) return;
+  if(!creuxDisponible()) return;
   queueAnalysisRunning = true;
   try{
     while(true){
+      // Revérifié à CHAQUE tour : le creux d'il y a deux secondes ne dit rien de
+      // maintenant, et c'est précisément entre deux cartes qu'une nouvelle arrive.
+      if(!creuxDisponible()){ if(detectRunning) creuxInterrompus++; break; }
       const item = pendingQueue.find(it => !it._analysis || it._analysis.status === 'pending');
       if(!item) break;
+      const t0 = performance.now();
       await analyzeQueueItem(item);
+      if(detectRunning){ cartesEnCreux++; msFond += performance.now() - t0; }
       validerSiCertain(item);
       renderQueueOverview();
       // Une proposition qui apparaît change le classement de la liste : elle remonte
@@ -7928,6 +7954,12 @@ function buildDiagReport(){
   l.push('écran       : ' + screen.width + 'x' + screen.height + ' dpr=' + (window.devicePixelRatio||1));
   l.push('vidéo       : ' + (v && v.videoWidth ? v.videoWidth+'x'+v.videoHeight : 'non démarrée'));
   l.push('OCR prêt    : ' + ocrReadyForCamera + (workerBroken ? '  (worker HS, repli fil principal)' : '  (worker)'));
+  // Analyse de fond glissée dans les creux entre deux cartes. À lire avec les ocrMs des
+  // tentatives ci-dessous : si les lectures en direct s'allongent quand ce compteur
+  // monte, c'est que les creux ne sont pas aussi libres qu'annoncé.
+  l.push('fond/creux  : ' + cartesEnCreux + ' carte(s) analysée(s) pendant la prise de vue'
+    + (cartesEnCreux ? ' · ' + Math.round(msFond) + ' ms au total, ' + Math.round(msFond/cartesEnCreux) + ' ms/carte' : '')
+    + ' · ' + creuxInterrompus + ' interruption(s) par retour d’une carte');
   l.push('capture auto: ' + autoCaptureEnabled);
   l.push('file        : ' + pendingQueue.length + ' en attente, ' + capturedThisSession + ' capturée(s)');
   l.push('réglages    : netteté min=' + MIN_SHARPNESS + '  détection ' + DETECT_LONG_EDGE + 'px' +
@@ -8554,6 +8586,7 @@ function indiceVisee(base){
 function demarrerQualite(){
   arreterQualite();
   msCadre = 0; msJauges = 0; imagesDessinees = 0; imagesSautees = 0;
+  cartesEnCreux = 0; msFond = 0; creuxInterrompus = 0;
   relancesFaites = 0; noirDepuis = 0;   // nouvelle session caméra : le compteur repart
   const jauges = $('jauges');
   if(jauges) jauges.style.display = '';
@@ -8869,6 +8902,9 @@ async function detectLoop(){
         echecsConsecutifs = 0;
         blocageDepuis = 0;
         secoursDejaFait = false;
+        // Le cadre est vide depuis assez longtemps : c'est le seul instant où une carte
+        // de la file peut être lue sans rien prendre à la lecture en direct.
+        processQueueAnalysis();
       }
     } else {
       lowScoreStreak = 0;
