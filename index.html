@@ -6700,7 +6700,19 @@ const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exac
 // après le départ d'une analyse fait attendre la lecture live d'UNE inférence (~1,7 s au
 // lieu des 15 s mesurées quand la file entière passait devant). C'est le prix, et il est
 // borné — c'est toute la différence.
-const CREUX_MS = 900;
+// Mesuré en session réelle, et le verdict est sans appel : à 900 ms le seuil attrapait
+// les intervalles ENTRE DEUX CARTES, pas les pauses. Avec une file de 46 photos importées,
+// chaque échange de carte lançait une analyse de fond, et la lecture suivante attendait
+// derrière. Relevé comparatif sur le même téléphone :
+//
+//   build du 29 (suspension totale) : lecture médiane 429-786 ms, worker 294-704 ms
+//   build du 30 (creux à 900 ms)    : lecture médiane 1223 ms,    worker 1025 ms
+//
+// Le worker triplé est la signature : il était occupé ailleurs au moment où la lecture
+// arrivait. Le seuil monte donc à deux secondes et demie — au-delà de tout échange de
+// carte, en deçà d'une vraie pause. Pendant une rafale, plus aucune analyse de fond ne
+// démarre ; dès que l'utilisateur s'arrête, la file se vide.
+const CREUX_MS = 2500;
 let cartesEnCreux = 0;        // cartes analysées pendant un creux, caméra allumée
 let msFond = 0;               // temps total qu'elles ont pris
 let creuxInterrompus = 0;     // fois où une carte est revenue et a stoppé la boucle
@@ -7929,6 +7941,10 @@ function diagPush(kind, data){
     entry.imgSaut = imagesSautees;
     entry.heapMb = heapMb();
     entry.queueLen = pendingQueue.length;
+    // Analyse de fond glissée dans les creux : sans ces deux chiffres dans le relais, un
+    // ralentissement des lectures ne peut pas être relié à sa cause.
+    entry.creux = cartesEnCreux;
+    entry.msFond = Math.round(msFond);
     entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
   }
   diagLog.push(entry);
@@ -8902,10 +8918,12 @@ async function detectLoop(){
         echecsConsecutifs = 0;
         blocageDepuis = 0;
         secoursDejaFait = false;
-        // Le cadre est vide depuis assez longtemps : c'est le seul instant où une carte
-        // de la file peut être lue sans rien prendre à la lecture en direct.
-        processQueueAnalysis();
       }
+      // Tenté à chaque tour tant que le cadre reste vide : processQueueAnalysis se garde
+      // elle-même (creuxDisponible) et sort immédiatement tant que le creux n'a pas la
+      // durée requise. Posé sur la seule confirmation d'absence, à 1200 ms, l'appel
+      // arrivait trop tôt pour un seuil de creux plus long et ne revenait jamais.
+      processQueueAnalysis();
     } else {
       lowScoreStreak = 0;
       absenceStreak = 0;
