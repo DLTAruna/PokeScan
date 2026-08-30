@@ -360,6 +360,64 @@
      Le geste attendu quand la camera occupe tout l'ecran : une feuille qu'on tire, pas
      une sortie du plein ecran pour retrouver un panneau replie en haut de page. */
   /* ---- Liste des cartes de la session ---- */
+  /* ---- Conseils de prise de vue ---- */
+  /* Le « i » est posé DANS le bandeau de jauges, qui ne capte aucun geste : il doit
+     rétablir les siens pour lui seul. */
+  .btn-conseils{
+    position:absolute; top:100%; left:0; margin-top:7px;
+    pointer-events:auto;
+    width:19px; height:19px; padding:0; border-radius:50%; flex:none;
+    display:flex; align-items:center; justify-content:center;
+    background:transparent; border:none; color:rgba(255,255,255,.62);
+    filter:drop-shadow(0 1px 3px rgba(0,0,0,.95));
+  }
+  .btn-conseils svg{width:100%; height:100%;}
+  .btn-conseils:active{color:#fff;}
+
+  .popup-conseils{position:fixed; inset:0; z-index:280; display:none;}
+  .popup-conseils.ouvert{display:block;}
+  .pc-voile{position:absolute; inset:0; background:rgba(4,6,10,.72);}
+  .pc-panneau{
+    position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+    width:min(400px, calc(100% - 24px)); max-height:min(86vh, 720px); overflow-y:auto;
+    -webkit-overflow-scrolling:touch;
+    background:var(--panel); border:1px solid var(--border); border-radius:16px;
+    padding:16px 16px 14px; box-shadow:0 14px 44px rgba(0,0,0,.6);
+    animation:frMonte .2s cubic-bezier(.22,.9,.3,1);
+  }
+  /* Croix en haut à gauche : le titre lui laisse la place, plutôt que de la faire flotter
+     par-dessus. */
+  .pc-fermer{
+    float:left; margin:0 12px 4px 0;
+    width:30px; height:30px; padding:0; border-radius:50%; flex:none;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--panel2); border:1px solid var(--border); color:var(--muted);
+  }
+  .pc-fermer svg{width:17px; height:17px;}
+  .pc-fermer:active{background:var(--accent); color:#1a1206;}
+  .pc-panneau h3{margin:4px 0 0; font-size:15px;}
+  .pc-sous{margin:5px 0 0; font-size:11.5px; line-height:1.5; color:var(--muted); clear:both;}
+  .pc-bloc{
+    display:flex; align-items:flex-start; gap:12px;
+    padding:12px 0; border-bottom:1px solid rgba(255,255,255,.07);
+  }
+  .pc-bloc:first-of-type{padding-top:14px;}
+  .pc-fig{width:104px; height:44px; flex:none; margin-top:2px;}
+  .pc-txt{min-width:0;}
+  .pc-txt b{font-size:12.5px;}
+  .pc-txt p{margin:3px 0 0; font-size:11.5px; line-height:1.55; color:var(--muted);}
+  .pc-txt p b{color:var(--text); font-size:inherit;}
+  .pc-note{
+    margin:12px 0 0; padding:9px 11px; border-radius:9px; font-size:11px; line-height:1.5;
+    background:rgba(255,203,5,.07); border:1px solid rgba(255,203,5,.24); color:var(--muted);
+  }
+  /* Sous 400 px, le schéma passe au-dessus du texte : côte à côte, il ne resterait que
+     140 px pour la phrase, soit un mot par ligne. */
+  @media (max-width:399px){
+    .pc-bloc{flex-direction:column; gap:8px;}
+    .pc-fig{width:100%; max-width:170px; height:auto;}
+  }
+
   .popup-lot{position:fixed; inset:0; z-index:270; display:none;}
   .popup-lot.ouvert{display:block;}
   /* Image figée et floutée, peinte dans un canvas. Elle recouvre la vidéo, qui continue
@@ -1640,31 +1698,20 @@
   }
   .suggestion-set .sug-non svg{width:14px; height:14px;}
   .suggestion-set .sug-non:active{color:#fff;}
-  /* Bouton « i » : une infobulle `title` ne s'ouvre qu'au survol, donc jamais sur un
-     téléphone. Le conseil a besoin d'un déclencheur visible. */
-  .suggestion-set .sug-i{
-    flex:none; width:26px; height:30px; padding:0; border-radius:8px;
-    display:flex; align-items:center; justify-content:center;
-    background:transparent; border:none; color:#8fbdf0;
-  }
-  .suggestion-set .sug-i svg{width:15px; height:15px;}
-  .suggestion-set .sug-i:active{color:#fff;}
   /* Verrou en cours : vert, comme tout ce qui est acquis dans cette interface — et non
      bleu comme une proposition, qui appelle une décision. */
   .suggestion-set.verrouille{border-color:rgba(59,165,93,.55);}
-  .suggestion-set.verrouille .sug-oui{cursor:default;}
+  .suggestion-set.verrouille .sug-oui{padding-right:12px;}
   .suggestion-set.verrouille .sug-oui svg{color:#6ddb98;}
-  .suggestion-set.verrouille .sug-i{color:#6ddb98;}
-  .suggestion-set.verrouille .sug-non{color:rgba(255,255,255,.55);}
-
-  /* Bulle d'explication, sous le cadre de visée. */
-  .bulle-info{
-    position:absolute; left:50%; transform:translateX(-50%); z-index:24;
-    width:min(330px, calc(100% - 26px));
-    padding:9px 12px; border-radius:10px; font-size:11.5px; line-height:1.5;
-    background:rgba(8,10,16,.94); border:1px solid rgba(61,125,202,.5); color:var(--text);
-    box-shadow:0 6px 20px rgba(0,0,0,.5);
+  /* L'invitation sous le nom : sans elle, une pastille verte ne dit pas qu'elle est
+     cliquable, et surtout pas ce qu'elle ferait. */
+  .suggestion-set .sug-txt small{
+    display:block; font-size:9.5px; font-weight:600; letter-spacing:.03em;
+    color:var(--muted); line-height:1.25; margin-top:1px;
   }
+  .suggestion-set.verrouille .sug-oui:active{background:rgba(59,165,93,.18);}
+
+
 
   /* Bilan de session */
   .bilan-session{
@@ -1695,7 +1742,8 @@
      basculer le compositeur sur un chemin où, sur plusieurs GPU Android, la vidéo se rend
      NOIRE — invisible sur ordinateur, ce qui le rend d'autant plus traître. */
   .jauges{
-    position:absolute; left:7px; top:50%; transform:translateY(-50%);
+    position:absolute; left:7px; top:calc(50% - var(--decalage-cadre, 0px));
+    transform:translateY(-50%);
     display:flex; flex-direction:column; align-items:flex-start; gap:9px;
     pointer-events:none; z-index:3;
   }
@@ -3306,12 +3354,15 @@
           <div class="jauge"><span class="jl">NETTETÉ</span><span class="jt"><i id="jauge-net"></i></span></div>
           <div class="jauge"><span class="jl">LUMIÈRE</span><span class="jt"><i id="jauge-lum"></i></span></div>
           <div class="jauge"><span class="jl">CADRAGE</span><span class="jt"><i id="jauge-cad"></i></span></div>
+          <button class="btn-conseils" id="btn-conseils" aria-label="Conseils de prise de vue" title="Conseils de prise de vue">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2"/>
+              <circle cx="12" cy="7.7" r="1.05" fill="currentColor" stroke="none"/>
+            </svg>
+          </button>
         </div>
         <button class="pastille-recents" id="pastille-recents" title="Voir les dernières cartes ajoutées"></button>
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
-        <!-- Explication du conseil de verrouillage. Posée SOUS le cadre de visée (position
-             calculée à l'ouverture) : au-dessus, elle cacherait la carte qu'on cadre. -->
-        <div class="bulle-info" id="bulle-info" style="display:none;"></div>
         <!-- Raccourci vers l'import de photos, posé sur l'image : quand on a un dossier
              à injecter, on ne devrait pas avoir à couper la caméra, remonter la page et
              changer de mode à la main. -->
@@ -3403,6 +3454,66 @@
            rend l'aperçu noir sur plusieurs GPU Android (c'est ce qui avait déjà été
            retiré du cadre de visée). L'image est figée dans un canvas et floutée là,
            par réduction puis agrandissement — aucun filtre ne touche la couche vidéo. -->
+      <!-- Conseils de prise de vue. Ouvert depuis le « i » posé sous les jauges : ce sont
+           elles qui signalent le problème, c'est ici qu'on lit comment le corriger. Chaque
+           bloc montre le défaut à gauche, la correction à droite — un schéma se comprend
+           d'un coup d'œil là où trois lignes de texte se sautent. -->
+      <div class="popup-conseils" id="popup-conseils">
+        <div class="pc-voile" id="pc-voile"></div>
+        <div class="pc-panneau" role="dialog" aria-label="Conseils de prise de vue">
+          <button class="pc-fermer" id="pc-fermer" aria-label="Fermer">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M7.4 7.4l9.2 9.2M16.6 7.4l-9.2 9.2"/></svg>
+          </button>
+          <h3>Trois choses à surveiller</h3>
+          <p class="pc-sous">Les trois jauges à gauche de l’écran mesurent ces trois points en direct. Une barre rouge dit lequel corriger.</p>
+
+          <div class="pc-bloc">
+            <svg class="pc-fig" viewBox="0 0 104 44" fill="none" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+              <rect x="6" y="5" width="22" height="32" rx="3" stroke="#e0553f" opacity=".35"/>
+              <rect x="11" y="7" width="22" height="32" rx="3" stroke="#e0553f" opacity=".85"/>
+              <path d="M46 22h11M53 18l4.5 4-4.5 4" stroke="rgba(255,255,255,.45)" stroke-linecap="round"/>
+              <rect x="72" y="6" width="22" height="32" rx="3" stroke="#3ba55d"/>
+              <path d="M77 29h12M77 33h7" stroke="#3ba55d" opacity=".6" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            <div class="pc-txt">
+              <b>Netteté</b>
+              <p>Éloigne le téléphone de quelques centimètres, puis <b>attends une seconde sans bouger</b> : la mise au point se refait à chaque mouvement. C’est le premier tueur de lecture, avant même la lumière.</p>
+            </div>
+          </div>
+
+          <div class="pc-bloc">
+            <svg class="pc-fig" viewBox="0 0 104 44" fill="none" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+              <rect x="6" y="6" width="22" height="32" rx="3" stroke="#e0553f"/>
+              <ellipse cx="17" cy="20" rx="7.5" ry="9.5" fill="#fff" opacity=".5"/>
+              <path d="M46 22h11M53 18l4.5 4-4.5 4" stroke="rgba(255,255,255,.45)" stroke-linecap="round"/>
+              <rect x="66" y="6" width="22" height="32" rx="3" stroke="#3ba55d"/>
+              <circle cx="97" cy="12" r="3.4" stroke="#e9b44c"/>
+              <path d="M97 5.8v-2M91.6 12h-2M93.2 8.2l-1.4-1.4M93.2 15.8l-1.4 1.4M100.8 8.2l1.4-1.4" stroke="#e9b44c" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <div class="pc-txt">
+              <b>Lumière et reflets</b>
+              <p>La lampe <b>sur le côté, jamais dans l’axe</b> : de face elle se reflète en plein sur le numéro et l’efface. Sur une holo ou une brillante, incline légèrement la carte jusqu’à faire glisser le reflet hors du bas.</p>
+            </div>
+          </div>
+
+          <div class="pc-bloc">
+            <svg class="pc-fig" viewBox="0 0 104 44" fill="none" stroke-width="2" stroke-linejoin="round" aria-hidden="true">
+              <rect x="4" y="4" width="30" height="36" rx="3" stroke="rgba(255,255,255,.3)" stroke-dasharray="3 3"/>
+              <rect x="13" y="14" width="12" height="17" rx="2" stroke="#e0553f"/>
+              <path d="M46 22h11M53 18l4.5 4-4.5 4" stroke="rgba(255,255,255,.45)" stroke-linecap="round"/>
+              <rect x="70" y="4" width="30" height="36" rx="3" stroke="rgba(255,255,255,.3)" stroke-dasharray="3 3"/>
+              <rect x="74" y="7" width="22" height="30" rx="2.5" stroke="#3ba55d"/>
+            </svg>
+            <div class="pc-txt">
+              <b>Cadrage</b>
+              <p>La carte doit <b>remplir le cadre</b>, ses quatre bords visibles. Tiens-la par le haut : un doigt posé sur un coin empêche de la détecter, même si le numéro reste lisible.</p>
+            </div>
+          </div>
+
+          <p class="pc-note">Une carte que la lecture n’arrive pas à trancher n’est jamais perdue : elle part dans « À confirmer », avec sa photo.</p>
+        </div>
+      </div>
+
       <div class="popup-lot" id="popup-lot">
         <canvas class="pl-fond" id="pl-fond"></canvas>
         <div class="pl-voile" id="pl-voile"></div>
@@ -7820,7 +7931,12 @@ let decalageGuideY = 0;
 function majCadrageVisible(){
   const video = $('video');
   const plein = $('cam-fullscreen-area')?.classList.contains('fs');
-  if(!video || !video.videoWidth || !plein){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; return; }
+  const wrap0 = $('video-wrap');
+  if(!video || !video.videoWidth || !plein){
+    cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0;
+    if(wrap0) wrap0.style.setProperty('--decalage-cadre', '0px');
+    return;
+  }
   const b = video.getBoundingClientRect();
   if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; return; }
   const rEl = b.width / b.height, rIm = video.videoWidth / video.videoHeight;
@@ -7834,6 +7950,11 @@ function majCadrageVisible(){
   // Le facteur cadrageVisible.h convertit des pixels d'écran en fraction d'IMAGE : quand
   // l'image déborde verticalement, la hauteur de l'élément ne couvre qu'une partie d'elle.
   decalageGuideY = ((centreImage - centreLibre) * cadrageVisible.h) / b.height;
+  // Le même écart, en pixels d'écran cette fois, sert à recaler ce qui doit suivre le
+  // cadre plutôt que l'image — le bandeau de jauges, qui commente ce qui se passe DANS
+  // le cadre et n'avait aucune raison d'être centré ailleurs que lui.
+  const wrap = $('video-wrap');
+  if(wrap) wrap.style.setProperty('--decalage-cadre', (centreImage - centreLibre).toFixed(1) + 'px');
 }
 addEventListener('resize', majCadrageVisible);
 // La pastille du total abrège son contenu sous 380 px : une rotation change ce verdict.
@@ -9713,6 +9834,7 @@ function stopCamera(){
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
   cadrageVisible = {w: 1, h: 1};
   fermerPopupLot();
+  fermerPopupConseils();
   reinitialiserZoom();
   // Les réglages doivent regagner la page : laissés dans la feuille, ils auraient
   // disparu de l'onglet Scanner jusqu'au prochain démarrage de la caméra.
@@ -11037,10 +11159,18 @@ function fermerPopupLot(){
   }
 }
 
+// Conseils de prise de vue. Le voile ET la croix ferment ; la fenêtre elle-même ne se
+// referme pas quand on la touche, on doit pouvoir y faire défiler du texte.
+function ouvrirPopupConseils(){ $('popup-conseils')?.classList.add('ouvert'); }
+function fermerPopupConseils(){ $('popup-conseils')?.classList.remove('ouvert'); }
+$('btn-conseils')?.addEventListener('click', ouvrirPopupConseils);
+$('pc-fermer')?.addEventListener('click', fermerPopupConseils);
+$('pc-voile')?.addEventListener('click', fermerPopupConseils);
+
 $('cam-total')?.addEventListener('click', ouvrirPopupLot);
 $('btn-fermer-popup')?.addEventListener('click', fermerPopupLot);
 $('pl-voile')?.addEventListener('click', fermerPopupLot);
-document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerPopupLot(); });
+document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape'){ fermerPopupLot(); fermerPopupConseils(); } });
 
 
 function validerAutomatiquement(card, item, fiabilite){
@@ -11465,6 +11595,13 @@ const SVG_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 //   - un set verrouillé                           -> on le rappelle, avec de quoi le lever.
 // Le dernier cas manquait, et c'était le plus gênant : un verrou oublié fait chercher
 // toutes les cartes suivantes dans la mauvaise extension, sans que rien ne le signale.
+// Trois états, et non plus un seul :
+//   - rien de verrouillé, six cartes du même set  -> on propose de verrouiller ;
+//   - un set verrouillé, six cartes d'un AUTRE    -> on propose d'en changer ;
+//   - un set verrouillé                           -> on le rappelle, et la pastille entière
+//     lève le verrou d'un appui.
+// Le dernier cas manquait, et c'était le plus gênant : un verrou oublié fait chercher
+// toutes les cartes suivantes dans la mauvaise extension, sans que rien ne le signale.
 function majSuggestionSet(){
   const z = $('suggestion-set');
   if(!z) return;
@@ -11472,7 +11609,7 @@ function majSuggestionSet(){
   const unanime = setsRecents.length >= SUGGESTION_SEUIL && setsRecents.every(x => x === s);
   const proposable = unanime && s && s !== setVerrouilleId && !suggestionRefusee.has(s);
 
-  if(!proposable && !setVerrouilleId){ z.style.display = 'none'; fermerInfoSuggestion(); return; }
+  if(!proposable && !setVerrouilleId){ z.style.display = 'none'; return; }
 
   if(proposable){
     const nom = nomDeSet(s);
@@ -11485,68 +11622,26 @@ function majSuggestionSet(){
         <span class="sug-n">${SUGGESTION_SEUIL}×</span>
         <span class="sug-txt">${change ? 'Passer à' : 'Verrouiller'} <b>${escapeHtml(nom)}</b></span>
       </button>
-      <button class="sug-i" id="sug-i" aria-label="Pourquoi ?" title="Pourquoi ?">${SVG_INFO}</button>
       <button class="sug-non" id="sug-non" aria-label="Ignorer cette suggestion" title="Ignorer">${SVG_CROIX}</button>`;
     $('sug-oui').addEventListener('click', ()=> fixerSetVerrouille(s));
     $('sug-non').addEventListener('click', ()=>{ suggestionRefusee.add(s); majSuggestionSet(); });
-    $('sug-i').addEventListener('click', ()=> ouvrirInfoSuggestion(
-      `Tes ${SUGGESTION_SEUIL} dernières cartes viennent de « ${nom} ». Verrouiller ce set rend les lectures plus sûres : le numéro imprimé suffit alors à identifier la carte, sans avoir à deviner l’extension.`));
     return;
   }
 
-  // Rappel du verrou en cours. La croix le lève et rend la détection automatique.
+  // Verrou en cours. La pastille entière est le bouton de déverrouillage, et le dit :
+  // une croix seule laissait deviner ce qu'elle allait faire.
   const nomV = nomDeSet(setVerrouilleId) || setVerrouilleNom || setVerrouilleId;
   z.style.display = '';
   z.className = 'suggestion-set verrouille';
-  z.innerHTML = `<span class="sug-oui" role="status">
+  z.innerHTML = `<button class="sug-oui" id="sug-non" title="Revenir à la détection automatique du set">
       ${SVG_CADENAS}
-      <span class="sug-txt">Set : <b>${escapeHtml(nomV)}</b></span>
-    </span>
-    <button class="sug-i" id="sug-i" aria-label="Pourquoi ?" title="Pourquoi ?">${SVG_INFO}</button>
-    <button class="sug-non" id="sug-non" aria-label="Déverrouiller" title="Revenir à la détection automatique">${SVG_CROIX}</button>`;
+      <span class="sug-txt">Set <b>${escapeHtml(nomV)}</b><small>appuyer pour déverrouiller</small></span>
+    </button>`;
   $('sug-non').addEventListener('click', ()=>{
     fixerSetVerrouille(null);
     toast('🔓 Détection du set à nouveau automatique.');
   });
-  $('sug-i').addEventListener('click', ()=> ouvrirInfoSuggestion(
-    `Toutes les cartes sont cherchées dans « ${nomV} » en priorité : le numéro imprimé suffit à les identifier. Ferme ce verrou (la croix) si tu passes à une autre extension — sinon les cartes suivantes seraient cherchées dans la mauvaise.`));
 }
-
-// ---------------- BULLE D'INFORMATION ----------------
-// Une infobulle `title` ne s'ouvre qu'au survol : sur un téléphone, elle n'existe pas.
-// L'explication passe donc par un bouton « i » explicite, et s'affiche SOUS le cadre de
-// visée — au-dessus, elle cacherait la carte qu'on est en train de cadrer.
-function ouvrirInfoSuggestion(texte){
-  const b = $('bulle-info');
-  if(!b) return;
-  b.textContent = texte;
-  b.style.display = '';
-  const video = $('video');
-  const zone = $('cam-fullscreen-area');
-  if(video && video.videoWidth && zone?.classList.contains('fs')){
-    const bi = boiteImage(video);
-    const g = guideRect(video);
-    b.style.top = Math.round(bi.y + (g.y + g.h) * bi.h + 10) + 'px';
-  } else {
-    b.style.top = '';
-  }
-}
-function fermerInfoSuggestion(){
-  const b = $('bulle-info');
-  if(b) b.style.display = 'none';
-}
-// Un appui n'importe où la referme : elle ne porte aucune action, seulement une phrase.
-document.addEventListener('click', (e)=>{
-  const b = $('bulle-info');
-  if(!b || b.style.display === 'none') return;
-  if(e.target.closest('#sug-i') || e.target.closest('#bulle-info')) return;
-  // Phase de capture ET propagation stoppée : l'appui sert UNIQUEMENT à refermer. La
-  // bulle déborde sur la rangée du bas ; sans cela, la refermer d'un doigt posé sur le
-  // déclencheur prendrait une photo dans la foulée.
-  e.stopPropagation();
-  e.preventDefault();
-  fermerInfoSuggestion();
-}, true);
 // ---------------- BILAN DE SESSION ----------------
 // Sur un chantier de mille cartes étalé sur des semaines, savoir où l'on en est change le
 // rapport à la tâche. Compté depuis l'ouverture de la page et non depuis toujours : c'est
@@ -15137,6 +15232,8 @@ function quickAdd(card){
   const impClasseur = dest.classeur ? enregistrerAuClasseur(card) : null;
   if(dest.vrac) ajouterAuVrac(card, entry);
   noterJournalScan(card, entry, dest, dest.stock ? cible : null, 'main');
+  // Compte dans les « six cartes du même set » au même titre qu'une lecture automatique.
+  noterSetRecent(card.set?.id);
 
   if(hadPhoto) pendingQueue.shift();
 
