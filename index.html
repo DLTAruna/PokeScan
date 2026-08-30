@@ -7464,7 +7464,6 @@ async function startCamera(){
     // Après la bascule en plein écran ET une fois la vidéo dimensionnée : c'est la
     // combinaison des deux qui décide de la part visible de l'image.
     majCadrageVisible();
-    $('video').addEventListener('loadedmetadata', majCadrageVisible, {once: false});
     showLiveResultWaiting();
     capturedThisSession = 0;
     resetTotalSession();
@@ -8165,6 +8164,9 @@ function majCadrageVisible(){
   if(wrap) wrap.style.setProperty('--decalage-cadre', (centreImage - centreLibre).toFixed(1) + 'px');
 }
 addEventListener('resize', majCadrageVisible);
+// Posé une seule fois, hors de startCamera : celle-ci est rappelée à chaque relance de la
+// caméra (changement d'objectif, flux noir, reprise de veille), et l'écouteur s'y empilait.
+$('video')?.addEventListener('loadedmetadata', majCadrageVisible);
 // La pastille du total abrège son contenu sous 380 px : une rotation change ce verdict.
 addEventListener('resize', ()=> renderTotalSession());
 addEventListener('orientationchange', ()=> setTimeout(majCadrageVisible, 250));
@@ -10048,7 +10050,11 @@ function stopAimLoop(){
 // Plein écran natif, en plus du calque CSS. Toujours appelée depuis un geste (démarrage
 // de la caméra) : sans lui, la demande est refusée par principe.
 async function demanderPleinEcran(){
-  const el = $('cam-fullscreen-area');
+  // Le DOCUMENT, et non la zone caméra : un élément en plein écran passe dans la couche
+  // supérieure et peint par-dessus tout le reste de la page, z-index compris. Les
+  // panneaux ouverts depuis cet écran (liste de session, réglages, conseils) sont des
+  // frères de la zone caméra — ils s'ouvraient sous une couche qui les recouvrait.
+  const el = document.documentElement;
   if(!el || document.fullscreenElement) return;
   const demande = el.requestFullscreen || el.webkitRequestFullscreen || el.mozRequestFullScreen;
   if(!demande) return;   // Safari iOS sur un élément quelconque : le calque CSS suffira
