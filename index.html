@@ -277,7 +277,7 @@
   /* contain et non cover : on doit voir exactement ce qui sera capturé, et le cadre
      de visée superposé doit s'aligner au pixel près sur l'image vidéo. */
   video{width:100%; display:block; max-height:65vh; object-fit:contain; background:#000;}
-  .flash{position:absolute; inset:0; background:#fff; opacity:0; pointer-events:none;}
+  .flash{position:absolute; inset:0; z-index:2; background:#fff; opacity:0; pointer-events:none;}
   .flash.show{opacity:.22; transition:opacity 0s;}
   .flash:not(.show){transition:opacity .16s ease-out;}
   /* Tout le dessin est dans le SVG : le bouton n'est plus qu'un cadre rond. Le halo doré
@@ -376,12 +376,13 @@
 
   .popup-conseils{position:fixed; inset:0; z-index:280; display:none;}
   .popup-conseils.ouvert{display:block;}
-  .pc-voile{
+  .pc-voile{ z-index:0;
     position:absolute; inset:0; background:rgba(4,6,10,.72);
     animation:pcVoile .19s ease-out;
   }
   @keyframes pcVoile{ from{opacity:0;} to{opacity:1;} }
   .pc-panneau{
+    z-index:1;
     position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     width:min(400px, calc(100% - 24px)); max-height:min(86vh, 720px); overflow-y:auto;
     -webkit-overflow-scrolling:touch;
@@ -436,9 +437,10 @@
   .popup-lot.ouvert{display:block;}
   /* Image figée et floutée, peinte dans un canvas. Elle recouvre la vidéo, qui continue
      de tourner dessous sans qu'aucun filtre ne s'applique à sa couche. */
-  .pl-fond{position:absolute; inset:0; width:100%; height:100%; object-fit:cover;}
-  .pl-voile{position:absolute; inset:0; background:rgba(6,8,12,.55);}
+  .pl-fond{position:absolute; inset:0; z-index:0; width:100%; height:100%; object-fit:cover;}
+  .pl-voile{position:absolute; inset:0; z-index:1; background:rgba(6,8,12,.55);}
   .pl-panneau{
+    z-index:2;
     position:absolute; left:0; right:0; bottom:0; top:max(48px, 12vh);
     display:flex; flex-direction:column;
     background:rgba(14,17,24,.94); border-top:1px solid var(--border);
@@ -548,8 +550,9 @@
 
   .feuille-reglages{position:fixed; inset:0; z-index:260; display:none;}
   .feuille-reglages.ouverte{display:block;}
-  .fr-voile{position:absolute; inset:0; background:rgba(0,0,0,.55);}
+  .fr-voile{position:absolute; inset:0; z-index:0; background:rgba(0,0,0,.55);}
   .fr-panneau{
+    z-index:1;
     position:absolute; left:0; right:0; bottom:0;
     max-height:86vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
     background:var(--panel); border-top:1px solid var(--border);
@@ -572,11 +575,11 @@
   .fr-corps > .corps{padding:0;}
   /* ---- cadre de visée : rouge = pas de carte, jaune = à ajuster, vert = prêt ---- */
   .aim-overlay{
-    position:absolute; inset:0; width:100%; height:100%;
+    position:absolute; inset:0; z-index:1; width:100%; height:100%;
     object-fit:contain; pointer-events:none;
   }
   .aim-hint{
-    position:absolute; bottom:74px; left:50%; transform:translateX(-50%);
+    position:absolute; z-index:22; bottom:74px; left:50%; transform:translateX(-50%);
     display:flex; align-items:center; gap:7px;
     background:rgba(0,0,0,.7); color:#fff; padding:6px 14px; border-radius:16px;
     font-size:13px; white-space:nowrap; pointer-events:none; max-width:92%; overflow:hidden;
@@ -645,7 +648,7 @@
   .cam-total{min-width:0; max-width:100%;}
   .cam-total #cam-total-val{flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;}
   .cam-counter{
-    position:absolute; top:calc(50px + env(safe-area-inset-top)); left:10px; background:rgba(0,0,0,.6); color:#fff;
+    position:absolute; z-index:19; top:calc(50px + env(safe-area-inset-top)); left:10px; background:rgba(0,0,0,.6); color:#fff;
     padding:4px 10px; border-radius:14px; font-size:12px;
   }
   /* Valeur cumulée des cartes identifiées depuis le démarrage de la caméra : sur une
@@ -669,7 +672,7 @@
   /* Rappel de prise en main : les doigts posés sur les bords gênent la détection du
      quadrilatère de la carte, même si le numéro (bas-gauche) reste visible. */
   .grip-hint{
-    position:absolute; top:calc(86px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
+    position:absolute; z-index:19; top:calc(86px + env(safe-area-inset-top)); left:50%; transform:translateX(-50%);
     background:rgba(0,0,0,.55); color:#fff; padding:4px 10px; border-radius:12px;
     font-size:11px; white-space:nowrap; pointer-events:none; max-width:92%;
     overflow:hidden; text-overflow:ellipsis; opacity:.85;
@@ -680,7 +683,7 @@
      de la couleur seuil) ou franchement hors sujet (vert/rouge tranché), sans attendre
      un relevé pour le comprendre. */
   .score-readout{
-    position:absolute; top:calc(86px + env(safe-area-inset-top)); left:10px; background:rgba(0,0,0,.6); color:#fff;
+    position:absolute; z-index:19; top:calc(86px + env(safe-area-inset-top)); left:10px; background:rgba(0,0,0,.6); color:#fff;
     border:1px solid var(--border); border-radius:14px; padding:4px 10px; font-size:11px;
     font-variant-numeric:tabular-nums; pointer-events:none;
   }
@@ -793,13 +796,12 @@
 
   /* ---- En-têtes de set dans le lot ---- */
   .set-group td{
-    background:linear-gradient(90deg, rgba(212,175,55,.16), rgba(212,175,55,.03) 60%, transparent);
+    background:linear-gradient(90deg, rgba(212,175,55,.16), rgba(212,175,55,.03) 60%, transparent), var(--panel);
     border-top:2px solid rgba(212,175,55,.45); border-bottom:none;
     padding:10px 12px 8px;
     /* Collant : en défilant dans un lot de plusieurs centaines de lignes, on sait
        toujours à quelle extension appartient la ligne qu'on est en train de modifier. */
     position:sticky; top:0; z-index:2;
-    backdrop-filter:blur(6px);
   }
   .set-group-inner{display:flex; align-items:center; gap:12px; flex-wrap:wrap;}
   .set-group-logo{height:34px; width:auto; max-width:150px; object-fit:contain;
@@ -1268,6 +1270,7 @@
   }
   .versions-modal.open{display:flex;}
   .versions-boite{
+    position:relative; z-index:1;
     background:var(--panel); border:1px solid var(--border); border-radius:14px;
     padding:14px 16px; max-width:460px; width:100%; max-height:82vh; overflow:auto;
     box-shadow:0 24px 60px rgba(0,0,0,.7);
@@ -1495,9 +1498,7 @@
        faire lire comme une bande collée en bas.
        La saturation compense la perte due à la transparence : sans elle, les couleurs vues
        à travers paraissent délavées. */
-    background:rgba(13,16,24,.58);
-    backdrop-filter:blur(22px) saturate(1.5);
-    -webkit-backdrop-filter:blur(22px) saturate(1.5);
+    background:rgba(13,16,24,.96);
     border-top:1px solid rgba(255,255,255,.10);
     padding:6px 4px calc(6px + env(safe-area-inset-bottom));
   }
@@ -1510,11 +1511,7 @@
     pointer-events:none;
     background:linear-gradient(to top, rgba(10,13,22,.72), transparent);
   }
-  /* Repli pour les navigateurs sans backdrop-filter : sans lui, la barre y serait
-     simplement translucide sur du texte net, donc illisible. */
-  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))){
-    .navbar{background:rgba(13,16,24,.96);}
-  }
+  /* Le repli d'hier est devenu le seul chemin : voir le commentaire de .navbar. */
   .nav-item{
     position:relative; background:none; border:0; cursor:pointer; color:var(--muted);
     display:flex; flex-direction:column; align-items:center; gap:2px; padding:5px 2px;
@@ -1562,10 +1559,11 @@
   }
   .menu-voile{
     position:fixed; inset:0; z-index:260; display:none;
-    background:rgba(6,8,14,.72); backdrop-filter:blur(3px);
+    background:rgba(6,8,14,.86);
   }
   .menu-voile.open{display:block;}
   .menu-panneau{
+    z-index:1;
     position:absolute; right:0; top:0; bottom:0; width:min(320px, 86vw);
     background:var(--panel); border-left:1px solid var(--border);
     padding:16px 14px calc(16px + env(safe-area-inset-bottom));
@@ -6712,16 +6710,23 @@ const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exac
 // arrivait. Le seuil monte donc à deux secondes et demie — au-delà de tout échange de
 // carte, en deçà d'une vraie pause. Pendant une rafale, plus aucune analyse de fond ne
 // démarre ; dès que l'utilisateur s'arrête, la file se vide.
-const CREUX_MS = 2500;
-let cartesEnCreux = 0;        // cartes analysées pendant un creux, caméra allumée
-let msFond = 0;               // temps total qu'elles ont pris
-let creuxInterrompus = 0;     // fois où une carte est revenue et a stoppé la boucle
+// Compteurs conservés : ils valent zéro tant que l'analyse ne tourne pas pendant la prise
+// de vue, et le relais les porte — si l'un d'eux remonte un jour, c'est que la suspension
+// a une fuite.
+let cartesEnCreux = 0;
+let msFond = 0;
+let creuxInterrompus = 0;
 
+// Rien pendant la prise de vue. Deux essais mesurés sur téléphone réel :
+//   seuil 900 ms  -> lecture médiane 429 ms qui passe à 1223, worker 294 -> 1025
+//   seuil 2500 ms -> ressenti toujours dégradé
+// La cause est structurelle : le worker OCR est unique et une inférence ne s'interrompt
+// pas. Le creux entre deux cartes existe bel et bien, mais on ne peut pas y glisser une
+// tâche sans risquer qu'elle déborde sur la lecture suivante — et une lecture retardée
+// coûte plus cher qu'une carte analysée en avance ne rapporte. La file repart à l'arrêt
+// de la caméra (voir stopCamera), où elle a tout le processeur pour elle.
 function creuxDisponible(){
-  if(!detectRunning) return true;        // caméra éteinte : tout le temps est disponible
-  if(readInFlight) return false;         // une lecture en direct occupe déjà le worker
-  if(!absenceDepuis) return false;       // une carte est dans le cadre
-  return (Date.now() - absenceDepuis) >= CREUX_MS;
+  return !detectRunning;
 }
 
 async function processQueueAnalysis(){
@@ -8919,11 +8924,6 @@ async function detectLoop(){
         blocageDepuis = 0;
         secoursDejaFait = false;
       }
-      // Tenté à chaque tour tant que le cadre reste vide : processQueueAnalysis se garde
-      // elle-même (creuxDisponible) et sort immédiatement tant que le creux n'a pas la
-      // durée requise. Posé sur la seule confirmation d'absence, à 1200 ms, l'appel
-      // arrivait trop tôt pour un seuil de creux plus long et ne revenait jamais.
-      processQueueAnalysis();
     } else {
       lowScoreStreak = 0;
       absenceStreak = 0;
