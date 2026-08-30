@@ -2489,6 +2489,48 @@
     color:var(--muted); font:inherit; font-size:12.5px; cursor:pointer;
   }
   .pub-oubli:hover{color:var(--text);}
+  /* La fenêtre d'envoi est plus large que celle du compte : elle porte une liste, et une
+     liste de cartes dans 420 px se lit une ligne à la fois. */
+  .exp-panneau{width:min(560px, calc(100vw - 24px));}
+  .exp-bloc{margin-bottom:14px;}
+  .exp-lbl{display:block; font-size:11.5px; font-weight:700; color:var(--muted); margin-bottom:7px;}
+  .exp-raretes{display:flex; flex-wrap:wrap; gap:6px;}
+  .exp-rar{
+    display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:9px;
+    border:1px solid var(--border); background:var(--panel2); color:var(--muted);
+    font:inherit; font-size:12.5px; cursor:pointer;
+  }
+  .exp-rar b{font-size:11.5px; opacity:.75;}
+  .exp-rar.on{border-color:var(--accent); background:rgba(255,203,5,.14); color:var(--text); font-weight:700;}
+  .exp-rar.on b{opacity:1; color:var(--accent);}
+  .exp-seg{width:100%;}
+  .exp-seg button{flex:1; padding:8px 6px; font-size:12.5px;}
+  .exp-ligne{display:flex; align-items:center; justify-content:space-between; gap:12px;}
+  .exp-ligne .exp-lbl{margin:0;}
+  .exp-cote{display:flex; align-items:center; gap:6px; font-size:13px; color:var(--muted);}
+  .exp-cote input{width:88px;}
+  .exp-case{display:flex; align-items:center; gap:9px; font-size:12.5px; color:var(--muted); margin-bottom:14px; cursor:pointer;}
+  .exp-case[hidden]{display:none;}
+  .exp-case input{flex:none;}
+  .exp-bilan{
+    padding:10px 12px; border-radius:10px; margin-bottom:10px;
+    background:rgba(255,203,5,.10); border:1px solid rgba(255,203,5,.28);
+    font-size:13.5px; font-weight:700; color:var(--accent);
+  }
+  .exp-liste{max-height:34vh; overflow-y:auto; display:grid; gap:4px; margin-bottom:16px;}
+  .exp-l{
+    display:flex; align-items:center; gap:9px; padding:6px 8px; border-radius:8px;
+    background:var(--panel2); font-size:12.5px; cursor:pointer;
+  }
+  .exp-l input{flex:none;}
+  .exp-l .exp-nom{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .exp-l .exp-num{color:var(--muted); font-size:11px; flex:none;}
+  .exp-l .exp-prix{font-weight:700; flex:none; font-variant-numeric:tabular-nums;}
+  .exp-l.off{opacity:.42;}
+  .exp-vide{padding:14px; text-align:center; font-size:12.5px; color:var(--muted);}
+  .exp-pied{display:flex; gap:10px; justify-content:flex-end;}
+  .exp-pied button{padding:11px 18px; font-size:14px;}
+
   .mco-sans-compte{margin:14px 0 0; text-align:center;}
   .mco-sans-compte[hidden]{display:none;}
   .pub-message{
@@ -4035,6 +4077,49 @@
 <!-- Fenêtre de compte. Elle remplace le glissement vers un formulaire en bas de page : on
      cliquait « Créer mon compte » et l'écran partait ailleurs, ce qui donne l'impression
      d'avoir raté sa cible. Une fenêtre répond au clic là où il a eu lieu. -->
+<!-- Envoi d'un classeur vers le stock. Les raretés sont le sélecteur PRINCIPAL, pas un
+     filtre d'appoint : « je vends mes communes et peu communes » est la décision qu'on prend
+     réellement devant un set, et elle porte sur des centaines de cartes d'un coup. -->
+<div class="modal-compte" id="modal-export" hidden>
+  <div class="mco-voile" id="exp-voile"></div>
+  <div class="mco-panneau exp-panneau" role="dialog" aria-modal="true" aria-labelledby="exp-titre">
+    <button class="mco-fermer" id="exp-fermer" aria-label="Fermer">✕</button>
+    <h2 id="exp-titre">Envoyer vers le stock</h2>
+    <p class="mco-sous" id="exp-sous">—</p>
+
+    <div class="exp-bloc">
+      <span class="exp-lbl">Raretés</span>
+      <div class="exp-raretes" id="exp-raretes"></div>
+    </div>
+
+    <div class="exp-bloc">
+      <span class="exp-lbl">Combien d’exemplaires</span>
+      <div class="seg exp-seg" id="exp-quantite">
+        <button class="on" data-q="garder">Garder 1 au classeur</button>
+        <button data-q="tout">Tout envoyer</button>
+      </div>
+    </div>
+
+    <div class="exp-bloc exp-ligne">
+      <label class="exp-lbl" for="exp-cote">Cote minimum</label>
+      <div class="exp-cote"><input type="number" id="exp-cote" min="0" step="0.5" value="0"> €</div>
+    </div>
+
+    <label class="exp-case" id="exp-sanscote-ligne" hidden>
+      <input type="checkbox" id="exp-sanscote">
+      <span id="exp-sanscote-txt">Inclure les cartes sans cote connue</span>
+    </label>
+
+    <div class="exp-bilan" id="exp-bilan">—</div>
+    <div class="exp-liste" id="exp-liste"></div>
+
+    <div class="exp-pied">
+      <button class="btn-ghost" id="exp-annuler">Annuler</button>
+      <button class="btn-gold" id="exp-valider" disabled>Envoyer</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-compte" id="modal-compte" hidden>
   <div class="mco-voile" id="mco-voile"></div>
   <div class="mco-panneau" role="dialog" aria-modal="true" aria-labelledby="mco-titre">
@@ -5119,7 +5204,8 @@
       <div class="filtre-rarete" id="filtre-rarete"></div>
       <div class="remplissage" id="set-remplissage"></div>
       <div class="set-vue-row">
-        <button class="btn-ghost btn-sm" id="btn-mode-vue">📖 Mode classeur</button>
+        <button class="btn-ghost btn-sm" id="btn-mode-vue">Mode classeur</button>
+      <button class="btn-ghost btn-sm" id="btn-vers-stock">Envoyer vers le stock…</button>
         <div class="seg" id="filtre-possession">
           <button class="on" data-f="toutes">Toutes <b id="n-toutes">0</b></button>
           <button data-f="possedees">Possédées <b id="n-possedees">0</b></button>
@@ -19513,6 +19599,187 @@ brancherCompte();
 // Comme l'activation d'onglet : en micro-tache, donc apres que le script entier a declare
 // son etat. initCompte lit collection, scelle et batch a travers la synchronisation.
 queueMicrotask(initCompte);
+
+
+// ============================================================================
+//                    ENVOI D'UN CLASSEUR VERS LE STOCK
+// ============================================================================
+// La passerelle « Pret a vendre » propose deja des lots tout faits, mais elle raisonne sur
+// TOUTE la collection. Devant un set, la decision qu'on prend reellement est autre :
+// « je garde mes rares et je vends mes communes ». Elle porte sur des centaines de cartes
+// d'un coup et se prend par RARETE — d'ou des pastilles de rarete en selecteur principal,
+// et non un filtre d'appoint sous les autres.
+//
+// Deux garde-fous, parce qu'un geste qui deplace des centaines de cartes doit etre sur :
+//   - on n'enleve JAMAIS du classeur. Le modele de l'application dit que la collection
+//     contient le stock : une carte en vente reste possedee tant qu'elle n'est pas partie.
+//   - rien ne part sans avoir ete vu. Le total et la liste s'affichent avant, chaque ligne
+//     est decochable.
+
+let expItems = [];              // candidats du set, deja enrichis par indexerCollection
+let expRaretes = new Set();     // raretes retenues ; vide = toutes
+let expExclus = new Set();      // lignes decochees a la main
+let expQuantite = 'garder';     // 'garder' un exemplaire au classeur, ou 'tout' envoyer
+let expSetNom = '';
+
+function expEur(v){ return (v || 0).toFixed(2).replace('.', ',') + ' €'; }
+
+// Nombre d'exemplaires qu'une ligne enverrait, selon le reglage de quantite. En mode
+// « garder », une carte unique envoie zero : c'est exactement « mes doublons seulement »,
+// dit par ce qu'il advient plutot que par le nom du filtre.
+function expQte(i){
+  const q = parseInt(i.qty) || 1;
+  return expQuantite === 'tout' ? q : Math.max(0, q - 1);
+}
+
+function expRetenus(){
+  const coteMin = parseFloat($('exp-cote')?.value) || 0;
+  const sansCote = !!$('exp-sanscote')?.checked;
+  return expItems.filter(i => {
+    if(expQte(i) < 1) return false;
+    if(expRaretes.size && !expRaretes.has(i.rarete || '—')) return false;
+    if(!i.prix) return sansCote;
+    return i.prix >= coteMin;
+  });
+}
+
+function expRendre(){
+  const retenus = expRetenus();
+  const gardes = retenus.filter(i => !expExclus.has(i.cle));
+  const nb = gardes.reduce((t, i) => t + expQte(i), 0);
+  const val = gardes.reduce((t, i) => t + (i.prix || 0) * expQte(i), 0);
+
+  $('exp-bilan').textContent = nb
+    ? nb + (nb > 1 ? ' cartes' : ' carte') + ' · ' + expEur(val) + ' au prix du marché'
+    : 'Aucune carte ne correspond à ces critères.';
+
+  const z = $('exp-liste');
+  z.innerHTML = retenus.length
+    ? retenus.map(i => {
+        const off = expExclus.has(i.cle);
+        return '<label class="exp-l' + (off ? ' off' : '') + '">'
+          + '<input type="checkbox" data-cle="' + escapeHtml(i.cle) + '"' + (off ? '' : ' checked') + '>'
+          + '<span class="exp-num">#' + escapeHtml(i.localId || '?') + '</span>'
+          + '<span class="exp-nom">' + escapeHtml(i.nom) + '</span>'
+          + '<span class="exp-num">×' + expQte(i) + '</span>'
+          + '<span class="exp-prix">' + (i.prix ? expEur(i.prix) : '—') + '</span>'
+          + '</label>';
+      }).join('')
+    : '<div class="exp-vide">Rien à envoyer avec ces réglages.</div>';
+
+  const b = $('exp-valider');
+  b.disabled = !nb;
+  b.textContent = nb ? 'Envoyer ' + nb + (nb > 1 ? ' cartes' : ' carte') : 'Envoyer';
+}
+
+function expRendreRaretes(){
+  // Comptees sur ce qui est REELLEMENT envoyable au reglage de quantite courant : afficher
+  // « Commune 180 » alors que le mode « garder 1 » n'en laisse partir que douze donnerait
+  // un chiffre juste et une attente fausse.
+  const parRarete = new Map();
+  for(const i of expItems){
+    const q = expQte(i);
+    if(q < 1) continue;
+    const r = i.rarete || '—';
+    parRarete.set(r, (parRarete.get(r) || 0) + q);
+  }
+  const z = $('exp-raretes');
+  if(!parRarete.size){
+    z.innerHTML = '<span class="exp-vide" style="padding:0;">Aucun exemplaire disponible avec ce réglage.</span>';
+    return;
+  }
+  z.innerHTML = [...parRarete.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([r, q]) => '<button class="exp-rar' + (expRaretes.has(r) ? ' on' : '') + '" data-rar="'
+      + escapeHtml(r) + '">' + escapeHtml(r) + ' <b>' + q + '</b></button>').join('');
+}
+
+async function ouvrirExportSet(setId){
+  const m = $('modal-export');
+  if(!m) return;
+  if(!indexCollection) await indexerCollection();
+  // Ce qui est deja en vente n'est pas repropose : sans ce filtre, valider deux fois de
+  // suite creerait deux annonces pour la meme carte.
+  expItems = [...indexCollection.values()].filter(i => i.setId === setId && !estAuStock(i.cardId, i.variante));
+  expRaretes = new Set();
+  expExclus = new Set();
+  expQuantite = 'garder';
+  document.querySelectorAll('#exp-quantite button').forEach(b => b.classList.toggle('on', b.dataset.q === 'garder'));
+  $('exp-cote').value = 0;
+  $('exp-sanscote').checked = false;
+
+  const sansCote = expItems.filter(i => !i.prix).length;
+  const ligne = $('exp-sanscote-ligne');
+  // La ligne n'existe que s'il y a des cartes concernees, mais quand elle existe elle est
+  // explicite : sur un masterset fraichement ajoute, la cote n'est connue que pour les
+  // cartes deja ouvertes, et un filtre de prix les ecarterait TOUTES en silence.
+  if(sansCote){
+    ligne.hidden = false;
+    $('exp-sanscote-txt').textContent = 'Inclure les ' + sansCote + ' carte(s) sans cote connue';
+  } else ligne.hidden = true;
+
+  expSetNom = findSetMeta(setId)?.name
+    || (seriesIndex || []).flatMap(x => x.sets || []).find(x => x.id === setId)?.name
+    || setId;
+  $('exp-sous').textContent = expItems.length
+    ? expSetNom + ' — ' + expItems.length + ' carte(s) possédée(s) et pas encore en vente.'
+    : expSetNom + ' — rien à envoyer : ce set est vide, ou tout est déjà au stock.';
+
+  expRendreRaretes();
+  expRendre();
+  m.hidden = false;
+  empilerRetour('modal-export', fermerExportSet);
+}
+
+function fermerExportSet(){
+  const m = $('modal-export');
+  if(!m || m.hidden) return;
+  m.hidden = true;
+  depilerRetour('modal-export');
+}
+
+$('btn-vers-stock')?.addEventListener('click', ()=>{ if(setCourantId) ouvrirExportSet(setCourantId); });
+$('exp-fermer')?.addEventListener('click', fermerExportSet);
+$('exp-voile')?.addEventListener('click', fermerExportSet);
+$('exp-annuler')?.addEventListener('click', fermerExportSet);
+
+$('exp-raretes')?.addEventListener('click', (e)=>{
+  const b = e.target.closest('.exp-rar');
+  if(!b) return;
+  const r = b.dataset.rar;
+  if(expRaretes.has(r)) expRaretes.delete(r); else expRaretes.add(r);
+  expRendreRaretes();
+  expRendre();
+});
+
+$('exp-quantite')?.addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-q]');
+  if(!b) return;
+  expQuantite = b.dataset.q;
+  document.querySelectorAll('#exp-quantite button').forEach(x => x.classList.toggle('on', x === b));
+  expRendreRaretes();
+  expRendre();
+});
+
+$('exp-cote')?.addEventListener('input', expRendre);
+$('exp-sanscote')?.addEventListener('change', expRendre);
+$('exp-liste')?.addEventListener('change', (e)=>{
+  const c = e.target.closest('input[data-cle]');
+  if(!c) return;
+  if(c.checked) expExclus.delete(c.dataset.cle); else expExclus.add(c.dataset.cle);
+  expRendre();
+});
+
+$('exp-valider')?.addEventListener('click', async ()=>{
+  const gardes = expRetenus().filter(i => !expExclus.has(i.cle));
+  if(!gardes.length) return;
+  const entrees = gardes.map(i => entreeDepuisCollection(i, expQte(i)));
+  fermerExportSet();
+  await ajouterAuStock(entrees);
+  // Le classeur n'a pas change, mais le stock si : les compteurs de l'accueil et la
+  // passerelle doivent suivre sans qu'on ait a naviguer.
+  if(typeof rendreAccueil === 'function') rendreAccueil();
+});
 
 const ETAT_EBAY = {
   NM: {code: 'USED_EXCELLENT', libelle: 'Near Mint'},
