@@ -652,6 +652,59 @@
     background:rgba(0,0,0,.4); overflow:hidden;
   }
   .cl-couv-jauge i{display:block; height:100%; background:rgba(255,255,255,.6); border-radius:3px;}
+  /* Bouton « vendre » de la tuile : discret a cote du bouton de possession, et present
+     seulement sur une carte qu'on possede — proposer de vendre ce qu'on n'a pas n'aurait
+     aucun sens. */
+  .btn-vendre{
+    position:absolute; left:5px; bottom:5px; z-index:3; width:24px; height:24px;
+    display:flex; align-items:center; justify-content:center;
+    border:0; border-radius:50%; cursor:pointer; font-size:12px; font-weight:800; line-height:1;
+    background:rgba(0,0,0,.55); color:rgba(255,255,255,.62); transition:background .14s, color .14s;
+  }
+  .card-thumb:hover .btn-vendre{background:var(--accent); color:#1a1206;}
+  @media (hover: none){ .btn-vendre{background:rgba(0,0,0,.6);} }
+  /* ---- Passerelle collection -> stock ---- */
+  .passerelle{
+    border:1px solid var(--border); border-radius:12px; background:var(--panel2);
+    margin:14px 0 4px; overflow:hidden;
+  }
+  .ps-tete{
+    display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background:transparent; border:0; color:var(--text); font:inherit; cursor:pointer;
+    padding:11px 14px;
+  }
+  .ps-tete b{font-size:13.5px;}
+  .ps-chev{color:var(--muted); font-size:11px; width:10px;}
+  .ps-resume{margin-left:auto; font-size:12px; color:var(--muted);}
+  .ps-corps{padding:2px 14px 14px;}
+  .ps-corps[hidden]{display:none;}
+  .ps-bloc{
+    display:flex; align-items:center; gap:12px; padding:10px 0;
+    border-top:1px solid var(--border);
+  }
+  .ps-txt{display:flex; flex-direction:column; gap:2px; min-width:0; flex:1;}
+  .ps-txt b{font-size:13px;}
+  .ps-txt span{font-size:11.5px; color:var(--muted); line-height:1.45;}
+  .ps-val{font-weight:800; color:var(--accent); font-variant-numeric:tabular-nums; white-space:nowrap;}
+  .ps-bloc.vide{opacity:.45;}
+  .ps-bloc.vide .ps-val{color:var(--muted);}
+  .ps-seuil{
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+    padding:12px 0 2px; border-top:1px solid var(--border); margin-top:2px;
+  }
+  .ps-seuil label{font-size:12px; color:var(--muted); margin:0;}
+  .ps-seuil input{width:92px; margin:0;}
+  .ps-detail{margin-top:10px; font-size:12px; color:var(--muted);}
+  .ps-detail summary{cursor:pointer;}
+  .ps-detail ul{margin:8px 0 0; padding-left:18px; line-height:1.7;}
+  .ps-detail b{color:var(--text);}
+  /* Un lot n'est pas une carte : la vignette montre un exemplaire du tas, le badge dit
+     combien il y en a derriere. Sans lui, une ligne de stock a 8 euros ressemblerait a une
+     carte unique mal cotee. */
+  .pf-lot{
+    position:absolute; top:6px; left:6px; z-index:3; padding:2px 7px; border-radius:7px;
+    background:var(--accent); color:#1a1206; font-size:10px; font-weight:800; letter-spacing:.3px;
+  }
   /* ---- Mode classeur ---- */
   /* Trois colonnes et non deux : la reliure est un element a part entiere, entre les deux
      pages. Dessinee sur le bord de chaque page (comme avant), elle se dedoublait — deux
@@ -2332,7 +2385,7 @@
   <div id="lat-vendeur">
     <div class="lat-titre">Navigation</div>
       <button class="lat-lien" data-tab="dashboard"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3.5" width="8" height="7" rx="1.8" fill="var(--t2)" opacity=".3"/><rect x="3" y="3.5" width="8" height="7" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="3.5" width="8" height="11" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="3" y="13" width="8" height="7.5" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Dashboard</span></button>
-      <button class="lat-lien" data-tab="batch"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" fill="var(--t2)" opacity=".28"/><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M9 8.2V5.6a1.6 1.6 0 0 1 1.6-1.6h2.8A1.6 1.6 0 0 1 15 5.6v2.6" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.5 12.6h17" stroke="var(--t1)" stroke-width="1.7" opacity=".6"/></svg><span>Portfolio</span><span class="lat-badge lot-badge zero">0</span></button>
+      <button class="lat-lien" data-tab="batch"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" fill="var(--t2)" opacity=".28"/><path d="M3.5 8.2h17v10.4a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M9 8.2V5.6a1.6 1.6 0 0 1 1.6-1.6h2.8A1.6 1.6 0 0 1 15 5.6v2.6" stroke="var(--t1)" stroke-width="1.7"/><path d="M3.5 12.6h17" stroke="var(--t1)" stroke-width="1.7" opacity=".6"/></svg><span>Stock</span><span class="lat-badge lot-badge zero">0</span></button>
       <button class="lat-lien" data-tab="listes"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Listes</span></button>
       <button class="lat-lien" data-tab="capture"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 8V5.6a2 2 0 0 1 2-2H8M16 3.6h2.6a2 2 0 0 1 2 2V8M20.6 16v2.4a2 2 0 0 1-2 2H16M8 20.4H5.4a2 2 0 0 1-2-2V16" stroke="var(--t1)" stroke-width="1.7"/><rect x="7.6" y="7.8" width="8.8" height="8.4" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="7.6" y="7.8" width="8.8" height="8.4" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg><span>Scanner</span></button>
       <button class="lat-lien" data-tab="identify"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="2.8" width="11.4" height="15" rx="2" stroke="var(--t1)" stroke-width="1.7"/><circle cx="15.6" cy="15" r="4.6" fill="var(--t2)" opacity=".32"/><circle cx="15.6" cy="15" r="4.6" stroke="var(--t1)" stroke-width="1.7"/><path d="m19 18.4 2.3 2.3" stroke="var(--t1)" stroke-width="1.7"/></svg><span>À vérifier</span><span class="lat-badge queue-badge zero">0</span></button>
@@ -2370,7 +2423,7 @@
     <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="var(--t2)" opacity=".22"/><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="12" cy="14" r="3.9" fill="var(--t2)" opacity=".45"/><circle cx="12" cy="14" r="3.9" stroke="var(--t1)" stroke-width="1.7"/><path d="M10.3 12.6a2.4 2.4 0 0 1 1.7-1" stroke="var(--t1)" stroke-width="1.7" opacity=".9"/></svg></span>
   </button>
   <button class="nav-item" data-tab="batch">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" fill="var(--t2)" opacity=".28"/><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16.3" cy="7.7" r="1.45" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Lot</span>
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" fill="var(--t2)" opacity=".28"/><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16.3" cy="7.7" r="1.45" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Stock</span>
     <span class="nav-badge" id="nav-lot-badge" data-zero="masquer">0</span>
   </button>
   <button class="nav-item" data-tab="scelle">
@@ -2899,10 +2952,12 @@
         </div>
       </div>
 
+      <div class="passerelle" id="passerelle"></div>
+
       <div class="pf-tete">
         <div>
-          <h2 style="margin:0;">Portfolio</h2>
-          <p class="sub">Gère tes cartes et produits scellés.</p>
+          <h2 style="margin:0;">Stock</h2>
+          <p class="sub">Ce que tu as à vendre : cartes, lots et produits scellés.</p>
         </div>
         <div class="actions">
           <button class="btn-ghost btn-sm" id="pf-masquer">👁️ Masquer €</button>
@@ -3229,6 +3284,10 @@
         <div>
           <label>Catégorie eBay (ID)</label>
           <input type="text" id="category-id-input" value="183454">
+        </div>
+        <div>
+          <label>Catégorie eBay des lots</label>
+          <input type="text" id="lot-category-input" placeholder="même que ci-dessus">
         </div>
       </div>
       <p class="hint">183454 = "CCG Individual Cards", catégorie utilisée pour les cartes Pokémon à l'unité sur eBay. Vérifie qu'elle est toujours correcte via "Vendre un objet similaire" sur une annonce Pokémon existante — voir Guide.</p>
@@ -3675,7 +3734,7 @@ function activerOnglet(nom){
 
   document.querySelectorAll('[data-tab]').forEach(b => b.classList.toggle('active', b.dataset.tab === nom));
 
-  if(nom === 'batch'){ renderBatch(); rendreVuesPortfolio(); }
+  if(nom === 'batch'){ renderBatch(); rendreVuesPortfolio(); rendrePasserelle(); }
   if(nom === 'identify') renderIdentify();
   if(nom === 'sets') renderSetsTab();
   if(nom === 'dashboard') rendreDashboard();
@@ -10282,6 +10341,11 @@ async function chargerCollection(){
 
 // Une carte est « possédée » dès qu'au moins une de ses versions l'est. C'est ce que le
 // mode simple montre ; le mode complet, lui, regarde version par version.
+// Toute ecriture dans la collection perime l'index des propositions de vente : sans ca,
+// remplir cent emplacements ne changerait rien a ce que la passerelle propose tant qu'on
+// n'a pas recharge la page.
+function invaliderIndexCollection(){ indexCollection = null; }
+
 function possedeCarte(cardId){
   for(const k of collection.keys()) if(k.startsWith(cardId + '|')) return true;
   return false;
@@ -10304,6 +10368,7 @@ async function majPossession(cardId, setId, localId, delta, variante = 'normal')
     collection.set(cle, e);
     await idbSet(COLLECTION_STORE, e);
   }
+  invaliderIndexCollection();
   majCoteGlobale();
   // « Reste à acquérir » n'a de valeur que s'il suit immédiatement : pointer une carte et
   // voir le montant baisser est précisément ce qui rend le chiffre utile.
@@ -10530,6 +10595,309 @@ function majEtatMastersets(){
 function demarrerCalculMastersets(){
   if(navigator.connection && navigator.connection.saveData) return;
   setTimeout(()=> planifierMastersets(setsAEvaluer()), 5000);
+}
+
+
+// ---------------- DE LA COLLECTION AU STOCK ----------------
+// La collection dit ce qu'on possede, le stock ce qu'on vend. Les synchroniser
+// entierement confondrait les deux et rendrait le stock illisible des la trois centieme
+// carte : c'est la raison d'etre de ce module, qui PROPOSE au lieu de recopier.
+//
+// Quatre familles, exclusives entre elles, pour que chaque exemplaire possede tombe dans
+// une case et une seule :
+//
+//   1. Les doubles      exemplaires au-dela du premier. Excedentaires par definition —
+//                       le premier remplit le classeur, les suivants sont a vendre. C'est
+//                       le seul cas ou la donnee repond toute seule a la question.
+//   2. Les cartes cotees   dernier exemplaire d'une carte dont la cote atteint le seuil.
+//                       Merite sa propre annonce.
+//   3. Les lots         tout le reste, le fond de bac. Il ne se vend pas a l'unite, donc
+//                       il n'a rien a faire a l'unite dans le stock : une ligne par
+//                       (extension x rarete x impression), parce qu'une commune normale et
+//                       une commune reverse de la meme extension n'ont ni la meme valeur
+//                       ni le meme acheteur.
+//   4. Le scelle        chaque piece vaut une annonce, il n'y en a jamais des centaines,
+//                       et sa cote est connue. Rien a filtrer.
+
+const CLE_SEUIL_VENTE = 'seuilVente';
+let seuilVente = parseFloat(localStorage.getItem(CLE_SEUIL_VENTE));
+if(!isFinite(seuilVente) || seuilVente < 0) seuilVente = 2;
+
+// Lecture groupee : une transaction pour mille fiches plutot que mille transactions.
+async function idbGetPlusieurs(store, cles){
+  if(!cles.length) return new Map();
+  const db = await openIdb();
+  return new Promise((resolve, reject)=>{
+    const tx = db.transaction(store, 'readonly');
+    const os = tx.objectStore(store);
+    const out = new Map();
+    for(const k of cles){
+      const r = os.get(k);
+      r.onsuccess = ()=> { if(r.result) out.set(k, r.result); };
+    }
+    tx.oncomplete = ()=> resolve(out);
+    tx.onerror = ()=> reject(tx.error);
+  });
+}
+
+// Index de la collection : cote, rarete et nom de chaque exemplaire possede. Les fiches
+// viennent du cache local — celui que le calcul des mastersets remplit deja pour tous les
+// sets concernes, donc sans une seule requete reseau supplementaire.
+let indexCollection = null;   // cle -> {cle, cardId, variante, setId, localId, qty, prix, rarete, nom, image, setName}
+
+async function indexerCollection(){
+  const ids = [...new Set([...collection.values()].map(e => e.cardId))];
+  const fiches = await idbGetPlusieurs('cardDetail', ids).catch(()=> new Map());
+  indexCollection = new Map();
+  for(const e of collection.values()){
+    const f = fiches.get(e.cardId);
+    const d = f && f.detail;
+    indexCollection.set(e.cle, {
+      cle: e.cle, cardId: e.cardId, variante: e.variante, setId: e.setId,
+      localId: e.localId, qty: parseInt(e.qty) || 1,
+      prix: d ? (prixRetenu(d, e.variante) || 0) : 0,
+      rarete: (d && d.rarity) || 'Sans rareté',
+      nom: (d && d.name) || ('#' + e.localId),
+      image: (d && (d.imageBase || d.image)) || '',
+      setName: (d && d.set && d.set.name) || findSetMeta(e.setId)?.name || e.setId
+    });
+  }
+  return indexCollection;
+}
+
+// Deja au stock ? On compare sur la carte ET l'impression quand celle-ci est connue : une
+// meme carte en normale et en reverse sont deux annonces distinctes. Les entrees anterieures
+// a ce module n'ont pas de `variante` — on ne les considere alors que par leur carte, ce qui
+// evite de reproposer ce qui est deja en vente.
+function estAuStock(cardId, variante){
+  return batch.some(b => b.cardId === cardId && (!b.variante || !variante || b.variante === variante));
+}
+function lotDejaAuStock(sku){ return batch.some(b => b.sku === sku); }
+
+function propositionsVente(){
+  const doubles = [], cotees = [], parLot = new Map();
+  if(indexCollection){
+    for(const i of indexCollection.values()){
+      if(estAuStock(i.cardId, i.variante)) continue;
+      // L'excedent part d'un cote, le dernier exemplaire de l'autre : sans cette separation
+      // une carte a la fois doublee et cotee serait comptee deux fois, et le total annonce
+      // depasserait ce qu'on possede.
+      const surplus = i.qty - 1;
+      if(surplus > 0) doubles.push({info: i, qte: surplus});
+      if(i.prix >= seuilVente) cotees.push({info: i, qte: 1});
+      else {
+        const cle = i.setId + '|' + i.rarete + '|' + i.variante;
+        let g = parLot.get(cle);
+        if(!g) parLot.set(cle, g = {setId: i.setId, setName: i.setName, rarete: i.rarete,
+                                    variante: i.variante, cartes: [], valeur: 0, image: ''});
+        g.cartes.push(i);
+        g.valeur += i.prix;
+        if(!g.image && i.image) g.image = i.image;
+      }
+    }
+  }
+  // Un groupe d'une seule carte n'est pas un lot, c'est une carte : le vendre sous
+  // l'intitule « Lot 1 carte Pokemon » serait absurde a lire comme a acheter. Ces
+  // isoles retournent donc a l'unite, meme sous le seuil — il n'y a rien a grouper.
+  const groupes = [...parLot.values()];
+  for(const g of groupes){
+    if(g.cartes.length === 1) cotees.push({info: g.cartes[0], qte: 1});
+  }
+  const lots = groupes
+    .filter(g => g.cartes.length > 1 && !lotDejaAuStock(skuLot(g)))
+    .sort((a, b) => b.valeur - a.valeur);
+  const scelles = (scelle || []).filter(p => !batch.some(b => b.origine && b.origine.scelleId === p.id));
+
+  const somme = (l, f) => l.reduce((s, x) => s + f(x), 0);
+  return {
+    doubles: {items: doubles, nb: somme(doubles, d => d.qte),
+              valeur: somme(doubles, d => d.info.prix * d.qte)},
+    cotees:  {items: cotees, nb: cotees.length, valeur: somme(cotees, d => d.info.prix)},
+    lots:    {items: lots, nb: lots.length,
+              cartes: somme(lots, g => g.cartes.length), valeur: somme(lots, g => g.valeur)},
+    scelles: {items: scelles, nb: scelles.length,
+              valeur: somme(scelles, p => (parseFloat(p.cote) || 0) * (parseInt(p.qty) || 1))}
+  };
+}
+
+function skuLot(g){
+  return ('PKMN-LOT-' + g.setId + '-' + g.rarete + '-' + g.variante)
+    .toUpperCase().replace(/[^A-Z0-9-]+/g, '');
+}
+
+// Fabrique une entree de stock. Les modeles de titre et de description sont ceux des
+// Reglages, comme pour une carte scannee : une carte venue de la collection doit produire
+// exactement la meme annonce qu'une carte passee devant la camera.
+function remplirModele(str, vars){
+  return String(str || '').replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? '');
+}
+
+function entreeDepuisCollection(i, qte){
+  const pct = parseFloat($('price-pct-input').value) || 80;
+  const vars = {name: i.nom, set: i.setName, number: i.localId,
+                rarity: i.rarete, condition: conditionLabel('NM')};
+  return {
+    id: 'c' + Date.now() + Math.random().toString(36).slice(2, 7),
+    photo: null, cardName: i.nom, setName: i.setName, number: i.localId,
+    rarity: i.rarete, condition: 'NM',
+    price: i.prix ? (i.prix * pct / 100).toFixed(2) : '',
+    priceCurrency: $('currency-select').value, qty: qte,
+    title: remplirModele($('title-template-input').value, vars).slice(0, 80),
+    description: remplirModele($('desc-template-input').value, vars),
+    sku: 'PKMN-' + i.setId + '-' + i.localId + '-' + i.variante + '-' + Date.now().toString().slice(-5),
+    setId: i.setId, cardImage: i.image ? i.image + '/low.webp' : '',
+    cardId: i.cardId, variante: i.variante,
+    marketPrice: i.prix || null, marketCurrency: 'EUR',
+    imageUrl: '', categoryId: $('category-id-input').value,
+    // Origine conservee : c'est elle qui permettra, le jour ou les ventes seront reliees,
+    // de decrementer la collection sans avoir a deviner quelle carte a ete vendue.
+    origine: {type: 'collection', cle: i.cle},
+    ajouteA: Date.now()
+  };
+}
+
+function entreeDepuisLot(g){
+  const pct = parseFloat($('price-pct-input').value) || 80;
+  const n = g.cartes.length;
+  const impression = NOM_VARIANTE[g.variante] || g.variante;
+  const liste = g.cartes.slice()
+    .sort((a, b) => (parseInt(a.localId, 10) || 0) - (parseInt(b.localId, 10) || 0))
+    .map(c => '#' + c.localId + ' ' + c.nom).join('\n');
+  return {
+    id: 'l' + Date.now() + Math.random().toString(36).slice(2, 7),
+    lot: true, nbCartes: n,
+    photo: null, cardName: 'Lot ' + g.rarete + ' ' + impression,
+    setName: g.setName, setId: g.setId, number: '', rarity: g.rarete, condition: 'NM',
+    price: g.valeur ? (g.valeur * pct / 100).toFixed(2) : '',
+    priceCurrency: $('currency-select').value, qty: 1,
+    title: ('Lot ' + n + ' cartes Pokémon ' + g.setName + ' ' + g.rarete + ' ' + impression + ' FR').slice(0, 80),
+    description: 'Lot de ' + n + ' cartes Pokémon.\n'
+      + 'Série : ' + g.setName + '\nRareté : ' + g.rarete + '\nImpression : ' + impression
+      + '\nÉtat : Near Mint\n\nDétail du lot :\n' + liste,
+    sku: skuLot(g),
+    cardImage: g.image ? g.image + '/low.webp' : '',
+    cardId: '', variante: g.variante,
+    marketPrice: g.valeur || null, marketCurrency: 'EUR',
+    imageUrl: '', categoryId: ($('lot-category-input')?.value || $('category-id-input').value),
+    origine: {type: 'lot', cles: g.cartes.map(c => c.cle)},
+    ajouteA: Date.now()
+  };
+}
+
+function entreeDepuisScelle(p){
+  const pct = parseFloat($('price-pct-input').value) || 80;
+  const cote = parseFloat(p.cote) || 0;
+  const nom = p.nom || p.type || 'Produit scellé';
+  return {
+    id: 's' + Date.now() + Math.random().toString(36).slice(2, 7),
+    scelle: true,
+    photo: p.photo || null, cardName: nom, setName: p.serie || p.type || '',
+    number: '', rarity: p.type || '', condition: 'NM',
+    price: cote ? (cote * pct / 100).toFixed(2) : '',
+    priceCurrency: $('currency-select').value, qty: parseInt(p.qty) || 1,
+    title: (nom + ' Pokémon ' + (p.serie || '') + ' scellé neuf FR').slice(0, 80),
+    description: 'Produit scellé Pokémon : ' + nom
+      + (p.serie ? '\nSérie : ' + p.serie : '') + '\nType : ' + (p.type || '—')
+      + '\nÉtat : neuf, sous blister d\'origine.',
+    sku: 'PKMN-SCELLE-' + String(p.id || Date.now()).slice(-8),
+    setId: '', cardImage: p.image || '', cardId: '',
+    achat: p.achat || '',
+    marketPrice: cote || null, marketCurrency: 'EUR',
+    imageUrl: '', categoryId: ($('lot-category-input')?.value || $('category-id-input').value),
+    origine: {type: 'scelle', scelleId: p.id},
+    ajouteA: Date.now()
+  };
+}
+
+async function ajouterAuStock(entrees){
+  if(!entrees.length){ toast('Rien à ajouter.'); return; }
+  batch.push(...entrees);
+  planifierSauvegardeSession();
+  // rendreVuesPortfolio et non renderBatch seul : le second ne met a jour que les
+  // compteurs du bandeau, pas la grille. Les lignes etaient bien ajoutees, et la page
+  // continuait d annoncer un stock vide.
+  renderBatch();
+  rendreVuesPortfolio();
+  await rendrePasserelle();
+  majBadgesNav();
+  toast(entrees.length + ' ligne(s) ajoutée(s) au stock.');
+}
+
+// ---- Panneau « Prêt à vendre » ----
+let passerelleOuverte = localStorage.getItem('passerelleOuverte') !== '0';
+
+async function rendrePasserelle(){
+  const z = $('passerelle');
+  if(!z) return;
+  if(!indexCollection) await indexerCollection();
+  const p = propositionsVente();
+  const rien = !p.doubles.nb && !p.cotees.nb && !p.lots.nb && !p.scelles.nb;
+  const eur = (v) => (v || 0).toFixed(2) + ' €';
+
+  const bloc = (id, titre, sous, valeur, actif) => `
+    <div class="ps-bloc${actif ? '' : ' vide'}">
+      <div class="ps-txt"><b>${titre}</b><span>${sous}</span></div>
+      <div class="ps-val">${eur(valeur)}</div>
+      <button class="btn-gold btn-sm" data-ajout="${id}"${actif ? '' : ' disabled'}>Ajouter au stock</button>
+    </div>`;
+
+  z.innerHTML = `
+    <button class="ps-tete" id="ps-bascule">
+      <span class="ps-chev">${passerelleOuverte ? '▾' : '▸'}</span>
+      <b>Prêt à vendre</b>
+      <span class="ps-resume">${rien ? 'rien en attente' :
+        [p.doubles.nb ? p.doubles.nb + ' double(s)' : '',
+         p.cotees.nb ? p.cotees.nb + ' carte(s) à l’unité' : '',
+         p.lots.nb ? p.lots.nb + ' lot(s)' : '',
+         p.scelles.nb ? p.scelles.nb + ' scellé(s)' : ''].filter(Boolean).join(' · ')}</span>
+    </button>
+    <div class="ps-corps"${passerelleOuverte ? '' : ' hidden'}>
+      ${rien
+        ? '<p class="hint" style="margin:4px 0 0;">Tout ce que tu possèdes est déjà au stock, ou ta collection est vide.</p>'
+        : `
+        ${bloc('doubles', 'Doubles', p.doubles.nb + ' exemplaire(s) en trop — le premier reste au classeur', p.doubles.valeur, p.doubles.nb)}
+        ${bloc('cotees', 'Cartes à l’unité', p.cotees.nb + ' carte(s) à ' + seuilVente.toFixed(2) + ' € ou plus, ou trop isolées pour former un lot', p.cotees.valeur, p.cotees.nb)}
+        ${bloc('lots', 'Lots', p.lots.nb + ' lot(s) · ' + p.lots.cartes + ' cartes sous le seuil, groupées par extension, rareté et impression', p.lots.valeur, p.lots.nb)}
+        ${bloc('scelles', 'Scellé', p.scelles.nb + ' produit(s) pas encore au stock', p.scelles.valeur, p.scelles.nb)}
+        <div class="ps-seuil">
+          <label for="ps-seuil-input">Seuil de vente à l’unité</label>
+          <input type="number" id="ps-seuil-input" min="0" step="0.5" value="${seuilVente}">
+          <span class="hint" style="margin:0;">En dessous, les cartes partent en lot plutôt qu’en annonce individuelle.</span>
+        </div>
+        ${p.lots.nb ? `<details class="ps-detail"><summary>Voir le détail des ${p.lots.nb} lot(s)</summary>
+          <ul>${p.lots.items.map(g => `<li><b>${escapeHtml(g.setName)}</b> · ${escapeHtml(g.rarete)} · ${escapeHtml(NOM_VARIANTE[g.variante] || g.variante)}
+            — ${g.cartes.length} carte(s), ${eur(g.valeur)}</li>`).join('')}</ul></details>` : ''}`}
+    </div>`;
+
+  $('ps-bascule').addEventListener('click', ()=>{
+    passerelleOuverte = !passerelleOuverte;
+    localStorage.setItem('passerelleOuverte', passerelleOuverte ? '1' : '0');
+    rendrePasserelle();
+  });
+  const si = $('ps-seuil-input');
+  if(si) si.addEventListener('change', ()=>{
+    const v = parseFloat(si.value);
+    seuilVente = (isFinite(v) && v >= 0) ? v : 0;
+    localStorage.setItem(CLE_SEUIL_VENTE, String(seuilVente));
+    rendrePasserelle();
+  });
+  z.querySelectorAll('[data-ajout]').forEach(b => b.addEventListener('click', async ()=>{
+    const q = b.dataset.ajout;
+    if(q === 'doubles') await ajouterAuStock(p.doubles.items.map(d => entreeDepuisCollection(d.info, d.qte)));
+    else if(q === 'cotees') await ajouterAuStock(p.cotees.items.map(d => entreeDepuisCollection(d.info, d.qte)));
+    else if(q === 'lots') await ajouterAuStock(p.lots.items.map(entreeDepuisLot));
+    else if(q === 'scelles') await ajouterAuStock(p.scelles.items.map(entreeDepuisScelle));
+  }));
+}
+
+// Geste manuel depuis le classeur : une carte, tout de suite, sans passer par les
+// propositions. C'est le chemin pour ce qu'on decide au cas par cas, en regardant sa page.
+async function vendreDepuisClasseur(cardId, variante){
+  if(!indexCollection) await indexerCollection();
+  const i = indexCollection.get(cleCollection(cardId, variante));
+  if(!i){ toast('Marque d’abord la carte comme possédée.'); return; }
+  if(estAuStock(cardId, variante)){ toast('Déjà au stock.'); return; }
+  await ajouterAuStock([entreeDepuisCollection(i, 1)]);
 }
 
 function progressionSet(cartes){
@@ -10781,6 +11149,7 @@ async function annulerRemplissage(){
 
 // Tout ce qui depend de la collection, recalcule UNE fois pour l'ensemble du lot.
 async function apresRemplissage(){
+  invaliderIndexCollection();
   majCoteGlobale();
   if(setCourantId && cartesSetCourant.length){
     await majMasterset(setCourantId, cartesSetCourant);
@@ -11394,6 +11763,7 @@ function rendreCartesSet(){
         ${badgeVersions}
         <button class="btn-possede${possCarte ? ' on' : ''}" data-action="possede"
                 title="${possCarte ? 'Possédée ×' + possCarte.qty + ' — clic pour en retirer une' : 'Marquer comme possédée'}">${possCarte ? '✓ ' + possCarte.qty : '+'}</button>
+        ${possCarte ? `<button class="btn-vendre" data-action="vendre" title="Ajouter cette carte au stock à vendre">€</button>` : ''}
       </div>`;
   };
 
@@ -11471,6 +11841,16 @@ function rendreCartesSet(){
       // répété du pointage d'un classeur, il doit rester instantané.
       if(ev.target.closest('[data-action="possede"]')) return;
       openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId);
+    });
+    const bvd = el.querySelector('[data-action="vendre"]');
+    if(bvd) bvd.addEventListener('click', (ev)=>{
+      ev.stopPropagation();
+      // Sans `variante`, on prend la premiere impression reellement possedee : en mode
+      // simple la tuile ne porte pas d'impression, et supposer « normal » ajouterait au
+      // stock une version qu'on ne possede pas.
+      const v = el.dataset.variante
+        || [...collection.keys()].find(k => k.startsWith(el.dataset.cardId + '|'))?.split('|')[1];
+      vendreDepuisClasseur(el.dataset.cardId, v);
     });
     const bv = el.querySelector('[data-action="versions"]');
     if(bv) bv.addEventListener('click', (ev)=>{
@@ -13223,7 +13603,7 @@ function rendreGrillePortfolio(){
   g.classList.toggle('selection', pfModeSelection);
 
   if(!visibles.length){
-    g.innerHTML = `<div class="pf-vide">${batch.length ? 'Aucune carte ne correspond à ces filtres.' : 'Le lot est vide — scanne une carte pour commencer.'}</div>`;
+    g.innerHTML = `<div class="pf-vide">${batch.length ? 'Aucune carte ne correspond à ces filtres.' : 'Le stock est vide — scanne une carte ou ajoute-la depuis ta collection.'}</div>`;
     rendrePagination(total, pages);
     return;
   }
@@ -13246,6 +13626,7 @@ function rendreGrillePortfolio(){
       <span class="pf-coche">${pfChoisies.has(e.id) ? '✓' : ''}</span>
       ${img ? `<img class="pf-vignette" src="${escapeHtml(img)}" loading="lazy" alt="">`
             : '<span class="pf-vignette"></span>'}
+      ${e.lot ? `<span class="pf-lot">LOT ×${e.nbCartes || '?'}</span>` : ''}
       ${qte > 1 ? `<span class="pf-qte">×${qte}</span>` : ''}
       ${manque ? `<span class="pf-alerte">${manque}</span>` : ''}
       <span class="pf-infos">
