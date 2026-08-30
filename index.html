@@ -262,7 +262,7 @@
   /* Légende du déclencheur : alignée sur le bouton, pas sur l'écran — il est à droite. */
   .fab-legende{
     position:absolute; z-index:21; right:0; bottom:2px; width:92px;
-    text-align:center; font-size:8.5px; font-weight:800; letter-spacing:.08em; line-height:1;
+    text-align:center; font-size:8px; font-weight:800; letter-spacing:.03em; line-height:1;
     text-transform:uppercase; color:rgba(255,255,255,.75); pointer-events:none;
     white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.95);
   }
@@ -376,15 +376,29 @@
 
   .popup-conseils{position:fixed; inset:0; z-index:280; display:none;}
   .popup-conseils.ouvert{display:block;}
-  .pc-voile{position:absolute; inset:0; background:rgba(4,6,10,.72);}
+  .pc-voile{
+    position:absolute; inset:0; background:rgba(4,6,10,.72);
+    animation:pcVoile .19s ease-out;
+  }
+  @keyframes pcVoile{ from{opacity:0;} to{opacity:1;} }
   .pc-panneau{
     position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
     width:min(400px, calc(100% - 24px)); max-height:min(86vh, 720px); overflow-y:auto;
     -webkit-overflow-scrolling:touch;
     background:var(--panel); border:1px solid var(--border); border-radius:16px;
     padding:16px 16px 14px; box-shadow:0 14px 44px rgba(0,0,0,.6);
-    animation:frMonte .2s cubic-bezier(.22,.9,.3,1);
+    animation:pcApparait .19s cubic-bezier(.22,.9,.3,1);
+    /* Sur sa propre couche : sans cela le navigateur recompose la page entiere a chaque
+       image, et l'animation broute sur une fenetre de sept cents pixels de haut. */
+    will-change:transform, opacity;
   }
+  /* Le centrage fait partie des images-cles : l'omettre revient a l'annuler pendant toute
+     la duree de l'animation. */
+  @keyframes pcApparait{
+    from{transform:translate(-50%, calc(-50% + 14px)); opacity:0;}
+    to{transform:translate(-50%,-50%); opacity:1;}
+  }
+  @media (prefers-reduced-motion: reduce){ .pc-panneau{animation:none;} }
   /* Croix en haut à gauche : le titre lui laisse la place, plutôt que de la faire flotter
      par-dessus. */
   .pc-fermer{
@@ -1702,6 +1716,9 @@
      bleu comme une proposition, qui appelle une décision. */
   .suggestion-set.verrouille{border-color:rgba(59,165,93,.55);}
   .suggestion-set.verrouille .sug-oui{padding-right:12px;}
+  /* Rien ne suit le texte dans cet etat : aligne a gauche, il laissait un blanc a droite
+     qui faisait croire a un bouton manquant. */
+  .suggestion-set.verrouille .sug-txt{text-align:center;}
   .suggestion-set.verrouille .sug-oui svg{color:#6ddb98;}
   /* L'invitation sous le nom : sans elle, une pastille verte ne dit pas qu'elle est
      cliquable, et surtout pas ce qu'elle ferait. */
@@ -3410,7 +3427,7 @@
             <circle cx="32" cy="32" r="29.6" fill="none" stroke="url(#fabOr)" stroke-width="2.6"/>
           </svg>
         </button>
-        <div class="fab-legende">Prise manuelle</div>
+        <div class="fab-legende">Capture manuelle</div>
         <!-- Zoom : un seul repère, qui affiche la valeur pendant le pincement et bascule
              1x/2x au toucher. Masqué tant que l'appareil ne déclare pas savoir zoomer. -->
         <button class="zoom-indic" id="zoom-indic" style="display:none;">1×</button>
