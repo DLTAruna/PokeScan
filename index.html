@@ -1302,9 +1302,15 @@
   .classeur-page:not(.couverture) > .cl-cuir{opacity:.34;}
   .classeur-nav{display:flex; align-items:center; justify-content:center; gap:14px; margin-top:12px; flex-wrap:wrap;}
   .classeur-pos{font-size:12px; color:var(--muted);}
+  .cl-astuce{flex-basis:100%; text-align:center; font-size:11px; color:var(--muted); opacity:.75;}
+  /* Une seule face a la fois. La feuille qui tourne est un clone pose sur le body, donc
+     hors de tout conteneur : sa profondeur vient de sa propre fonction perspective(). */
+  .classeur-pages.solo{grid-template-columns:1fr;}
+  .cl-tourne{will-change:transform, opacity; backface-visibility:hidden;}
+
   @media (max-width:760px){
     /* Une double page cote a cote sur un ecran de telephone donnerait des vignettes
-       illisibles : les deux pages passent l'une sous l'autre. */
+       illisibles. On n'en montre plus qu'une, tournee au doigt (voir pagesParVue). */
     .classeur-pages{grid-template-columns:1fr; gap:12px;}
     /* Empilees, les pages ne se font plus face : la reliure n'a plus de sens entre elles,
        et les coins redeviennent symetriques. */
@@ -5666,7 +5672,15 @@ appliquerMode(modeActuel, false);
 // Passer par activerOnglet plutôt que de se contenter de la classe posée dans le balisage :
 // c'est elle qui allume l'entrée correspondante de la barre du bas et règle la bascule.
 // Sans cet appel, la page où l'on se trouve était la seule que la barre ne désignait pas.
-activerOnglet((document.querySelector('.section.active')?.id || 'section-accueil').replace('section-', ''));
+//
+// Reporté à la fin du script. Appelé ici, il rendait l'accueil AVANT que « scelle »,
+// « collection », « detailsCartes » et « historiqueValeur » ne soient déclarés plus bas :
+// lire un let avant sa déclaration lève, et typeof ne protège de rien. L'exception partait
+// dans une promesse — le script survivait, mais l'accueil restait sur ses valeurs vides
+// jusqu'à ce qu'autre chose le redessine. Une micro-tâche s'exécute une fois le script
+// entièrement déroulé, donc tout l'état est en place.
+queueMicrotask(()=>
+  activerOnglet((document.querySelector('.section.active')?.id || 'section-accueil').replace('section-', '')));
 
 
 $('btn-menu').addEventListener('click', ouvrirMenu);
@@ -14527,6 +14541,101 @@ let setCourantId = null, setCourantMeta = null;
 // correspondent aux pages de classeur réellement vendues : 2×2 pour les pochettes de
 // protection épaisses, 3×3 le format historique, 3×4 et 4×4 les modernes.
 let capaciteClasseur = parseInt(localStorage.getItem('capaciteClasseur'), 10) || 9;
+// Nombre de faces montrees a la fois. Deux sur grand ecran — un classeur ouvert se regarde
+// en double page — une seule sur telephone, ou la double page ne tient pas.
+function pagesParVue(){
+  return window.innerWidth < 760 ? 1 : 2;
+}
+
+// ---------------- TOURNER UNE PAGE ----------------
+// La page sortante est clonee par-dessus la nouvelle, puis pivote autour de sa reliure :
+// c'est ce qui donne l'impression qu'une feuille se souleve et decouvre celle du dessous,
+// la ou un simple remplacement ne dit rien du sens dans lequel on va. Le clone ne coute
+// qu'une copie de noeuds deja rendus, et l'animation ne touche que transform et opacity —
+// les deux seules proprietes qu'un telephone anime sans repeindre.
+let tourneEnCours = false;
+
+// Le nombre de vues est lu sur l'element au moment du geste et non capture a la liaison :
+// les ecouteurs de balayage ne se posent qu'une fois, alors que changer de set ou de filtre
+// change le nombre de pages. Fige, il aurait bloque la navigation sur l'ancien decompte.
+function nbVuesClasseur(){
+  return parseInt($('set-cards-grid')?.dataset.nbvues) || 1;
+}
+
+function tournerClasseur(sens){
+  if(tourneEnCours) return;
+  const cible = Math.min(Math.max(0, pageClasseur + sens), nbVuesClasseur() - 1);
+  if(cible === pageClasseur) return;
+
+  const zone = document.querySelector('.classeur-pages');
+  const pages = zone ? zone.querySelectorAll('.classeur-page') : [];
+  // En double page, c'est la feuille de DROITE qui part vers la gauche quand on avance, et
+  // celle de GAUCHE qui revient quand on recule. Sur une vue solo les deux se confondent.
+  const source = sens > 0 ? pages[pages.length - 1] : pages[0];
+  const reduit = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if(!source || reduit){ pageClasseur = cible; rendreCartesSet(); return; }
+
+  const r = source.getBoundingClientRect();
+  const st = getComputedStyle(source);
+  const clone = source.cloneNode(true);
+  clone.classList.add('cl-tourne');
+  // Sorti de son parent, le clone perdrait la teinte du classeur (portee par --t sur
+  // .classeur-pages) et les coins que lui donnent :first-child / :last-child. On les
+  // recopie, sinon la feuille qui tourne serait grise et carree face a une page teintee.
+  clone.style.setProperty('--t', getComputedStyle(zone).getPropertyValue('--t'));
+  clone.style.cssText += `position:fixed; left:${r.left}px; top:${r.top}px;
+    width:${r.width}px; height:${r.height}px; margin:0; z-index:120; pointer-events:none;
+    border-radius:${st.borderRadius}; border:${st.border}; box-shadow:${st.boxShadow};
+    background:${st.background};
+    transform-origin:${sens > 0 ? 'left' : 'right'} center;`;
+  document.body.appendChild(clone);
+
+  tourneEnCours = true;
+  pageClasseur = cible;
+  rendreCartesSet();
+
+  // Deux images d'attente avant de lancer la rotation : sans elles le navigateur applique
+  // l'etat final des le premier calcul de style et rien ne s'anime.
+  requestAnimationFrame(()=> requestAnimationFrame(()=>{
+    clone.style.transition = 'transform .42s cubic-bezier(.36,.06,.24,1), opacity .42s ease-in';
+    clone.style.transform = `perspective(1500px) rotateY(${sens > 0 ? -102 : 102}deg)`;
+    clone.style.opacity = '0';
+  }));
+  const fin = ()=>{ if(clone.isConnected) clone.remove(); tourneEnCours = false; };
+  clone.addEventListener('transitionend', fin, {once: true});
+  // Filet : une transition qui ne demarre jamais laisserait le clone colle a l'ecran et le
+  // classeur bloque pour de bon.
+  setTimeout(fin, 700);
+}
+
+// Balayage horizontal. Le sens est celui du papier : on tire vers la gauche pour avancer.
+// La direction se decide au premier mouvement franc et ne change plus, sinon un defilement
+// vertical un peu oblique tournerait des pages sans qu'on l'ait demande.
+function brancherBalayageClasseur(zone, nbVues){
+  if(!zone) return;
+  zone.dataset.nbvues = nbVues;
+  if(zone.dataset.balayage) return;
+  zone.dataset.balayage = '1';
+  let x0 = 0, y0 = 0, suivi = false, horizontal = null;
+  zone.addEventListener('touchstart', (e)=>{
+    if(e.touches.length !== 1){ suivi = false; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    suivi = true; horizontal = null;
+  }, {passive: true});
+  zone.addEventListener('touchmove', (e)=>{
+    if(!suivi || e.touches.length !== 1) return;
+    const dx = e.touches[0].clientX - x0, dy = e.touches[0].clientY - y0;
+    if(horizontal === null && Math.abs(dx) + Math.abs(dy) > 12) horizontal = Math.abs(dx) > Math.abs(dy);
+  }, {passive: true});
+  zone.addEventListener('touchend', (e)=>{
+    if(!suivi || horizontal !== true){ suivi = false; return; }
+    suivi = false;
+    const dx = e.changedTouches[0].clientX - x0;
+    if(Math.abs(dx) < 45) return;
+    tournerClasseur(dx < 0 ? 1 : -1);
+  }, {passive: true});
+}
+
 function tailleClasseur(){
   // Sur écran étroit, une double page de 4×4 donnerait des vignettes illisibles : on
   // redescend à 3×3 quel que soit le choix, sans l'écraser pour autant.
@@ -15323,11 +15432,17 @@ function rendreCartesSet(){
   // redevient celle du geste reel.
   const faces = [];
   for(let i = 0; i < affichees.length; i += parPage) faces.push({cartes: affichees.slice(i, i + parPage)});
+  // Sur telephone, une double page cote a cote donnait des vignettes illisibles : les deux
+  // pages passaient donc l'une SOUS l'autre, et le classeur redevenait la grille qui defile
+  // qu'il etait cense remplacer. On montre une seule face a la fois, qu'on tourne du doigt —
+  // c'est le geste reel, et la seule mise en page ou une page reste lisible sur 375 px.
+  const parVue = pagesParVue();
   // Le dos de la derniere page existe physiquement, meme vide : sans lui la double page
-  // finale n'aurait qu'un cote et le classeur paraitrait coupe en deux.
-  if(faces.length % 2) faces.push({cartes: []});
-  const nbDoubles = Math.max(1, faces.length / 2);
-  const nbVues = nbDoubles + 1;   // les doubles pages, plus la couverture
+  // finale n'aurait qu'un cote et le classeur paraitrait coupe en deux. A une seule face
+  // par vue, cette page vide ne serait qu'un balayage pour rien.
+  if(parVue === 2 && faces.length % 2) faces.push({cartes: []});
+  const nbPlanches = Math.max(1, Math.ceil(faces.length / parVue));
+  const nbVues = nbPlanches + 1;   // les planches, plus la couverture
   pageClasseur = Math.min(Math.max(0, pageClasseur), nbVues - 1);
 
   // Les compteurs portent toujours sur le SET ENTIER, jamais sur la vue filtrée : sinon
@@ -15424,27 +15539,35 @@ function rendreCartesSet(){
       + '<i class="cl-anneau" style="top:50%"></i>'
       + '<i class="cl-anneau" style="top:82%"></i></div>';
     const ferme = pageClasseur === 0;
-    const d = (pageClasseur - 1) * 2;   // premiere face de la double page courante
+    const d = (pageClasseur - 1) * parVue;   // premiere face de la planche courante
     grid.className = 'classeur';
     grid.innerHTML = `
       ${DEFS_CUIR}
       ${ferme
         ? `<div class="classeur-pages ferme" style="--t:${teinteDuClasseur(setCourantId)}">${faceCouverture()}</div>`
-        : `<div class="classeur-pages" style="--t:${teinteDuClasseur(setCourantId)}">
-            ${rendreFace(faces[d])}
-            ${reliure}
-            ${rendreFace(faces[d + 1])}
-          </div>`}
+        : parVue === 2
+          ? `<div class="classeur-pages" style="--t:${teinteDuClasseur(setCourantId)}">
+              ${rendreFace(faces[d])}
+              ${reliure}
+              ${rendreFace(faces[d + 1])}
+            </div>`
+          : `<div class="classeur-pages solo" style="--t:${teinteDuClasseur(setCourantId)}">
+              ${rendreFace(faces[d])}
+            </div>`}
       <div class="classeur-nav">
         <button class="btn-ghost btn-sm" id="cl-prec" ${ferme ? 'disabled' : ''}>← ${pageClasseur === 1 ? 'Couverture' : 'Page précédente'}</button>
-        <span class="classeur-pos">${ferme ? 'Couverture — classeur fermé' : `Pages ${d+1}–${d+2} sur ${nbDoubles*2}`}</span>
+        <span class="classeur-pos">${ferme ? 'Couverture — classeur fermé'
+          : parVue === 2 ? `Pages ${d+1}–${d+2} sur ${faces.length}`
+                         : `Page ${d+1} sur ${faces.length}`}</span>
         <button class="btn-ghost btn-sm" id="cl-suiv" ${pageClasseur >= nbVues-1 ? 'disabled' : ''}>${ferme ? 'Ouvrir le classeur →' : 'Page suivante →'}</button>
+        ${parVue === 1 ? '<span class="cl-astuce">Balaye la page pour la tourner</span>' : ''}
       </div>`;
     // Le bouton d'habillage nait avec la couverture, donc a chaque rendu : il faut le
     // relier ici et non une fois pour toutes au demarrage.
     $('btn-style-classeur')?.addEventListener('click', ouvrirStyleClasseur);
-    $('cl-prec')?.addEventListener('click', ()=>{ pageClasseur--; rendreCartesSet(); });
-    $('cl-suiv')?.addEventListener('click', ()=>{ pageClasseur++; rendreCartesSet(); });
+    $('cl-prec')?.addEventListener('click', ()=> tournerClasseur(-1));
+    $('cl-suiv')?.addEventListener('click', ()=> tournerClasseur(1));
+    brancherBalayageClasseur(grid, nbVues);
   } else {
     grid.className = 'cards-grid';
     grid.innerHTML = affichees.length
