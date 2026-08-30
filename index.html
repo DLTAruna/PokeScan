@@ -7201,6 +7201,27 @@ let pulseCaptureAt = -1e9;
 // continu par renderOverlayLoop (voir plus bas), jamais directement par detectLoop —
 // c'est ce qui permet d'interpoler en douceur entre deux détections (~5-8/s) plutôt que
 // de faire sauter le cadre à chaque nouvelle position brute.
+// Copie réduite de l'image vidéo, réutilisée d'une frame à l'autre. 80 px de large :
+// assez pour que l'agrandissement suivant garde les masses de couleur, assez peu pour
+// que la copie ne coûte rien. Elle n'est PAS conservée entre deux ouvertures de caméra :
+// le format change avec l'objectif.
+let canevasFlou = null;
+function imageFloue(video, OW, OH){
+  if(!video || !video.videoWidth) return null;
+  try{
+    const L = 80, H = Math.max(1, Math.round(L * OH / OW));
+    if(!canevasFlou) canevasFlou = document.createElement('canvas');
+    if(canevasFlou.width !== L || canevasFlou.height !== H){ canevasFlou.width = L; canevasFlou.height = H; }
+    const c = canevasFlou.getContext('2d');
+    c.drawImage(video, 0, 0, L, H);
+    return canevasFlou;
+  }catch(e){
+    // Une image non encore décodable lève ici. On rend null : le voile reste alors
+    // simplement opaque, ce qui est le comportement d'avant — jamais une frame perdue.
+    return null;
+  }
+}
+
 function drawGuideOverlay(video, state, corners){
   const cvs = $('aim-overlay');
   if(!cvs || !video.videoWidth) return;
@@ -7229,23 +7250,46 @@ function drawGuideOverlay(video, state, corners){
   const pulse = dt >= 0 && dt < PULSE_DUREE_MS ? Math.pow(1 - dt/PULSE_DUREE_MS, 2) : 0;
   const couleur = pulse > 0 ? couleurs.ok : (couleurs[state] || couleurs.attente);
 
+  // Voile flou et assombri autour du cadre. Le flou est calculé DANS le canvas et non
+  // par un backdrop-filter : posé au-dessus d'un <video>, celui-ci fait basculer le
+  // compositeur sur un chemin de rendu où la vidéo devient NOIRE sur plusieurs GPU
+  // Android — le défaut était invisible sur ordinateur, et c'est exactement pour ça
+  // qu'il avait fallu retirer le précédent. Ici on ne touche pas à la composition : on
+  // redessine simplement l'image, floutée, dans la couche qu'on contrôle déjà.
   ctx.save();
-  ctx.fillStyle = 'rgba(0,0,0,.42)';
   ctx.beginPath();
   ctx.rect(0, 0, OW, OH);
   rectCartePath(ctx, R, radius);
-  ctx.fill('evenodd');
+  ctx.clip('evenodd');
+  const flou = imageFloue(video, OW, OH);
+  if(flou){
+    // L'essentiel du flou vient du rééchantillonnage : redescendre l'image à 80 px de
+    // large puis la réétirer coûte presque rien et brouille déjà tout le détail. Le
+    // filtre ne fait plus que lisser l'escalier que laisse cet agrandissement — d'où un
+    // rayon modeste, là où flouter l'image pleine résolution serait l'opération la plus
+    // lourde de la boucle, au moment précis où le processeur lit une carte.
+    ctx.filter = 'blur(3px)';
+    ctx.drawImage(flou, 0, 0, OW, OH);
+    ctx.filter = 'none';
+  }
+  // Assombrissement par-dessus le flou : les deux ensemble écartent l'arrière-plan de
+  // l'attention bien mieux que l'un ou l'autre seul.
+  ctx.fillStyle = flou ? 'rgba(0,0,0,.5)' : 'rgba(0,0,0,.56)';
+  ctx.fillRect(0, 0, OW, OH);
   ctx.restore();
 
-  // Le quadrilatère détecté reste tracé, mais en fil discret : il montre que le
-  // détecteur accroche la carte sans redevenir l'élément dominant de l'image.
+  // Le quadrilatère détecté : un trait FIN, mais franc. À 0,34 d'opacité il se perdait
+  // dans l'image — or c'est lui qui dit que le détecteur accroche vraiment la carte,
+  // pendant que les équerres, elles, sont immobiles et ne prouvent rien. Il reste deux
+  // fois plus fin que les équerres pour rester lisible comme une information de second
+  // plan et non comme un second cadre.
   if(corners){
     const pts = [corners.tl, corners.tr, corners.br, corners.bl].map(p => [p[0]*OW, p[1]*OH]);
     const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
     ctx.save();
-    ctx.globalAlpha = 0.34;
+    ctx.globalAlpha = 0.85;
     ctx.strokeStyle = couleur;
-    ctx.lineWidth = Math.max(1.5, OW*0.0028);
+    ctx.lineWidth = Math.max(1.6, OW*0.0032);
     ctx.lineJoin = 'round';
     ctx.beginPath();
     roundedPolyPath(ctx, pts, Math.min(Math.max(...xs)-Math.min(...xs), Math.max(...ys)-Math.min(...ys)) * 0.07);
