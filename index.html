@@ -2921,6 +2921,27 @@
     content:''; position:absolute; inset:0; pointer-events:none; opacity:.5;
     background:radial-gradient(circle at 88% 12%, rgba(255,255,255,.10), transparent 46%);
   }
+  /* Deux halos, un rouge et un bleu, qui derivent lentement sous le contenu. Le degrade de
+     fond reste fixe : ce sont ces taches qui bougent par-dessus, ce qui donne l'impression
+     que la couleur respire sans qu'aucun pixel du bandeau ne soit recalcule. Comme pour les
+     carres de la mosaique, transform et rien d'autre — la seule propriete qu'un telephone
+     anime sans repeindre. Le va-et-vient evite la coupure d'une boucle qui repart.
+     Seize secondes : assez lent pour qu'on ne surprenne jamais le mouvement en le fixant,
+     assez vif pour que le bandeau ne paraisse pas fige entre deux regards. */
+  .jeu-banniere.pokemon::before{
+    content:''; position:absolute; inset:-45%; z-index:0; pointer-events:none;
+    background:
+      radial-gradient(circle at 27% 33%, rgba(238,21,21,.34), transparent 43%),
+      radial-gradient(circle at 69% 63%, rgba(61,125,202,.32), transparent 47%);
+    animation:banniereDerive 16s ease-in-out infinite alternate;
+  }
+  @keyframes banniereDerive{
+    from{transform:translate3d(-4%, -3%, 0) scale(1);}
+    to{transform:translate3d(5%, 4%, 0) scale(1.14);}
+  }
+  @media (prefers-reduced-motion: reduce){
+    .jeu-banniere.pokemon::before{animation:none;}
+  }
   .jeu-banniere > *{position:relative; z-index:1;}
   /* ---- Banniere de jeu dans la barre ----
      La pastille ronde disait « il y a une categorie ici » sans rien evoquer. Une vraie
@@ -5152,11 +5173,11 @@ function appliquerMode(mode, allerAccueil){
   // On ne déplace l'utilisateur QUE s'il a lui-même changé de mode. Au chargement, la page
   // courante est restaurée telle quelle : le renvoyer à l'accueil effacerait ce qu'il était
   // en train de faire.
-  // L'accueil est unique et sert les deux modes : ce sont ses portes qui changent, pas la
-  // page. Renvoyer ailleurs revenait à ouvrir une seconde page d'accueil.
-  const sa = $('section-accueil');
-  if(sa) sa.dataset.mode = mode;
-  if(allerAccueil) activerOnglet('accueil');
+  // Chaque monde a sa propre porte : Collectionneur ouvre l'accueil de la collection,
+  // Vendeur le tableau de bord. Renvoyer les deux vers la mosaïque avait un effet que je
+  // n'avais pas vu : synchroniserMode y force la bascule sur « neutre », donc le bouton
+  // qu'on venait de choisir s'éteignait aussitôt.
+  if(allerAccueil) activerOnglet(mode === 'vendeur' ? 'dashboard' : 'collection');
 }
 
 // Un onglet ouvert depuis ailleurs (barre du bas, raccourci, bouton d'une page) doit
