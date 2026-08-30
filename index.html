@@ -705,6 +705,41 @@
     position:absolute; top:6px; left:6px; z-index:3; padding:2px 7px; border-radius:7px;
     background:var(--accent); color:#1a1206; font-size:10px; font-weight:800; letter-spacing:.3px;
   }
+  /* ---- Bascule des deux modes de capture ---- */
+  .scan-modes{margin:0 0 14px; width:100%;}
+  .scan-modes button{flex:1; padding:11px 14px; font-size:13.5px; font-weight:700;}
+
+  /* Zone de depot : elle occupe toute la largeur et se voit de loin, parce que c'est la
+     cible d'un geste (lacher un dossier) et non un bouton qu'on cherche. */
+  .zone-depot{
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    padding:34px 20px; border-radius:14px; text-align:center;
+    border:2px dashed var(--border); background:var(--panel2);
+    transition:border-color .15s, background .15s;
+  }
+  .zone-depot.survol{border-color:var(--accent); background:rgba(255,203,5,.07);}
+  .zd-ico{font-size:30px; line-height:1;}
+  .zd-titre{font-size:14.5px; font-weight:700;}
+  .zd-sous{font-size:11.5px; color:var(--muted);}
+  /* Sur ecran tactile il n'y a pas de glisser-deposer : la zone se reduit a son bouton,
+     et n'annonce plus un geste impossible. */
+  @media (hover: none){
+    .zone-depot{padding:18px 16px;}
+    .zone-depot .zd-ico, .zone-depot .zd-titre, .zone-depot .zd-sous{display:none;}
+  }
+
+  /* Reglages de scan replies : l'indice de set et la validation automatique se choisissent
+     une fois puis ne se retouchent plus. Deplies, ils occupaient tout le haut de l'onglet
+     et repoussaient la camera — qui est ce qu'on vient chercher — hors de l'ecran. */
+  .reglages-scan{border:1px solid var(--border); border-radius:10px; margin:0 0 12px;}
+  .reglages-scan > summary{
+    cursor:pointer; padding:9px 12px; font-size:12.5px; color:var(--muted);
+    list-style:none; display:flex; align-items:center; gap:8px;
+  }
+  .reglages-scan > summary::-webkit-details-marker{display:none;}
+  .reglages-scan > summary::before{content:'⚙'; font-size:13px;}
+  .reglages-scan[open] > summary{border-bottom:1px solid var(--border); color:var(--text);}
+  .reglages-scan .corps{padding:12px;}
   /* ---- Mode classeur ---- */
   /* Trois colonnes et non deux : la reliure est un element a part entiere, entre les deux
      pages. Dessinee sur le bord de chaque page (comme avant), elle se dedoublait — deux
@@ -1194,7 +1229,6 @@
   .menu-item[data-tab="export"] .ico{--t1:#7cc9ea; --t2:#4bb8e0;}
   .menu-item[data-tab="settings"] .ico{--t1:#a8b4c8; --t2:#8e9bb0;}
   .menu-item[data-tab="guide"] .ico{--t1:#ffd75e; --t2:#ffcb05;}
-  .menu-item[data-tab="bench"] .ico{--t1:#8ce0b4; --t2:#3ba55d;}
   /* Bandeau d'installation. Place en tete de l'onglet Capture et non en surimpression :
      une bulle flottante par-dessus l'interface se ferme par reflexe sans etre lue. */
   .bandeau-install{
@@ -2298,15 +2332,6 @@
   }
   .cv-hint{font-size:11px; color:var(--muted); margin-top:6px; text-align:center; flex-shrink:0;}
 
-  .warn-box-bench{
-    background:rgba(224,161,42,.1); border:1px solid rgba(224,161,42,.4); border-radius:10px;
-    padding:11px 13px; font-size:12.5px; line-height:1.6; color:#f0dcb0; margin-bottom:14px;
-  }
-  .warn-box-bench b{color:var(--warn);}
-  #bench-frame-wrap iframe{
-    width:100%; height:78vh; border:1px solid var(--border); border-radius:10px;
-    margin-top:14px; background:var(--bg); display:block;
-  }
 
   .pkb-footer{
     max-width:900px; margin:8px auto 0; padding:18px 16px 30px; text-align:center;
@@ -2439,7 +2464,6 @@
     <button class="menu-item" data-tab="export"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5" fill="var(--t2)" opacity=".26"/><path d="M4.5 15.5V19a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3.5" stroke="var(--t1)" stroke-width="1.7"/><path d="M12 3v11.5m-4.4-4L12 15l4.4-4.5" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Export</b><small>CSV et photos pour eBay</small></div></button>
     <button class="menu-item" data-tab="settings"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="16" cy="7.2" r="2.9" fill="var(--t2)" opacity=".3"/><circle cx="9" cy="16.8" r="2.9" fill="var(--t2)" opacity=".3"/><path d="M3.5 7.2h9.6M18.9 7.2h1.6M3.5 16.8h2.6M11.9 16.8h8.6" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16" cy="7.2" r="2.9" stroke="var(--t1)" stroke-width="1.7"/><circle cx="9" cy="16.8" r="2.9" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Réglages</b><small>Modèles de titre, prix, cache</small></div></button>
     <button class="menu-item" data-tab="guide"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7.3C10.6 5.9 8.6 5.1 5.6 5.1A1.6 1.6 0 0 0 4 6.7v10.9a1.6 1.6 0 0 0 1.6 1.6c3 0 5 .8 6.4 2.2V7.3Z" fill="var(--t2)" opacity=".3"/><path d="M12 7.3C10.6 5.9 8.6 5.1 5.6 5.1A1.6 1.6 0 0 0 4 6.7v10.9a1.6 1.6 0 0 0 1.6 1.6c3 0 5 .8 6.4 2.2 1.4-1.4 3.4-2.2 6.4-2.2a1.6 1.6 0 0 0 1.6-1.6V6.7a1.6 1.6 0 0 0-1.6-1.6c-3 0-5 .8-6.4 2.2Z" stroke="var(--t1)" stroke-width="1.7"/><path d="M12 7.3v14.1" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Guide</b><small>Comment vendre en masse</small></div></button>
-    <button class="menu-item" data-tab="bench"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.7 9.4 5 17.7a1.9 1.9 0 0 0 1.6 2.9h10.8a1.9 1.9 0 0 0 1.6-2.9l-4.7-8.3Z" fill="var(--t2)" opacity=".3"/><path d="M9.7 3.2v6.2L5 17.7a1.9 1.9 0 0 0 1.6 2.9h10.8a1.9 1.9 0 0 0 1.6-2.9l-4.7-8.3V3.2" stroke="var(--t1)" stroke-width="1.7"/><path d="M8.5 3.2h7M7.6 14.6h8.8" stroke="var(--t1)" stroke-width="1.7"/></svg><div><b>Banc de test</b><small>Mesurer la précision de lecture</small></div></button>
   </div>
 </div>
 
@@ -2634,34 +2658,19 @@
           <button class="btn-gold btn-sm" id="btn-install-oui">Installer</button>
         </div>
       </div>
-      <!-- Bandeau de valeur : la question à laquelle l'app ne répondait pas -->
-      <div class="cote-hero" id="cote-hero">
-        <div class="cote-tete">
-          <span class="cote-kicker">Valeur du patrimoine</span>
-          <span class="cote-kicker" id="cote-maj">—</span>
-        </div>
-        <div class="cote-corps">
-          <div class="cote-bloc">
-            <div class="cote-lbl">Total</div>
-            <div class="cote-num" id="cote-total">0 €</div>
-            <div class="cote-sub" id="cote-detail">—</div>
-          </div>
-          <div class="cote-bloc cote-droite">
-            <div class="cote-lbl">Plus-value latente</div>
-            <div class="cote-num cote-pv" id="cote-pv">—</div>
-            <div class="cote-sub" id="cote-pv-sub">coût d'achat non renseigné</div>
-          </div>
-        </div>
-        <div class="cote-pieds">
-          <div class="cote-pied"><span class="pt collection"></span>Collection <b id="cote-p-coll">0 €</b></div>
-          <div class="cote-pied"><span class="pt lot"></span>Lot à vendre <b id="cote-p-lot">0 €</b></div>
-          <div class="cote-pied"><span class="pt scelle"></span>Scellé <b id="cote-p-scelle">0 €</b></div>
-        </div>
+      <!-- Deux modes de capture, un seul à l'écran. Les deux panneaux étaient empilés :
+           on faisait défiler l'import et la photo de secours à chaque visite pour arriver
+           à la caméra, qui est ce qu'on vient chercher neuf fois sur dix. -->
+      <div class="seg scan-modes" id="scan-modes">
+        <button class="on" data-scan="live">📹 Caméra en direct</button>
+        <button data-scan="import">📥 Importer des photos</button>
       </div>
-    <div class="panel">
+    <div class="panel" id="panneau-live">
       <h2>📹 Caméra en direct (rafale)</h2>
       <p class="sub">Place la carte dans le cadre : la capture se déclenche <b>toute seule</b> dès qu'il passe au vert. Enchaîne les cartes sans rien toucher — l'analyse tourne en arrière-plan pendant que tu continues. Le bouton 📸 reste disponible pour forcer une prise.</p>
-      <div style="margin:10px 0 12px;">
+      <details class="reglages-scan">
+        <summary id="resume-reglages-scan">Réglages de scan — set : Auto · validation automatique</summary>
+        <div class="corps">
         <label for="capture-set">Choix du set</label>
         <select id="capture-set">
           <option value="">Auto — détecter le set à chaque carte</option>
@@ -2680,7 +2689,8 @@
           classeur d'une seule extension, choisis-la : le numéro suffit alors à identifier
           la carte, sans avoir à deviner le set.
         </p>
-      </div>
+        </div>
+      </details>
       <div class="capture-btns" id="cam-start-row">
         <button class="btn-gold" id="btn-start-cam">📹 Démarrer la caméra</button>
       </div>
@@ -2732,46 +2742,27 @@
       </div>
       <div class="hint" id="cam-error"></div>
       <div class="hint" id="capture-progress"></div>
-      <div class="hint diag-controls" style="margin-top:8px;">
-        <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
-        <button class="btn-ghost btn-sm" id="btn-diag-share" style="margin-left:6px; display:none;">📤 Partager</button>
-        <button class="btn-ghost btn-sm" id="btn-diag-test" style="margin-left:6px;">🔌 Tester le relais</button>        &nbsp;·&nbsp;
-        <button class="link-btn" id="btn-forcer-maj">🔄 Forcer la mise à jour</button>
-        <span class="hint" id="build-version" style="margin-left:8px;"></span>
 
-        <button class="link-btn" id="btn-diag-show" style="margin-left:8px;">voir</button>
-        <span id="diag-count" style="margin-left:8px;"></span>
-        <label style="margin-left:10px; font-size:12px; display:inline-flex; align-items:center; gap:4px; cursor:pointer;">
-          <input type="checkbox" id="chk-diag-remote">📡 envoyer en direct (debug)
-        </label>
-        <span id="diag-remote-status" style="margin-left:6px; font-size:11px;"></span>
-      </div>
-      <pre id="diag-view" style="display:none; background:var(--panel2); border:1px solid var(--border);
-           border-radius:8px; padding:8px; font-size:10.5px; max-height:260px; overflow:auto;
-           white-space:pre-wrap; word-break:break-word; margin-top:6px;"></pre>
       <div class="queue-strip" id="queue-strip"></div>
       </div>
     </div>
 
-    <div class="panel">
-      <h2>📥 Import en masse</h2>
-      <p class="sub">Tu as déjà pris toutes les photos avec l'appareil de ton téléphone ? Sélectionne-les toutes d'un coup (des dizaines ou centaines à la fois).</p>
-      <div class="capture-btns">
-        <button class="btn-primary" id="btn-bulk-import">📥 Choisir des photos en masse</button>
+    <div class="panel" id="panneau-import" style="display:none;">
+      <h2>📥 Importer des photos</h2>
+      <p class="sub">Tu as déjà photographié ton stock ? Dépose le dossier ici, ou choisis les fichiers — l'application en avale des centaines à la suite. Les cartes reconnues partent au lot, les autres dans « À vérifier ».</p>
+      <!-- Zone de dépôt : sur un ordinateur, le geste naturel quand on a un dossier de
+           photos est de le lâcher sur la page, pas d'ouvrir un sélecteur de fichiers. -->
+      <div class="zone-depot" id="zone-depot">
+        <div class="zd-ico">📥</div>
+        <div class="zd-titre">Dépose tes photos ici</div>
+        <div class="zd-sous">ou</div>
+        <button class="btn-primary" id="btn-bulk-import">Choisir des fichiers</button>
       </div>
       <input type="file" id="bulk-input" accept="image/*" multiple>
       <div class="progress-bar" id="bulk-progress"><div class="fill" id="bulk-progress-fill"></div></div>
       <div class="hint" id="bulk-status"></div>
     </div>
 
-    <div class="panel">
-      <h2>📷 Photo unique (secours)</h2>
-      <p class="sub">Si la caméra en direct ne fonctionne pas sur ton appareil, utilise l'appareil photo natif carte par carte.</p>
-      <div class="capture-btns">
-        <button class="btn-ghost" id="btn-native-cam">📷 Prendre une photo</button>
-      </div>
-      <input type="file" id="native-cam-input" accept="image/*" capture="environment">
-    </div>
   </section>
 
   <!-- IDENTIFY TAB -->
@@ -2805,7 +2796,6 @@
       <div class="hint">
         <button class="link-btn" id="btn-review-skipped">↩️ Cartes passées (<span id="skipped-count">0</span>) — les revoir</button>
         &nbsp;·&nbsp;
-        <button class="link-btn" id="btn-toggle-ocr-debug">🔬 Debug OCR</button>
         &nbsp;·&nbsp;
         <button class="link-btn" id="btn-vider-file" style="color:var(--danger,#e5484d)">🗑️ Tout effacer</button>
       </div>
@@ -2845,24 +2835,11 @@
           <img class="empty-icon" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/143.png" alt="" aria-hidden="true">
           <div id="identify-vide-texte">Aucune photo en attente.</div>
           <div class="hint" style="margin-top:8px; max-width:34em;">Tu peux quand même chercher une carte
-          et l'ajouter sans photo, ou aller dans l'onglet Capture.</div>
+          et l'ajouter sans photo, ou aller dans l'onglet Scanner.</div>
         </div>
         <div class="confirm-overlay" id="confirm-overlay"><div class="confirm-check">✅</div></div>
       </div>
 
-      <div id="ocr-debug-panel" style="display:none; margin-top:10px; background:var(--panel2); border:1px solid var(--border); border-radius:8px; padding:10px;">
-        <div style="display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
-          <div>
-            <div class="hint" style="margin:0 0 4px;">Bande lue (bas de carte)</div>
-            <img id="ocr-debug-preview" style="max-width:220px; border:1px solid var(--border); border-radius:4px; background:#000;">
-          </div>
-          <div style="flex:1; min-width:160px;">
-            <div class="hint" style="margin:0 0 4px;">Texte brut détecté</div>
-            <div id="ocr-debug-text" style="font-family:monospace; font-size:12px; white-space:pre-wrap; word-break:break-all; color:var(--text);">—</div>
-          </div>
-        </div>
-        <p class="hint" style="margin-top:8px;">Si le texte est illisible ou mal cadré, ajuste "Zone OCR (% bas de carte)" dans les Réglages, en fonction de tes propres photos.</p>
-      </div>
 
       <div style="margin-top:12px;">
         <label>Rechercher une carte</label>
@@ -3216,6 +3193,32 @@
   <!-- SETTINGS TAB -->
   <section class="section" id="section-settings">
     <div class="panel">
+      <h2>🩺 Diagnostic</h2>
+      <p class="sub">Le journal des tentatives de lecture, gardé en mémoire pendant la session. Il ne sert que si quelque chose se passe mal : une caméra qui refuse de démarrer ou des cartes mal identifiées se diagnostiquent avec, et rarement autrement — les pannes de caméra dépendent du modèle de téléphone et ne se reproduisent pas ailleurs.</p>
+      <div class="diag-controls">
+        <button class="btn-ghost btn-sm" id="btn-diag-copy">🩺 Copier le diagnostic</button>
+        <button class="btn-ghost btn-sm" id="btn-diag-share" style="margin-left:6px; display:none;">📤 Partager</button>
+        <button class="link-btn" id="btn-diag-show" style="margin-left:10px;">voir le journal</button>
+        <span id="diag-count" style="margin-left:8px;"></span>
+      </div>
+      <pre id="diag-view" style="display:none; background:var(--panel2); border:1px solid var(--border);
+           border-radius:8px; padding:8px; font-size:10.5px; max-height:260px; overflow:auto;
+           white-space:pre-wrap; word-break:break-word; margin-top:8px;"></pre>
+      <label style="display:flex; align-items:center; gap:8px; margin-top:12px; cursor:pointer;">
+        <input type="checkbox" id="chk-diag-remote" style="width:auto; margin:0;">
+        <span>📡 Envoyer le journal en direct</span>
+      </label>
+      <p class="hint" style="margin:4px 0 0;">Décoché, rien ne quitte l’appareil. Coché, chaque tentative de lecture part vers le relais de l’application — à n’activer que le temps d’un diagnostic.</p>
+      <div class="diag-controls" style="margin-top:10px;">
+        <button class="btn-ghost btn-sm" id="btn-diag-test">🔌 Tester le relais</button>
+        <span id="diag-remote-status" style="margin-left:8px; font-size:11px;"></span>
+      </div>
+      <div class="diag-controls" style="margin-top:12px;">
+        <button class="link-btn" id="btn-forcer-maj">🔄 Forcer la mise à jour</button>
+        <span class="hint" id="build-version" style="margin-left:8px;"></span>
+      </div>
+    </div>
+    <div class="panel">
       <h2>Politique de prix</h2>
       <p class="sub">Recalcule d'un coup le prix de vente de tout le lot à partir de la cote du marché.</p>
       <div class="repricing-bar">
@@ -3305,25 +3308,6 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
   </section>
 
   <!-- BENCH TAB -->
-  <section class="section" id="section-bench">
-    <div class="panel">
-      <h2>🧪 Banc d'essai OCR</h2>
-      <p class="sub">Mesure le taux de lecture du numéro sur un échantillon aléatoire du catalogue. La bonne réponse est connue pour chaque carte (<code>localId</code> + total du set), donc la mesure est objective sur des centaines de cartes sans rien annoter à la main. Sert à comparer des fenêtres de recadrage et des politiques de décision <b>avant</b> de toucher au code de l'app.</p>
-      <div class="warn-box-bench">
-        ⚠️ <b>Garde cet onglet au premier plan pendant un run.</b> En arrière-plan, le navigateur
-        suspend les accès réseau : les images ne se chargent plus et les résultats deviennent
-        silencieusement faux (déjà constaté — un run entier perdu). Le banc alerte désormais
-        au-delà de 5 % de cartes non chargées, mais mieux vaut ne pas y arriver.
-      </div>
-      <div class="capture-btns">
-        <button class="btn-gold" id="btn-open-bench">🧪 Ouvrir le banc ici</button>
-        <button class="btn-ghost" id="btn-bench-newtab">↗️ Ouvrir dans un onglet séparé</button>
-      </div>
-      <p class="hint">Un onglet séparé est préférable pour un run long : tu peux continuer à scanner ici pendant ce temps sans interrompre la mesure.</p>
-      <div id="bench-frame-wrap"></div>
-    </div>
-  </section>
-
   <!-- GUIDE TAB -->
   <section class="section guide" id="section-guide">
     <div class="panel">
@@ -3336,8 +3320,8 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
       <p>La recherche utilise <a href="https://tcgdex.dev" target="_blank">TCGdex</a>, gratuit et sans clé. Il gère nativement les cartes en français et fournit des prix Cardmarket (€) en plus de TCGPlayer ($).</p>
 
       <h3>3. Deux façons de capturer en masse</h3>
-      <p><b>Caméra en direct :</b> onglet Capture → "Démarrer la caméra" → appuie sur le gros bouton rond pour chaque carte, sans jamais rien fermer. Les photos s'accumulent dans une file (visible en vignettes). Idéal si tu scannes carte par carte devant toi, en rythme.</p>
-      <p><b>Import en masse :</b> si tu préfères photographier tout ton stock d'abord avec l'appareil photo normal de ton téléphone, puis sélectionner toutes les photos d'un coup (l'app peut en avaler des centaines à la suite).</p>
+      <p><b>Caméra en direct :</b> onglet Scanner. Sur téléphone, le bouton central de la barre du bas ouvre la caméra directement. La capture se déclenche toute seule dès que le cadre passe au vert — enchaîne les cartes sans rien toucher ; le gros bouton rond reste là pour forcer une prise.</p>
+      <p><b>Importer des photos :</b> si tu préfères photographier tout ton stock d'abord. Sur ordinateur, dépose le dossier entier sur la zone prévue ; sinon, choisis les fichiers — l'application en avale des centaines à la suite.</p>
       <p>Les deux méthodes remplissent la même file d'attente, utilisée ensuite dans l'onglet Identifier.</p>
 
       <h3>4. Identifie à toute vitesse</h3>
@@ -5523,7 +5507,7 @@ function texteUtile(t){
   return typeof t === 'string' && t.replace(/[^a-zA-Zà-üÀ-Ü0-9]/g, '').length >= 4;
 }
 
-async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
+async function runCardAnalysis(analysisSrc, cardBounds){
   const analysis = { status:'pending', card:null };
   const cropPct = parseFloat($('ocr-crop-pct')?.value) || 10;
 
@@ -5533,7 +5517,6 @@ async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
   //  - le crop bas de carte donne la meilleure résolution effective sur le numéro ;
   //  - la pleine image rattrape les cas où le crop tombe à côté.
   const croppedRaw = await cropBottomBandForOcr(analysisSrc, cropPct, 'raw', 55, cardBounds);
-  if(showDebug && $('ocr-debug-preview')) $('ocr-debug-preview').src = croppedRaw;
 
   const texts = [];
   try{ texts.push(await recognizeText(await dataUrlToCanvas(croppedRaw))); }
@@ -5576,7 +5559,6 @@ async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
   async function analyserTexte(){
     const rawText = texts.join('\n').trim();
     analysis.rawText = rawText;
-    if(showDebug && $('ocr-debug-text')) $('ocr-debug-text').textContent = rawText || '(vide)';
 
     // Candidats de numéro avec normalisation des sosies de chiffres ("183/I65" -> "183/165").
     const candidates = extractNumberCandidates(rawText);
@@ -5644,7 +5626,7 @@ async function runCardAnalysis(analysisSrc, cardBounds, showDebug){
 // il n'y a donc plus de détection de contour à faire.
 async function analyzeCanvasCard(canvas){
   return await runCardAnalysis(canvas.toDataURL('image/png'),
-    {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1}, false);
+    {topFrac:0, bottomFrac:1, leftFrac:0, rightFrac:1});
 }
 
 // Lecture RAPIDE du seul numéro, pour le verrou de capture en temps réel.
@@ -5693,7 +5675,6 @@ async function quickReadNumberFromBand(bandCanvas, alreadyCropped){
 
 async function analyzeQueueItem(item){
   if(item._analysis && item._analysis.status !== 'pending') return item._analysis;
-  const isCurrent = pendingQueue[0] === item;
   item._analysis = { status: 'pending', card: null };
   let objectUrl = null;
   try{
@@ -5715,7 +5696,7 @@ async function analyzeQueueItem(item){
     try{ cardBounds = detectCardBounds(await loadImageEl(analysisSrc)); }
     catch(e){ /* détection impossible, on retombe sur le bord de l'image */ }
 
-    item._analysis = await runCardAnalysis(analysisSrc, cardBounds, isCurrent);
+    item._analysis = await runCardAnalysis(analysisSrc, cardBounds);
     return item._analysis;
   } catch(err){
     item._analysis.status = 'uncertain';
@@ -6373,7 +6354,7 @@ async function startCamera(){
     renderQueueStrip();
     startAimLoop();
   } catch(err){
-    $('cam-error').textContent = '⚠️ Caméra indisponible ('+err.message+'). Utilise "Import en masse" ou "Photo unique" ci-dessous à la place.';
+    $('cam-error').textContent = '⚠️ Caméra indisponible ('+err.message+'). Bascule sur « Importer des photos » en haut de la page.';
   }
 }
 
@@ -6731,13 +6712,6 @@ const DIAG_MAX = 250;
 // silencieuse fausse toute lecture des chiffres sans qu'on puisse s'en douter.
 let diagTronquees = 0;
 
-// Série compacte réservée à l'analyse de dégradation : uniquement l'instant dans la session,
-// la durée de recognize() et l'état mémoire. Trois nombres par tentative, donc on peut en
-// garder beaucoup plus que les entrées détaillées (qui embarquent le texte OCR brut).
-// Séparée volontairement du journal : même si celui-ci finit par se tronquer sur une très
-// longue session, la mesure de dégradation reste, elle, complète depuis le début.
-const serieDegradation = [];
-const SERIE_MAX = 3000;
 let diagRemoteEnabled = localStorage.getItem('diagRemoteEnabled') === '1';
 
 function getDiagDeviceId(){
@@ -6911,11 +6885,6 @@ function diagPush(kind, data){
     entry.heapMb = heapMb();
     entry.queueLen = pendingQueue.length;
     entry.sessionS = camStartedAt ? Math.round((Date.now() - camStartedAt)/100)/10 : null;
-    // Série compacte, conservée même quand le journal détaillé se tronque : c'est elle qui
-    // porte la mesure de dégradation, et elle doit couvrir la session DEPUIS LE DÉBUT.
-    if(entry.tRecognize != null && entry.sessionS != null && serieDegradation.length < SERIE_MAX){
-      serieDegradation.push({s: entry.sessionS, ms: entry.tRecognize, tas: entry.heapMb, file: entry.queueLen});
-    }
   }
   diagLog.push(entry);
   if(diagLog.length > DIAG_MAX){ diagLog.shift(); diagTronquees++; }
@@ -6946,38 +6915,6 @@ function buildDiagReport(){
          '  stabilité<=' + MAX_CORNER_SHIFT + '  score min=' + MIN_SCORE);
   l.push('analyse fond: ' + (detectRunning ? 'suspendue (caméra active)' : (queueAnalysisRunning ? 'en cours' : 'au repos')));
 
-  // Verdict direct sur la dégradation intra-session (voir diagPush) : compare la première
-  // et la dernière moitié des appels recognize() de la session, avec l'évolution du tas en
-  // regard. Sans ce résumé il fallait recalculer ces moyennes à la main sur chaque relevé,
-  // ce qui est exactement ce qui a conduit à une conclusion fausse en comparant deux
-  // sessions de durées différentes (§4.38).
-  // Calculé sur la série compacte et NON sur le journal : celui-ci se tronque par le début
-  // sur une longue session, or c'est exactement le début qu'il faut pour comparer les deux
-  // moitiés. L'analyse portait donc jusqu'ici sur la seule fin de session — elle
-  // sous-estimait forcément la dégradation.
-  const reco = serieDegradation;
-  if(reco.length >= 6){
-    const moy = a => Math.round(a.reduce((x,y)=>x+y,0) / a.length);
-    const mid = Math.floor(reco.length/2);
-    const t1 = moy(reco.slice(0,mid).map(e=>e.ms));
-    const t2 = moy(reco.slice(mid).map(e=>e.ms));
-    const h1 = reco.slice(0,mid).filter(e=>e.tas!=null).map(e=>e.tas);
-    const h2 = reco.slice(mid).filter(e=>e.tas!=null).map(e=>e.tas);
-    l.push('');
-    l.push('dégradation : ' + reco.length + ' lectures sur ' + reco[reco.length-1].s + 's de session');
-    l.push('              recognize ' + t1 + 'ms (1re moitié, dès ' + reco[0].s + 's) -> ' +
-           t2 + 'ms (2e moitié)  = x' + (t2/Math.max(t1,1)).toFixed(2));
-    if(h1.length && h2.length){
-      l.push('              tas ' + moy(h1) + 'Mo -> ' + moy(h2) + 'Mo  (file ' +
-             reco[0].file + ' -> ' + reco[reco.length-1].file + ' cartes)');
-      l.push('              → tas stable + temps qui monte = thermique ; les deux montent ensemble = mémoire');
-    } else {
-      l.push('              (mesure mémoire indisponible sur ce navigateur)');
-    }
-    // Détail brut : permet de refaire le calcul autrement (par quart, par carte…) sans
-    // dépendre du découpage choisi ici.
-    l.push('              série (s:ms) ' + reco.map(e => e.s + ':' + e.ms).join(' '));
-  }
 
   l.push('');
   // Troncature annoncée : sans ça, un relevé amputé du début se lit exactement comme un
@@ -8841,40 +8778,161 @@ function flashScreen(){
   setTimeout(()=> flash.classList.remove('show'), 90);
 }
 
-// ---------------- BULK IMPORT ----------------
-$('btn-bulk-import').addEventListener('click', ()=> $('bulk-input').click());
-$('bulk-input').addEventListener('change', async (e)=>{
-  const files = [...e.target.files];
+// ---------------- IMPORT DE PHOTOS ----------------
+async function importerPhotos(files){
   if(!files.length) return;
   const bar = $('bulk-progress');
   const fill = $('bulk-progress-fill');
   bar.style.display = 'block';
-  let done = 0;
+  let done = 0, echecs = 0;
   for(const file of files){
     try{
       const dataUrl = await compressFileToDataUrl(file);
       pushToQueue(dataUrl, file); // le fichier d'origine sert à l'OCR, la version compressée au stockage
-    } catch(err){ /* skip unreadable file */ }
+    } catch(err){ echecs++; }
     done++;
     fill.style.width = Math.round(done/files.length*100)+'%';
-    $('bulk-status').textContent = `${done} / ${files.length} photo(s) traitée(s)...`;
+    $('bulk-status').textContent = `${done} / ${files.length} photo(s) traitée(s)…`;
   }
   bar.style.display = 'none';
-  $('bulk-status').textContent = `✅ ${files.length} photo(s) ajoutée(s) à la file d'attente.`;
+  // Les fichiers illisibles sont comptés et annoncés : les passer en silence donnait un
+  // « 300 photos ajoutées » alors que la file n'en contenait que 287.
+  $('bulk-status').textContent = `✅ ${done - echecs} photo(s) ajoutée(s) à la file`
+    + (echecs ? ` · ${echecs} illisible(s), ignorée(s)` : '') + '.';
+  toast(`📥 ${done - echecs} photo(s) importée(s)`);
+}
+
+$('btn-bulk-import').addEventListener('click', ()=> $('bulk-input').click());
+$('bulk-input').addEventListener('change', async (e)=>{
+  const files = [...e.target.files];
   e.target.value = '';
-  toast(`📥 ${files.length} photo(s) importée(s)`);
+  await importerPhotos(files);
 });
 
-// ---------------- NATIVE SINGLE CAMERA ----------------
-$('btn-native-cam').addEventListener('click', ()=> $('native-cam-input').click());
-$('native-cam-input').addEventListener('change', async (e)=>{
-  const file = e.target.files[0];
-  if(!file) return;
-  const dataUrl = await compressFileToDataUrl(file);
-  pushToQueue(dataUrl, file); // idem : OCR sur l'original, stockage sur la version compressée
-  e.target.value = '';
-  toast('📷 Photo ajoutée à la file.');
+// ---------------- DEUX MODES DE CAPTURE ----------------
+// La caméra et l'import étaient deux panneaux empilés : il fallait faire défiler l'un pour
+// atteindre l'autre, alors qu'on n'en utilise qu'un seul par session. Ils deviennent deux
+// modes, un seul à l'écran, et le choix est mémorisé — on ne change pas de méthode de
+// capture toutes les cinq minutes, c'est plutôt une habitude par appareil.
+let modeScan = localStorage.getItem('modeScan') === 'import' ? 'import' : 'live';
+
+function appliquerModeScan(mode){
+  modeScan = mode === 'import' ? 'import' : 'live';
+  localStorage.setItem('modeScan', modeScan);
+  const live = $('panneau-live'), imp = $('panneau-import');
+  if(live) live.style.display = modeScan === 'live' ? '' : 'none';
+  if(imp) imp.style.display = modeScan === 'import' ? '' : 'none';
+  document.querySelectorAll('#scan-modes button[data-scan]').forEach(b =>
+    b.classList.toggle('on', b.dataset.scan === modeScan));
+  // Quitter le mode caméra coupe le flux : le laisser tourner derrière un panneau caché
+  // consomme la batterie et garde le voyant allumé, ce qui inquiète a juste titre.
+  if(modeScan !== 'live' && cameraStream) stopCamera();
+}
+
+$('scan-modes')?.addEventListener('click', (e)=>{
+  const b = e.target.closest('button[data-scan]');
+  if(b) appliquerModeScan(b.dataset.scan);
 });
+appliquerModeScan(modeScan);
+
+
+// ---------------- OUVERTURE DIRECTE SUR TÉLÉPHONE ----------------
+// Sur mobile, atteindre la caméra demandait : appuyer sur le bouton central, arriver sur
+// la page, faire défiler les réglages, puis appuyer sur « Démarrer la caméra ». Deux
+// appuis et un défilement pour la seule chose qu'on vient faire.
+//
+// Le bouton central ouvre donc la caméra directement. Uniquement sur tactile : sur
+// ordinateur, arriver sur l'onglet Scanner n'est pas forcément vouloir filmer — on vient
+// souvent y déposer un dossier — et allumer la webcam sans qu'on l'ait demandé serait
+// franchement déplacé.
+const TACTILE = matchMedia("(hover: none)").matches;
+
+// On se greffe sur le bouton SANS interrompre l'écouteur d'onglet déjà en place : couper
+// la propagation depuis la phase de capture n'empêchait pas l'écouteur posé sur le même
+// bouton de se déclencher (stopPropagation ne vaut que pour les AUTRES éléments), et
+// l'onglet était donc activé deux fois.
+document.querySelectorAll('.navbar [data-tab="capture"]').forEach(b =>
+  b.addEventListener("click", ()=>{
+    if(!TACTILE || modeScan !== "live" || cameraStream) return;
+    // Léger différé : l'activation d'onglet remet la page en haut et bascule les sections,
+    // et demander le flux dans le même souffle fait sauter la transition.
+    setTimeout(()=>{
+      if(!cameraStream && $("section-capture")?.classList.contains("active")) startCamera();
+    }, 120);
+  }));
+
+// Le résumé des réglages repliés doit dire ce qu'ils valent, sinon on les déplie à chaque
+// fois pour vérifier — ce qui annulerait tout le bénéfice du repli.
+function majResumeReglagesScan(){
+  const el = $("resume-reglages-scan");
+  if(!el) return;
+  const sel = $("capture-set");
+  const set = (sel && sel.value) ? (sel.options[sel.selectedIndex]?.textContent || "").replace(/ \(.*$/, "") : "Auto";
+  const auto = $("chk-validation-auto")?.checked;
+  el.textContent = "Réglages de scan — set : " + set + " · validation "
+    + (auto ? "automatique" : "manuelle");
+}
+$("capture-set")?.addEventListener("change", majResumeReglagesScan);
+$("chk-validation-auto")?.addEventListener("change", majResumeReglagesScan);
+majResumeReglagesScan();
+
+// ---------------- DÉPÔT D'UN DOSSIER ----------------
+// Sur un ordinateur, le geste naturel quand on a un dossier de photos est de le lâcher sur
+// la page. Le sélecteur de fichiers reste, mais il n'est plus le seul chemin.
+//
+// `webkitGetAsEntry` plutôt que `dataTransfer.files` : ce dernier est vide quand on dépose
+// un DOSSIER, ce qui donnait un dépôt qui « ne fait rien » sans le moindre message.
+async function fichiersDuDepot(dt){
+  const items = [...(dt.items || [])];
+  const entrees = items.map(i => i.webkitGetAsEntry && i.webkitGetAsEntry()).filter(Boolean);
+  if(!entrees.length) return [...(dt.files || [])];
+
+  const out = [];
+  const lire = async (entree)=>{
+    if(entree.isFile){
+      const f = await new Promise(r => entree.file(r, ()=> r(null)));
+      if(f && /^image\//.test(f.type)) out.push(f);
+      return;
+    }
+    if(entree.isDirectory){
+      const lecteur = entree.createReader();
+      // readEntries ne renvoie qu'un paquet à la fois (100 sous Chrome) : sans la boucle,
+      // un dossier de 300 photos n'en donnait que le premier tiers, silencieusement.
+      for(;;){
+        const lot = await new Promise(r => lecteur.readEntries(r, ()=> r([])));
+        if(!lot.length) break;
+        for(const e of lot) await lire(e);
+      }
+    }
+  };
+  for(const e of entrees) await lire(e);
+  return out;
+}
+
+{
+  const zone = $('zone-depot');
+  if(zone){
+    const stop = (e)=>{ e.preventDefault(); e.stopPropagation(); };
+    ['dragenter','dragover'].forEach(t => zone.addEventListener(t, (e)=>{
+      stop(e); zone.classList.add('survol');
+    }));
+    ['dragleave','drop'].forEach(t => zone.addEventListener(t, (e)=>{
+      stop(e); zone.classList.remove('survol');
+    }));
+    zone.addEventListener('drop', async (e)=>{
+      const fichiers = await fichiersDuDepot(e.dataTransfer);
+      if(!fichiers.length){ toast('Aucune image dans ce dépôt.'); return; }
+      await importerPhotos(fichiers);
+    });
+    // Un dépôt ailleurs sur la page ouvrirait l'image dans l'onglet, ce qui fait perdre la
+    // session en cours. On l'annule partout.
+    ['dragover','drop'].forEach(t => window.addEventListener(t, (e)=>{
+      if(!e.target.closest('#zone-depot')) e.preventDefault();
+    }));
+  }
+}
+
+
 
 // ---------------- IDENTIFY: STICKY SETTINGS ----------------
 let stickyCondition = 'NM';
@@ -9129,7 +9187,6 @@ function renderIdentify(){
   // carte serait une corvée. Seul le bouton « Réinitialiser les filtres » les efface.
   $('search-results').innerHTML = '';
   $('search-status').textContent = '';
-  if($('ocr-debug-preview')){ $('ocr-debug-preview').src = ''; $('ocr-debug-text').textContent = '—'; }
   currentResults = [];
   highlightedIndex = -1;
   $('search-name').focus();
@@ -9167,10 +9224,6 @@ $('btn-skip-card').addEventListener('click', ()=>{
   renderIdentify();
 });
 
-$('btn-toggle-ocr-debug').addEventListener('click', ()=>{
-  const panel = $('ocr-debug-panel');
-  panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
-});
 
 $('ocr-enabled-toggle').addEventListener('change', ()=>{
   ocrEnabled = $('ocr-enabled-toggle').value === 'on';
@@ -11333,7 +11386,7 @@ function fermerPanneauVersions(){ $('versions-modal').classList.remove('open'); 
 // Le catalogue TCGdex mélange les extensions de jeu et des produits qui n'en sont pas.
 // Les parcourir comme des sets à compléter n'a pas de sens :
 //   tcgp  Pokémon TCG Pocket — jeu MOBILE, ces cartes n'existent pas physiquement
-//         (même exclusion que dans le banc de test, voir bench.html) ;
+//         (même exclusion que dans le banc de mesure qui a servi au calibrage) ;
 //   mc    Collection McDonald's — distributions promotionnelles ;
 //   tk    Kits du dresseur — decks d'initiation, pas des extensions ;
 //   pop   POP — promos de jeu organisé ;
@@ -12018,23 +12071,6 @@ async function openSetDetail(setId){
 }
 
 // ---------------- ONGLET BANC ----------------
-// Le banc reste un fichier séparé (bench.html) plutôt qu'un onglet réimplémenté ici :
-// il charge son propre moteur OCR et son propre échantillon, et le dupliquer garantirait
-// qu'il finisse par mesurer autre chose que ce que l'app exécute. L'iframe n'est créée
-// qu'au clic — sans ça, ouvrir l'onglet suffirait à télécharger les modèles OCR une
-// seconde fois à chaque chargement de page.
-$('btn-open-bench').addEventListener('click', ()=>{
-  const wrap = $('bench-frame-wrap');
-  if(wrap.querySelector('iframe')){ wrap.innerHTML = ''; $('btn-open-bench').textContent = '🧪 Ouvrir le banc ici'; return; }
-  const f = document.createElement('iframe');
-  f.src = 'bench.html';
-  f.title = 'Banc d’essai OCR';
-  wrap.appendChild(f);
-  $('btn-open-bench').textContent = '✕ Fermer le banc';
-});
-
-$('btn-bench-newtab').addEventListener('click', ()=> window.open('bench.html', '_blank'));
-
 $('btn-sets-back').addEventListener('click', ()=>{
   $('set-detail').style.display = 'none';
   $('sets-browse').style.display = 'block';
@@ -12066,7 +12102,7 @@ $('sets-filter').addEventListener('input', ()=>{ if(seriesIndex) renderSeriesLis
 // avec le sujet). D'où l'interrupteur, et le repli silencieux sur l'affichage plat.
 //
 // MODÈLE : U²-Netp, retenu après comparaison directe avec RMBG-1.4 sur les mêmes 7 cartes
-// (voir segtest.html). Il gagne sur les quatre plans à la fois :
+// (mesuré sur banc lors du choix). Il gagne sur les quatre plans à la fois :
 //   temps     13 844 ms -> 2 681 ms de moyenne (5,2x)
 //   poids     45 Mo     -> 4,7 Mo (le téléchargement initial cesse d'être un coût)
 //   licence   non commerciale -> Apache 2.0
