@@ -255,10 +255,18 @@
 
   /* Les elements ancres au bas de la video se decalent au-dessus de la barre de
      resultat, qui est desormais posee par-dessus eux. */
-  #cam-fullscreen-area.fs .aim-hint{bottom:184px;}
+  #cam-fullscreen-area.fs .aim-hint{bottom:206px;}
   #cam-fullscreen-area.fs .capture-fab{
-    bottom:108px; left:auto; right:14px; transform:none;
+    bottom:130px; left:auto; right:14px; transform:none;
   }
+  /* Légende du déclencheur : alignée sur le bouton, pas sur l'écran — il est à droite. */
+  .fab-legende{
+    position:absolute; z-index:21; right:0; bottom:2px; width:92px;
+    text-align:center; font-size:8.5px; font-weight:800; letter-spacing:.08em; line-height:1;
+    text-transform:uppercase; color:rgba(255,255,255,.75); pointer-events:none;
+    white-space:nowrap; text-shadow:0 1px 4px rgba(0,0,0,.95);
+  }
+  #cam-fullscreen-area.fs .fab-legende{bottom:114px;}
   #cam-fullscreen-area.fs .capture-fab:active{transform:scale(.94);}
   #cam-fullscreen-area.fs .jauges{left:8px;}
   #cam-fullscreen-area.fs #cam-error,
@@ -298,7 +306,7 @@
   }
   .imp-cam button{padding:6px 9px; font-size:11.5px; color:rgba(255,255,255,.72); white-space:nowrap;}
   .imp-cam button.on{background:var(--accent); color:#1a1206;}
-  #cam-fullscreen-area.fs .imp-cam{bottom:126px;}
+  #cam-fullscreen-area.fs .imp-cam{bottom:148px;}
   @media (max-width:360px){ .imp-cam button{padding:5px 7px; font-size:11px;} }
 
   /* Destination des cartes scannées */
@@ -600,7 +608,7 @@
     font-size:12.5px; font-weight:700; font-variant-numeric:tabular-nums;
   }
   .zoom-indic.actif{color:var(--accent); border-color:var(--accent);}
-  #cam-fullscreen-area.fs .zoom-indic{bottom:192px; right:18px;}
+  #cam-fullscreen-area.fs .zoom-indic{bottom:214px; right:18px;}
 
   /* Raccourci vers l'import de photos, posé sur l'image, symétrique du déclencheur.
      Sans lui, injecter un dossier demandait de couper la caméra, remonter la page et
@@ -613,7 +621,7 @@
   }
   .btn-import-cam svg{width:22px; height:22px;}
   .btn-import-cam:active{background:rgba(0,0,0,.85);}
-  #cam-fullscreen-area.fs .btn-import-cam{bottom:117px; left:16px;}
+  #cam-fullscreen-area.fs .btn-import-cam{bottom:139px; left:16px;}
   /* Panneau de résultat live : montre le numéro dès qu'il est lu, puis se complète
      (nom/set/prix) quand la résolution TCGdex répond — voir resolveLiveResult(). */
   .live-result{
@@ -1632,6 +1640,31 @@
   }
   .suggestion-set .sug-non svg{width:14px; height:14px;}
   .suggestion-set .sug-non:active{color:#fff;}
+  /* Bouton « i » : une infobulle `title` ne s'ouvre qu'au survol, donc jamais sur un
+     téléphone. Le conseil a besoin d'un déclencheur visible. */
+  .suggestion-set .sug-i{
+    flex:none; width:26px; height:30px; padding:0; border-radius:8px;
+    display:flex; align-items:center; justify-content:center;
+    background:transparent; border:none; color:#8fbdf0;
+  }
+  .suggestion-set .sug-i svg{width:15px; height:15px;}
+  .suggestion-set .sug-i:active{color:#fff;}
+  /* Verrou en cours : vert, comme tout ce qui est acquis dans cette interface — et non
+     bleu comme une proposition, qui appelle une décision. */
+  .suggestion-set.verrouille{border-color:rgba(59,165,93,.55);}
+  .suggestion-set.verrouille .sug-oui{cursor:default;}
+  .suggestion-set.verrouille .sug-oui svg{color:#6ddb98;}
+  .suggestion-set.verrouille .sug-i{color:#6ddb98;}
+  .suggestion-set.verrouille .sug-non{color:rgba(255,255,255,.55);}
+
+  /* Bulle d'explication, sous le cadre de visée. */
+  .bulle-info{
+    position:absolute; left:50%; transform:translateX(-50%); z-index:24;
+    width:min(330px, calc(100% - 26px));
+    padding:9px 12px; border-radius:10px; font-size:11.5px; line-height:1.5;
+    background:rgba(8,10,16,.94); border:1px solid rgba(61,125,202,.5); color:var(--text);
+    box-shadow:0 6px 20px rgba(0,0,0,.5);
+  }
 
   /* Bilan de session */
   .bilan-session{
@@ -3276,6 +3309,9 @@
         </div>
         <button class="pastille-recents" id="pastille-recents" title="Voir les dernières cartes ajoutées"></button>
         <div class="aim-hint" id="aim-hint">Démarrage…</div>
+        <!-- Explication du conseil de verrouillage. Posée SOUS le cadre de visée (position
+             calculée à l'ouverture) : au-dessus, elle cacherait la carte qu'on cadre. -->
+        <div class="bulle-info" id="bulle-info" style="display:none;"></div>
         <!-- Raccourci vers l'import de photos, posé sur l'image : quand on a un dossier
              à injecter, on ne devrait pas avoir à couper la caméra, remonter la page et
              changer de mode à la main. -->
@@ -3323,6 +3359,7 @@
             <circle cx="32" cy="32" r="29.6" fill="none" stroke="url(#fabOr)" stroke-width="2.6"/>
           </svg>
         </button>
+        <div class="fab-legende">Prise manuelle</div>
         <!-- Zoom : un seul repère, qui affiche la valeur pendant le pincement et bascule
              1x/2x au toucher. Masqué tant que l'appareil ne déclare pas savoir zoomer. -->
         <button class="zoom-indic" id="zoom-indic" style="display:none;">1×</button>
@@ -10094,7 +10131,13 @@ async function resolveSetHint(query){
 let setHintDebounce = null;
 $('btn-reprice-all').addEventListener('click', ()=> repositionnerPrix(null));
 
-$('capture-set').addEventListener('change', appliquerSetVerrouille);
+$('capture-set').addEventListener('change', ()=>{
+  appliquerSetVerrouille();
+  // La pastille du cadre porte l'état du verrou : changé depuis les réglages, il doit s'y
+  // refléter aussi, sinon les deux écrans racontent deux choses différentes.
+  setsRecents = [];
+  majSuggestionSet();
+});
 // Liste remplie au premier déploiement plutôt qu'au chargement de la page : elle suppose
 // l'index des séries, inutile de le payer pour quelqu'un qui reste en Auto.
 $('capture-set').addEventListener('mousedown', remplirListeSets, {once:true});
@@ -11362,55 +11405,148 @@ function noterSetRecent(setId){
   majSuggestionSet();
 }
 
+// Nom lisible d'un set. L'identifiant ne doit JAMAIS servir de repli visible : « sv03.5 »
+// ne dit rien à personne, alors que le set s'appelle « 151 » et que c'est écrit sur la
+// carte qu'on tient. Deux sources déjà chargées ailleurs sont consultées avant d'abandonner.
+function nomDeSet(id){
+  if(!id) return null;
+  const m = metaSetsRecherche && metaSetsRecherche[id];
+  if(m && m.nom) return m.nom;
+  if(Array.isArray(seriesIndex)){
+    for(const serie of seriesIndex){
+      const st = (serie.sets || []).find(x => x.id === id);
+      if(st && st.name) return st.name;
+    }
+  }
+  return null;
+}
+
+// Charge l'index des séries si le nom manque, puis réaffiche. Tant qu'il manque, la
+// pastille ne s'affiche pas : mieux vaut une seconde d'attente qu'un identifiant brut,
+// qu'on ne peut ni reconnaître ni vérifier sur la carte.
+let chargementNomsEnCours = false;
+function assurerNomsDeSets(){
+  if(chargementNomsEnCours || metaSetsRecherche) return;
+  chargementNomsEnCours = true;
+  chargerMetaSetsRecherche()
+    .then(()=> majSuggestionSet())
+    .catch(()=>{})
+    .finally(()=>{ chargementNomsEnCours = false; });
+}
+
+// Verrouille (ou déverrouille, avec id nul) et rafraîchit la pastille. La liste déroulante
+// reste la source de vérité — appliquerSetVerrouille lit sa valeur — mais elle est
+// alimentée à la demande : sans remplirListeSets, l'affectation ne « prend » pas et le
+// verrouillage échouerait en silence.
+function fixerSetVerrouille(id){
+  const sel = $('capture-set');
+  if(!sel) return;
+  const poser = ()=>{
+    sel.value = id || '';
+    appliquerSetVerrouille();
+    // Le compteur repart de zéro : les six cartes qui viennent de motiver ce changement
+    // ne doivent pas immédiatement en motiver un autre.
+    setsRecents = [];
+    suggestionRefusee = new Set();
+    majSuggestionSet();
+  };
+  sel.value = id || '';
+  if(id && sel.value !== id) remplirListeSets().then(poser).catch(poser);
+  else poser();
+}
+
+const SVG_CADENAS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.6" y="10.4" width="14.8" height="10.2" rx="2.2"/><path d="M8.4 10.4V7.6a3.6 3.6 0 0 1 7.2 0v2.8"/></svg>';
+const SVG_CROIX = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M7.6 7.6l8.8 8.8M16.4 7.6l-8.8 8.8"/></svg>';
+const SVG_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.4"/><circle cx="12" cy="7.6" r="1.05" fill="currentColor" stroke="none"/></svg>';
+
+// Trois états, et non plus un seul :
+//   - rien de verrouillé, six cartes du même set  -> on propose de verrouiller ;
+//   - un set verrouillé, six cartes d'un AUTRE    -> on propose d'en changer ;
+//   - un set verrouillé                           -> on le rappelle, avec de quoi le lever.
+// Le dernier cas manquait, et c'était le plus gênant : un verrou oublié fait chercher
+// toutes les cartes suivantes dans la mauvaise extension, sans que rien ne le signale.
 function majSuggestionSet(){
   const z = $('suggestion-set');
   if(!z) return;
   const s = setsRecents[0];
   const unanime = setsRecents.length >= SUGGESTION_SEUIL && setsRecents.every(x => x === s);
-  if(!unanime || setVerrouilleId === s || suggestionRefusee.has(s)){
-    z.style.display = 'none';
+  const proposable = unanime && s && s !== setVerrouilleId && !suggestionRefusee.has(s);
+
+  if(!proposable && !setVerrouilleId){ z.style.display = 'none'; fermerInfoSuggestion(); return; }
+
+  if(proposable){
+    const nom = nomDeSet(s);
+    if(!nom){ z.style.display = 'none'; assurerNomsDeSets(); return; }
+    const change = !!setVerrouilleId;
+    z.style.display = '';
+    z.className = 'suggestion-set';
+    z.innerHTML = `<button class="sug-oui" id="sug-oui">
+        ${SVG_CADENAS}
+        <span class="sug-n">${SUGGESTION_SEUIL}×</span>
+        <span class="sug-txt">${change ? 'Passer à' : 'Verrouiller'} <b>${escapeHtml(nom)}</b></span>
+      </button>
+      <button class="sug-i" id="sug-i" aria-label="Pourquoi ?" title="Pourquoi ?">${SVG_INFO}</button>
+      <button class="sug-non" id="sug-non" aria-label="Ignorer cette suggestion" title="Ignorer">${SVG_CROIX}</button>`;
+    $('sug-oui').addEventListener('click', ()=> fixerSetVerrouille(s));
+    $('sug-non').addEventListener('click', ()=>{ suggestionRefusee.add(s); majSuggestionSet(); });
+    $('sug-i').addEventListener('click', ()=> ouvrirInfoSuggestion(
+      `Tes ${SUGGESTION_SEUIL} dernières cartes viennent de « ${nom} ». Verrouiller ce set rend les lectures plus sûres : le numéro imprimé suffit alors à identifier la carte, sans avoir à deviner l’extension.`));
     return;
   }
-  const nom = (metaSetsRecherche && metaSetsRecherche[s]?.nom) || s;
+
+  // Rappel du verrou en cours. La croix le lève et rend la détection automatique.
+  const nomV = nomDeSet(setVerrouilleId) || setVerrouilleNom || setVerrouilleId;
   z.style.display = '';
-  // Le motif tient dans le compteur (« 6× »), l'action dans le verbe, la raison longue
-  // dans l'infobulle. Sur un écran de visée, une phrase de deux lignes n'est pas lue :
-  // elle est contournée du regard, et elle masque la carte.
-  z.innerHTML = `<button class="sug-oui" id="sug-oui"
-      title="Tes ${SUGGESTION_SEUIL} dernières cartes viennent de ${escapeHtml(nom)}. Verrouiller ce set rend les lectures plus sûres : le numéro suffit alors à identifier la carte.">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="4.6" y="10.4" width="14.8" height="10.2" rx="2.2"/>
-        <path d="M8.4 10.4V7.6a3.6 3.6 0 0 1 7.2 0v2.8"/>
-      </svg>
-      <span class="sug-n">${SUGGESTION_SEUIL}×</span>
-      <span class="sug-txt">Verrouiller <b>${escapeHtml(nom)}</b></span>
-    </button>
-    <button class="sug-non" id="sug-non" aria-label="Ignorer cette suggestion" title="Ignorer">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true"><path d="M7.6 7.6l8.8 8.8M16.4 7.6l-8.8 8.8"/></svg>
-    </button>`;
-  $('sug-oui').addEventListener('click', ()=>{
-    $('capture-set').value = s;
-    // remplirListeSets alimente la liste à la demande : si elle est vide, la valeur ne
-    // « prend » pas et le verrouillage échouerait en silence.
-    //
-    // Le rafraîchissement de la suggestion suit CHAQUE branche et non le corps du
-    // gestionnaire : appelé en dehors, il s'exécutait avant que la branche asynchrone ait
-    // posé setVerrouilleId, et la suggestion restait affichée alors que le set était
-    // verrouillé.
-    if($('capture-set').value !== s){
-      remplirListeSets().then(()=>{
-        $('capture-set').value = s;
-        appliquerSetVerrouille();
-        majSuggestionSet();
-      });
-    } else {
-      appliquerSetVerrouille();
-      majSuggestionSet();
-    }
+  z.className = 'suggestion-set verrouille';
+  z.innerHTML = `<span class="sug-oui" role="status">
+      ${SVG_CADENAS}
+      <span class="sug-txt">Set : <b>${escapeHtml(nomV)}</b></span>
+    </span>
+    <button class="sug-i" id="sug-i" aria-label="Pourquoi ?" title="Pourquoi ?">${SVG_INFO}</button>
+    <button class="sug-non" id="sug-non" aria-label="Déverrouiller" title="Revenir à la détection automatique">${SVG_CROIX}</button>`;
+  $('sug-non').addEventListener('click', ()=>{
+    fixerSetVerrouille(null);
+    toast('🔓 Détection du set à nouveau automatique.');
   });
-  $('sug-non').addEventListener('click', ()=>{ suggestionRefusee.add(s); majSuggestionSet(); });
+  $('sug-i').addEventListener('click', ()=> ouvrirInfoSuggestion(
+    `Toutes les cartes sont cherchées dans « ${nomV} » en priorité : le numéro imprimé suffit à les identifier. Ferme ce verrou (la croix) si tu passes à une autre extension — sinon les cartes suivantes seraient cherchées dans la mauvaise.`));
 }
 
+// ---------------- BULLE D'INFORMATION ----------------
+// Une infobulle `title` ne s'ouvre qu'au survol : sur un téléphone, elle n'existe pas.
+// L'explication passe donc par un bouton « i » explicite, et s'affiche SOUS le cadre de
+// visée — au-dessus, elle cacherait la carte qu'on est en train de cadrer.
+function ouvrirInfoSuggestion(texte){
+  const b = $('bulle-info');
+  if(!b) return;
+  b.textContent = texte;
+  b.style.display = '';
+  const video = $('video');
+  const zone = $('cam-fullscreen-area');
+  if(video && video.videoWidth && zone?.classList.contains('fs')){
+    const bi = boiteImage(video);
+    const g = guideRect(video);
+    b.style.top = Math.round(bi.y + (g.y + g.h) * bi.h + 10) + 'px';
+  } else {
+    b.style.top = '';
+  }
+}
+function fermerInfoSuggestion(){
+  const b = $('bulle-info');
+  if(b) b.style.display = 'none';
+}
+// Un appui n'importe où la referme : elle ne porte aucune action, seulement une phrase.
+document.addEventListener('click', (e)=>{
+  const b = $('bulle-info');
+  if(!b || b.style.display === 'none') return;
+  if(e.target.closest('#sug-i') || e.target.closest('#bulle-info')) return;
+  // Phase de capture ET propagation stoppée : l'appui sert UNIQUEMENT à refermer. La
+  // bulle déborde sur la rangée du bas ; sans cela, la refermer d'un doigt posé sur le
+  // déclencheur prendrait une photo dans la foulée.
+  e.stopPropagation();
+  e.preventDefault();
+  fermerInfoSuggestion();
+}, true);
 // ---------------- BILAN DE SESSION ----------------
 // Sur un chantier de mille cartes étalé sur des semaines, savoir où l'on en est change le
 // rapport à la tâche. Compté depuis l'ouverture de la page et non depuis toujours : c'est
