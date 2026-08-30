@@ -1623,18 +1623,17 @@
      contre 59 x 122 pour la disposition en colonnes qui a précédé. Ce bandeau est posé
      sur le bord gauche de la carte visée — chaque pixel qu'il occupe est un pixel de
      moins pour cadrer, et une jauge se lit d'un coup d'œil ou ne sert à rien. */
+  /* Aucun fond : le bandeau se pose directement sur l'image. Le cartouche sombre
+     garantissait la lisibilité, mais assombrissait 29 x 145 px d'un écran qui doit rester
+     une caméra. Le contraste est reporté sur les traits eux-mêmes — un cerne noir d'un
+     pixel plus une ombre portée suffisent à détacher un objet de 4 px de large.
+     Toujours PAS de backdrop-filter : au-dessus du <video>, un filtre d'arrière-plan fait
+     basculer le compositeur sur un chemin où, sur plusieurs GPU Android, la vidéo se rend
+     NOIRE — invisible sur ordinateur, ce qui le rend d'autant plus traître. */
   .jauges{
-    position:absolute; left:5px; top:50%; transform:translateY(-50%);
-    display:flex; flex-direction:column; align-items:flex-start; gap:7px;
+    position:absolute; left:7px; top:50%; transform:translateY(-50%);
+    display:flex; flex-direction:column; align-items:flex-start; gap:9px;
     pointer-events:none; z-index:3;
-    padding:7px 6px 8px; border-radius:9px;
-    /* PAS de backdrop-filter ici. Cet élément est superposé au <video> de la caméra, et
-       un filtre d'arrière-plan par-dessus une couche vidéo fait basculer le compositeur
-       sur un chemin de rendu où, sur plusieurs GPU Android, la vidéo se rend NOIRE. Le
-       défaut ne se voit pas sur ordinateur, ce qui le rend d'autant plus traître. Un fond
-       simplement plus opaque donne la même lisibilité sans toucher à la composition. */
-    background:rgba(8,10,16,.74);
-    border:1px solid rgba(255,255,255,.09);
   }
   .jauge{display:flex; flex-direction:row; align-items:center; gap:4px;}
   /* Légende tournée : c'est le mot « LUMIÈRE » qui fixait la largeur du bandeau, pas la
@@ -1644,16 +1643,16 @@
      d'une légende d'axe. */
   .jauge .jl{
     writing-mode:vertical-rl; transform:rotate(180deg);
-    font-size:7px; font-weight:800; letter-spacing:.05em; color:rgba(255,255,255,.6);
-    text-shadow:0 1px 3px rgba(0,0,0,.9); line-height:1;
+    font-size:7px; font-weight:800; letter-spacing:.05em; color:rgba(255,255,255,.78);
+    text-shadow:0 0 3px rgba(0,0,0,.95), 0 1px 2px rgba(0,0,0,.9); line-height:1;
   }
   /* Remplissage par le bas : align-items:flex-end colle la barre intérieure au fond de
      la gouttière, et c'est sa hauteur que la boucle d'animation fait varier. */
   .jauge .jt{
     display:flex; align-items:flex-end;
-    width:4px; height:38px; border-radius:2px;
-    background:rgba(255,255,255,.16); overflow:hidden;
-    box-shadow:0 1px 3px rgba(0,0,0,.55);
+    width:4px; height:40px; border-radius:2px;
+    background:rgba(0,0,0,.42); overflow:hidden;
+    box-shadow:0 0 0 1px rgba(0,0,0,.5), 0 1px 4px rgba(0,0,0,.6);
   }
   /* Aucune transition CSS ici : l'interpolation se fait en JS dans la boucle rAF, a la
      cadence reelle de l'ecran. Une transition CSS de 160 ms par-dessus ne ferait
@@ -9494,19 +9493,20 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
     const text = (r && r.text) || '';
 
     // Trois issues, et non deux :
-    //  - le nom concorde        -> certain, la carte part au lot ;
-    //  - le nom CONTREDIT       -> vrai doute, la carte reste à vérifier ;
-    //  - le nom est ILLISIBLE   -> aucune information. On s'en remet alors au numéro, qui
-    //    a été lu, lui, et qui suffisait déjà à désigner la carte. La marquer « à vérifier »
-    //    reviendrait à demander à l'utilisateur de trancher une question que personne n'a
-    //    posée.
+    //  - le nom concorde        -> certain, la carte part à sa destination ;
+    //  - le nom CONTREDIT       -> vrai doute, la carte reste à confirmer ;
+    //  - le nom est ILLISIBLE   -> aucune information. La proposition tirée du numéro est
+    //    conservée, mais elle n'est PAS validée toute seule.
     //
-    // Le repli sur le numéro n'est PAS silencieux : la note le dit, et l'entrée reste
-    // relisible dans le lot. Un numéro mal lu passera donc, mais il passera visiblement —
-    // ce qui vaut mieux que bloquer chaque carte au reflet mal placé.
-    // Dénominateur reconnu = le numéro lu correspond à un set réel. C'est faible comme
-    // preuve, mais c'est la seule qui reste quand le nom est illisible, et c'est mieux que
-    // rien : un dénominateur inventé par l'OCR ne tombe presque jamais sur un total existant.
+    // Ce dernier cas validait automatiquement, au motif qu'un dénominateur reconnu rend le
+    // numéro plausible. Erreur constatée en usage réel : un Nosferapti est parti au
+    // classeur en « Bulbizarre #001 ». Le défaut est structurel, pas accidentel — les
+    // petits numéros sont exactement ceux qu'une lecture partielle produit (un fragment de
+    // chiffre donne « 001 »), et « 001 » existe dans TOUS les sets, donc tombe toujours sur
+    // une carte réelle. La preuve la plus faible menait ainsi au résultat le plus crédible.
+    //
+    // Un seul signal, aucune corroboration, et l'erreur est silencieuse : une carte fausse
+    // se retrouve en vente. Elle passe donc par « À confirmer », où elle coûte un appui.
     const denom = item._analysis && item._analysis.denominator;
     const denomPlausible = denom && setDenominatorMap
       && Array.isArray(setDenominatorMap[String(denom)])
@@ -9514,14 +9514,10 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
 
     if(!cardNameAppearsInText(card, text) && !texteUtile(text) && denomPlausible
        && item._analysis && item._analysis.number && item._analysis.status !== 'ok'){
-      item._analysis.status = 'ok';
-      item._analysis.note = (item._analysis.note || '').replace('nom à relire', 'nom illisible, numéro retenu');
-      if(mySeq === liveResultSeq) showLiveResultDone(card, 'high');
-      if(validationAuto && pendingQueue.includes(item)){
-        // Le nom n'a pas été lu : seul le numéro porte l'identification.
-        const rr = validerAutomatiquement(card, item, 'numero');
-        noterAutoValidee(card, rr);
-      }
+      // Le statut reste « uncertain » : c'est lui que lit validerSiCertain, le passer à
+      // « ok » ferait valider la carte par un autre chemin quelques lignes plus loin.
+      item._analysis.note = (item._analysis.note || '').replace('nom à relire', 'nom illisible — numéro seul, à confirmer');
+      if(mySeq === liveResultSeq) showLiveResultDone(card, 'low');
       return;
     }
 
@@ -10724,8 +10720,6 @@ function noterJournalScan(card, entry, dest, ligneStock, fiabilite){
     if(ligneStock) deja.entryId = ligneStock.id;
     if(dest.classeur) deja.classeur = true;
     if(dest.vrac) deja.vrac = true;
-    // La lecture la plus faible l'emporte : c'est celle qui mérite d'être revérifiée.
-    if(fiabilite === 'numero') deja.fiabilite = 'numero';
   } else {
     journalScan.push({
       cle, cardId: card.id, setId: card.set?.id || '', setNom: card.set?.name || '',
@@ -10818,14 +10812,13 @@ function figerFondPopup(){
 const FIABILITE = {
   main:    {texte: 'Validée à la main', ton: 'or'},
   lecture: {texte: 'Nom et numéro confirmés', ton: 'vert'},
-  visuel:  {texte: 'Doublon reconnu à l’image', ton: 'vert'},
-  numero:  {texte: 'Numéro seul — nom illisible', ton: 'ambre'}
+  visuel:  {texte: 'Doublon reconnu à l’image', ton: 'vert'}
+  // Il n'existe plus de niveau « numéro seul » : ce chemin ne valide plus tout seul, il
+  // envoie la carte à « À confirmer » (voir confirmLiveResultByName).
 };
 const ICO_FIABILITE = {
   // Double coche : deux signaux indépendants concordent.
   vert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 12.6l3.6 3.6 7-7"/><path d="M10.4 16.2l3.6 3.6 7.2-7.2"/></svg>',
-  // Coche simple : un seul signal a suffi.
-  ambre: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.6 12.8l4.6 4.6 10.2-10.2"/></svg>',
   // Main : c'est l'utilisateur qui a tranché, la plus sûre des quatre.
   or: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.1 11.4V5.5a1.55 1.55 0 0 1 3.1 0v5.2m0-2.1a1.5 1.5 0 0 1 3 0v2.1m0-1.3a1.5 1.5 0 0 1 3 0v5.2c0 3.1-2.2 5.5-5.4 5.5h-.9a4.9 4.9 0 0 1-4-2.05l-2.6-3.6a1.55 1.55 0 0 1 2.35-2l1.45 1.5V11.4"/></svg>'
 };
