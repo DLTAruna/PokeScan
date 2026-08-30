@@ -1415,6 +1415,29 @@
     font-size:10px; font-weight:800; cursor:pointer; line-height:1.5;
   }
   .badge-versions.partiel{background:var(--accent); color:#1a1206; border-color:transparent;}
+  /* Menu d'une carte. Pose sur le body et non dans la tuile : une tuile mesure quatre-vingts
+     pixels et vit dans une grille a debordement cache — un menu ouvert dedans serait rogne
+     par sa propre case. */
+  .menu-carte{
+    position:fixed; z-index:320; min-width:206px; padding:5px; border-radius:12px;
+    background:var(--panel); border:1px solid var(--border);
+    box-shadow:0 16px 40px rgba(0,0,0,.62);
+  }
+  .menu-carte[hidden]{display:none;}
+  .menu-carte b{
+    display:block; padding:7px 10px 6px; font-size:12px; color:var(--muted);
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .menu-carte button{
+    display:flex; align-items:center; gap:9px; width:100%; padding:9px 10px;
+    border:0; border-radius:8px; background:transparent; color:var(--text);
+    font:inherit; font-size:13px; text-align:left; cursor:pointer;
+  }
+  .menu-carte button:hover{background:var(--panel2);}
+  .menu-carte button.danger{color:#f0a29c;}
+  .menu-carte hr{border:0; border-top:1px solid var(--border); margin:4px 6px;}
+  .menu-carte-voile{position:fixed; inset:0; z-index:319;}
+  .menu-carte-voile[hidden]{display:none;}
   /* Produits scelles */
   .sc-groupe{margin-bottom:14px;}
   .sc-groupe-tete{
@@ -16400,7 +16423,7 @@ function rendreCartesSet(){
         ${badgeVersions}
         <button class="btn-possede${possCarte ? ' on' : ''}" data-action="possede"
                 title="${possCarte ? 'Possédée ×' + possCarte.qty + ' — clic pour en retirer une' : 'Marquer comme possédée'}">${possCarte ? '✓ ' + possCarte.qty : '+'}</button>
-        ${possCarte ? `<button class="btn-vendre" data-action="vendre" title="Ajouter cette carte au stock à vendre">€</button>` : ''}
+        ${possCarte ? `<button class="btn-vendre" data-action="menu" title="Que faire de cette carte ?" aria-haspopup="true">⋯</button>` : ''}
       </div>`;
   };
 
@@ -16487,15 +16510,15 @@ function rendreCartesSet(){
       if(ev.target.closest('[data-action="possede"]')) return;
       openCardViewer(el.dataset.image, el.dataset.label, el.dataset.cardId);
     });
-    const bvd = el.querySelector('[data-action="vendre"]');
+    const bvd = el.querySelector('[data-action="menu"]');
     if(bvd) bvd.addEventListener('click', (ev)=>{
       ev.stopPropagation();
       // Sans `variante`, on prend la premiere impression reellement possedee : en mode
-      // simple la tuile ne porte pas d'impression, et supposer « normal » ajouterait au
-      // stock une version qu'on ne possede pas.
+      // simple la tuile ne porte pas d'impression, et supposer « normal » agirait sur une
+      // version qu'on ne possede pas.
       const v = el.dataset.variante
         || [...collection.keys()].find(k => k.startsWith(el.dataset.cardId + '|'))?.split('|')[1];
-      vendreDepuisClasseur(el.dataset.cardId, v);
+      ouvrirMenuCarte(bvd, el.dataset.cardId, v, el.dataset.localId);
     });
     const bv = el.querySelector('[data-action="versions"]');
     if(bv) bv.addEventListener('click', (ev)=>{
@@ -19780,6 +19803,115 @@ $('exp-valider')?.addEventListener('click', async ()=>{
   // passerelle doivent suivre sans qu'on ait a naviguer.
   if(typeof rendreAccueil === 'function') rendreAccueil();
 });
+
+
+// ============================================================================
+//                          MENU D'UNE CARTE DU CLASSEUR
+// ============================================================================
+// La tuile n'offrait qu'un bouton « € » : mettre en vente, et rien d'autre. Or devant une
+// carte du classeur on hesite entre plusieurs suites — la vendre, la ranger dans une liste,
+// corriger sa quantite, verifier sa cote ailleurs — et il n'y avait de place que pour une.
+// Un menu tient tout ca sans encombrer une vignette de quatre-vingts pixels.
+
+function fermerMenuCarte(){
+  $('menu-carte')?.setAttribute('hidden', '');
+  $('menu-carte-voile')?.setAttribute('hidden', '');
+}
+
+// Cherche la ligne d'index correspondant a la carte. L'index se reconstruit s'il a ete
+// invalide par une ecriture, sans quoi le menu agirait sur un etat perime.
+async function ligneIndex(cardId, variante){
+  if(!indexCollection) await indexerCollection();
+  return indexCollection.get(cleCollection(cardId, variante))
+    || [...indexCollection.values()].find(i => i.cardId === cardId);
+}
+
+async function ouvrirMenuCarte(bouton, cardId, variante, localId){
+  let voile = $('menu-carte-voile'), menu = $('menu-carte');
+  if(!voile){
+    voile = document.createElement('div');
+    voile.className = 'menu-carte-voile'; voile.id = 'menu-carte-voile'; voile.hidden = true;
+    voile.addEventListener('click', fermerMenuCarte);
+    document.body.appendChild(voile);
+  }
+  if(!menu){
+    menu = document.createElement('div');
+    menu.className = 'menu-carte'; menu.id = 'menu-carte'; menu.hidden = true;
+    document.body.appendChild(menu);
+  }
+
+  const i = await ligneIndex(cardId, variante);
+  const nom = (i && i.nom) || ('#' + (localId || '?'));
+  const q = (i && i.qty) || 1;
+  const dejaVendue = estAuStock(cardId, variante);
+
+  menu.innerHTML =
+    '<b>' + escapeHtml(nom) + (q > 1 ? ' · ×' + q : '') + '</b>'
+    + (dejaVendue
+        ? '<button disabled style="opacity:.45; cursor:default;">Déjà au stock</button>'
+        : '<button data-m="vendre">Mettre en vente</button>')
+    + '<button data-m="liste">Ajouter à une liste…</button>'
+    + '<hr>'
+    + '<button data-m="plus">Ajouter un exemplaire</button>'
+    + '<button data-m="cote">Voir la cote sur Cardmarket</button>'
+    + '<hr>'
+    + '<button data-m="retirer" class="danger">Retirer du classeur</button>';
+
+  // Positionne sous le bouton, puis rentre dans l'ecran : ouvert sur une carte du bord
+  // droit, le menu sortait du cadre et ses libelles etaient coupes.
+  voile.hidden = false; menu.hidden = false;
+  const r = bouton.getBoundingClientRect();
+  const m = menu.getBoundingClientRect();
+  const x = Math.min(Math.max(8, r.left), innerWidth - m.width - 8);
+  const y = r.bottom + m.height + 8 > innerHeight ? Math.max(8, r.top - m.height - 6) : r.bottom + 6;
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+
+  menu.onclick = async (e)=>{
+    const b = e.target.closest('button[data-m]');
+    if(!b) return;
+    e.stopPropagation();
+    fermerMenuCarte();
+    const v = variante || (i && i.variante);
+    switch(b.dataset.m){
+      case 'vendre':
+        vendreDepuisClasseur(cardId, v);
+        break;
+      case 'liste': {
+        // Une liste ne contient que des lignes de STOCK — c'est ainsi qu'elle est lue.
+        // Ranger une carte du classeur dans une liste la met donc d'abord en vente ; le
+        // message le dit, plutot que de laisser decouvrir l'effet de bord.
+        const ligne = await ligneIndex(cardId, v);
+        if(!ligne) return;
+        let entree = batch.find(x => x.cardId === cardId && (!x.variante || !v || x.variante === v));
+        if(!entree){
+          entree = entreeDepuisCollection(ligne, 1);
+          await ajouterAuStock([entree]);
+        }
+        await ajouterAUneListe(entree.id);
+        break;
+      }
+      case 'plus':
+        await majPossession(cardId, (i && i.setId) || setCourantId, localId, 1, v || 'normal');
+        rendreCartesSet();
+        break;
+      case 'retirer':
+        await majPossession(cardId, (i && i.setId) || setCourantId, localId, -1, v || 'normal');
+        rendreCartesSet();
+        break;
+      case 'cote':
+        // Cardmarket n'expose pas d'adresse par identifiant de carte : on ouvre sa recherche
+        // sur le nom, ce qui tombe juste dans l'immense majorite des cas et ne casse jamais.
+        open('https://www.cardmarket.com/fr/Pokemon/Products/Search?searchString='
+          + encodeURIComponent(nom), '_blank', 'noopener');
+        break;
+    }
+    if(typeof rendreAccueil === 'function') rendreAccueil();
+  };
+}
+
+addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerMenuCarte(); });
+addEventListener('scroll', fermerMenuCarte, true);
 
 const ETAT_EBAY = {
   NM: {code: 'USED_EXCELLENT', libelle: 'Near Mint'},
