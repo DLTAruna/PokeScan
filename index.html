@@ -23,6 +23,9 @@
     --bg:#0a0d16; --panel:#151a24; --panel2:#1c2331; --border:#2a3244;
     --text:#f1f3f8; --muted:#93a0b7; --accent:#ffcb05; --accent-dark:#e0a900; --accent2:#3d7dca; --accent2-dark:#2f68a8;
     --red:#ee1515; --good:#3ba55d; --warn:#e0a12a; --bad:#e85b45; --radius:16px;
+    /* Une couleur par mode. L'or pour vendre, le violet pour collectionner : deux teintes
+       assez eloignees pour se distinguer d'un coup d'oeil, meme du coin de l'oeil. */
+    --mode-vendeur:#ffcb05; --mode-collec:#7c5cff;
     --shadow:0 8px 22px rgba(0,0,0,.35);
   }
   *{box-sizing:border-box;}
@@ -1472,14 +1475,62 @@
     header h1{font-size:17px;}
     header .pkb-art, header .pkb-art-2, header .pkb-art-3, header .pkb-art-4{opacity:.14;}
   }
-  .lat-modes{display:flex; gap:4px; background:var(--panel2); border-radius:10px; padding:3px; margin-bottom:14px;}
-  .lat-mode{
-    flex:1; border:0; background:transparent; color:var(--muted); cursor:pointer;
-    font:inherit; font-size:11px; font-weight:800; letter-spacing:.06em;
-    padding:7px 4px; border-radius:8px; text-transform:uppercase;
+  /* ---- Bascule des deux modes ----
+     Un curseur qui GLISSE d'un cote a l'autre, et non deux fonds qui s'allument et
+     s'eteignent : le mouvement montre que les deux entrees sont les deux faces d'un meme
+     interrupteur. Sans lui, la bascule se lit comme deux boutons independants dont on ne
+     devine pas qu'ils s'excluent.
+
+     Duree et courbe reprises de tcgcrew (300 ms, cubic-bezier(.4,0,.2,1)) : c'est leur
+     langage de mouvement sur tout le site. */
+  .modes-bascule{
+    position:relative; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
+    background:var(--panel2); border:1px solid var(--border);
+    border-radius:11px; padding:3px; gap:0;
   }
-  .lat-mode.on{background:var(--accent); color:#1a1206;}
-  .lat-mode.on[data-mode="collection"]{background:#7c5cff; color:#fff;}
+  .modes-curseur{
+    position:absolute; top:3px; bottom:3px; left:3px; width:calc(50% - 3px);
+    border-radius:8px; z-index:0; pointer-events:none;
+    transition:transform .3s cubic-bezier(.4,0,.2,1),
+               background .3s cubic-bezier(.4,0,.2,1),
+               box-shadow .3s cubic-bezier(.4,0,.2,1);
+  }
+  /* translateX(100%) deplace le curseur de SA propre largeur, soit 50% - 3px : son bord
+     gauche atterrit donc exactement a 50% du conteneur. */
+  .modes-bascule[data-actif="vendeur"] .modes-curseur{
+    transform:translateX(0);
+    background:linear-gradient(135deg, #ffe066, var(--mode-vendeur));
+    box-shadow:0 2px 12px rgba(255,203,5,.34);
+  }
+  .modes-bascule[data-actif="collection"] .modes-curseur{
+    transform:translateX(100%);
+    background:linear-gradient(135deg, #a08cff, var(--mode-collec));
+    box-shadow:0 2px 12px rgba(124,92,255,.42);
+  }
+  .modes-bascule .lat-mode{
+    position:relative; z-index:1; display:flex; align-items:center; justify-content:center;
+    gap:7px; background:transparent; border:0; cursor:pointer; font:inherit;
+    color:var(--muted); transition:color .3s cubic-bezier(.4,0,.2,1);
+  }
+  /* Texte fonce sur l'or, clair sur le violet : chaque teinte impose son contraste. */
+  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]{color:#221a05;}
+  .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"]{color:#fff;}
+  .modes-bascule .lat-mode:hover{color:var(--text);}
+  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]:hover,
+  .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"]:hover{color:inherit;}
+  .mico{width:16px; height:16px; flex:none; display:block;}
+  /* Un mouvement qui traverse l'ecran est exactement ce que ce reglage demande d'eviter :
+     la bascule reste instantanee, seule la couleur change. */
+  @media (prefers-reduced-motion: reduce){
+    .modes-curseur{transition:none;}
+  }
+  .lat-modes{margin-bottom:14px;}
+  .lat-modes .lat-mode{font-size:11px; font-weight:800; padding:8px 3px;}
+  .lat-modes .mico{width:14px; height:14px;}
+  .modes-bascule .lat-mode span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .barre-mode .modes-bascule .lat-mode{font-size:13px; font-weight:700; padding:9px 8px;}
+
+
 
   .lat-titre{
     font-size:9.5px; font-weight:800; letter-spacing:.12em; text-transform:uppercase;
@@ -2476,9 +2527,10 @@
 <aside class="lateral" id="lateral">
   <div class="lat-logo"><img src="icone-192.png" alt=""><span>PokéScan</span></div>
 
-  <div class="lat-modes" role="tablist">
-    <button class="lat-mode on" data-mode="vendeur">Vendeur</button>
-    <button class="lat-mode" data-mode="collection">Collectionneur</button>
+  <div class="lat-modes modes-bascule" data-actif="vendeur" role="tablist">
+    <span class="modes-curseur" aria-hidden="true"></span>
+    <button class="lat-mode" data-mode="vendeur" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.4" y="6" width="19.2" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 9.4v5.2M18.4 9.4v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Vendeur</span></button>
+    <button class="lat-mode" data-mode="collection" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(11 14.6 11.9)" opacity=".55"/><rect x="4.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7.2 8.6h4.8M7.2 11.4h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".75"/></svg><span>Collectionneur</span></button>
   </div>
 
   <div id="lat-vendeur">
@@ -2564,9 +2616,10 @@
 <!-- Sélecteur de mode, téléphone et tablette uniquement : au-dessus de 1024 px la barre
      latérale porte déjà le même choix, au même endroit relatif. -->
 <div class="barre-mode" id="barre-mode">
-  <div class="seg" role="tablist">
-    <button class="lat-mode" data-mode="vendeur">💰 Vendeur</button>
-    <button class="lat-mode" data-mode="collection">🗂️ Collectionneur</button>
+  <div class="modes-bascule" data-actif="vendeur" role="tablist">
+    <span class="modes-curseur" aria-hidden="true"></span>
+    <button class="lat-mode" data-mode="vendeur" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.4" y="6" width="19.2" height="12" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="12" cy="12" r="2.9" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M5.6 9.4v5.2M18.4 9.4v5.2" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Vendeur</span></button>
+    <button class="lat-mode" data-mode="collection" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(11 14.6 11.9)" opacity=".55"/><rect x="4.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7.2 8.6h4.8M7.2 11.4h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".75"/></svg><span>Collectionneur</span></button>
   </div>
 </div>
 
@@ -3663,6 +3716,10 @@ function appliquerMode(mode, allerAccueil){
   modeActuel = mode;
   localStorage.setItem('modeNav', mode);
   document.querySelectorAll('.lat-mode').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  // Le curseur glissant se positionne par un attribut sur le conteneur, et non par une
+  // classe sur le bouton : la transition CSS a besoin de deux etats sur le MEME element
+  // pour animer, ce que deux boutons qui s allument tour a tour ne donnent pas.
+  document.querySelectorAll('.modes-bascule').forEach(c => c.dataset.actif = mode);
   const v = $('lat-vendeur'), c = $('lat-collection');
   if(v) v.style.display = mode === 'vendeur' ? '' : 'none';
   if(c) c.style.display = mode === 'collection' ? '' : 'none';
