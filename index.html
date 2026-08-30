@@ -3089,6 +3089,7 @@
     display:flex; align-items:center; justify-content:center;
     border:0; border-radius:50%; cursor:pointer; font-size:13px; line-height:1;
     background:rgba(0,0,0,.42); color:rgba(255,255,255,.42); opacity:0; transition:opacity .14s, color .14s;
+    padding:0; flex:none;
   }
   .set-card:hover .set-fav{opacity:1;}
   .set-fav.on{opacity:1; color:var(--accent);}
@@ -3107,7 +3108,7 @@
   @media (max-width: 560px){
     .cl-outils{flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch; padding-bottom:2px;}
     .cl-outils .grandir{display:none;}
-    .cl-bouton{flex:0 0 auto;}
+    .cl-bouton, .cl-bascule{flex:0 0 auto;}
   }
   .cl-outils .grandir{flex:1; min-width:170px;}
   .cl-bouton{
@@ -3118,6 +3119,31 @@
   .cl-bouton:hover{border-color:var(--accent2); color:var(--text);}
   .cl-bouton.on{background:var(--accent); border-color:var(--accent); color:#1a1206; font-weight:700;}
   .cl-bouton .pastille{font-size:9.5px; font-weight:800; opacity:.75;}
+  /* Le filtre restant devient un interrupteur plutot qu'un bouton qui s'allume. Trois
+     boutons cote a cote, chacun pouvant etre allume ou eteint, ne disaient pas s'ils
+     etaient des actions ou des reglages ; seul, un interrupteur ne laisse aucun doute, et
+     son etat se lit sans avoir a comparer avec un voisin. */
+  .cl-bascule{
+    display:inline-flex; align-items:center; gap:9px; border:0; background:transparent;
+    color:var(--muted); font:inherit; font-size:12.5px; cursor:pointer;
+    padding:4px 2px; white-space:nowrap;
+  }
+  .cl-rail{
+    width:34px; height:19px; border-radius:10px; flex:none; position:relative;
+    background:var(--panel2); border:1px solid var(--border);
+    transition:background .18s ease, border-color .18s ease;
+  }
+  .cl-pouce{
+    position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%;
+    background:var(--muted); transition:transform .18s ease, background .18s ease;
+  }
+  .cl-bascule:hover{color:var(--text);}
+  .cl-bascule.on{color:var(--text); font-weight:600;}
+  .cl-bascule.on .cl-rail{background:rgba(240,185,42,.22); border-color:var(--accent);}
+  .cl-bascule.on .cl-pouce{transform:translateX(15px); background:var(--accent);}
+  @media (prefers-reduced-motion: reduce){
+    .cl-rail, .cl-pouce{transition:none;}
+  }
   .repricing-bar{
     display:flex; align-items:center; gap:8px; flex-wrap:wrap;
     margin:10px 0 4px; padding:10px 12px; font-size:13px;
@@ -3209,12 +3235,22 @@
   }
   .set-card .set-name{font-size:12.5px; font-weight:700; line-height:1.25;}
   .set-card .set-meta{font-size:11px; color:var(--muted);}
-  .cache-dot{
+  /* Pastille de progression du masterset. A GAUCHE : c'est le premier endroit ou l'oeil se
+     pose en parcourant une grille, et l'etoile des favoris occupe deja le coin droit. */
+  .set-dot{
     display:inline-block; width:8px; height:8px; border-radius:50%;
     background:var(--border); vertical-align:middle;
   }
-  .cache-dot.cached{background:var(--good); box-shadow:0 0 6px rgba(59,165,93,.7);}
-  .set-card .cache-dot{position:absolute; top:8px; right:8px;}
+  .set-dot.partiel{background:var(--accent); box-shadow:0 0 6px rgba(240,185,42,.55);}
+  .set-dot.complet{background:var(--good); box-shadow:0 0 6px rgba(59,165,93,.7);}
+  .set-card .set-dot{position:absolute; top:9px; left:9px;}
+  .set-logo.sans-logo{display:flex; align-items:center; justify-content:center; color:var(--muted); opacity:.5;}
+  .set-logo.sans-logo svg{width:30px; height:30px;}
+  .ico-seg{width:15px; height:15px; flex:none; vertical-align:-2px;}
+  .set-fav svg, .fav-etoile svg{width:14px; height:14px; display:block; flex:none;}
+  .fav-etoile{padding:0; flex:none; display:inline-flex; align-items:center; justify-content:center;}
+  /* Une etoile pleine plutot qu’un second trace : le meme dessin, rempli quand il est actif. */
+  .set-fav.on svg, .fav-etoile.on svg{fill:currentColor;}
   .set-detail-head{display:flex; align-items:center; gap:14px; margin:12px 0 4px;}
   .set-detail-head img{height:64px; max-width:150px; object-fit:contain; filter:drop-shadow(0 0 2px rgba(255,255,255,.55));}
   .set-detail-head h2{margin:0;}
@@ -4519,16 +4555,16 @@
 
     <!-- Bascule entre navigation par série et par Pokémon -->
     <div class="seg" id="nav-catalogue" style="margin-bottom:12px;">
-      <button class="on" data-n="series">🗂️ <span class="lg">Par&nbsp;</span>Série</button>
-      <button data-n="favoris">⭐ <span class="lg">Mes&nbsp;</span>Favoris <span class="n" id="nav-nb-favoris">0</span></button>
-      <button data-n="pokedex">🔴 <span class="lg">Par&nbsp;</span>Pokémon</button>
+      <button class="on" data-n="series"><svg class="ico-seg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 7.2A1.6 1.6 0 0 1 5.2 5.6h4l1.6 2h8A1.6 1.6 0 0 1 20.4 9.2v8.4a1.6 1.6 0 0 1-1.6 1.6H5.2a1.6 1.6 0 0 1-1.6-1.6Z"/></svg><span class="lg">Par&nbsp;</span>Série</button>
+      <button data-n="favoris"><svg class="ico-seg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 4.2 2.4 4.9 5.4.8-3.9 3.8.9 5.4-4.8-2.5-4.8 2.5.9-5.4-3.9-3.8 5.4-.8Z"/></svg><span class="lg">Mes&nbsp;</span>Favoris <span class="n" id="nav-nb-favoris">0</span></button>
+      <button data-n="pokedex"><svg class="ico-seg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><path d="M3.8 12h4.4M15.8 12h4.4"/><circle cx="12" cy="12" r="3.1"/></svg><span class="lg">Par&nbsp;</span>Pokémon</button>
     </div>
 
     <!-- Vue Pokédex -->
     <div class="panel" id="pokedex-vue" style="display:none;">
-      <h2>🔴 Pokédex</h2>
+      <h2>Pokédex</h2>
       <p class="sub">Chaque Pokémon et toutes ses cartes, toutes extensions confondues. Utile quand on cherche « tous mes Dracaufeu » plutôt qu'un set précis.</p>
-      <input type="text" id="pokedex-filtre" placeholder="🔎 Numéro ou nom (ex : 6, Dracaufeu…)" autocomplete="off">
+      <input type="text" id="pokedex-filtre" placeholder="Numéro ou nom (ex : 6, Dracaufeu…)" autocomplete="off">
       <p class="hint" id="pokedex-statut"></p>
       <div class="pokedex-grille" id="pokedex-grille"></div>
     </div>
@@ -4547,9 +4583,9 @@
     </div>
     <!-- Vue liste : toutes les séries et leurs sets -->
     <div class="panel" id="sets-browse">
-      <h2>🗂️ Toutes les séries</h2>
-      <p class="sub">Parcours le catalogue complet, série par série. Un set marqué <span class="cache-dot cached"></span> a sa liste de cartes en cache local : son identification ne fait plus aucun appel réseau. Ouvrir un set le met en cache au passage.</p>
-      <input type="text" id="sets-filter" placeholder="🔎 Filtrer par nom de set ou de série (ex: 151, Écarlate, Néo…)" autocomplete="off">
+      <h2>Toutes les séries</h2>
+      <p class="sub">Parcours le catalogue complet, série par série. Une pastille <span class="set-dot partiel"></span> signale un masterset entamé, <span class="set-dot complet"></span> un masterset complet.</p>
+      <input type="text" id="sets-filter" placeholder="Filtrer par nom de set ou de série (ex: 151, Écarlate, Néo…)" autocomplete="off">
       <p class="hint" id="sets-status">Chargement du catalogue…</p>
       <p class="hint" id="ms-etat" style="margin-top:-2px;"></p>
       <div id="series-list"></div>
@@ -13624,6 +13660,12 @@ async function loadSeriesIndex(onProgress){
   return kept;
 }
 
+// Etoile et carte-sans-logo en trace, pour remplacer les caracteres ★ ☆ 🃏 : rendus par la
+// police systeme, ils imposaient leur propre couleur et leur propre graisse au milieu d'une
+// interface dessinee.
+const ETOILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true"><path d="m12 4 2.5 5 5.5.8-4 3.9.9 5.5-4.9-2.6-4.9 2.6.9-5.5-4-3.9 5.5-.8Z"/></svg>';
+const SANS_LOGO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" aria-hidden="true"><rect x="7.6" y="3.4" width="11" height="15.4" rx="2"/><path d="M5.4 6.2 3.6 17a2 2 0 0 0 1.6 2.3l7.2 1.3" opacity=".65"/></svg>';
+
 function esc(s){
   return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
@@ -13660,7 +13702,7 @@ function majCompteurFavoris(){
 // des expressions regulieres JavaScript. On teste donc la sous-chaine, assez discriminante
 // ici : aucun nom d extension ne contient « energ » ou « promo » par accident.
 const SET_ANNEXE = /(énerg|energ|promo|black star|\bkits?\b|deck de d[ée]marrage|starter)/i;
-let afficherAnnexes = localStorage.getItem('afficherAnnexes') === '1';
+let afficherAnnexes = false;   // sans bouton, la valeur ne peut plus etre changee : voir renderSeriesList
 // Sets sans aucune carte possédée : affichés par défaut — on parcourt justement le
 // classeur pour voir ce qu'il reste à trouver.
 let masquerVides = localStorage.getItem('masquerVides') === '1';
@@ -13732,11 +13774,18 @@ function renderSeriesList(){
     const cards = sets.map(st => `
       <div class="set-card" data-set-id="${esc(st.id)}">
         <button class="set-fav${favorisSets.has(st.id) ? ' on' : ''}" data-favset="${esc(st.id)}"
-                title="${favorisSets.has(st.id) ? 'Retirer des favoris' : 'Mettre ce set en favori'}">${favorisSets.has(st.id) ? '★' : '☆'}</button>
-        <span class="cache-dot ${cachedSetIds.has(st.id) ? 'cached' : ''}" title="${cachedSetIds.has(st.id) ? 'Liste de cartes en cache local' : 'Pas encore en cache'}"></span>
+                title="${favorisSets.has(st.id) ? 'Retirer des favoris' : 'Mettre ce set en favori'}">${ETOILE}</button>
+        ${(()=>{
+          const nPoss = possParSet.get(st.id)?.size || 0;
+          const totSet = st.total || st.official || 0;
+          if(!nPoss) return '';
+          const fini = totSet && nPoss >= totSet;
+          return `<span class="set-dot ${fini ? 'complet' : 'partiel'}" title="${
+            fini ? 'Masterset complet' : 'Masterset entamé'}"></span>`;
+        })()}
         ${st.logo
           ? `<img class="set-logo" src="${esc(st.logo)}.webp" alt="" loading="lazy">`
-          : `<div class="set-logo" style="display:flex;align-items:center;justify-content:center;font-size:22px;">🃏</div>`}
+          : `<div class="set-logo sans-logo">${SANS_LOGO}</div>`}
         <div class="set-name">${esc(st.name)}</div>
         <div class="set-meta">${st.official != null ? st.official + ' cartes' : ''}${st.total && st.total !== st.official ? ` (${st.total} au total)` : ''}</div>
         ${(()=>{
@@ -13757,7 +13806,7 @@ function renderSeriesList(){
     return `<div class="series-block${fav ? ' favori' : ''}">
       <div class="series-head">
         <button class="fav-etoile${fav ? ' on' : ''}" data-fav="${esc(serie.id)}"
-                title="${fav ? 'Retirer des favoris' : 'Épingler cette série en haut'}">${fav ? '★' : '☆'}</button>
+                title="${fav ? 'Retirer des favoris' : 'Épingler cette série en haut'}">${ETOILE}</button>
         <h3>${esc(serie.name)}</h3>
         <span class="series-count">${sets.length} set(s)</span>
       </div>
@@ -13771,43 +13820,26 @@ function renderSeriesList(){
   // Le décompte porte sur ce qui est RÉELLEMENT affiché : annoncer « 200 sets » alors que
   // la vue en montre 145 laisserait croire à un bug d'affichage.
   const totalSets = ordonnees.reduce((n,s)=> n + s.sets.length, 0);
-  const ecartees = seriesIndex.filter(s => !serieRetenue(s));
-  const nEcartes = ecartees.reduce((n,s)=> n + s.sets.length, 0);
   // Des boutons-icônes plutôt qu'une phrase : l'ancienne ligne énonçait chaque filtre en
   // toutes lettres et occupait deux lignes pour des réglages qu'on active une fois. Le
   // titre au survol garde l'explication pour qui la cherche.
   $('sets-status').innerHTML = `<div class="cl-outils">
-      <span class="grandir hint" style="margin:0;">${ordonnees.length} série(s) · ${shownSets} set(s) affiché(s)
-        · <b>${cachedSetIds.size}</b> en cache</span>
-      <button class="cl-bouton${afficherAnnexes ? ' on' : ''}" id="cl-annexes"
-        title="Decks d'énergies, planches de promos et kits : des cartes de complément qui noient les extensions dans la liste">
-        ⚡ Annexes</button>
-      <button class="cl-bouton${masquerVides ? ' on' : ''}" id="cl-vides"
+      <span class="grandir hint" style="margin:0;">${ordonnees.length} série(s) · ${shownSets} set(s) affiché(s)</span>
+      <button class="cl-bascule${masquerVides ? ' on' : ''}" id="cl-vides" role="switch"
+        aria-checked="${masquerVides ? 'true' : 'false'}"
         title="N'afficher que les extensions dont tu possèdes au moins une carte">
-        📥 Entamés seulement</button>
-      <button class="cl-bouton${afficherHorsSerie ? ' on' : ''}" id="btn-hors-serie"
-        title="Pocket, McDonald's, kits, POP — hors extensions principales">
-        🧩 Hors extensions${nEcartes ? ` <span class="pastille">${nEcartes}</span>` : ''}</button>
+        <span class="cl-rail"><span class="cl-pouce"></span></span>
+        <span>Séries entamées seulement</span></button>
     </div>`;
 
-  const bh = $('btn-hors-serie');
-  if(bh) bh.addEventListener('click', ()=>{
-    afficherHorsSerie = !afficherHorsSerie;
-    localStorage.setItem('afficherHorsSerie', afficherHorsSerie ? '1' : '0');
-    renderSeriesList();
-  });
-  const ba = $('cl-annexes');
-  if(ba) ba.addEventListener('click', ()=>{
-    afficherAnnexes = !afficherAnnexes;
-    localStorage.setItem('afficherAnnexes', afficherAnnexes ? '1' : '0');
-    renderSeriesList();
-  });
   const bv = $('cl-vides');
   if(bv) bv.addEventListener('click', ()=>{
     masquerVides = !masquerVides;
     localStorage.setItem('masquerVides', masquerVides ? '1' : '0');
     renderSeriesList();
   });
+  // Le décompte reste seul à gauche : sans les deux boutons retirés, la barre n'a plus
+  // besoin de défiler et le libellé de l'interrupteur tient sur une ligne.
 
   box.querySelectorAll('[data-favset]').forEach(b=>{
     b.addEventListener('click', (e)=>{ e.stopPropagation(); basculerFavoriSet(b.dataset.favset); });
@@ -13825,9 +13857,9 @@ async function renderSetsTab(){
   try{
     cachedSetIds = new Set(await idbAllKeys('cardLists'));
     if(!seriesIndex){
-      $('sets-status').textContent = '🔎 Chargement du catalogue…';
+      $('sets-status').textContent = 'Chargement du catalogue…';
       seriesIndex = await loadSeriesIndex((done,total)=>{
-        $('sets-status').textContent = `🔎 Chargement du catalogue… (${done}/${total} séries)`;
+        $('sets-status').textContent = `Chargement du catalogue… (${done}/${total} séries)`;
       });
     }
     renderSeriesList();
@@ -15152,7 +15184,7 @@ function fermerPanneauVersions(){ $('versions-modal').classList.remove('open'); 
 // directement : une carte McDonald's se scanne, s'identifie et se vend comme les autres.
 // Ce filtre ne porte que sur la navigation par set, et il est débrayable.
 const SERIES_HORS_CATALOGUE = new Set(['tcgp', 'mc', 'tk', 'pop', 'misc']);
-let afficherHorsSerie = localStorage.getItem('afficherHorsSerie') === '1';
+let afficherHorsSerie = false; // idem : le bouton « Hors extensions » a ete retire
 
 function serieRetenue(serie){
   return afficherHorsSerie || !SERIES_HORS_CATALOGUE.has(serie.id);
