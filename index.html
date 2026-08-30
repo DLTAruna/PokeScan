@@ -6792,6 +6792,37 @@ async function quickReadNumberFromBand(bandCanvas, alreadyCropped){
   }
 }
 
+// Redresse une photo importée. Contrairement à une capture, aucun détecteur n'a tourné
+// dessus : il faut donc lui chercher ses coins avant de pouvoir la redresser.
+//
+// Ce n'est pas qu'une question d'apparence. La bande du numéro est découpée en fractions
+// de la carte ; sur une photo prise de travers, elle est lue EN BIAIS, ce qui abîme la
+// lecture autant que le flou. Redresser devrait donc faire monter le taux de réussite des
+// imports, pas seulement les rendre présentables.
+async function redresserPhotoImportee(src){
+  try{
+    const img = await loadImageEl(src);
+    const long = Math.max(img.naturalWidth, img.naturalHeight);
+    if(!long) return null;
+    // Le détecteur travaille sur une version réduite : les coins reviennent en fractions,
+    // donc l'aval est indifférent à la résolution employée ici.
+    const d0 = Math.min(1, DETECT_LONG_EDGE / long);
+    const bmp = await createImageBitmap(img, {
+      resizeWidth:  Math.max(1, Math.round(img.naturalWidth  * d0)),
+      resizeHeight: Math.max(1, Math.round(img.naturalHeight * d0)),
+      resizeQuality: 'medium'
+    });
+    const d = await detectWorkerCall('detect', {bitmap: bmp}, [bmp]);
+    // Pas de carte trouvée : la photo reste telle quelle. Un redressement à partir de
+    // coins douteux déformerait une image aujourd'hui simplement penchée.
+    if(!d || !d.corners || d.score == null || d.score < MIN_SCORE) return null;
+    return await redresserAvecCoins(img, d.corners, img.naturalWidth, img.naturalHeight);
+  }catch(e){
+    diagPush('err', {msg: 'redressement d’un import impossible : ' + e.message});
+    return null;
+  }
+}
+
 async function analyzeQueueItem(item){
   if(item._analysis && item._analysis.status !== 'pending') return item._analysis;
   item._analysis = { status: 'pending', card: null };
@@ -6809,11 +6840,35 @@ async function analyzeQueueItem(item){
       analysisSrc = objectUrl;
     }
 
+    // Photo importée : elle n'a jamais rencontré de détecteur. On lui cherche ses coins et
+    // on la redresse AVANT de la lire — la bande du numéro serait sinon découpée en biais.
+    // Une seule fois : le drapeau évite de recommencer si l'analyse est rejouée.
+    if(item.origine === 'import' && !item._redressee){
+      item._redressee = true;   // posé même en cas d'échec : inutile de réessayer à chaque passage
+      const droite = await redresserPhotoImportee(analysisSrc);
+      if(droite){
+        const dataUrl = droite.toDataURL('image/jpeg', 0.85);
+        item.photo = dataUrl;
+        // Le fichier d'origine ne sert plus : il porte la version penchée, et la relire
+        // reviendrait à défaire le travail qu'on vient de faire.
+        item.sourceBlob = null;
+        if(objectUrl){ URL.revokeObjectURL(objectUrl); objectUrl = null; }
+        analysisSrc = dataUrl;
+        planifierSauvegardeSession();
+        renderQueueStrip();
+        renderQueueOverview();
+        if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
+      }
+    }
+
     // Détecte la boîte englobante de la CARTE (pas de l'image) : le crop est ensuite
-    // dimensionné en % de la carte, invariant au zoom/cadrage de la photo.
+    // dimensionné en % de la carte, invariant au zoom/cadrage de la photo. Inutile sur une
+    // image redressée, où la carte EST l'image — le découpage se fait alors sur ses bords.
     let cardBounds = null;
-    try{ cardBounds = detectCardBounds(await loadImageEl(analysisSrc)); }
-    catch(e){ /* détection impossible, on retombe sur le bord de l'image */ }
+    if(!(item.origine === 'import' && item.photo === analysisSrc)){
+      try{ cardBounds = detectCardBounds(await loadImageEl(analysisSrc)); }
+      catch(e){ /* détection impossible, on retombe sur le bord de l'image */ }
+    }
 
     item._analysis = await runCardAnalysis(analysisSrc, cardBounds);
     return item._analysis;
@@ -7047,7 +7102,8 @@ function renderQueueOverview(){
 // l'analyse OCR puis libérée (voir analyzeQueueItem). Un Blob ne pèse pas sur le tas JS
 // comme le ferait une dataURL base64, et il n'est pas sérialisé dans la sauvegarde .json.
 function pushToQueue(dataUrl, sourceBlob, origine){
-  const item = {id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl, sourceBlob:sourceBlob||null};
+  const item = {id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl,
+                sourceBlob:sourceBlob||null, origine: origine || 'caméra'};
   pendingQueue.push(item);
   // Archivage sans await : une rafale ne doit pas attendre IndexedDB entre deux cartes.
   if(origine !== 'import') archiverCliche(item.id, dataUrl, origine);
@@ -10468,19 +10524,22 @@ function stopCamera(){
 // prise MANUELLE qui faisait exception et gardait la photo telle quelle, de travers. On la
 // retrouvait ensuite penchée dans « À vérifier », dans le fil des ajouts et jusque dans
 // l'annonce — alors que la géométrie était connue au moment du déclenchement.
-async function redresserDepuisDetection(video){
-  const coins = overlayTargetCorners;
-  if(!coins || !video || !video.videoWidth) return null;
+// Redressement d'une source quelconque a partir de coins deja connus, en fractions 0-1.
+// Partage par la prise manuelle (coins du detecteur en direct) et par les photos importees
+// (coins cherches sur le fichier) : c'est le meme traitement, il n'a pas a exister deux
+// fois — marge de securite, filtre de forme, remise d'aplomb.
+async function redresserAvecCoins(source, coins, largeurSrc, hauteurSrc){
+  if(!coins || !source) return null;
   try{
     const scanic = await getScanic();
     // Réduction AVANT redressement : extractDocument tourne sur le fil principal, son coût
     // est proportionnel à ce qu'on lui donne.
-    const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
-    const vw = Math.max(1, Math.round(video.videoWidth * ech));
-    const vh = Math.max(1, Math.round(video.videoHeight * ech));
+    const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(largeurSrc, hauteurSrc));
+    const vw = Math.max(1, Math.round(largeurSrc * ech));
+    const vh = Math.max(1, Math.round(hauteurSrc * ech));
     const frame = document.createElement('canvas');
     frame.width = vw; frame.height = vh;
-    frame.getContext('2d').drawImage(video, 0, 0, vw, vh);
+    frame.getContext('2d').drawImage(source, 0, 0, vw, vh);
 
     // Même marge de 4 % que la capture automatique : le détecteur cadre le visuel de la
     // carte plutôt que son bord physique, et sans cette homothétie le bas — donc le
@@ -10515,9 +10574,15 @@ async function redresserDepuisDetection(video){
     c2.drawImage(out, -out.width/2, -out.height/2);
     return rot;
   }catch(e){
-    diagPush('err', {msg: 'redressement manuel impossible : ' + e.message});
+    diagPush('err', {msg: 'redressement impossible : ' + e.message});
     return null;
   }
+}
+
+// Prise manuelle : les coins viennent du détecteur en direct.
+async function redresserDepuisDetection(video){
+  if(!video || !video.videoWidth) return null;
+  return redresserAvecCoins(video, overlayTargetCorners, video.videoWidth, video.videoHeight);
 }
 
 async function captureFrame(){
