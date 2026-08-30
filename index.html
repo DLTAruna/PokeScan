@@ -769,8 +769,25 @@
   .progress-bar .fill{height:100%; background:var(--accent2); width:0%; transition:width .15s;}
 
   /* ---- identify ---- */
-  .identify-topbar{display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:4px;}
-  .identify-topbar > *{flex:1; min-width:110px;}
+  /* Réglages de « À vérifier », repliés derrière leur résumé — même composant que les
+     réglages de scan, donc même geste. */
+  .reglages-ident{margin-bottom:10px;}
+  .reglages-ident > summary{font-variant-numeric:tabular-nums;}
+
+  /* Aperçu de la file : un lien discret et son décompte, sur une seule ligne. */
+  .apercu-file{
+    display:flex; align-items:baseline; gap:10px; flex-wrap:wrap;
+    margin:0 0 8px; font-size:12px;
+  }
+  .apercu-file .hint{margin:0;}
+
+  /* Fin de session, tout en bas : séparé du travail par un filet, pour qu'on ne clique
+     pas « vider la file » en cherchant autre chose. */
+  .actions-fin{
+    display:flex; gap:16px; flex-wrap:wrap; align-items:center;
+    margin-top:16px; padding-top:12px; border-top:1px solid var(--border);
+    font-size:12.5px;
+  }
   .identify-photo-wrap{position:relative; text-align:center; background:#0a0a0a; border-radius:var(--radius); padding:10px; min-height:160px; display:flex; align-items:center; justify-content:center; border:1px solid var(--border);}
   .identify-photo{max-width:100%; max-height:46vh; border-radius:8px; box-shadow:0 6px 20px rgba(0,0,0,.5);}
   .no-photo-placeholder{color:var(--muted); font-size:13px; padding:40px 10px; text-align:center;}
@@ -1847,9 +1864,16 @@
   }
   /* Bloc de proposition : la question posee en grand, avant le champ de recherche. */
   .proposition{
-    margin:12px 0; padding:14px; border-radius:12px;
-    background:linear-gradient(150deg, rgba(61,125,202,.10), rgba(255,203,5,.06));
-    border:1px solid rgba(61,125,202,.30);
+    margin:4px 0 12px; padding:16px 14px 14px; border-radius:14px;
+    background:var(--panel2); border:1px solid var(--border);
+    box-shadow:var(--shadow);
+  }
+  /* La question, au-dessus des images : sans elle, deux vignettes côte à côte ne disent
+     pas ce qu'on attend de celui qui regarde. */
+  .prop-titre{
+    margin:0 0 12px; text-align:center;
+    font-size:11px; font-weight:800; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--accent2);
   }
   .prop-images{display:flex; align-items:center; justify-content:center; gap:12px;}
   .btn-poubelle{
@@ -3661,44 +3685,51 @@
   <!-- IDENTIFY TAB -->
   <section class="section" id="section-identify">
     <div class="panel">
-      <div class="identify-topbar">
-        <div>
-          <label>File d'attente</label>
-          <div style="padding-top:6px; font-weight:600;" id="identify-queue-label">0 carte(s) à identifier</div>
-        </div>
-        <div>
-          <label>État (appliqué à chaque ajout)</label>
+      <!-- Le haut de cet écran présentait quatre champs avant la première carte : compteur,
+           état, quantité, set. Deux d'entre eux ne sont pas des actions mais des valeurs
+           appliquées à CHAQUE ajout — des préférences, qui occupaient la meilleure place de
+           l'écran. Sur téléphone les quatre s'empilent, et on défilait par-dessus à chaque
+           carte pour atteindre la seule chose qu'on vient faire : répondre à une question.
+           Tout est replié derrière une ligne d'état qui dit déjà ce que les champs valent,
+           avec le même geste que l'engrenage du scanner. -->
+      <details class="reglages-scan reglages-ident">
+        <summary id="resume-ident">File d’attente</summary>
+        <div class="corps">
+          <label for="sticky-condition">État appliqué à chaque ajout</label>
           <select id="sticky-condition">
-            <option value="NM">Near Mint (NM)</option>
-            <option value="LP">Lightly Played (LP)</option>
-            <option value="MP">Moderately Played (MP)</option>
-            <option value="HP">Heavily Played (HP)</option>
-            <option value="DMG">Damaged</option>
+            <option value="NM">Near Mint (NM) — comme neuve</option>
+            <option value="LP">Lightly Played (LP) — usure légère</option>
+            <option value="MP">Moderately Played (MP) — usure visible</option>
+            <option value="HP">Heavily Played (HP) — très usée</option>
+            <option value="DMG">Damaged — abîmée</option>
           </select>
-        </div>
-        <div>
-          <label>Quantité</label>
-          <input type="number" id="sticky-qty" value="1" min="1">
-        </div>
-        <div>
-          <label>Set en cours (optionnel, accélère/fiabilise l'identification)</label>
-          <input type="text" id="current-set-hint" placeholder="ex: 151, MEW, Obsidian Flames..." autocomplete="off">
-        </div>
-      </div>
-      <div class="hint" id="current-set-hint-status"></div>
-      <div class="hint">
-        <button class="link-btn" id="btn-review-skipped">↩️ Cartes passées (<span id="skipped-count">0</span>) — les revoir</button>
-        &nbsp;·&nbsp;
-        &nbsp;·&nbsp;
-        <button class="link-btn" id="btn-vider-file" style="color:var(--danger,#e5484d)">🗑️ Tout effacer</button>
-      </div>
 
-      <div class="hint" id="queue-overview-summary" style="margin-top:8px;"></div>
-      <div class="queue-strip" id="queue-overview-strip"></div>
+          <label for="sticky-qty" style="margin-top:12px; display:block;">Quantité par ajout</label>
+          <input type="number" id="sticky-qty" value="1" min="1">
+
+          <label for="current-set-hint" style="margin-top:12px; display:block;">Set en cours</label>
+          <input type="text" id="current-set-hint" placeholder="ex : 151, MEW, Flammes Obsidiennes…" autocomplete="off">
+          <p class="hint" id="current-set-hint-status" style="margin:6px 0 0;"></p>
+          <p class="hint" style="margin:4px 0 0;">
+            Facultatif, mais c’est le réglage qui fiabilise le plus l’identification : le
+            numéro imprimé suffit alors à désigner la carte. Le scanner a son propre verrou
+            de set, qui s’applique pendant la prise de vue.
+          </p>
+        </div>
+      </details>
+
+      <!-- Aperçu de la file, replié. Il pousse la proposition vers le bas alors qu'on n'y
+           jette un œil que de temps en temps. -->
+      <div class="apercu-file">
+        <button class="link-btn" id="btn-apercu-file">🖼 Voir les photos en attente</button>
+        <span class="hint" id="queue-overview-summary"></span>
+      </div>
+      <div class="queue-strip" id="queue-overview-strip" style="display:none;"></div>
 
       <div class="divider"></div>
 
       <div class="proposition" id="proposition" style="display:none;">
+        <p class="prop-titre">Est-ce bien cette carte ?</p>
         <div class="prop-images">
           <figure>
             <img id="prop-photo" alt="">
@@ -3803,6 +3834,13 @@
 
       <div class="flexend" style="margin-top:10px;">
         <button class="btn-ghost" id="btn-skip-card">⏭ Passer cette carte</button>
+      </div>
+      <!-- Fin de session : on n’y vient qu’une fois le tas traité, jamais avant. Ces
+           deux liens étaient au-dessus de la première carte, séparés par deux points
+           médians vides restés d’un remaniement précédent. -->
+      <div class="actions-fin">
+        <button class="link-btn" id="btn-review-skipped">↩️ Revoir les cartes passées (<span id="skipped-count">0</span>)</button>
+        <button class="link-btn" id="btn-vider-file" style="color:var(--danger,#e5484d)">🗑️ Vider la file</button>
       </div>
     </div>
   </section>
@@ -6860,7 +6898,9 @@ function renderQueueOverview(){
     else waiting++;
   }
   summary.textContent = pendingQueue.length
-    ? `Aperçu file : ✅ ${ok} identifiée(s) · 🤔 ${uncertain} à vérifier · ❌ ${fail} illisible(s) · ⏳ ${waiting} en attente d'analyse`
+    ? [ok ? '✅ ' + ok + ' identifiée(s)' : null,
+        fail ? '❌ ' + fail + ' illisible(s)' : null,
+        waiting ? '⏳ ' + waiting + ' en analyse' : null].filter(Boolean).join(' · ')
     : '';
 
   strip.innerHTML = '';
@@ -10487,8 +10527,31 @@ async function fichiersDuDepot(dt){
 // ---------------- IDENTIFY: STICKY SETTINGS ----------------
 let stickyCondition = 'NM';
 let stickyQty = 1;
-$('sticky-condition').addEventListener('change', ()=> stickyCondition = $('sticky-condition').value);
-$('sticky-qty').addEventListener('input', ()=> stickyQty = parseInt($('sticky-qty').value)||1);
+// Le bandeau replie doit dire ce qu'il cache, sinon on l'ouvre a chaque carte pour
+// verifier — ce qui annulerait tout le benefice du repli.
+function majResumeIdent(){
+  const el = $('resume-ident');
+  if(!el) return;
+  const n = pendingQueue.length;
+  const attente = n === 0 ? 'File vide' : (n === 1 ? '1 carte à confirmer' : n + ' cartes à confirmer');
+  const set = ($('current-set-hint')?.value || '').trim();
+  el.textContent = attente + ' · ' + stickyCondition + ' ×' + (parseInt(stickyQty) || 1)
+    + (set ? ' · set ' + set : '');
+}
+
+$('sticky-condition').addEventListener('change', ()=>{ stickyCondition = $('sticky-condition').value; majResumeIdent(); });
+$('sticky-qty').addEventListener('input', ()=>{ stickyQty = parseInt($('sticky-qty').value)||1; majResumeIdent(); });
+$('current-set-hint')?.addEventListener('input', majResumeIdent);
+
+// Apercu de la file, replie : il poussait la proposition vers le bas alors qu'on n'y jette
+// un oeil que de temps en temps.
+$('btn-apercu-file')?.addEventListener('click', ()=>{
+  const s = $('queue-overview-strip'), b = $('btn-apercu-file');
+  if(!s) return;
+  const ouvert = s.style.display !== 'none';
+  s.style.display = ouvert ? 'none' : 'flex';
+  b.textContent = ouvert ? '🖼 Voir les photos en attente' : '🖼 Masquer les photos';
+});
 
 // ---------------- SET EN COURS (indice manuel pour le matching visuel) ----------------
 // Quand l'OCR ne lit ni code ni dénominateur exploitable (photo difficile), il n'y a
@@ -10727,7 +10790,7 @@ function majTexteFileVide(){
 function renderIdentify(){
   const myToken = ++identifyToken;
   updateQueueBadges();
-  $('identify-queue-label').textContent = `${pendingQueue.length} carte(s) à identifier`;
+  majResumeIdent();
   $('skipped-count').textContent = skippedQueue.length;
   const img = $('identify-photo');
   const placeholder = $('identify-placeholder');
