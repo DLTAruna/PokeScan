@@ -37,6 +37,20 @@
     --mode-vendeur:#ffcb05; --mode-collec:#7c5cff;
     --shadow:0 8px 22px rgba(0,0,0,.35);
   }
+  /* Mêmes valeurs, volontairement. Voir le commentaire ci-dessus : ce bloc n'est pas là
+     pour changer l'apparence — l'application est sombre en toutes circonstances — mais
+     pour que Samsung Internet constate que la page traite le mode sombre et renonce à la
+     repeindre à sa façon. Toute modification de la palette doit être reportée ici. */
+  @media (prefers-color-scheme: dark){
+    :root{
+      color-scheme: dark;
+      --bg:#0a0d16; --panel:#151a24; --panel2:#1c2331; --border:#2a3244;
+      --text:#f1f3f8; --muted:#93a0b7; --accent:#ffcb05; --accent-dark:#e0a900; --accent2:#3d7dca; --accent2-dark:#2f68a8;
+      --red:#ee1515; --good:#3ba55d; --warn:#e0a12a; --bad:#e85b45; --radius:16px;
+      --mode-vendeur:#ffcb05; --mode-collec:#7c5cff;
+      --shadow:0 8px 22px rgba(0,0,0,.35);
+    }
+  }
   *{box-sizing:border-box;}
   ::selection{background:var(--accent); color:#1a1a1a;}
   ::-webkit-scrollbar{width:10px; height:10px;}
@@ -1863,14 +1877,23 @@
   .prop-infos b{font-size:16px;}
   .prop-infos span{font-size:12px; color:var(--muted);}
   .prop-raison{font-style:italic; opacity:.85;}
-  .prop-actions{display:flex; gap:10px; justify-content:center; align-items:center; flex-wrap:wrap;}
-  .prop-actions .btn-gold{min-width:150px;}
-  /* Sur telephone la decision se prend au pouce : les deux boutons passent pleine
-     largeur pour ne pas se rater, la comparaison garde la priorite verticale. */
+  /* Deux niveaux, et ils se voient. Les deux premiers boutons répondent « est-ce bien
+     cette carte » ; les deux derniers disent « cette photo ne vaut rien » — ce n'est pas
+     la même question, ils ne sont donc pas au même rang ni à la même taille. */
+  .prop-actions{display:flex; flex-direction:column; gap:9px; align-items:stretch;}
+  .prop-actions > .btn-gold, .prop-actions > .btn-ghost{width:100%; padding:11px 14px;}
+  .prop-rebut{display:flex; gap:9px;}
+  .prop-rebut > *{flex:1; min-width:0; font-size:12.5px; padding:9px 10px;}
+  /* Sur telephone la decision se prend au pouce : rien ne doit se rater. */
   @media (max-width: 520px){
     .prop-images img{height:168px;}
-    .prop-actions{flex-direction:column; align-items:stretch;}
-    .prop-actions .btn-gold, .prop-actions .btn-ghost{width:100%;}
+    .prop-actions > .btn-gold, .prop-actions > .btn-ghost{padding:13px 14px; font-size:14px;}
+    .prop-rebut > *{padding:11px 8px;}
+  }
+  /* Sous 360 px, « Reprendre la photo » et « Poubelle » ne tiennent plus cote a cote sans
+     se couper : ils s'empilent plutot que de tronquer leur libelle. */
+  @media (max-width: 359px){
+    .prop-rebut{flex-direction:column;}
   }
   .auto-validees{
     margin:10px 0; padding:9px 12px; border-radius:10px; font-size:12.5px;
@@ -3691,11 +3714,15 @@
         <div class="prop-actions">
           <button class="btn-gold" id="prop-oui">✓ Oui, c’est ma carte</button>
           <button class="btn-ghost" id="prop-non">🔎 Chercher ma carte</button>
-          <button class="btn-poubelle" id="prop-poubelle">🗑 Mettre à la poubelle</button>
+          <div class="prop-rebut">
+            <button class="btn-ghost" id="prop-reprendre">📷 Reprendre</button>
+            <button class="btn-poubelle" id="prop-poubelle">🗑 Poubelle</button>
+          </div>
         </div>
         <p class="hint" style="margin:8px 0 0;">
-          La poubelle jette <b>la photo</b>, pas la carte : rien n’est retiré de ton stock
-          ni de ta collection. Utile pour un cliché raté, flou, ou pris deux fois.
+          Ces deux-là ne touchent que <b>la photo</b> : rien n’est retiré de ton stock ni de
+          ta collection. <b>Reprendre</b> rouvre la caméra pour un second cliché ;
+          <b>Poubelle</b> jette un doublon ou un raté définitivement.
         </p>
       </div>
       <div class="auto-validees" id="auto-validees" style="display:none;"></div>
@@ -10737,6 +10764,24 @@ $('prop-non').addEventListener('click', ()=>{
 
 // La poubelle jette LA PHOTO, jamais une carte deja rangee. Elle n'existait pas : on ne
 // pouvait que « passer » un cliche rate, qui revenait donc indefiniment dans la file.
+// Reprendre la photo. Le cliché raté est retiré AVANT d'ouvrir la caméra : le garder
+// ferait revenir la même carte deux fois, l'ancienne photo puis la nouvelle.
+$('prop-reprendre')?.addEventListener('click', ()=>{
+  if(pendingQueue.length) pendingQueue.shift();
+  propositionCourante = null;
+  planifierSauvegardeSession();
+  updateQueueBadges();
+  renderQueueStrip();
+  renderQueueOverview();
+  if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
+  renderIdentify();
+  // Le mode caméra d'abord : l'onglet Scanner peut être resté sur l'import, et on
+  // arriverait alors devant un sélecteur de fichiers au lieu de l'objectif.
+  appliquerModeScan('live');
+  document.querySelector('.navbar [data-tab="capture"]')?.click();
+  toast('📷 Représente la carte à l’objectif.');
+});
+
 $('prop-poubelle').addEventListener('click', ()=>{
   if(!pendingQueue.length) return;
   const it = pendingQueue.shift();
