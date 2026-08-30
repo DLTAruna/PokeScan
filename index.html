@@ -1838,6 +1838,13 @@
     border:1px solid rgba(61,125,202,.30);
   }
   .prop-images{display:flex; align-items:center; justify-content:center; gap:12px;}
+  .btn-poubelle{
+    background:rgba(224,85,63,.16); color:#ff9d8a;
+    border:1px solid rgba(224,85,63,.5); border-radius:10px;
+    padding:9px 14px; font-size:13px; font-weight:600;
+  }
+  .btn-poubelle:hover{background:rgba(224,85,63,.28); color:#fff;}
+  .btn-poubelle:active{background:rgba(224,85,63,.7); color:#fff;}
   .prop-images figure{margin:0; text-align:center; flex:0 1 168px;}
   /* Hauteur identique des deux cotes : comparer deux images de tailles differentes
      demande un effort inutile a chaque carte, et sur des centaines de cartes cet effort
@@ -3682,10 +3689,14 @@
           <span class="prop-raison" id="prop-raison"></span>
         </div>
         <div class="prop-actions">
-          <button class="btn-gold" id="prop-oui">✓ C'est bien ça</button>
-          <button class="btn-ghost" id="prop-non">✗ Non, chercher</button>
-          <button class="link-btn" id="prop-passer">Passer</button>
+          <button class="btn-gold" id="prop-oui">✓ Oui, c’est ma carte</button>
+          <button class="btn-ghost" id="prop-non">🔎 Chercher ma carte</button>
+          <button class="btn-poubelle" id="prop-poubelle">🗑 Mettre à la poubelle</button>
         </div>
+        <p class="hint" style="margin:8px 0 0;">
+          La poubelle jette <b>la photo</b>, pas la carte : rien n’est retiré de ton stock
+          ni de ta collection. Utile pour un cliché raté, flou, ou pris deux fois.
+        </p>
       </div>
       <div class="auto-validees" id="auto-validees" style="display:none;"></div>
       <div class="identify-photo-wrap" id="identify-photo-wrap">
@@ -3700,6 +3711,10 @@
       </div>
 
 
+      <!-- Ouvert seulement sur demande (bouton « Chercher ma carte », ou absence de
+           proposition) : présent en permanence, il faisait défiler la page à chaque prise
+           de focus et brouillait la question posée. -->
+      <div id="bloc-recherche" style="display:none;">
       <div style="margin-top:12px;">
         <label>Rechercher une carte</label>
         <input type="text" id="search-name" placeholder="ex : Dracaufeu 199 · 199/165 · Pikachu" autocomplete="off">
@@ -3753,6 +3768,7 @@
       <div class="hint" id="search-status"></div>
       <div class="hint">Astuce clavier : tape le nom (et le numéro), flèches ↑↓ pour choisir, Entrée pour ajouter instantanément.</div>
       <div class="search-results" id="search-results"></div>
+      </div>
 
       <div class="flexend" style="margin-top:10px;">
         <button class="btn-ghost" id="btn-skip-card">⏭ Passer cette carte</button>
@@ -8084,12 +8100,14 @@ let cadrageVisible = {w: 1, h: 1};
 // basse et le panneau de résultat près de deux cents. Ce qu'on veut centrer, c'est la
 // place réellement libre entre les deux — pas la surface totale.
 let decalageGuideY = 0;
+// Marge horizontale a laisser libre de chaque cote, en fraction d'image.
+let margeLaterale = 0;
 function majCadrageVisible(){
   const video = $('video');
   const plein = $('cam-fullscreen-area')?.classList.contains('fs');
   const wrap0 = $('video-wrap');
   if(!video || !video.videoWidth || !plein){
-    cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0;
+    cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; margeLaterale = 0;
     if(wrap0) wrap0.style.setProperty('--decalage-cadre', '0px');
     return;
   }
@@ -8097,6 +8115,13 @@ function majCadrageVisible(){
   if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; return; }
   const rEl = b.width / b.height, rIm = video.videoWidth / video.videoHeight;
   cadrageVisible = rEl > rIm ? {w: 1, h: rIm / rEl} : {w: rEl / rIm, h: 1};
+
+  // Place a reserver a gauche : le bandeau de jauges et son bouton « i ». Mesure quand il
+  // est affiche, valeur de repli sinon (il est masque tant que la premiere mesure de
+  // qualite n'est pas tombee).
+  const jRect = $('jauges')?.getBoundingClientRect();
+  const margeLatPx = (jRect && jRect.width) ? (jRect.right + 10) : 40;
+  margeLaterale = margeLatPx / (b.width / cadrageVisible.w);
 
   const barre = document.querySelector('.cam-topbar')?.getBoundingClientRect();
   const fab = $('btn-capture-frame')?.getBoundingClientRect();
@@ -8123,7 +8148,10 @@ function guideRect(video){
   if(w > 0.92){ w = 0.92; h = (w*vw*CARD_RATIO)/vh; }
   // Bornage au visible. La marge de 6 % évite que le cadre affleure exactement le bord de
   // l'écran : on doit voir un peu d'image autour de la carte pour savoir qu'on la cadre.
-  const wMax = cadrageVisible.w * 0.94, hMax = cadrageVisible.h * 0.94;
+  // Deux bornes, la plus stricte l'emporte : la part visible de l'image, et la place
+  // laissee libre pour le bandeau de jauges.
+  const wMax = Math.min(cadrageVisible.w * 0.94, cadrageVisible.w - 2 * margeLaterale);
+  const hMax = cadrageVisible.h * 0.94;
   if(w > wMax){ w = wMax; h = (w*vw*CARD_RATIO)/vh; }
   if(h > hMax){ h = hMax; w = (h*vh/CARD_RATIO)/vw; }
   // Bornée : le cadre remonte, mais jamais au point de sortir de l'image — on capture ce
@@ -10591,11 +10619,13 @@ function majProposition(){
     propositionCourante = null;
     const wrap = $('identify-photo-wrap');
     if(wrap) wrap.style.display = '';
+    afficherRecherche(true);
     return;
   }
 
   propositionCourante = {item, card: a.card};
   z.style.display = '';
+  afficherRecherche(false);
   const wrap = $('identify-photo-wrap');
   if(wrap) wrap.style.display = 'none';
   $('prop-photo').src = item.photo || '';
@@ -10684,15 +10714,41 @@ function renderIdentify(){
 }
 
 
+// Ouvre ou ferme le bloc de recherche. Ferme, il ne prend pas de place et ne capte pas le
+// focus — c'est ce focus, sur un champ situe plus bas que la proposition, qui faisait
+// defiler la fenetre a chaque clic.
+function afficherRecherche(ouvrir){
+  const b = $('bloc-recherche');
+  if(b) b.style.display = ouvrir ? '' : 'none';
+}
+
 $('prop-oui').addEventListener('click', accepterProposition);
 $('prop-non').addEventListener('click', ()=>{
   $('proposition').style.display = 'none';
   propositionCourante = null;
   const wrap = $('identify-photo-wrap');
   if(wrap) wrap.style.display = '';
-  $('search-name').focus();
+  afficherRecherche(true);
+  // Le champ est amené à l'écran AVANT de recevoir le focus : le navigateur y défilerait
+  // de toute façon, autant que ce soit un mouvement voulu et non une secousse.
+  $('bloc-recherche')?.scrollIntoView({block: 'start', behavior: 'smooth'});
+  setTimeout(()=> $('search-name').focus({preventScroll: true}), 260);
 });
-$('prop-passer').addEventListener('click', ()=> $('btn-skip-card').click());
+
+// La poubelle jette LA PHOTO, jamais une carte deja rangee. Elle n'existait pas : on ne
+// pouvait que « passer » un cliche rate, qui revenait donc indefiniment dans la file.
+$('prop-poubelle').addEventListener('click', ()=>{
+  if(!pendingQueue.length) return;
+  const it = pendingQueue.shift();
+  propositionCourante = null;
+  planifierSauvegardeSession();
+  updateQueueBadges();
+  renderQueueStrip();
+  renderQueueOverview();
+  if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
+  renderIdentify();
+  toast('🗑️ Photo jetée' + (it && it._analysis && it._analysis.card ? ' — ' + it._analysis.card.name + ' n’a pas été ajoutée.' : '.'));
+});
 
 $('btn-review-skipped').addEventListener('click', ()=>{
   if(!skippedQueue.length){ toast('Aucune carte passée.'); return; }
