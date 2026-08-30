@@ -2482,6 +2482,8 @@
     color:var(--muted); font:inherit; font-size:12.5px; cursor:pointer;
   }
   .pub-oubli:hover{color:var(--text);}
+  .mco-sans-compte{margin:14px 0 0; text-align:center;}
+  .mco-sans-compte[hidden]{display:none;}
   .pub-message{
     margin:0 0 12px; padding:10px 12px; border-radius:9px; font-size:12.5px; line-height:1.45;
     border:1px solid rgba(232,117,109,.4); background:rgba(232,117,109,.12); color:#f0a29c;
@@ -4059,6 +4061,9 @@
     </form>
 
     <button class="pub-oubli" id="btn-oubli">Mot de passe oublié ?</button>
+    <p class="mco-sans-compte" id="mco-sans-compte" hidden>
+      <button class="pub-lien" id="btn-sans-compte-2">Continuer sans compte</button>
+    </p>
   </div>
 </div>
 
@@ -19124,6 +19129,17 @@ function ouvrirModaleCompte(mode){
   if(!m) return;
   document.querySelector('#pub-onglets button[data-mode="' + mode + '"]')?.click();
   messageCompte('');
+  if(!compteConfigure()){
+    // Message tourne vers ce que la personne peut faire, pas vers la cause technique. Le
+    // detail exact part dans la console, ou celui qui installe le site ira le chercher.
+    messageCompte('La création de compte n’est pas encore active sur cette installation. Tes cartes restent enregistrées sur cet appareil en attendant.');
+    console.warn('[PokéScan] Comptes désactivés : window.POKESCAN_SUPABASE_URL et '
+      + 'window.POKESCAN_SUPABASE_ANON sont vides en haut de index.html. '
+      + 'Marche à suivre : supabase/MISE-EN-PLACE.md');
+    $('mco-sans-compte')?.removeAttribute('hidden');
+  } else {
+    $('mco-sans-compte')?.setAttribute('hidden', '');
+  }
   m.hidden = false;
   empilerRetour('modal-compte', fermerModaleCompte);
   // Le focus part sur le premier champ, sauf sur écran tactile : y poser le curseur ferait
@@ -19164,10 +19180,13 @@ function brancherCompte(){
   $('mco-fermer')?.addEventListener('click', fermerModaleCompte);
   $('mco-voile')?.addEventListener('click', fermerModaleCompte);
   addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerModaleCompte(); });
-  $('btn-sans-compte')?.addEventListener('click', ()=>{
+  const passerSansCompte = ()=>{
     try{ localStorage.setItem('pokescanSansCompte', '1'); }catch(e){}
+    fermerModaleCompte();
     $('page-publique').hidden = true;
-  });
+  };
+  $('btn-sans-compte')?.addEventListener('click', passerSansCompte);
+  $('btn-sans-compte-2')?.addEventListener('click', passerSansCompte);
 
   $('form-compte')?.addEventListener('submit', async (e)=>{
     e.preventDefault();
