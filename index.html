@@ -4192,6 +4192,20 @@
         <button class="link-btn" id="btn-forcer-maj">🔄 Forcer la mise à jour</button>
         <span class="hint" id="build-version" style="margin-left:8px;"></span>
       </div>
+      <div class="diag-controls" style="margin-top:14px;">
+        <b style="font-size:13px;">📸 Clichés conservés</b>
+        <span class="hint" id="cliches-compte" style="margin-left:8px;">aucun cliché</span>
+      </div>
+      <p class="hint" style="margin:4px 0 8px;">
+        Pendant la phase de test, chaque photo prise par l’appareil est gardée — y compris
+        celles des cartes rangées au classeur, mises au vrac ou jetées, qui autrement
+        disparaîtraient avec elles. C’est ce qui permet de revenir sur une identification
+        douteuse et de regarder ce que l’objectif a réellement vu.
+      </p>
+      <div class="diag-controls">
+        <button class="btn-ghost btn-sm" id="btn-cliches-zip">⬇️ Exporter les clichés (.zip)</button>
+        <button class="link-btn" id="btn-cliches-vider" style="margin-left:10px; color:var(--danger,#e5484d)">Vider l’archive</button>
+      </div>
     </div>
     <div class="panel">
       <h2>Politique de prix</h2>
@@ -5788,7 +5802,7 @@ const IDB_NAME = 'pokescan_cache_v1';
 // segmentation). Le numéro de version doit augmenter pour qu'onupgradeneeded se déclenche
 // sur les navigateurs ayant déjà la base en v1 — sans ça, le magasin n'existerait jamais
 // chez les utilisateurs existants et toute lecture échouerait silencieusement.
-const IDB_VERSION = 7;
+const IDB_VERSION = 8;
 let idbPromise = null;
 
 function openIdb(){
@@ -5831,6 +5845,10 @@ function openIdb(){
       // carte déjà identifiée n'a plus besoin de sa photo : son illustration officielle
       // se retrouve depuis son identifiant.
       if(!db.objectStoreNames.contains('vrac')) db.createObjectStore('vrac', {keyPath:'cle'});
+      // Archive de phase de test : tous les clichés pris par l'appareil photo, avec la
+      // raison de leur capture. Les imports n'y sont pas — ce sont des fichiers que
+      // l'utilisateur possède déjà par ailleurs.
+      if(!db.objectStoreNames.contains('cliches')) db.createObjectStore('cliches', {keyPath:'id'});
     };
     req.onsuccess = ()=> resolve(req.result);
     req.onerror = ()=> reject(req.error);
@@ -6960,9 +6978,11 @@ function renderQueueOverview(){
 // `sourceBlob` = image d'origine, non recompressée, conservée uniquement le temps de
 // l'analyse OCR puis libérée (voir analyzeQueueItem). Un Blob ne pèse pas sur le tas JS
 // comme le ferait une dataURL base64, et il n'est pas sérialisé dans la sauvegarde .json.
-function pushToQueue(dataUrl, sourceBlob){
+function pushToQueue(dataUrl, sourceBlob, origine){
   const item = {id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl, sourceBlob:sourceBlob||null};
   pendingQueue.push(item);
+  // Archivage sans await : une rafale ne doit pas attendre IndexedDB entre deux cartes.
+  if(origine !== 'import') archiverCliche(item.id, dataUrl, origine);
   // La liste de session montre la file : ouverte pendant un import, elle doit s'y voir
   // arriver. Sans ce rafraîchissement, on choisissait deux cents photos dans la galerie
   // et rien ne bougeait à l'écran.
@@ -6974,6 +6994,30 @@ function pushToQueue(dataUrl, sourceBlob){
   updateCaptureProgress();  // l'analyse pouvant être suspendue, c'est ici que le compteur avance
   processQueueAnalysis();
   return item; // exploité par attemptRead pour le panneau de résultat live (voir resolveLiveResult)
+}
+
+// ---------------- ARCHIVE DES CLICHÉS (phase de test) ----------------
+// Tout ce que l'appareil photo a produit, gardé tel quel. Sert à revenir sur une
+// identification douteuse en regardant ce que l'objectif a réellement vu — sans cette
+// archive, la photo d'une carte partie au classeur ou jetée est perdue avec elle.
+let clichesTotal = 0;
+
+async function chargerCompteCliches(){
+  try{ clichesTotal = await idbCount('cliches'); }catch(e){ clichesTotal = 0; }
+  majCompteCliches();
+}
+
+function majCompteCliches(){
+  const el = $('cliches-compte');
+  if(el) el.textContent = clichesTotal ? clichesTotal + ' cliché(s) conservé(s)' : 'aucun cliché';
+}
+
+async function archiverCliche(id, dataUrl, origine){
+  try{
+    await idbSet('cliches', {id, photo: dataUrl, origine: origine || 'caméra', at: Date.now()});
+    clichesTotal++;
+    majCompteCliches();
+  }catch(e){ diagPush('err', {msg:'archive cliché : ' + e.message}); }
 }
 
 // ---------------- PERSISTANCE AUTOMATIQUE DE LA SESSION ----------------
@@ -7033,6 +7077,49 @@ function renderQueueStrip(){
 $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
 $('btn-capture-frame').addEventListener('click', ()=> captureFrame());
+// Export de l'archive. Les clichés sortent nommés par leur horodatage et leur origine :
+// « camera » pour une lecture aboutie, « secours » pour une carte que la lecture n'a pas
+// su traiter — c'est justement cette seconde catégorie qu'on vient examiner.
+$('btn-cliches-zip')?.addEventListener('click', async ()=>{
+  const b = $('btn-cliches-zip');
+  let tout = [];
+  try{ tout = await idbGetAll('cliches'); }catch(e){}
+  if(!tout.length){ toast('Aucun cliché conservé.'); return; }
+  b.disabled = true;
+  const libelle = b.textContent;
+  try{
+    const zip = new JSZip();
+    tout.sort((x, y)=> x.at - y.at).forEach((c, i)=>{
+      const d = new Date(c.at);
+      const h = d.toISOString().slice(0,19).replace(/[:T]/g, '-');
+      const base64 = String(c.photo || '').split(',')[1];
+      if(!base64) return;
+      b.textContent = 'Compression… ' + (i+1) + '/' + tout.length;
+      zip.file(h + '_' + (c.origine || 'caméra') + '_' + String(i+1).padStart(4,'0') + '.jpg', base64, {base64:true});
+    });
+    const blob = await zip.generateAsync({type:'blob'});
+    downloadBlob(blob, 'pokescan-cliches-' + new Date().toISOString().slice(0,10) + '.zip');
+    toast('⬇️ ' + tout.length + ' cliché(s) exporté(s).');
+  }catch(e){
+    toast('⚠️ Export impossible : ' + e.message);
+  } finally {
+    b.disabled = false;
+    b.textContent = libelle;
+  }
+});
+
+$('btn-cliches-vider')?.addEventListener('click', async ()=>{
+  if(!confirm('Vider l’archive ? Les ' + clichesTotal + ' cliché(s) conservés seront effacés. Les cartes déjà rangées ne bougent pas.')) return;
+  try{
+    const cles = await idbAllKeys('cliches');
+    await idbDeleteTous('cliches', cles);
+  }catch(e){}
+  clichesTotal = 0;
+  majCompteCliches();
+  toast('Archive vidée.');
+});
+chargerCompteCliches();
+
 $('btn-diag-copy').addEventListener('click', copyDiagReport);
 
 // Test du relais en un appui, avec la réponse serveur COMPLÈTE affichée. Motif : « ça ne
@@ -7615,7 +7702,7 @@ async function choisirObjectifNet(){
     if(cameraStream) cameraStream.getTracks().forEach(t => t.stop());
     cameraStream = null;
     try{
-      cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(cam.deviceId));
+      cameraStream = await ouvrirObjectif(cam.deviceId);
       currentCameraDeviceId = cam.deviceId;
       $('video').srcObject = cameraStream;
       await $('video').play().catch(()=>{});
@@ -7640,6 +7727,26 @@ async function choisirObjectifNet(){
   if(currentCameraDeviceId !== initial || !cameraStream) await reprendreCamera(initial);
 }
 
+// Android rend le capteur de facon asynchrone : track.stop() revient immediatement, la
+// couche camera relache un peu plus tard. Ouvrir un autre objectif dans cet intervalle
+// echoue avec « Could not start video source » — six fois sur huit dans le journal reel.
+// Une pause courte suffit, et une seconde tentative plus longue rattrape le reste.
+const RELACHE_CAMERA_MS = 250;
+
+async function ouvrirObjectif(deviceId, essais = 2){
+  for(let n = 0; n < essais; n++){
+    // Pause croissante : 250 ms, puis 600. Au-dela, ce n'est plus un probleme de
+    // liberation et insister ne ferait qu'allonger l'attente.
+    await new Promise(r => setTimeout(r, RELACHE_CAMERA_MS * (n ? 2.4 : 1)));
+    try{
+      return await navigator.mediaDevices.getUserMedia(buildCameraConstraints(deviceId));
+    }catch(e){
+      if(n === essais - 1) throw e;
+      diagPush('err', {msg:'caméra: ouverture refusée (' + e.message + '), nouvelle tentative'});
+    }
+  }
+}
+
 async function switchLens(){
   const liste = objectifsArriere();
   if(liste.length < 2) return;
@@ -7654,7 +7761,7 @@ async function switchLens(){
   cameraStream = null;
 
   try{
-    cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(next.deviceId));
+    cameraStream = await ouvrirObjectif(next.deviceId);
     currentCameraDeviceId = next.deviceId;
     $('video').srcObject = cameraStream;
     await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
@@ -7899,7 +8006,11 @@ const DIAG_MAX = 250;
 // silencieuse fausse toute lecture des chiffres sans qu'on puisse s'en douter.
 let diagTronquees = 0;
 
-let diagRemoteEnabled = localStorage.getItem('diagRemoteEnabled') === '1';
+// Phase de test : le relais est ACTIF par defaut, et non plus sur demande. On ne peut pas
+// diagnostiquer un ralentissement ou un mauvais objectif sur un telephone qu'on n'a pas,
+// et le journal manque toujours au moment ou il servirait. La case reste disponible pour
+// le couper — un choix explicite l'emporte sur ce defaut.
+let diagRemoteEnabled = localStorage.getItem('diagRemoteEnabled') !== '0';
 
 function getDiagDeviceId(){
   let id = localStorage.getItem('diagDeviceId');
@@ -9590,7 +9701,7 @@ async function attemptRead(corners, score){
       {resizeWidth: 500, resizeHeight: Math.round(500 * Math.round(sourceForRead.height * 0.22) / sourceForRead.width), resizeQuality:'medium'});
 
     cv.toBlob(b => {
-      const item = pushToQueue(dataUrl, b);
+      const item = pushToQueue(dataUrl, b, 'caméra');
       if(hashShortcut){
         // Carte déjà identifiée avec certitude par correspondance visuelle : on saute la
         // résolution TCGdex (resolveLiveResult) entièrement, plus besoin de redeviner
@@ -9668,7 +9779,7 @@ let echecsConsecutifs = 0;
 function capturerSansLecture(canvas, raison, redressee){
   try{
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
-    canvas.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
+    canvas.toBlob((blob)=> pushToQueue(dataUrl, blob, 'secours'), 'image/png');
 
     // Même comptabilité qu'une capture normale : sans ça, la carte suivante serait
     // comparée à une empreinte périmée et pourrait passer pour un doublon.
@@ -10297,7 +10408,7 @@ async function captureFrame(){
   lastCaptureAt = Date.now();
 
   const dataUrl = source.toDataURL('image/jpeg', 0.8);
-  source.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
+  source.toBlob((blob)=> pushToQueue(dataUrl, blob, 'caméra'), 'image/png');
 
   capturedThisSession++;
   flashScreen(dataUrl);
@@ -10370,7 +10481,7 @@ async function importerPhotos(files){
   for(const file of files){
     try{
       const dataUrl = await compressFileToDataUrl(file);
-      pushToQueue(dataUrl, file); // le fichier d'origine sert à l'OCR, la version compressée au stockage
+      pushToQueue(dataUrl, file, 'import'); // le fichier d'origine sert à l'OCR, la version compressée au stockage
     } catch(err){ echecs++; }
     done++;
     fill.style.width = Math.round(done/files.length*100)+'%';
