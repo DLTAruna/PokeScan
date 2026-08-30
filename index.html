@@ -3199,7 +3199,7 @@
   </button>
   <button class="pkb-brand" id="btn-accueil" aria-label="Retour à l’accueil">
     <span class="pokeball"></span>
-    <h1>PokéScan <span class="pkb-fleche">→</span> eBay Lister</h1>
+    <h1>PokéScan</h1>
   </button>
 </header>
 
@@ -3560,7 +3560,6 @@
           <button class="acc-stat" data-vue="c-scelles"><b id="acc-c-scelles">0</b><small>items scellés</small></button>
           <button class="acc-stat" data-vue="c-series"><b id="acc-c-series">0</b><small>séries</small></button>
         </div>
-        <span class="acc-note" id="acc-c-note"></span>
       </div>
       <div class="acc-sep" aria-hidden="true"></div>
       <div class="acc-part vendeur">
@@ -3879,20 +3878,6 @@
            elles qui signalent le problème, c'est ici qu'on lit comment le corriger. Chaque
            bloc montre le défaut à gauche, la correction à droite — un schéma se comprend
            d'un coup d'œil là où trois lignes de texte se sautent. -->
-      <!-- Vue rapide d'une statistique de l'accueil. Volontairement dépouillée : on
-           regarde ce qu'il y a derrière un chiffre, on referme, ou on ouvre la vraie page.
-           Ce n'est pas une seconde interface de gestion. -->
-      <div class="popup-lot" id="popup-detail">
-        <div class="pl-voile" id="pd-voile"></div>
-        <div class="pl-panneau">
-          <div class="pl-tete">
-            <div><h3 id="pd-titre">—</h3><p id="pd-bilan"></p></div>
-            <button class="btn-ghost btn-sm" id="pd-fermer">Fermer</button>
-          </div>
-          <div class="pl-liste" id="pd-liste"></div>
-          <div class="pd-pied"><button class="btn-gold" id="pd-ouvrir">Ouvrir la page complète →</button></div>
-        </div>
-      </div>
 
       <div class="popup-conseils" id="popup-conseils">
         <div class="pc-voile" id="pc-voile"></div>
@@ -4669,6 +4654,21 @@ Envoi soigné sous protection rigide. N'hésitez pas à me contacter pour toute 
 
 </main>
 
+<!-- Vue rapide d'une statistique de l'accueil. Volontairement dépouillée : on
+     regarde ce qu'il y a derrière un chiffre, on referme, ou on ouvre la vraie page.
+     Ce n'est pas une seconde interface de gestion. -->
+<div class="popup-lot" id="popup-detail">
+  <div class="pl-voile" id="pd-voile"></div>
+  <div class="pl-panneau">
+    <div class="pl-tete">
+      <div><h3 id="pd-titre">—</h3><p id="pd-bilan"></p></div>
+      <button class="btn-ghost btn-sm" id="pd-fermer">Fermer</button>
+    </div>
+    <div class="pl-liste" id="pd-liste"></div>
+    <div class="pd-pied"><button class="btn-gold" id="pd-ouvrir">Ouvrir la page complète →</button></div>
+  </div>
+</div>
+
 <!-- Visualiseur plein écran d'une carte : zoom + inclinaison suivie à l'accéléromètre -->
   <div class="versions-modal" id="style-modal">
     <div class="versions-boite">
@@ -5147,8 +5147,7 @@ async function rendreAccueil(){
   $('acc-c-series').textContent = String(series.size);
   // Un total partiel présenté comme complet serait pire que pas de total : on dit ce qui
   // manque plutôt que de l'ignorer en silence.
-  $('acc-c-note').textContent = sansCote
-    ? sansCote + ' carte(s) sans cote connue, non comptée(s) dans le montant' : '';
+
 
   $('acc-s-val').textContent = eur(valStock);
   $('acc-s-cartes').textContent = String(cartesStock);
