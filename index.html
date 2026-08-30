@@ -496,6 +496,12 @@
   }
   .pl-groupe.attente h4{color:#ffce70;}
   .pl-groupe.attente button{margin-top:9px;}
+  /* C'est la seule action du bloc, et celle qu'on vient chercher : elle prend toute la
+     largeur disponible a l'interieur du cadre ambre. */
+  .pl-groupe.attente .pl-aller{
+    display:block; width:100%; margin-top:11px;
+    padding:12px 14px; font-size:14px; font-weight:700;
+  }
   .pl-ligne.att .pl-vign{border-color:rgba(224,161,42,.35);}
   .pl-ligne.att .pl-meta{color:rgba(255,206,112,.85);}
 
@@ -3707,13 +3713,9 @@
           <label for="sticky-qty" style="margin-top:12px; display:block;">Quantité par ajout</label>
           <input type="number" id="sticky-qty" value="1" min="1">
 
-          <label for="current-set-hint" style="margin-top:12px; display:block;">Set en cours</label>
-          <input type="text" id="current-set-hint" placeholder="ex : 151, MEW, Flammes Obsidiennes…" autocomplete="off">
-          <p class="hint" id="current-set-hint-status" style="margin:6px 0 0;"></p>
-          <p class="hint" style="margin:4px 0 0;">
-            Facultatif, mais c’est le réglage qui fiabilise le plus l’identification : le
-            numéro imprimé suffit alors à désigner la carte. Le scanner a son propre verrou
-            de set, qui s’applique pendant la prise de vue.
+          <p class="hint" style="margin:12px 0 0;">
+            Le set se verrouille depuis le <b>scanner</b>, pendant la prise de vue — il n’y
+            a qu’un seul verrou, et c’est là qu’il sert.
           </p>
         </div>
       </details>
@@ -3721,7 +3723,7 @@
       <!-- Aperçu de la file, replié. Il pousse la proposition vers le bas alors qu'on n'y
            jette un œil que de temps en temps. -->
       <div class="apercu-file">
-        <button class="link-btn" id="btn-apercu-file">🖼 Voir les photos en attente</button>
+        <button class="link-btn" id="btn-apercu-file">🖼 File d’attente</button>
         <span class="hint" id="queue-overview-summary"></span>
       </div>
       <div class="queue-strip" id="queue-overview-strip" style="display:none;"></div>
@@ -6774,6 +6776,27 @@ async function runAutoIdentify(myToken){
   }
 }
 
+// Rang d'une photo en attente, du plus exploitable au moins. Partage par la file
+// d'attente de « À vérifier » et par la liste de session — c'est le meme classement, il
+// n'a pas a exister en deux exemplaires qui pourraient diverger.
+function rangAttente(it){
+  const a = it && it._analysis;
+  if(!a) return 1;               // analyse en cours : verdict imminent
+  if(a.card) return 0;           // une carte proposee, il n'y a qu'a confirmer
+  if(a.number) return 2;         // un numero lu, mais aucune carte au bout
+  return 3;                      // rien du tout
+}
+
+// Tri STABLE : a fiabilite egale, l'ordre d'arrivee est conserve. Applique au moment ou
+// l'on passe a la carte suivante — jamais pendant qu'une proposition est affichee, ce qui
+// echangerait la carte sous le doigt.
+function trierFileParFiabilite(){
+  pendingQueue = pendingQueue
+    .map((it, i) => ({it, i}))
+    .sort((a, b) => (rangAttente(a.it) - rangAttente(b.it)) || (a.i - b.i))
+    .map(x => x.it);
+}
+
 // ---------------- APERÇU DE FILE : analyse de fond + icônes de statut ----------------
 let queueAnalysisRunning = false;
 const QUEUE_OVERVIEW_LIMIT = 40; // au-delà, seul le compteur global reste exact (perf DOM)
@@ -9642,7 +9665,7 @@ let echecsConsecutifs = 0;
 // chemin différent (image entière, autres découpages, pas de contrainte de temps réel) et
 // réussit parfois là où la lecture en direct a échoué. En cas d'échec là aussi, la carte
 // arrive dans « À vérifier » avec sa photo, prête pour une identification manuelle.
-function capturerSansLecture(canvas, raison){
+function capturerSansLecture(canvas, raison, redressee){
   try{
     const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
     canvas.toBlob((blob)=> pushToQueue(dataUrl, blob), 'image/png');
@@ -9655,11 +9678,11 @@ function capturerSansLecture(canvas, raison){
     cardConfirmedAbsentSinceCapture = true;
     lastCaptureAt = Date.now();
     echecsConsecutifs = 0;
-    secoursDejaFait = true;
 
     capturedThisSession++;
-    flashScreen();
+    flashScreen(dataUrl);
     if(navigator.vibrate) navigator.vibrate([30, 60, 30]);   // motif distinct d'une lecture réussie
+    montrerSecoursEnBas(dataUrl, redressee);
     setAimHint('📥 Non lue — envoyée dans « À vérifier »');
     diagPush('try', {ok:false, hint:'capture de secours (' + (raison || '?') + ')'});
   }catch(e){
@@ -9672,10 +9695,17 @@ function capturerSansLecture(canvas, raison){
 // situations qui bloquent l'utilisateur : la lecture qui échoue, et la prise de vue jugée
 // inexploitable. Du point de vue de celui qui tient la carte, c'est le même problème —
 // l'application ne fait rien et ne dit pas quoi changer.
-function tenterSecours(redressement, raison){
+async function tenterSecours(redressement, raison){
   if(secoursDejaFait) return false;
+  // Marque prise AVANT le premier await : sans elle, deux appels rapprochés passeraient
+  // tous les deux la garde et captureraient la même carte en double.
+  secoursDejaFait = true;
   const video = $('video');
   let source = redressement;
+  // Rien de redressé n'a été produit : on tente depuis les derniers coins connus du
+  // détecteur. Même chaîne que la prise manuelle. Elle coûte ~150 ms, sur une carte qui
+  // vient d'échouer cinq fois — le moment où l'on est le moins pressé.
+  if(!source) source = await redresserDepuisDetection(video);
   if(!source && video && video.videoWidth){
     const g = guideRect(video);
     const W = 600, H = Math.round(W*CARD_RATIO);
@@ -9685,8 +9715,8 @@ function tenterSecours(redressement, raison){
       g.x*video.videoWidth, g.y*video.videoHeight,
       g.w*video.videoWidth, g.h*video.videoHeight, 0, 0, W, H);
   }
-  if(!source) return false;
-  capturerSansLecture(source, raison);
+  if(!source){ secoursDejaFait = false; return false; }
+  capturerSansLecture(source, raison, !!redressement || source !== null);
   return true;
 }
 
@@ -9808,6 +9838,25 @@ function showLiveResultDone(card, confidence){
     : '';
   $('live-result-price').textContent = price.market ? formatPrice(price) : '—';
   $('live-result-badge').textContent = confidence === 'high' ? '✅' : '🤔';
+}
+
+// Carte capturée sans avoir été lue. Le panneau doit montrer CETTE photo, et dire
+// clairement qu'aucune identification n'a eu lieu — sinon il reste sur la carte
+// précédente et se lit comme un résultat.
+function montrerSecoursEnBas(dataUrl, redressee){
+  const el = $('live-result');
+  if(!el) return;
+  el.style.display = 'flex';
+  $('live-result-img').src = dataUrl;
+  $('live-result-name').textContent = 'Non lue — à confirmer';
+  $('live-result-set').textContent = redressee ? 'photo redressée' : 'photo brute';
+  $('live-result-num').textContent = '—';
+  $('live-result-price').textContent = '—';
+  $('live-result-badge').textContent = '📥';
+  $('live-result-badge').title = 'Envoyée dans « À vérifier » avec sa photo';
+  // Le réglage de quantité pilote la dernière ligne du LOT : il n'y en a pas ici.
+  const q = $('live-qty');
+  if(q) q.style.display = 'none';
 }
 
 function showLiveResultNotFound(){
@@ -10550,7 +10599,7 @@ $('btn-apercu-file')?.addEventListener('click', ()=>{
   if(!s) return;
   const ouvert = s.style.display !== 'none';
   s.style.display = ouvert ? 'none' : 'flex';
-  b.textContent = ouvert ? '🖼 Voir les photos en attente' : '🖼 Masquer les photos';
+  b.textContent = ouvert ? '🖼 File d’attente' : '🖼 Masquer la file';
 });
 
 // ---------------- SET EN COURS (indice manuel pour le matching visuel) ----------------
@@ -10623,7 +10672,9 @@ function appliquerSetVerrouille(){
 let currentSetHintId = null;
 let allSetsListCache = null;
 async function resolveSetHint(query){
-  const status = $('current-set-hint-status');
+  // Le champ a quitté « À vérifier » : le compte rendu n'a plus d'endroit où s'écrire sur
+  // cet écran. La résolution, elle, sert toujours (setVerrouilleId).
+  const status = $('current-set-hint-status') || {};
   query = query.trim();
   if(!query){ currentSetHintId = null; status.textContent = ''; return; }
 
@@ -10670,9 +10721,9 @@ $('capture-set').addEventListener('change', ()=>{
 $('capture-set').addEventListener('mousedown', remplirListeSets, {once:true});
 $('capture-set').addEventListener('focus', remplirListeSets, {once:true});
 
-$('current-set-hint').addEventListener('input', ()=>{
+$('current-set-hint')?.addEventListener('input', ()=>{
   clearTimeout(setHintDebounce);
-  setHintDebounce = setTimeout(()=> resolveSetHint($('current-set-hint').value), 500);
+  setHintDebounce = setTimeout(()=> resolveSetHint($('current-set-hint')?.value || ''), 500);
 });
 
 
@@ -10789,6 +10840,10 @@ function majTexteFileVide(){
 
 function renderIdentify(){
   const myToken = ++identifyToken;
+  // Les mieux lues d'abord : on enchaîne les confirmations d'un appui, et on garde pour
+  // la fin celles qui demandent une recherche. Ici et pas ailleurs — c'est le moment où
+  // l'on change de carte, donc le seul où réordonner ne déplace rien sous la main.
+  trierFileParFiabilite();
   updateQueueBadges();
   majResumeIdent();
   $('skipped-count').textContent = skippedQueue.length;
@@ -11545,15 +11600,8 @@ function rendrePopupLot(){
     // rendue dans l'ordre d'arrivee melangeait les propositions prêtes à confirmer d'un
     // appui et les photos que rien n'identifie : ce sont pourtant deux gestes tres
     // differents, l'un rapide, l'autre qui demande une recherche a la main.
-    const rang = (it)=>{
-      const a = it._analysis;
-      if(!a) return 1;               // analyse en cours : verdict imminent
-      if(a.card) return 0;           // une carte proposee, il n'y a qu'a confirmer
-      if(a.number) return 2;         // un numero lu, mais aucune carte au bout
-      return 3;                      // rien du tout
-    };
-    attente.sort((x, y)=> rang(x) - rang(y));
-    const perdues = attente.filter(it => rang(it) === 3).length;
+    attente.sort((x, y)=> rangAttente(x) - rangAttente(y));
+    const perdues = attente.filter(it => rangAttente(it) === 3).length;
 
     html += '<div class="pl-groupe attente"><h4>À confirmer — ' + attente.length + '</h4>'
       + '<p>La lecture n’a pas été assez sûre pour ranger ces cartes toute seule. Les '
@@ -11565,11 +11613,11 @@ function rendrePopupLot(){
               : 'Les ' + perdues + ' dernières, en rouge, n’ont donné aucune piste — il faudra les chercher par leur nom.')
           : 'Toutes ont donné au moins une piste.')
       + '</p>'
-      + '<button class="btn-ghost btn-sm" id="pl-aller-verifier">Aller les confirmer</button></div>';
+      + '<button class="btn-gold pl-aller" id="pl-aller-verifier">Aller les confirmer</button></div>';
 
     html += attente.map((it, i)=>{
       const a = it._analysis;
-      const r = rang(it);
+      const r = rangAttente(it);
       let titre = 'Analyse en cours…', detail = 'La lecture tourne en arrière-plan.';
       if(r === 0){
         titre = a.card.name;
