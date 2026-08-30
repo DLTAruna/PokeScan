@@ -488,6 +488,14 @@
     color:#ffce70; font-size:11px; font-weight:900;
     border:1.5px solid currentColor; border-radius:50%;
   }
+  /* Le rouge est réservé aux photos dont rien n'est sorti : réutilisé pour tout ce qui
+     attend, il ne signalerait plus rien. */
+  .pl-fia.perdu{
+    color:#ff8a75; font-size:11px; font-weight:900;
+    border:1.5px solid currentColor; border-radius:50%;
+  }
+  .pl-ligne.perdue .pl-vign{border-color:rgba(224,85,63,.55);}
+  .pl-ligne.perdue .pl-meta{color:rgba(255,138,117,.9);}
   .pl-ligne{
     display:flex; align-items:center; gap:10px; padding:8px 4px;
     border-bottom:1px solid rgba(255,255,255,.06);
@@ -6694,6 +6702,9 @@ async function processQueueAnalysis(){
       await analyzeQueueItem(item);
       validerSiCertain(item);
       renderQueueOverview();
+      // Une proposition qui apparaît change le classement de la liste : elle remonte
+      // au-dessus des photos que rien n'identifie encore.
+      if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
       updateCaptureProgress();
       // Rend la main au navigateur entre deux cartes : sans ça, l'aperçu caméra
       // saccade pendant que l'OCR enchaîne.
@@ -6784,6 +6795,10 @@ function renderQueueOverview(){
 function pushToQueue(dataUrl, sourceBlob){
   const item = {id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl, sourceBlob:sourceBlob||null};
   pendingQueue.push(item);
+  // La liste de session montre la file : ouverte pendant un import, elle doit s'y voir
+  // arriver. Sans ce rafraîchissement, on choisissait deux cents photos dans la galerie
+  // et rien ne bougeait à l'écran.
+  if($('popup-lot')?.classList.contains('ouvert')) rendrePopupLot();
   updateQueueBadges();
   renderQueueStrip();
   renderQueueOverview();
@@ -11250,37 +11265,90 @@ function rendrePopupLot(){
   }
 
   if(attente.length){
-    html += '<div class="pl-groupe attente"><h4>À confirmer — ' + attente.length + '</h4>'
-      + '<p>La lecture n’a pas été assez sûre pour ranger ces cartes toute seule. Elles '
-      + 'attendent dans l’onglet <b>À vérifier</b>, avec leur photo : un appui par carte '
-      + 'suffit à les valider.</p>'
-      + '<button class="btn-ghost btn-sm" id="pl-aller-verifier">Aller les confirmer</button></div>';
-    html += attente.map(it=>{
+    // Classement par ce qu'on sait de la carte, du plus exploitable au moins. Une file
+    // rendue dans l'ordre d'arrivee melangeait les propositions prêtes à confirmer d'un
+    // appui et les photos que rien n'identifie : ce sont pourtant deux gestes tres
+    // differents, l'un rapide, l'autre qui demande une recherche a la main.
+    const rang = (it)=>{
       const a = it._analysis;
+      if(!a) return 1;               // analyse en cours : verdict imminent
+      if(a.card) return 0;           // une carte proposee, il n'y a qu'a confirmer
+      if(a.number) return 2;         // un numero lu, mais aucune carte au bout
+      return 3;                      // rien du tout
+    };
+    attente.sort((x, y)=> rang(x) - rang(y));
+    const perdues = attente.filter(it => rang(it) === 3).length;
+
+    html += '<div class="pl-groupe attente"><h4>À confirmer — ' + attente.length + '</h4>'
+      + '<p>La lecture n’a pas été assez sûre pour ranger ces cartes toute seule. Les '
+      + 'propositions sont en tête : un appui suffit à les valider dans l’onglet '
+      + '<b>À vérifier</b>. '
+      + (perdues
+          ? (perdues === 1
+              ? 'La dernière, en rouge, n’a donné aucune piste — il faudra la chercher par son nom.'
+              : 'Les ' + perdues + ' dernières, en rouge, n’ont donné aucune piste — il faudra les chercher par leur nom.')
+          : 'Toutes ont donné au moins une piste.')
+      + '</p>'
+      + '<button class="btn-ghost btn-sm" id="pl-aller-verifier">Aller les confirmer</button></div>';
+
+    html += attente.map((it, i)=>{
+      const a = it._analysis;
+      const r = rang(it);
       let titre = 'Analyse en cours…', detail = 'La lecture tourne en arrière-plan.';
-      if(a && a.card){
+      if(r === 0){
         titre = a.card.name;
         detail = 'Proposition à confirmer' + (a.number ? ' · #' + escapeHtml(a.number) : '');
-      } else if(a){
+      } else if(r === 2){
+        titre = 'Aucune carte trouvée';
+        detail = 'Numéro lu : #' + escapeHtml(a.number) + ' — mais il ne correspond à rien de connu.';
+      } else if(r === 3){
         titre = 'Carte non lue';
-        detail = a.number ? 'Numéro lu : #' + escapeHtml(a.number) : 'Ni le nom ni le numéro n’ont pu être lus.';
+        detail = 'Ni le nom ni le numéro n’ont pu être lus.';
       }
-      return '<div class="pl-ligne att">'
+      // Le rouge est réservé au cas sans aucune piste : réutilisé pour tout ce qui
+      // attend, il ne signalerait plus rien.
+      const perdue = r === 3;
+      return '<div class="pl-ligne att' + (perdue ? ' perdue' : '') + '">'
         + (it.photo ? '<img class="pl-vign" src="' + it.photo + '" alt="">' : '<div class="pl-vign"></div>')
         + '<div class="pl-info">'
-          + '<div class="pl-nom"><span class="pl-fia doute" title="Identification incertaine">?</span>'
+          + '<div class="pl-nom"><span class="pl-fia ' + (perdue ? 'perdu' : 'doute')
+          + '" title="' + (perdue ? 'Aucune piste' : 'Identification incertaine') + '">'
+          + (perdue ? '!' : '?') + '</span>'
           + escapeHtml(titre) + '</div>'
           + '<div class="pl-meta"><span>' + detail + '</span></div>'
+        + '</div>'
+        // Une photo en attente vaut UN exemplaire par construction : deux exemplaires,
+        // ce sont deux photos. Il n'y a donc pas de quantité à régler ici, seulement une
+        // photo à jeter quand elle est ratée ou en double.
+        + '<div class="pl-qte">'
+          + '<button data-att="' + i + '" class="sup" title="Retirer cette photo de la file">'
+          + ICO_CORBEILLE + '</button>'
         + '</div>'
       + '</div>';
     }).join('');
   }
-
   z.innerHTML = html;
   z.querySelectorAll('button[data-pl]').forEach(b=>{
     b.addEventListener('click', ()=>{
       const j = lignes[parseInt(b.dataset.pl, 10)];
       if(j) ajusterJournal(j, parseInt(b.dataset.d, 10));
+    });
+  });
+  // Retrait d'une photo en attente. La liste rendue est TRIÉE, donc l'index ne désigne
+  // pas la même chose que dans pendingQueue : on retrouve l'objet, jamais sa position.
+  z.querySelectorAll('button[data-att]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      const it = attente[parseInt(b.dataset.att, 10)];
+      if(!it) return;
+      const i = pendingQueue.indexOf(it);
+      if(i >= 0) pendingQueue.splice(i, 1);
+      planifierSauvegardeSession();
+      updateQueueBadges();
+      renderQueueStrip();
+      renderQueueOverview();
+      renderIdentify();
+      rendrePopupLot();
+      toast('🗑️ Photo retirée de la file.');
     });
   });
   // La caméra est coupée avant de changer d'onglet : en plein écran elle recouvre toute la
