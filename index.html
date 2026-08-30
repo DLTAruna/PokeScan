@@ -1610,6 +1610,22 @@
     border:3px solid rgba(10,13,22,.55); transition:transform .16s ease;
   }
   .nav-item.active .nav-fab{transform:scale(1.06);}
+  /* Bandeau d'alerte en tete du stock. Il remplace un onglet : une file qui doit se vider
+     n'a pas sa place a cote de lieux permanents, mais elle doit sauter aux yeux la ou l'on
+     travaille. Jaune plutot que rouge — c'est du travail en attente, pas une erreur. */
+  .bandeau-verif{
+    display:flex; align-items:center; gap:12px; width:100%; margin-bottom:12px;
+    padding:12px 14px; border-radius:12px; text-align:left; cursor:pointer;
+    border:1px solid rgba(240,185,42,.42); background:rgba(240,185,42,.11);
+    color:var(--txt); font:inherit;
+  }
+  .bandeau-verif[hidden]{display:none;}
+  .bandeau-verif .ico{width:24px; height:24px; flex:none; --t1:#f0b92a; --t2:#f0b92a;}
+  .bandeau-verif .bv-txt{display:flex; flex-direction:column; gap:2px; flex:1; min-width:0;}
+  .bandeau-verif .bv-txt b{font-size:15px; color:#f5c84e;}
+  .bandeau-verif .bv-txt small{font-size:11.5px; color:var(--muted); line-height:1.35;}
+  .bandeau-verif .bv-fleche{font-size:22px; color:#f0b92a; flex:none;}
+  .bandeau-verif:active{transform:scale(.99);}
   .nav-badge{
     position:absolute; top:0; right:calc(50% - 22px); min-width:16px; padding:0 4px;
     background:var(--red,#e5484d); color:#fff; border-radius:9px;
@@ -2036,6 +2052,50 @@
   .acc-or{color:var(--mode-vendeur);}
   .acc-violet{color:var(--mode-collec);}
   .acc-sous{font-size:11.5px; color:var(--muted); line-height:1.4;}
+  /* Les portes suivent le mode. Rien n'est retiré du balisage : le même accueil montre
+     trois portes de vendeur ou trois portes de collectionneur selon la bascule du haut,
+     qui jusqu'ici ne commandait rien de ce qu'elle surplombait. */
+  #section-accueil[data-mode="vendeur"] .col-porte[data-mode="collection"],
+  #section-accueil[data-mode="collection"] .col-porte[data-mode="vendeur"]{display:none;}
+
+  /* Reprendre : des pastilles au même gabarit que les chiffres du bilan, mais qui mènent
+     quelque part. Chacune est une tâche, pas une mesure. */
+  .acc-reprendre{padding:13px 14px;}
+  .acc-reprendre[hidden]{display:none;}
+  .acc-todo{display:flex; gap:8px; flex-wrap:wrap; margin-top:9px;}
+  .acc-tache{
+    display:flex; align-items:center; gap:8px; padding:9px 13px; border-radius:11px;
+    border:1px solid var(--border); background:var(--fond2); color:var(--txt);
+    font:inherit; font-size:13px; cursor:pointer; text-align:left;
+  }
+  .acc-tache b{font-size:16px; font-weight:800;}
+  .acc-tache small{color:var(--muted); font-size:12px;}
+  .acc-tache:active{transform:scale(.98);}
+  .acc-tache.urgent{border-color:rgba(240,185,42,.45); background:rgba(240,185,42,.10);}
+  .acc-tache.urgent b{color:#f5c84e;}
+  .acc-tache.prete{border-color:rgba(59,165,93,.42); background:rgba(59,165,93,.10);}
+  .acc-tache.prete b{color:#7ee2a0;}
+
+  /* Variations : une ligne par carte, le pourcentage à droite. La valeur d'avant et
+     d'après tient dans le sous-titre — sans elles, un « +42 % » sur une carte à 0,30 €
+     se lirait comme un évènement. */
+  .acc-mouvements{padding:13px 14px;}
+  .acc-mouvements[hidden]{display:none;}
+  .acc-mouvements .entete{display:flex; align-items:baseline; justify-content:space-between; gap:10px;}
+  .acc-mv-note{font-size:11px; color:var(--muted);}
+  .acc-mv{display:grid; gap:6px; margin-top:9px;}
+  .acc-mv-l{display:flex; align-items:center; gap:10px; padding:6px 8px; border-radius:9px; background:var(--fond2);}
+  .acc-mv-l img{width:26px; height:36px; object-fit:cover; border-radius:3px; flex:none; background:#0a0d14;}
+  .acc-mv-i{display:flex; flex-direction:column; gap:1px; flex:1; min-width:0;}
+  .acc-mv-i b{font-size:13px; font-weight:700; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .acc-mv-i small{font-size:11px; color:var(--muted);}
+  .acc-mv-p{font-size:13.5px; font-weight:800; flex:none;}
+  .acc-mv-p.up{color:#7ee2a0;} .acc-mv-p.down{color:#ef7f7f;}
+
+  /* Avancement du travail. La courbe mesure la valeur ; rien ne mesurait l'effort, qui est
+     pourtant ce qui avance vraiment quand on dépouille un tas de mille cartes. */
+  .acc-progres{font-size:11.5px; font-weight:700; color:#7ee2a0; margin-left:auto;}
+  .acc-progres:empty{display:none;}
   .acc-courbe .entete{display:flex; align-items:center; justify-content:space-between; gap:10px; flex-wrap:wrap;}
   .acc-courbe .micro{font-size:10px; font-weight:800; letter-spacing:.09em; text-transform:uppercase; color:var(--muted);}
 
@@ -3292,25 +3352,24 @@
   <button class="nav-item" data-mode="vendeur" data-tab="accueil">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 10.6 12 3.6l8.6 7" stroke="var(--t1)" stroke-width="1.7"/><path d="M5.6 9.4V19a1.4 1.4 0 0 0 1.4 1.4h10a1.4 1.4 0 0 0 1.4-1.4V9.4" stroke="var(--t1)" stroke-width="1.7"/><rect x="9.6" y="13.4" width="4.8" height="7" rx="1.2" fill="var(--t2)" opacity=".35"/><rect x="9.6" y="13.4" width="4.8" height="7" rx="1.2" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Accueil</span>
   </button>
-  <button class="nav-item" data-mode="vendeur" data-tab="identify">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="2.8" width="11.4" height="15" rx="2" stroke="var(--t1)" stroke-width="1.7"/><path d="M6.2 6.6h5.4M6.2 9.6h3.2" stroke="var(--t1)" stroke-width="1.7" opacity=".65"/><circle cx="15.6" cy="15" r="4.6" fill="var(--t2)" opacity=".32"/><circle cx="15.6" cy="15" r="4.6" stroke="var(--t1)" stroke-width="1.7"/><path d="m19 18.4 2.3 2.3" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">À vérifier</span>
-    <span class="nav-badge queue-badge" data-zero="masquer">0</span>
-  </button>
   <button class="nav-item" data-mode="collection" data-tab="accueil">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.4 4.2 13a4.6 4.6 0 0 1 6.5-6.5l1.3 1.3 1.3-1.3A4.6 4.6 0 0 1 19.8 13Z" fill="var(--t2)" opacity=".28"/><path d="M12 20.4 4.2 13a4.6 4.6 0 0 1 6.5-6.5l1.3 1.3 1.3-1.3A4.6 4.6 0 0 1 19.8 13Z" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Accueil</span>
   </button>
   <button class="nav-item" data-mode="collection" data-tab="sets">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.4 3.6h9.2a2.8 2.8 0 0 1 2.8 2.8v10.2" stroke="var(--t1)" stroke-width="1.7" opacity=".55"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" fill="var(--t2)" opacity=".28"/><rect x="3.2" y="6.6" width="11.6" height="14.4" rx="2.2" stroke="var(--t1)" stroke-width="1.7"/><path d="M6.4 11.2h5.2M6.4 14.4h3.4" stroke="var(--t1)" stroke-width="1.7" opacity=".7"/></svg></span><span class="nav-lbl">Classeur</span>
   </button>
-  <button class="nav-item nav-central active" data-tab="capture" aria-label="Capture">
-    <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="var(--t2)" opacity=".22"/><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="12" cy="14" r="3.9" fill="var(--t2)" opacity=".45"/><circle cx="12" cy="14" r="3.9" stroke="var(--t1)" stroke-width="1.7"/><path d="M10.3 12.6a2.4 2.4 0 0 1 1.7-1" stroke="var(--t1)" stroke-width="1.7" opacity=".9"/></svg></span>
-  </button>
   <button class="nav-item" data-mode="vendeur" data-tab="batch">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" fill="var(--t2)" opacity=".28"/><path d="M3.4 12.6 12 4h6.5A1.5 1.5 0 0 1 20 5.5V12l-8.6 8.6a1.7 1.7 0 0 1-2.4 0l-5.6-5.6a1.7 1.7 0 0 1 0-2.4Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="16.3" cy="7.7" r="1.45" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Stock</span>
     <span class="nav-badge" id="nav-lot-badge" data-zero="masquer">0</span>
   </button>
+  <button class="nav-item nav-central active" data-tab="capture" aria-label="Capture">
+    <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" fill="var(--t2)" opacity=".22"/><path d="M3.6 8h2.9L8 5.9h8L17.5 8h2.9a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3.6a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2Z" stroke="var(--t1)" stroke-width="1.7"/><circle cx="12" cy="14" r="3.9" fill="var(--t2)" opacity=".45"/><circle cx="12" cy="14" r="3.9" stroke="var(--t1)" stroke-width="1.7"/><path d="M10.3 12.6a2.4 2.4 0 0 1 1.7-1" stroke="var(--t1)" stroke-width="1.7" opacity=".9"/></svg></span>
+  </button>
   <button class="nav-item" data-mode="vendeur" data-tab="listes">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Listes</span>
+  </button>
+  <button class="nav-item" data-mode="vendeur" data-tab="ventes">
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.6 6.4h2.2l2.2 9.6h9.2l2.2-7.2H7.2" stroke="var(--t1)" stroke-width="1.7"/><circle cx="10" cy="19.2" r="1.5" fill="var(--t2)"/><circle cx="16.4" cy="19.2" r="1.5" fill="var(--t2)"/></svg></span><span class="nav-lbl">Ventes</span>
   </button>
   <button class="nav-item" data-mode="collection" data-tab="scelle">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 21 8v8L12 20.8 3 16V8Z" fill="var(--t2)" opacity=".2"/><path d="M3 8 12 3.2 21 8l-9 4.8Z" fill="var(--t2)" opacity=".42"/><path d="M12 3.2 21 8v8L12 20.8 3 16V8Z" stroke="var(--t1)" stroke-width="1.7"/><path d="m3 8 9 4.8L21 8M12 12.8v8" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Scellé</span>
@@ -3579,7 +3638,8 @@
       <div class="acc-courbe">
         <div class="entete">
           <span class="micro">Évolution de la cote</span>
-          <div class="pf-seg" id="acc-periode">
+          <span class="acc-progres" id="acc-progres"></span>
+        <div class="pf-seg" id="acc-periode">
             <button data-jours="7">Semaine</button>
             <button data-jours="30" class="on">Mois</button>
             <button data-jours="365">Année</button>
@@ -3590,10 +3650,54 @@
       </div>
     </div>
 
+    <!-- Reprendre. L'accueil répondait à « combien je possède », jamais à « quoi faire
+         maintenant » — sur un tas de mille cartes, c'est pourtant la question qu'on se pose
+         en ouvrant. Le bloc n'existe que s'il reste quelque chose : rien à faire, rien à
+         afficher, plutôt qu'une rangée de zéros qui se lit comme un reproche. -->
+    <div class="panel acc-reprendre" id="acc-reprendre" hidden>
+      <span class="micro">Reprendre</span>
+      <div class="acc-todo" id="acc-todo"></div>
+    </div>
+
+    <!-- Plus fortes variations. Calculées sur avg1 contre avg30, les deux seules bornes que
+         Cardmarket expose par carte : aucune API supplémentaire, et c'est la seule lecture
+         temporelle par carte qu'on puisse produire honnêtement aujourd'hui. -->
+    <div class="panel acc-mouvements" id="acc-mouvements" hidden>
+      <div class="entete">
+        <span class="micro">Plus fortes variations</span>
+        <span class="acc-mv-note">sur 30 jours</span>
+      </div>
+      <div class="acc-mv" id="acc-mv"></div>
+    </div>
+
     <!-- Trois portes, au même gabarit que celles de l'accueil Collection : hautes plutôt
          que larges, parce qu'elles portent une illustration et une phrase, pas une ligne. -->
     <div class="col-portes">
-      <button class="col-porte serie" data-tab="sets">
+      <button class="col-porte pstock" data-mode="vendeur" data-tab="batch">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="10" y="26" width="58" height="66" rx="6" fill="currentColor" opacity=".22"/><rect x="10" y="26" width="58" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="14" width="58" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><path d="M38 40h30M38 54h30M38 68h18" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".6"/></svg>
+        <span class="chapeau">Prêt à partir</span>
+        <h3>Stock</h3>
+        <p>Les cartes en vente, leur prix et leur photo d’annonce.</p>
+        <div class="col-vignettes" id="acc-vign-stock"></div>
+        <span class="cta">Ouvrir le stock →</span>
+      </button>
+      <button class="col-porte pverif" data-mode="vendeur" data-tab="identify">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="12" y="10" width="46" height="60" rx="5" fill="currentColor" opacity=".24"/><rect x="12" y="10" width="46" height="60" rx="5" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="63" cy="62" r="19" fill="none" stroke="currentColor" stroke-width="4.5"/><path d="m77 76 13 13" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg>
+        <span class="chapeau">Identification incertaine</span>
+        <h3>À vérifier</h3>
+        <p>Les scans dont la carte n’est pas sûre, à confirmer avant de vendre.</p>
+        <div class="col-vignettes" id="acc-vign-verif"></div>
+        <span class="cta">Traiter la file →</span>
+      </button>
+      <button class="col-porte plistes" data-mode="vendeur" data-tab="listes">
+        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="12" width="72" height="76" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><path d="M40 30h30M40 50h30M40 70h30" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><circle cx="28" cy="30" r="4.5" fill="currentColor"/><circle cx="28" cy="50" r="4.5" fill="currentColor" opacity=".62"/><circle cx="28" cy="70" r="4.5" fill="currentColor" opacity=".4"/></svg>
+        <span class="chapeau">Regroupements</span>
+        <h3>Listes</h3>
+        <p>Un lot pour une vente, un envoi en gradation, un échange.</p>
+        <div class="col-vignettes" id="acc-vign-listes"></div>
+        <span class="cta">Voir les listes →</span>
+      </button>
+      <button class="col-porte serie" data-mode="collection" data-tab="sets">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="8" width="76" height="84" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><rect x="56" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="24" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="56" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><path d="M14 22h-6M14 44h-6M14 66h-6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="8" cy="22" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="44" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="66" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/></svg>
         <span class="chapeau">Toutes les séries</span>
         <h3>Classeur</h3>
@@ -3601,7 +3705,7 @@
         <div class="col-vignettes" id="acc-vign-series"></div>
         <span class="cta">Ouvrir le classeur →</span>
       </button>
-      <button class="col-porte scelle" data-tab="scelle">
+      <button class="col-porte scelle" data-mode="collection" data-tab="scelle">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><path d="M12 42h76v46a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="currentColor" opacity=".32"/><path d="M12 42h76v46a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="none" stroke="currentColor" stroke-width="4"/><rect x="22" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><rect x="40" y="10" width="14" height="36" rx="2" fill="currentColor" opacity=".72"/><rect x="58" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><path d="M12 58h76" stroke="currentColor" stroke-width="3.5" opacity=".7"/></svg>
         <span class="chapeau">Produits fermés</span>
         <h3>Scellé</h3>
@@ -3609,7 +3713,7 @@
         <div class="col-vignettes" id="acc-vign-scelle"></div>
         <span class="cta">Explorer le scellé →</span>
       </button>
-      <button class="col-porte gradee" data-tab="gradees">
+      <button class="col-porte gradee" data-mode="collection" data-tab="gradees">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="18" y="6" width="64" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="4"/><rect x="27" y="30" width="46" height="56" rx="3" fill="currentColor" opacity=".38"/><rect x="27" y="30" width="46" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="27" y="13" width="46" height="11" rx="2.5" fill="currentColor" opacity=".7"/><path d="M34 18.5h20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity=".5"/><circle cx="61" cy="18.5" r="3.4" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
         <span class="chapeau">Cartes certifiées</span>
         <h3>Cartes gradées</h3>
@@ -4144,6 +4248,11 @@
 
   <!-- BATCH TAB -->
   <section class="section" id="section-batch">
+    <button class="bandeau-verif" id="bandeau-verif" data-tab="identify" hidden>
+      <svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="3" width="11" height="14.4" rx="1.9" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="3" width="11" height="14.4" rx="1.9" stroke="var(--t1)" stroke-width="1.7"/><circle cx="15.4" cy="14.8" r="4.4" stroke="var(--t1)" stroke-width="1.7"/><path d="m18.6 18 2.2 2.2" stroke="var(--t1)" stroke-width="1.7"/></svg>
+      <span class="bv-txt"><b id="bv-n">0</b> <span id="bv-mot">carte à vérifier</span><small>L’identification n’est pas sûre : confirme-la avant de vendre.</small></span>
+      <span class="bv-fleche">›</span>
+    </button>
     <div class="panel">
       <h2>Photo des annonces</h2>
       <p class="sub">Quelle image représente chaque carte : dans le tableau du lot, et dans la colonne <code>ImageURL</code> de l’export.</p>
@@ -4930,7 +5039,11 @@ function appliquerMode(mode, allerAccueil){
   // On ne déplace l'utilisateur QUE s'il a lui-même changé de mode. Au chargement, la page
   // courante est restaurée telle quelle : le renvoyer à l'accueil effacerait ce qu'il était
   // en train de faire.
-  if(allerAccueil) activerOnglet(mode === 'vendeur' ? 'dashboard' : 'collection');
+  // L'accueil est unique et sert les deux modes : ce sont ses portes qui changent, pas la
+  // page. Renvoyer ailleurs revenait à ouvrir une seconde page d'accueil.
+  const sa = $('section-accueil');
+  if(sa) sa.dataset.mode = mode;
+  if(allerAccueil) activerOnglet('accueil');
 }
 
 // Un onglet ouvert depuis ailleurs (barre du bas, raccourci, bouton d'une page) doit
@@ -5102,6 +5215,43 @@ $('section-accueil')?.addEventListener('click', (e)=>{
 $('pd-fermer')?.addEventListener('click', fermerVueAccueil);
 $('pd-voile')?.addEventListener('click', fermerVueAccueil);
 
+// Les cotes Cardmarket d'une fiche, quelle que soit la version qui les porte : on cherche
+// un ordre de grandeur pour la carte, pas le prix exact d'un tirage.
+function cotesCardmarket(card){
+  const v = (card && card.variantsDetailed) || [];
+  for(const x of v) if(x.pricing && x.pricing.cardmarket) return x.pricing.cardmarket;
+  return null;
+}
+
+// Plus fortes variations sur trente jours. avg1 contre avg30 : ce sont les deux seules
+// bornes que Cardmarket expose par carte, donc la seule comparaison temporelle possible
+// sans abonnement à un service d'historique.
+// Une fiche par carte et non un exemplaire par ligne : la question est « qu'est-ce qui
+// bouge », pas « combien j'en ai ».
+function mouvementsDuMois(){
+  const vus = new Map();
+  const ajouter = (cardId, nomSecours, imgSecours)=>{
+    if(!cardId || vus.has(cardId)) return;
+    const d = detailsCartes.get(cardId);
+    const cm = cotesCardmarket(d);
+    if(!cm || !(cm.avg30 > 0) || !(cm.avg1 > 0)) return;
+    const ecart = ((cm.avg1 - cm.avg30) / cm.avg30) * 100;
+    // Sous 2 %, c'est du bruit de marché : l'afficher donnerait du sens à une oscillation.
+    if(Math.abs(ecart) < 2) return;
+    vus.set(cardId, {
+      nom: (d && d.name) || nomSecours || cardId,
+      img: (d && d.images ? d.images.small : '') || imgSecours || '',
+      avant: cm.avg30, apres: cm.avg1, ecart
+    });
+  };
+  if(typeof collection !== 'undefined' && collection.size != null)
+    for(const e of collection.values()) ajouter(e.cardId);
+  for(const e of batch) ajouter(e.cardId, e.cardName, e.cardImage || e.photo);
+  const l = [...vus.values()].sort((a, b)=> b.ecart - a.ecart);
+  return {hausse: l.filter(x => x.ecart > 0).slice(0, 3),
+          baisse: l.filter(x => x.ecart < 0).slice(-3).reverse()};
+}
+
 async function rendreAccueil(){
   if(!$('acc-c-val')) return;
   const eur = (v)=> v.toFixed(2).replace('.', ',') + ' €';
@@ -5170,6 +5320,54 @@ async function rendreAccueil(){
   poser('acc-vign-series', visuels);
   poser('acc-vign-scelle', listeScelle.map(p => p.photo || p.image).filter(Boolean));
   poser('acc-vign-gradees', []);
+
+  // --- Reprendre : ce qu'il reste à faire, et seulement ça ---
+  const enFile = (typeof pendingQueue !== 'undefined') ? pendingQueue.length : 0;
+  const sansPrix = batch.filter(e => !(parseFloat(e.price) > 0)).length;
+  const taches = [
+    {n: enFile,    lbl: enFile > 1 ? 'à vérifier' : 'à vérifier',  tab: 'identify', cls: 'urgent'},
+    {n: sansPrix,  lbl: sansPrix > 1 ? 'sans prix' : 'sans prix',  tab: 'batch',    cls: ''},
+    {n: pretes,    lbl: 'prêtes à exporter',                       tab: 'export',   cls: 'prete'}
+  ].filter(t => t.n > 0);
+  const zoneTodo = $('acc-todo'), blocTodo = $('acc-reprendre');
+  if(zoneTodo && blocTodo){
+    blocTodo.hidden = !taches.length;
+    zoneTodo.innerHTML = taches.map(t =>
+      '<button class="acc-tache ' + t.cls + '" data-tab="' + t.tab + '"><b>' + t.n + '</b><small>'
+      + escapeHtml(t.lbl) + '</small></button>').join('');
+  }
+
+  // --- Avancement de la semaine ---
+  // Les deux registres portent leur date d'ajout : « at » pour le classeur, « ajouteA »
+  // pour le stock. C'est le seul compteur d'effort qu'on puisse tirer de l'existant.
+  const debutSemaine = Date.now() - 7 * 86400000;
+  let nouvelles = 0;
+  if(typeof collection !== 'undefined' && collection.size != null)
+    for(const e of collection.values()) if((e.at || 0) >= debutSemaine) nouvelles += parseInt(e.qty) || 1;
+  for(const e of batch) if((e.ajouteA || 0) >= debutSemaine) nouvelles += parseInt(e.qty) || 1;
+  const zp = $('acc-progres');
+  if(zp) zp.textContent = nouvelles ? '+' + nouvelles + (nouvelles > 1 ? ' cartes' : ' carte') + ' cette semaine' : '';
+
+  // --- Plus fortes variations ---
+  const mv = mouvementsDuMois();
+  const zoneMv = $('acc-mv'), blocMv = $('acc-mouvements');
+  if(zoneMv && blocMv){
+    const lignes = mv.hausse.concat(mv.baisse);
+    blocMv.hidden = !lignes.length;
+    zoneMv.innerHTML = lignes.map(x =>
+      '<div class="acc-mv-l">'
+      + (x.img ? '<img src="' + escapeHtml(x.img) + '" alt="" loading="lazy" onerror="this.remove()">' : '')
+      + '<span class="acc-mv-i"><b>' + escapeHtml(x.nom) + '</b><small>'
+      + eur(x.avant) + ' → ' + eur(x.apres) + '</small></span>'
+      + '<span class="acc-mv-p ' + (x.ecart > 0 ? 'up' : 'down') + '">'
+      + (x.ecart > 0 ? '+' : '') + x.ecart.toFixed(1).replace('.', ',') + ' %</span></div>').join('');
+  }
+
+  // --- Vignettes des portes vendeur ---
+  poser('acc-vign-stock', visuels);
+  poser('acc-vign-verif', (typeof pendingQueue !== 'undefined' ? pendingQueue : [])
+    .map(q => q.photo || q.apercu || '').filter(Boolean));
+  poser('acc-vign-listes', visuels.slice().reverse());
 
   // La courbe suit la cote de la collection : c'est elle qui se construit dans le temps,
   // le stock étant fait pour se vider.
@@ -5436,6 +5634,15 @@ function majBadgesNav(){
   document.querySelectorAll('.nav-badge.queue-badge').forEach(el=>{
     el.classList.toggle('zero', !pendingQueue.length);
   });
+  // Le bandeau du stock se remplit là où les autres compteurs se mettent à jour : un seul
+  // endroit où l'état de la file se lit, donc aucun risque de le voir diverger d'un
+  // affichage à l'autre.
+  const bv = $('bandeau-verif');
+  if(bv){
+    bv.hidden = !pendingQueue.length;
+    $('bv-n').textContent = pendingQueue.length;
+    $('bv-mot').textContent = pendingQueue.length > 1 ? 'cartes à vérifier' : 'carte à vérifier';
+  }
 }
 
 document.querySelectorAll('.navbar [data-tab], .menu-item[data-tab]').forEach(btn=>{
@@ -17318,7 +17525,7 @@ function tracerCourbe(points, cible){
     </svg>
     <div style="display:flex; justify-content:space-between; font-size:10.5px; color:var(--muted); margin-top:5px;">
       <span>${dateFr(points[0].j)}</span>
-      <span style="color:${couleur}; font-weight:700;">${ecart >= 0 ? '+' : ''}${ecart.toFixed(1)} %</span>
+      <span style="color:${couleur}; font-weight:700;">${ecart >= 0 ? '+' : ''}${ecart.toFixed(1).replace('.', ',')} %</span>
       <span>${dateFr(points[points.length-1].j)}</span>
     </div>`;
 }
