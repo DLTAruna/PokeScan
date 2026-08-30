@@ -2058,11 +2058,44 @@
   .acc-or{color:var(--mode-vendeur);}
   .acc-violet{color:var(--mode-collec);}
   .acc-sous{font-size:11.5px; color:var(--muted); line-height:1.4;}
-  /* Les portes suivent le mode. Rien n'est retiré du balisage : le même accueil montre
-     trois portes de vendeur ou trois portes de collectionneur selon la bascule du haut,
-     qui jusqu'ici ne commandait rien de ce qu'elle surplombait. */
-  #section-accueil[data-mode="vendeur"] .col-porte[data-mode="collection"],
-  #section-accueil[data-mode="collection"] .col-porte[data-mode="vendeur"]{display:none;}
+  /* Mosaique de l'accueil : six carres, trois par rangee. Des carres plutot que les
+     rectangles hauts d'avant — a six entrees, la hauteur repoussait tout sous la ligne de
+     flottaison, et une porte qu'on ne voit pas ne sert a rien. Ce qui saute donc, c'est la
+     phrase d'explication : sur un carre il reste une icone, un nom, un compteur. C'est
+     assez pour un accueil, dont le role est d'aiguiller et non de raconter. */
+  .acc-mosaique{display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:12px;}
+  .acc-case{
+    aspect-ratio:1; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:7px; padding:10px 6px; border-radius:15px;
+    border:1px solid var(--border); background:var(--fond2); color:var(--txt);
+    font:inherit; cursor:pointer; position:relative; overflow:hidden;
+    transition:border-color .18s ease, background .18s ease, transform .12s ease;
+  }
+  .acc-case svg{width:34%; max-width:44px; height:auto; flex:none;}
+  .acc-case b{font-size:12.5px; font-weight:700; text-align:center; line-height:1.2;}
+  .acc-case-n{font-size:15px; font-weight:800; line-height:1;}
+  .acc-case-n.zero{opacity:.32;}
+  .acc-case:active{transform:scale(.97);}
+  /* Le carre a du sens sur un telephone, ou la case fait 110 px. Sur grand ecran la meme
+     regle la poussait a 254 px : une icone perdue au milieu de beaucoup de vide. Au-dela
+     de 760 px la hauteur est fixee et la case s’allonge, ce qui reste lisible. */
+  @media (min-width:760px){
+    .acc-case{aspect-ratio:auto; height:132px;}
+    .acc-case svg{width:auto; height:40px;}
+  }
+  /* Deux familles, deux teintes : ce qu'on garde et ce qu'on vend. */
+  .acc-case.col{color:#c9b4ff; border-color:rgba(150,120,255,.26); background:rgba(150,120,255,.07);}
+  .acc-case.vd{color:#f0c85a; border-color:rgba(240,185,42,.24); background:rgba(240,185,42,.07);}
+  .acc-case.col b, .acc-case.vd b{color:var(--txt);}
+  /* La file d'attente ne s'allume que lorsqu'elle a quelque chose : le reste du temps elle
+     reste une case comme les autres, sans crier. */
+  .acc-case.verif.pleine{border-color:rgba(240,185,42,.55); background:rgba(240,185,42,.14);}
+  @media (max-width:400px){
+    .acc-mosaique{gap:7px;}
+    .acc-case{border-radius:13px; gap:5px;}
+    .acc-case b{font-size:11px;}
+    .acc-case-n{font-size:13.5px;}
+  }
 
   /* Reprendre : des pastilles au même gabarit que les chiffres du bilan, mais qui mènent
      quelque part. Chacune est une tâche, pas une mesure. */
@@ -3656,6 +3689,45 @@
       </div>
     </div>
 
+    <!-- Six entrees, toutes visibles en permanence. La version precedente n'en montrait
+         que trois selon le mode : coherent, mais ca faisait de l'accueil une page qui cache
+         la moitie de l'application derriere une bascule qu'on peut oublier d'avoir mise.
+         Un accueil se lit d'un coup d'oeil ; la bascule ne gouverne plus que la barre du bas.
+         Rangee du haut : ce qu'on garde. Rangee du bas : ce qu'on vend. Chaque famille a sa
+         teinte, ce qui suffit a les separer sans y ecrire de titre. -->
+    <div class="acc-mosaique">
+      <button class="acc-case col" data-tab="sets">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="10" width="70" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="30" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><rect x="60" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="30" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="60" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><circle cx="13" cy="26" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="50" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="74" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/></svg>
+        <b>Classeur</b>
+        <span class="acc-case-n" id="acc-n-classeur">0</span>
+      </button>
+      <button class="acc-case col" data-tab="scelle">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><path d="M12 42h76v44a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="currentColor" opacity=".3"/><path d="M12 42h76v44a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="none" stroke="currentColor" stroke-width="5"/><rect x="24" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><rect x="43" y="9" width="14" height="37" rx="2" fill="currentColor" opacity=".75"/><rect x="62" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/></svg>
+        <b>Scellé</b>
+        <span class="acc-case-n" id="acc-n-scelle">0</span>
+      </button>
+      <button class="acc-case col" data-tab="gradees">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="6" width="60" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="5"/><rect x="29" y="31" width="42" height="54" rx="3" fill="currentColor" opacity=".38"/><rect x="29" y="31" width="42" height="54" rx="3" fill="none" stroke="currentColor" stroke-width="3.5"/><rect x="29" y="14" width="42" height="11" rx="2.5" fill="currentColor" opacity=".72"/></svg>
+        <b>Gradées</b>
+        <span class="acc-case-n" id="acc-n-gradees">0</span>
+      </button>
+      <button class="acc-case vd" data-tab="batch">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><rect x="8" y="28" width="56" height="64" rx="6" fill="currentColor" opacity=".24"/><rect x="8" y="28" width="56" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="26" y="12" width="56" height="64" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><path d="M38 34h32M38 48h32M38 62h20" stroke="currentColor" stroke-width="4.6" stroke-linecap="round" opacity=".62"/></svg>
+        <b>Stock</b>
+        <span class="acc-case-n" id="acc-n-stock">0</span>
+      </button>
+      <button class="acc-case vd" data-tab="listes">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="12" width="72" height="76" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><path d="M42 31h30M42 50h30M42 69h30" stroke="currentColor" stroke-width="5" stroke-linecap="round"/><circle cx="29" cy="31" r="5" fill="currentColor"/><circle cx="29" cy="50" r="5" fill="currentColor" opacity=".62"/><circle cx="29" cy="69" r="5" fill="currentColor" opacity=".4"/></svg>
+        <b>Listes</b>
+        <span class="acc-case-n" id="acc-n-listes">0</span>
+      </button>
+      <button class="acc-case vd verif" data-tab="identify">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><rect x="10" y="9" width="46" height="60" rx="5" fill="currentColor" opacity=".26"/><rect x="10" y="9" width="46" height="60" rx="5" fill="none" stroke="currentColor" stroke-width="5"/><circle cx="64" cy="62" r="20" fill="none" stroke="currentColor" stroke-width="5"/><path d="m79 77 12 12" stroke="currentColor" stroke-width="6" stroke-linecap="round"/></svg>
+        <b>À vérifier</b>
+        <span class="acc-case-n" id="acc-n-verif">0</span>
+      </button>
+    </div>
+
     <!-- Reprendre. L'accueil répondait à « combien je possède », jamais à « quoi faire
          maintenant » — sur un tas de mille cartes, c'est pourtant la question qu'on se pose
          en ouvrant. Le bloc n'existe que s'il reste quelque chose : rien à faire, rien à
@@ -3678,56 +3750,6 @@
 
     <!-- Trois portes, au même gabarit que celles de l'accueil Collection : hautes plutôt
          que larges, parce qu'elles portent une illustration et une phrase, pas une ligne. -->
-    <div class="col-portes">
-      <button class="col-porte pstock" data-mode="vendeur" data-tab="batch">
-        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="10" y="26" width="58" height="66" rx="6" fill="currentColor" opacity=".22"/><rect x="10" y="26" width="58" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="14" width="58" height="66" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><path d="M38 40h30M38 54h30M38 68h18" stroke="currentColor" stroke-width="4" stroke-linecap="round" opacity=".6"/></svg>
-        <span class="chapeau">Prêt à partir</span>
-        <h3>Stock</h3>
-        <p>Les cartes en vente, leur prix et leur photo d’annonce.</p>
-        <div class="col-vignettes" id="acc-vign-stock"></div>
-        <span class="cta">Ouvrir le stock →</span>
-      </button>
-      <button class="col-porte pverif" data-mode="vendeur" data-tab="identify">
-        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="12" y="10" width="46" height="60" rx="5" fill="currentColor" opacity=".24"/><rect x="12" y="10" width="46" height="60" rx="5" fill="none" stroke="currentColor" stroke-width="4"/><circle cx="63" cy="62" r="19" fill="none" stroke="currentColor" stroke-width="4.5"/><path d="m77 76 13 13" stroke="currentColor" stroke-width="5" stroke-linecap="round"/></svg>
-        <span class="chapeau">Identification incertaine</span>
-        <h3>À vérifier</h3>
-        <p>Les scans dont la carte n’est pas sûre, à confirmer avant de vendre.</p>
-        <div class="col-vignettes" id="acc-vign-verif"></div>
-        <span class="cta">Traiter la file →</span>
-      </button>
-      <button class="col-porte plistes" data-mode="vendeur" data-tab="listes">
-        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="12" width="72" height="76" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><path d="M40 30h30M40 50h30M40 70h30" stroke="currentColor" stroke-width="4.5" stroke-linecap="round"/><circle cx="28" cy="30" r="4.5" fill="currentColor"/><circle cx="28" cy="50" r="4.5" fill="currentColor" opacity=".62"/><circle cx="28" cy="70" r="4.5" fill="currentColor" opacity=".4"/></svg>
-        <span class="chapeau">Regroupements</span>
-        <h3>Listes</h3>
-        <p>Un lot pour une vente, un envoi en gradation, un échange.</p>
-        <div class="col-vignettes" id="acc-vign-listes"></div>
-        <span class="cta">Voir les listes →</span>
-      </button>
-      <button class="col-porte serie" data-mode="collection" data-tab="sets">
-        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="8" width="76" height="84" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><rect x="56" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="24" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="56" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><path d="M14 22h-6M14 44h-6M14 66h-6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="8" cy="22" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="44" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="66" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/></svg>
-        <span class="chapeau">Toutes les séries</span>
-        <h3>Classeur</h3>
-        <p>De l’édition de base en 1999 aux dernières extensions, par bloc.</p>
-        <div class="col-vignettes" id="acc-vign-series"></div>
-        <span class="cta">Ouvrir le classeur →</span>
-      </button>
-      <button class="col-porte scelle" data-mode="collection" data-tab="scelle">
-        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><path d="M12 42h76v46a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="currentColor" opacity=".32"/><path d="M12 42h76v46a5 5 0 0 1-5 5H17a5 5 0 0 1-5-5Z" fill="none" stroke="currentColor" stroke-width="4"/><rect x="22" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><rect x="40" y="10" width="14" height="36" rx="2" fill="currentColor" opacity=".72"/><rect x="58" y="16" width="14" height="30" rx="2" fill="currentColor" opacity=".55"/><path d="M12 58h76" stroke="currentColor" stroke-width="3.5" opacity=".7"/></svg>
-        <span class="chapeau">Produits fermés</span>
-        <h3>Scellé</h3>
-        <p>Coffrets, displays et ETB, avec leur cote et leur plus-value.</p>
-        <div class="col-vignettes" id="acc-vign-scelle"></div>
-        <span class="cta">Explorer le scellé →</span>
-      </button>
-      <button class="col-porte gradee" data-mode="collection" data-tab="gradees">
-        <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="18" y="6" width="64" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="4"/><rect x="27" y="30" width="46" height="56" rx="3" fill="currentColor" opacity=".38"/><rect x="27" y="30" width="46" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="27" y="13" width="46" height="11" rx="2.5" fill="currentColor" opacity=".7"/><path d="M34 18.5h20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity=".5"/><circle cx="61" cy="18.5" r="3.4" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
-        <span class="chapeau">Cartes certifiées</span>
-        <h3>Cartes gradées</h3>
-        <p>PSA, BGS, CGC — le registre des cartes notées, avec leur grade.</p>
-        <div class="col-vignettes" id="acc-vign-gradees"></div>
-        <span class="cta">Ouvrir le registre →</span>
-      </button>
-    </div>
   </section>
 
   <section class="section" id="section-capture">
@@ -5314,19 +5336,6 @@ async function rendreAccueil(){
   $('acc-s-pretes').textContent = String(pretes);
 
 
-  // Vignettes des portes : tes propres cartes, pas une illustration. Une porte qui montre
-  // ce qu'on possède déjà dit quelque chose ; trois images choisies d'avance ne disent rien.
-  const visuels = batch.map(e => e.cardImage || e.photo).filter(Boolean);
-  const poser = (id, liste)=>{
-    const z = $(id);
-    if(!z) return;
-    z.innerHTML = liste.slice(0, 4)
-      .map(u => '<img src="' + escapeHtml(u) + '" alt="" loading="lazy" onerror="this.remove()">').join('');
-  };
-  poser('acc-vign-series', visuels);
-  poser('acc-vign-scelle', listeScelle.map(p => p.photo || p.image).filter(Boolean));
-  poser('acc-vign-gradees', []);
-
   // --- Reprendre : ce qu'il reste à faire, et seulement ça ---
   const enFile = (typeof pendingQueue !== 'undefined') ? pendingQueue.length : 0;
   const sansPrix = batch.filter(e => !(parseFloat(e.price) > 0)).length;
@@ -5369,11 +5378,22 @@ async function rendreAccueil(){
       + (x.ecart > 0 ? '+' : '') + x.ecart.toFixed(1).replace('.', ',') + ' %</span></div>').join('');
   }
 
-  // --- Vignettes des portes vendeur ---
-  poser('acc-vign-stock', visuels);
-  poser('acc-vign-verif', (typeof pendingQueue !== 'undefined' ? pendingQueue : [])
-    .map(q => q.photo || q.apercu || '').filter(Boolean));
-  poser('acc-vign-listes', visuels.slice().reverse());
+  // --- Les six compteurs de la mosaïque ---
+  // Chaque case dit combien elle contient : c'est ce qui décide où l'on va en ouvrant
+  // l'application. Un compteur à zéro reste lisible mais s'efface.
+  const compteur = (id, v)=>{
+    const z = $(id);
+    if(!z) return;
+    z.textContent = v;
+    z.classList.toggle('zero', !v);
+  };
+  compteur('acc-n-classeur', cartesColl);
+  compteur('acc-n-scelle', nbScelle);
+  compteur('acc-n-gradees', 0);
+  compteur('acc-n-stock', cartesStock);
+  compteur('acc-n-listes', (typeof listes !== 'undefined' && Array.isArray(listes)) ? listes.length : 0);
+  compteur('acc-n-verif', enFile);
+  document.querySelector('.acc-case.verif')?.classList.toggle('pleine', enFile > 0);
 
   // La courbe suit la cote de la collection : c'est elle qui se construit dans le temps,
   // le stock étant fait pour se vider.
