@@ -80,9 +80,33 @@
       radial-gradient(90% 180% at 8% 0%, rgba(200,18,18,.20), transparent 60%),
       radial-gradient(80% 160% at 96% 10%, rgba(61,125,202,.22), transparent 62%),
       var(--bg);
-    padding:16px 16px 14px; position:sticky; top:0; z-index:20;
+    display:flex; align-items:center; gap:12px;
+    padding:calc(9px + env(safe-area-inset-top)) 14px 9px;
+    position:sticky; top:0;
+    /* Au-dessus de la barre du bas (200) : l'en-tete est colle en haut, il doit passer
+       devant ce qui defile dessous, y compris les elements fixes de la page. */
+    z-index:210;
     box-shadow:0 2px 14px rgba(0,0,0,.5); border-bottom:1px solid var(--border);
     overflow:hidden;
+  }
+  /* Le titre est un bouton : il ramene a l'accueil. C'est la convention de toute barre
+     d'application, et cela donne un chemin de retour depuis n'importe quelle page. */
+  .pkb-brand{
+    display:flex; align-items:center; gap:9px; min-width:0; position:relative; z-index:2;
+    background:transparent; border:0; padding:0; cursor:pointer; color:inherit; font:inherit;
+    text-align:left;
+  }
+  .pkb-brand h1{
+    margin:0; font-size:17px; line-height:1.15; letter-spacing:.2px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  .pkb-fleche{opacity:.55; font-weight:600; margin:0 1px;}
+  .pkb-brand:hover h1{color:var(--accent);}
+  @media (max-width:400px){
+    /* Sous cette largeur, le titre complet rogne le nom de l'application : on garde le nom
+       et on laisse tomber la destination, qui est ecrite partout ailleurs. */
+    .pkb-brand h1{font-size:15.5px;}
+    .pkb-fleche, .pkb-brand h1 .pkb-suite{display:none;}
   }
   /* Le semis d'étoiles a été retiré : il n'était lisible que sur le dégradé saturé, et
      sur fond sombre il ne produisait plus qu'un grain sale. */
@@ -1599,11 +1623,20 @@
   main{padding-bottom:calc(86px + env(safe-area-inset-bottom)) !important;}
 
   /* ---------- MENU DES SECTIONS SECONDAIRES ---------- */
+  /* Dans le flux, en premier : le bouton n'est plus pose PAR-DESSUS le titre, sa place
+     n'a donc plus a etre calculee et rien ne peut plus se recouvrir. */
   .btn-menu{
-    position:absolute; top:14px; right:14px; z-index:3;
-    width:38px; height:38px; border-radius:12px; font-size:17px; cursor:pointer;
-    background:rgba(255,255,255,.14); border:1px solid rgba(255,255,255,.28); color:#fff;
+    position:relative; z-index:2; flex:none;
+    width:40px; height:40px; border-radius:12px; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(255,255,255,.07); border:1px solid rgba(255,255,255,.14); color:#fff;
+    transition:background .16s ease, border-color .16s ease;
   }
+  /* flex:none : sans lui le SVG est comprime par le conteneur flex du bouton — mesure
+     6 px de large au lieu de 21, et les trois traits se collent en un point. */
+  .btn-menu svg{width:21px; height:21px; flex:none;}
+  .btn-menu:hover{background:rgba(255,255,255,.14); border-color:var(--accent2);}
+  .btn-menu:active{background:rgba(255,255,255,.2);}
   .menu-voile{
     position:fixed; inset:0; z-index:260; display:none;
     background:rgba(6,8,14,.86);
@@ -2078,9 +2111,11 @@
      langage de mouvement sur tout le site. */
   .modes-bascule{
     position:relative; display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr);
-    background:var(--panel2); border:1px solid var(--border);
-    border-radius:11px; padding:3px; gap:0;
+    background:transparent; border:0; border-radius:0; padding:0; gap:10px;
   }
+  /* Le curseur glissant n'a plus lieu d'etre : deux boutons distincts ne partagent pas de
+     rail. Chacun s'allume chez lui. */
+  .modes-curseur{display:none;}
   .modes-curseur{
     position:absolute; top:3px; bottom:3px; left:3px; width:calc(50% - 3px);
     border-radius:8px; z-index:0; pointer-events:none;
@@ -2102,15 +2137,24 @@
   }
   .modes-bascule .lat-mode{
     position:relative; z-index:1; display:flex; align-items:center; justify-content:center;
-    gap:7px; background:transparent; border:0; cursor:pointer; font:inherit;
-    color:var(--muted); transition:color .3s cubic-bezier(.4,0,.2,1);
+    gap:8px; cursor:pointer; font:inherit; font-weight:800;
+    background:var(--panel2); border:1.5px solid var(--border); border-radius:12px;
+    color:var(--muted); padding:11px 10px;
+    transition:color .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
   }
-  /* Texte fonce sur l'or, clair sur le violet : chaque teinte impose son contraste. */
-  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]{color:#221a05;}
-  .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"]{color:#fff;}
-  .modes-bascule .lat-mode:hover{color:var(--text);}
-  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]:hover,
-  .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"]:hover{color:inherit;}
+  .modes-bascule .lat-mode:hover{color:var(--text); border-color:var(--accent2);}
+  /* Allume : la teinte du monde, en plein, avec le contraste que chacune impose —
+     texte fonce sur l'or, clair sur le violet. */
+  .modes-bascule[data-actif="vendeur"] .lat-mode[data-mode="vendeur"]{
+    color:#221a05; border-color:var(--mode-vendeur);
+    background:linear-gradient(135deg, #ffe066, var(--mode-vendeur));
+    box-shadow:0 2px 12px rgba(255,203,5,.30);
+  }
+  .modes-bascule[data-actif="collection"] .lat-mode[data-mode="collection"]{
+    color:#fff; border-color:var(--mode-collec);
+    background:linear-gradient(135deg, #a08cff, var(--mode-collec));
+    box-shadow:0 2px 12px rgba(124,92,255,.38);
+  }
   .mico{width:16px; height:16px; flex:none; display:block;}
   /* Un mouvement qui traverse l'ecran est exactement ce que ce reglage demande d'eviter :
      la bascule reste instantanee, seule la couleur change. */
@@ -2121,7 +2165,8 @@
   .lat-modes .lat-mode{font-size:11px; font-weight:800; padding:8px 3px;}
   .lat-modes .mico{width:14px; height:14px;}
   .modes-bascule .lat-mode span{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
-  .barre-mode .modes-bascule .lat-mode{font-size:13px; font-weight:700; padding:9px 8px;}
+  .barre-mode .modes-bascule .lat-mode{font-size:14.5px; padding:12px 10px;}
+  .barre-mode .modes-bascule .mico{width:19px; height:19px;}
 
 
 
@@ -3149,14 +3194,13 @@
 <header>
   <img class="pkb-art-4" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/384.png" alt="" aria-hidden="true">
   <img class="pkb-art" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/25.png" alt="" aria-hidden="true">
-  <img class="pkb-art-2" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/6.png" alt="" aria-hidden="true">
-  <img class="pkb-art-3" src="https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/other/official-artwork/160.png" alt="" aria-hidden="true">
-  <div class="pkb-brand">
+  <button class="btn-menu" id="btn-menu" aria-label="Ouvrir le menu">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg>
+  </button>
+  <button class="pkb-brand" id="btn-accueil" aria-label="Retour à l’accueil">
     <span class="pokeball"></span>
-    <h1>PokéScan <span style="opacity:.65; font-weight:600;">→</span> eBay Lister</h1>
-  </div>
-  <p>Capture en rafale ou en masse, identifie à toute vitesse, exporte pour eBay.</p>
-  <button class="btn-menu" id="btn-menu" aria-label="Menu"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="var(--t1)" stroke-width="1.7"/></svg></button>
+    <h1>PokéScan <span class="pkb-fleche">→</span> eBay Lister</h1>
+  </button>
 </header>
 
 
@@ -3243,14 +3287,14 @@
        latérale, invisible sous 900 px. La bascule Vendeur/Collection elle-même n'y était
        pas : le mode ne pouvait pas changer depuis un téléphone.
        Le bouton de capture n'a pas de mode : scanner sert aux deux. -->
-  <button class="nav-item" data-mode="vendeur" data-tab="dashboard">
-    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3.5" width="8" height="7" rx="1.8" fill="var(--t2)" opacity=".3"/><rect x="3" y="3.5" width="8" height="7" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="3.5" width="8" height="11" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="3" y="13" width="8" height="7.5" rx="1.8" stroke="var(--t1)" stroke-width="1.7"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" fill="var(--t2)" opacity=".3"/><rect x="13" y="17" width="8" height="3.5" rx="1.6" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Tableau</span>
+  <button class="nav-item" data-mode="vendeur" data-tab="accueil">
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.4 10.6 12 3.6l8.6 7" stroke="var(--t1)" stroke-width="1.7"/><path d="M5.6 9.4V19a1.4 1.4 0 0 0 1.4 1.4h10a1.4 1.4 0 0 0 1.4-1.4V9.4" stroke="var(--t1)" stroke-width="1.7"/><rect x="9.6" y="13.4" width="4.8" height="7" rx="1.2" fill="var(--t2)" opacity=".35"/><rect x="9.6" y="13.4" width="4.8" height="7" rx="1.2" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Accueil</span>
   </button>
   <button class="nav-item" data-mode="vendeur" data-tab="identify">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.2" y="2.8" width="11.4" height="15" rx="2" stroke="var(--t1)" stroke-width="1.7"/><path d="M6.2 6.6h5.4M6.2 9.6h3.2" stroke="var(--t1)" stroke-width="1.7" opacity=".65"/><circle cx="15.6" cy="15" r="4.6" fill="var(--t2)" opacity=".32"/><circle cx="15.6" cy="15" r="4.6" stroke="var(--t1)" stroke-width="1.7"/><path d="m19 18.4 2.3 2.3" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">À vérifier</span>
     <span class="nav-badge queue-badge" data-zero="masquer">0</span>
   </button>
-  <button class="nav-item" data-mode="collection" data-tab="collection">
+  <button class="nav-item" data-mode="collection" data-tab="accueil">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20.4 4.2 13a4.6 4.6 0 0 1 6.5-6.5l1.3 1.3 1.3-1.3A4.6 4.6 0 0 1 19.8 13Z" fill="var(--t2)" opacity=".28"/><path d="M12 20.4 4.2 13a4.6 4.6 0 0 1 6.5-6.5l1.3 1.3 1.3-1.3A4.6 4.6 0 0 1 19.8 13Z" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Accueil</span>
   </button>
   <button class="nav-item" data-mode="collection" data-tab="sets">
@@ -3270,7 +3314,7 @@
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2 21 8v8L12 20.8 3 16V8Z" fill="var(--t2)" opacity=".2"/><path d="M3 8 12 3.2 21 8l-9 4.8Z" fill="var(--t2)" opacity=".42"/><path d="M12 3.2 21 8v8L12 20.8 3 16V8Z" stroke="var(--t1)" stroke-width="1.7"/><path d="m3 8 9 4.8L21 8M12 12.8v8" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Scellé</span>
     <span class="nav-badge" id="nav-scelle-badge" data-zero="masquer">0</span>
   </button>
-  <button class="nav-item" data-mode="collection" data-tab="onepiece">
+  <button class="nav-item" data-mode="collection" data-tab="gradees">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="14.6" rx="9.4" ry="3.1" fill="var(--t2)" opacity=".3"/><path d="M6.4 14.2c0-4 2.5-6.6 5.6-6.6s5.6 2.6 5.6 6.6" fill="var(--t2)" opacity=".2"/><path d="M6.4 14.2c0-4 2.5-6.6 5.6-6.6s5.6 2.6 5.6 6.6" stroke="var(--t1)" stroke-width="1.7"/><ellipse cx="12" cy="14.6" rx="9.4" ry="3.1" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">One Piece</span>
   </button>
 </nav>
@@ -3451,15 +3495,15 @@
     <div class="col-portes">
       <button class="col-porte serie" data-tab="sets">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="8" width="76" height="84" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><rect x="56" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="24" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="56" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><path d="M14 22h-6M14 44h-6M14 66h-6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="8" cy="22" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="44" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="66" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/></svg>
-        <span class="chapeau">Toutes les ères</span>
+        <span class="chapeau">Toutes les séries</span>
         <h3>Classeur</h3>
-        <p>De la Base 1999 aux dernières extensions, bloc par bloc.</p>
+        <p>De l’édition de base en 1999 aux dernières extensions, par bloc.</p>
         <div class="col-vignettes" id="col-vignettes-series"></div>
         <span class="cta">Ouvrir le classeur →</span>
       </button>
       <button class="col-porte gradee" data-tab="gradees">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="18" y="6" width="64" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="4"/><rect x="27" y="30" width="46" height="56" rx="3" fill="currentColor" opacity=".38"/><rect x="27" y="30" width="46" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="27" y="13" width="46" height="11" rx="2.5" fill="currentColor" opacity=".7"/><path d="M34 18.5h20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity=".5"/><circle cx="61" cy="18.5" r="3.4" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
-        <span class="chapeau">Sous coque</span>
+        <span class="chapeau">Cartes certifiées</span>
         <h3>Cartes gradées</h3>
         <p>PSA, BGS, CGC — le registre des cartes notées, avec leur grade.</p>
         <div class="col-vignettes" id="col-vignettes-gradees"></div>
@@ -3550,9 +3594,9 @@
     <div class="col-portes">
       <button class="col-porte serie" data-tab="sets">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="14" y="8" width="76" height="84" rx="6" fill="none" stroke="currentColor" stroke-width="4"/><rect x="24" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><rect x="56" y="18" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="24" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".28"/><rect x="56" y="54" width="26" height="30" rx="3" fill="currentColor" opacity=".45"/><path d="M14 22h-6M14 44h-6M14 66h-6" stroke="currentColor" stroke-width="4" stroke-linecap="round"/><circle cx="8" cy="22" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="44" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/><circle cx="8" cy="66" r="5" fill="none" stroke="currentColor" stroke-width="3.5"/></svg>
-        <span class="chapeau">Toutes les ères</span>
+        <span class="chapeau">Toutes les séries</span>
         <h3>Classeur</h3>
-        <p>De la Base 1999 aux dernières extensions, bloc par bloc.</p>
+        <p>De l’édition de base en 1999 aux dernières extensions, par bloc.</p>
         <div class="col-vignettes" id="acc-vign-series"></div>
         <span class="cta">Ouvrir le classeur →</span>
       </button>
@@ -3566,7 +3610,7 @@
       </button>
       <button class="col-porte gradee" data-tab="gradees">
         <svg class="porte-fond" viewBox="0 0 100 100" aria-hidden="true"><rect x="18" y="6" width="64" height="88" rx="7" fill="none" stroke="currentColor" stroke-width="4"/><rect x="27" y="30" width="46" height="56" rx="3" fill="currentColor" opacity=".38"/><rect x="27" y="30" width="46" height="56" rx="3" fill="none" stroke="currentColor" stroke-width="3"/><rect x="27" y="13" width="46" height="11" rx="2.5" fill="currentColor" opacity=".7"/><path d="M34 18.5h20" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" opacity=".5"/><circle cx="61" cy="18.5" r="3.4" fill="none" stroke="currentColor" stroke-width="2.4"/></svg>
-        <span class="chapeau">Sous coque</span>
+        <span class="chapeau">Cartes certifiées</span>
         <h3>Cartes gradées</h3>
         <p>PSA, BGS, CGC — le registre des cartes notées, avec leur grade.</p>
         <div class="col-vignettes" id="acc-vign-gradees"></div>
@@ -5130,8 +5174,11 @@ async function rendreAccueil(){
   // le stock étant fait pour se vider.
   try{
     await amorcerHistoriqueGlobal();
+    // Le relevé du jour est posé avant de tracer : sans lui, la fenêtre « Semaine » n'a
+    // que les points reconstitués et il manque celui d'aujourd'hui.
+    await noterValeurDuJour();
     const pts = await chargerHistorique();
-    const limite = accueilPeriode ? Date.now() - accueilPeriode * 86400000 : 0;
+    const limite = accueilPeriode ? debutDuJourIlYA(accueilPeriode) : 0;
     tracerCourbe(accueilPeriode ? pts.filter(p => new Date(p.j).getTime() >= limite) : pts, 'acc-graph');
   }catch(e){}
 }
@@ -5408,13 +5455,15 @@ document.addEventListener('click', (e)=>{
 });
 
 appliquerMode(modeActuel, false);
-// La page ouverte au chargement décide de l'état de la bascule : sur l'accueil elle
-// s'éteint, ailleurs elle reprend le mode mémorisé.
-synchroniserMode((document.querySelector('.section.active')?.id || '').replace('section-', ''));
-if(document.querySelector('.section.active')?.id === 'section-accueil') rendreAccueil();
+// Passer par activerOnglet plutôt que de se contenter de la classe posée dans le balisage :
+// c'est elle qui allume l'entrée correspondante de la barre du bas et règle la bascule.
+// Sans cet appel, la page où l'on se trouve était la seule que la barre ne désignait pas.
+activerOnglet((document.querySelector('.section.active')?.id || 'section-accueil').replace('section-', ''));
 
 
 $('btn-menu').addEventListener('click', ouvrirMenu);
+// Le titre est le chemin de retour : depuis n'importe quelle page, il ramene a l'accueil.
+$('btn-accueil')?.addEventListener('click', ()=> activerOnglet('accueil'));
 $('btn-menu-fermer').addEventListener('click', fermerMenu);
 $('menu-voile').addEventListener('click', (e)=>{ if(e.target.id === 'menu-voile') fermerMenu(); });
 document.addEventListener('keydown', (e)=>{ if(e.key === 'Escape') fermerMenu(); });
@@ -17226,6 +17275,17 @@ function dateFr(iso){
   return m ? m[3] + '/' + m[2] + '/' + m[1].slice(2) : String(iso || '');
 }
 
+// Borne ramenee au debut du jour. Les releves sont dates a la JOURNEE (aaaa-mm-jj), donc
+// a minuit ; les comparer a un horodatage courant exclut toujours le point le plus ancien
+// de la fenetre demandee. Consequence visible : la vue « Semaine » ne gardait que le point
+// de la veille — un seul point, donc « historique en construction », alors qu'on en a
+// trois des la premiere ouverture.
+function debutDuJourIlYA(jours){
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime() - jours * 86400000;
+}
+
 function tracerCourbe(points, cible){
   const z = $(cible);
   if(!z) return;
@@ -17272,7 +17332,7 @@ async function rendreBandeauValeur(){
   if($('val-refs')) $('val-refs').textContent = batch.length + (typeof scelle !== 'undefined' ? scelle.length : 0);
 
   const pts = await chargerHistorique();
-  const limite = valPeriode ? Date.now() - valPeriode * 86400000 : 0;
+  const limite = valPeriode ? debutDuJourIlYA(valPeriode) : 0;
   const filtres = valPeriode ? pts.filter(p => new Date(p.j).getTime() >= limite) : pts;
   tracerCourbe(filtres, 'val-graph');
 }
@@ -17372,7 +17432,7 @@ const TENDANCE_JOURS_VERDICT = 7;
 
 function courbeTendance(cardId){
   const pts = (historiqueCotes && cardId && historiqueCotes[cardId]) || [];
-  const limite = Date.now() - TENDANCE_JOURS_TRACE * 86400000;
+  const limite = debutDuJourIlYA(TENDANCE_JOURS_TRACE);
   const trace = pts.filter(p => new Date(p.j).getTime() >= limite);
   const recents = pts.slice(-TENDANCE_JOURS_VERDICT);
   // Une courbe entièrement bâtie sur les moyennes rétroactives n'est pas un relevé : on
