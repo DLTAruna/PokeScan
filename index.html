@@ -5935,7 +5935,42 @@ function mouvementsDuMois(){
           baisse: l.filter(x => x.ecart < 0).slice(-3).reverse()};
 }
 
+// Les fiches détaillées — donc les COTES — sont mises en cache dans IndexedDB, mais
+// detailsCartes est une Map en mémoire qui repart vide à chaque chargement de page. Elle ne
+// se remplit qu'en ouvrant des cartes une par une. Conséquence : la valeur de la collection
+// affichait zéro alors que neuf cents fiches dormaient en cache local. Ajouter un masterset
+// entier faisait bouger les compteurs et pas un centime — l'information existait, personne
+// n'allait la chercher.
+//
+// Un seul passage sur le magasin, et seulement quand il manque quelque chose. Les cartes
+// dont la fiche n'est pas en cache sont mémorisées comme tentées : sans ça, une carte jamais
+// consultée relancerait la lecture complète du magasin à chaque rendu.
+const fichesTentees = new Set();
+
+async function hydraterFiches(){
+  const manquants = new Set();
+  const noter = (id)=>{ if(id && !detailsCartes.has(id) && !fichesTentees.has(id)) manquants.add(id); };
+  if(typeof collection !== 'undefined' && collection.size != null)
+    for(const e of collection.values()) noter(e.cardId);
+  for(const e of batch) noter(e.cardId);
+  if(!manquants.size) return 0;
+
+  let posees = 0;
+  try{
+    const toutes = await idbGetAll('cardDetail');
+    for(const f of toutes){
+      if(!f || !f.detail || !manquants.has(f.cardId)) continue;
+      detailsCartes.set(f.cardId, typeof normaliserRareteFiche === 'function'
+        ? normaliserRareteFiche(f.detail) : f.detail);
+      posees++;
+    }
+  }catch(e){}
+  for(const id of manquants) fichesTentees.add(id);
+  return posees;
+}
+
 async function rendreAccueil(){
+  await hydraterFiches();
   if(!$('acc-c-val')) return;
   const eur = (v)=> v.toFixed(2).replace('.', ',') + ' €';
 
@@ -6198,14 +6233,26 @@ async function logosDeSets(){
 }
 
 async function rendreAccueilCollection(){
-  const nb = batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
-  const sets = new Set(batch.map(e => e.setId).filter(Boolean));
-  const val = batch.reduce((s,e) => s + (parseFloat(e.marketPrice)||0) * (parseInt(e.qty)||1), 0);
+  await hydraterFiches();
+  // Ces quatre chiffres ne comptaient QUE le lot de vente. Sur une page intitulée
+  // « Pokémon », « CARTES 14 » annonçait donc ce qu'on met en vente et ignorait le
+  // classeur : ajouter un masterset entier n'y changeait rien. Ils comptent désormais
+  // la collection ET le stock, comme sur l'accueil — une carte mise en vente reste
+  // possédée tant qu'elle n'est pas partie.
+  const entrees = (typeof collection !== 'undefined' && collection.size != null)
+    ? [...collection.values()] : [];
+  const nb = entrees.reduce((s,e) => s + (parseInt(e.qty)||1), 0)
+           + batch.reduce((s,e) => s + (parseInt(e.qty)||1), 0);
+  const sets = new Set([...entrees, ...batch].map(e => e.setId).filter(Boolean));
+  const val = entrees.reduce((s,e) => s + ((prixUnitaireCollection(e) || 0) * (parseInt(e.qty)||1)), 0)
+            + batch.reduce((s,e) => s + (parseFloat(e.marketPrice)||0) * (parseInt(e.qty)||1), 0);
   // Meme seuil que l'accueil : SEUIL_RARE separe, dans un tas de mille cartes, celles qu'on
   // vend a l'unite de celles qu'on met en lot. La cote du marche est retenue, pas le prix
   // demande — une carte n'est pas rare parce qu'on l'affiche cher.
-  const rares = batch.reduce((s,e) =>
-    s + ((parseFloat(e.marketPrice) || parseFloat(e.price) || 0) >= SEUIL_RARE ? (parseInt(e.qty)||1) : 0), 0);
+  const rares = entrees.reduce((s,e) =>
+      s + ((prixUnitaireCollection(e) || 0) >= SEUIL_RARE ? (parseInt(e.qty)||1) : 0), 0)
+    + batch.reduce((s,e) =>
+      s + ((parseFloat(e.marketPrice) || parseFloat(e.price) || 0) >= SEUIL_RARE ? (parseInt(e.qty)||1) : 0), 0);
   if($('col-cartes')) $('col-cartes').textContent = nb;
   if($('col-rares')) $('col-rares').textContent = rares;
   if($('col-sets')) $('col-sets').textContent = sets.size;
@@ -6235,6 +6282,7 @@ async function rendreAccueilCollection(){
     'https://assets.tcgdex.net/fr/sv/sv03.5/009/low.webp'
   ];
   poser('col-vignettes-series', visuels, REPLI);
+  // « sets » couvre maintenant classeur ET stock : les logos suivent.
   // Les logos de series remplacent les vignettes de cartes sur la porte du classeur : c'est
   // ce qu'on y cherche du regard — quelles series sont entamees — et non quelles cartes on
   // possede, information deja donnee par le compteur juste au-dessus.
