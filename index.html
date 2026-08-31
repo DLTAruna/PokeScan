@@ -4602,6 +4602,16 @@
           classeur d'une seule extension, choisis-la : le numéro suffit alors à identifier
           la carte, sans avoir à deviner le set.
         </p>
+
+        <label class="dest-case" style="margin-top:12px;">
+          <input type="checkbox" id="chk-scan-v2">
+          <span><b>Scanner V2 <span style="color:var(--accent)">[BÊTA]</span></b><small>Identifie la carte
+          par son <b>illustration</b> (DINOv2 + points d'intérêt), pas par le numéro — marche même
+          quand le chiffre est illisible. Demande un set choisi ci-dessus. Chaque scan est
+          enregistré pour analyse.</small></span>
+        </label>
+        <p class="hint" id="v2-etat" style="margin:6px 0 0; display:none;"></p>
+
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Changer d’objectif</button>
         </div>
       </details>
@@ -11365,6 +11375,18 @@ async function attemptRead(corners, score){
       redressement = rot;
     }
 
+    // ─────────────────────────── SCANNER V2 (bêta) ───────────────────────────
+    // Identification par l'illustration (DINOv2 → ORB → OCR de départage), court-circuite
+    // toute la lecture du numéro ci-dessous. Actif seulement si l'utilisateur a coché la
+    // case ET qu'un pack de référence est chargé pour le set. Voir scan-v2.js.
+    // En cas d'échec (rien d'exploitable), on retombe sur la lecture OCR normale.
+    if(window.SCAN_V2 && SCAN_V2.pretV2()){
+      const rV2 = await gererScanV2(sourceForRead, corners, score, t0).catch(e => { console.warn('V2', e); return null; });
+      if(rV2 === 'traite'){ captureFaite = true; return; }
+      if(rV2 === 'rejet-doublon'){ return; }
+      // sinon : rV2 === null → repli sur la lecture OCR
+    }
+
     // Raccourci visuel : compare la carte redressée aux cartes déjà confirmées cette
     // session (voir sessionCardHashes) AVANT d'envoyer quoi que ce soit au worker OCR.
     // Même algorithme (dHash 9x8, gradient horizontal) que resolveCardByVisualMatch,
@@ -11925,6 +11947,77 @@ function registerSessionCardHash(card, liveHash){
   if(!card?.id || liveHash == null) return;
   if(sessionCardHashes.some(c => c.cardId === card.id)) return;
   sessionCardHashes.push({cardId: card.id, card, hash: liveHash});
+}
+
+// ─────────────────────────── SCANNER V2 : traitement d'une carte redressée ───────────────
+// Appelé depuis attemptRead quand la V2 est active. Retourne :
+//   'traite'        → identifiée, panneau + lot gérés, attemptRead doit s'arrêter
+//   'rejet-doublon' → même carte que la précédente, toujours en place : ne rien faire
+//   null            → rien d'exploitable, attemptRead retombe sur la lecture OCR
+let v2DerniereCle = null;
+async function gererScanV2(sourceForRead, corners, score, t0){
+  const res = await SCAN_V2.identifierV2(sourceForRead);
+  // Rien de solide : catégorie « rebut » ou pas de proposition → repli OCR.
+  if(!res || !res.pick || res.categorie === 'rebut') return null;
+
+  // Anti-doublon minimal : même carte que la dernière ET la carte n'a pas quitté le champ
+  // depuis (le même signal d'absence que la lecture normale).
+  if(res.pick.cle === v2DerniereCle && !cardConfirmedAbsentSinceCapture) return 'rejet-doublon';
+
+  const card = await getCardDetailCached(res.pick.cle);
+  if(!card) return null;   // fiche indisponible → repli OCR
+
+  const confiance = res.categorie === 'sure' ? 'high' : 'uncertain';
+  let liveHash = null;
+  try{ liveHash = hashIllustration(sourceForRead); }catch(e){}
+
+  const cv = document.createElement('canvas');
+  cv.width = sourceForRead.width; cv.height = sourceForRead.height;
+  cv.getContext('2d').drawImage(sourceForRead, 0, 0);
+  const dataUrl = cv.toDataURL('image/jpeg', 0.8);
+  const mySeq = ++liveResultSeq;
+  showLiveResultPending(dataUrl, card.number, '');
+
+  v2DerniereCle = res.pick.cle;
+  lastCaptureCorners = corners; lastCaptureAt = Date.now(); lastCaptureCardId = card.id;
+  lastCaptureNumber = {number: stripLeadingZero(String(card.number)), denominator: String(card.set?.cardCount?.official || '')};
+  lastCaptureHash = liveHash;
+  cardConfirmedAbsentSinceCapture = false;
+
+  cv.toBlob(b => {
+    const item = pushToQueue(dataUrl, b, 'caméra-v2');
+    item._analysis = {
+      status: confiance === 'high' ? 'ok' : 'uncertain',
+      card, note: `V2 · illustration · ${res.fiabilite}%${res.ocrLance ? ' · OCR ' + (res.ocrOk ? '✓' : '?') : ''}`,
+      rawText: res.ocrTxt || '', number: card.number, denominator: ''
+    };
+    showLiveResultDone(card, confiance === 'high' ? 'high' : 'low');
+    ajouterAuTotalSession(card);
+    if(liveHash != null){ registerSessionCardHash(card, liveHash); enregistrerHashPhoto(card, liveHash, confiance); }
+    if(validationAuto && confiance === 'high'){
+      const rr = validerAutomatiquement(card, item, 'v2');
+      setAimHint(rr.fusionnee ? `🔁 ${card.name} — 2e exemplaire (V2 ${res.fiabilite}%)`
+                              : `✅ ${card.name} — V2 ${res.fiabilite}%`);
+    }else{
+      setAimHint(`🤔 ${card.name} — V2 ${res.fiabilite}% · à vérifier`);
+    }
+    SCAN_V2.relayV2({
+      fichier: 'live', cardId: res.pick.cle, attendu: res.pick.cle, predit: res.pick.cle,
+      preditNum: res.pick.numero, juste: true, verifie: false,
+      fiabilite: res.fiabilite, categorie: res.categorie, conf: confiance,
+      inliers: res.inliers, marge: res.marge, ocrLance: res.ocrLance, ocrOk: res.ocrOk,
+      ms: res.ms, T: res.T, moteur: res.moteur, sets: SCAN_V2.setV2(), score: +Number(score).toFixed(2)
+    });
+  }, 'image/png');
+
+  validerObjectifCourant();
+  capturedThisSession++;
+  flashScreen(dataUrl);
+  if(navigator.vibrate) navigator.vibrate(40);
+  setOverlayTarget('ok', corners);
+  diagPush('try', {ok:true, hint:'capture-v2', score, ocrMs:Math.round(performance.now()-t0),
+                   fiab:res.fiabilite, cat:res.categorie, inliers:res.inliers, v2ms:res.ms});
+  return 'traite';
 }
 
 async function resolveLiveResult(mySeq, item, dataUrl, number, denominator, ocrText, nameBmp, liveHash){
@@ -20108,6 +20201,51 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
   /* Échec silencieux ici : startAimLoop retentera au démarrage de la caméra et
      affichera l'erreur à ce moment-là si le worker est vraiment indisponible. */
 });
+</script>
+
+<!-- ─────────────────────── SCANNER V2 (bêta) ───────────────────────
+     Module séparé : ses propres Workers (DINOv2, ORB, OCR), l'index de référence
+     téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
+     pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
+<script type="module">
+import * as V2 from './scan-v2.js?v=2';
+window.SCAN_V2 = V2;
+
+const $$ = id => document.getElementById(id);
+const chk = $$('chk-scan-v2'), etat = $$('v2-etat'), sel = $$('capture-set');
+if(chk){
+  const dire = (txt, err) => { etat.style.display = txt ? '' : 'none'; etat.textContent = txt || '';
+    etat.style.color = err ? 'var(--red, #e5484d)' : ''; };
+
+  let enCours = false;
+  async function activer(){
+    if(!chk.checked){ dire(''); return; }
+    const setId = sel && sel.value;
+    if(!setId){ dire('Choisis un set ci-dessus pour activer la V2.', true); chk.checked = false; sauver(); return; }
+    if(V2.pretV2() && V2.setV2() === setId){ dire(`V2 active — ${setId}.`); return; }
+    if(enCours) return;
+    enCours = true;
+    try{
+      await V2.initV2(setId, { onProgress: (p, m) => dire(m || `V2 : ${Math.round(p*100)} %`) });
+    }catch(e){ dire('V2 indisponible : ' + e.message, true); chk.checked = false; sauver(); }
+    enCours = false;
+  }
+  const sauver = () => { try{ localStorage.setItem('pokescan_v2', chk.checked ? '1' : '0'); }catch(e){} };
+
+  chk.addEventListener('change', () => { sauver(); activer(); });
+  if(sel) sel.addEventListener('change', () => { if(chk.checked) activer(); });
+
+  try{ if(localStorage.getItem('pokescan_v2') === '1') chk.checked = true; }catch(e){}
+  if(new URLSearchParams(location.search).has('v2')) chk.checked = true;
+  // La liste des sets est peuplée de façon asynchrone : on tente l'activation après un délai
+  // puis on réessaie quand la valeur du <select> devient disponible.
+  if(chk.checked){
+    let essais = 0;
+    const t = setInterval(() => {
+      if(++essais > 20 || (sel && sel.value)){ clearInterval(t); activer(); }
+    }, 500);
+  }
+}
 </script>
 </body>
 </html>
