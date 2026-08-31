@@ -10638,11 +10638,12 @@ function scoreCadrage(video){
 function echantillonnerQualite(){
   const video = $('video');
   if(!video || !video.videoWidth) return;
-  // Silence pendant une lecture : le redressement et l'envoi au worker travaillent sur le
-  // même fil, et les jauges n'apprennent rien d'utile durant ces quelques centaines de
-  // millisecondes — la décision de déclencher est déjà prise. Les geler là est gratuit
-  // pour l'utilisateur et rend le fil au travail qui, lui, est sur le chemin critique.
-  if(readInFlight) return;
+  // Silence pendant une lecture OCR : le redressement et recognize() travaillent sur le
+  // fil principal pendant ~800 ms, et les jauges n'apprennent rien d'utile là. En V2 en
+  // revanche l'identification vit dans les Workers (DINOv2/ORB) et dure 1-3 s : figer les
+  // jauges aussi longtemps donne une caméra qui a l'air morte. On les garde vivantes.
+  const identifV2 = window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2();
+  if(readInFlight && !identifV2) return;
 
   if(!toileQualite){
     toileQualite = document.createElement('canvas');
@@ -11101,14 +11102,19 @@ async function detectLoop(){
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
 
-        // ── Scanner V2 : déclenchement propre. ORB tolère un flou léger, donc pas besoin
-        //    d'attendre que les jauges soient vertes (c'est ça, le « tenir la carte 2 s »).
-        //    En échange, on EXIGE que la carte soit là et STABLE : score franc + deux
-        //    détections consécutives quasi immobiles. Ça élimine aussi les déclenchements
-        //    sur rien (un faux positif du détecteur ne tient jamais deux images en place).
+        // ── Scanner V2 : déclenchement propre. ORB tolère un flou léger, donc AUCUNE
+        //    dépendance aux jauges (netteté/lumière/cadrage) — c'est ça, le « tenir la
+        //    carte 2 s ». On EXIGE juste : carte présente (score franc) et immobile.
         if(window.SCAN_V2 && SCAN_V2.actifV2()){
           const stable = prevCorners && maxCornerShift(prevCorners, d.corners) < MAX_CORNER_SHIFT * 1.6;
-          if(d.score >= 0.5 && stable){
+          // Carte déjà lue et toujours posée au même endroit : ne PAS relancer l'identif
+          // (elle tourne 1-3 s et ne ferait que reconfirmer la même carte, en gelant tout
+          // pendant ce temps). On réarme quand elle part, ou si elle bouge nettement.
+          const dejaLue = !cardConfirmedAbsentSinceCapture && lastCaptureCorners
+            && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * 3;
+          if(dejaLue){
+            setAimHint('✓ lue — retire la carte', conseilActif);
+          }else if(d.score >= 0.5 && stable){
             blocageDepuis = 0;
             lastReadAttemptAt = now;
             attemptRead(d.corners, d.score);
@@ -20262,7 +20268,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
      pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=11';
+import * as V2 from './scan-v2.js?v=12';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
