@@ -100,6 +100,35 @@
 </div>
 
 <div class="panneau">
+  <h2>Téléphone — scanner de vraies cartes</h2>
+  <p class="sub" style="margin:0 0 10px;">
+    La même chaîne que le corpus, mais alimentée par la caméra. Chaque carte lue attend ton
+    verdict : c'est la seule façon d'obtenir un taux de justesse réel — les journaux de
+    l'application comparent la prédiction à elle-même et annoncent donc toujours 100 %.
+    Tout est conservé sur l'appareil (IndexedDB) et survit à un rechargement.
+  </p>
+  <div class="rang" style="margin-bottom:10px;">
+    <button id="c-start" disabled>📷 Ouvrir la caméra</button>
+    <button class="fantome" id="c-stop" disabled>Fermer</button>
+    <button class="fantome" id="c-shoot" disabled>Déclencher</button>
+    <label class="caseline"><input type="checkbox" id="c-auto" checked> Capture automatique</label>
+    <button class="fantome" id="c-etalon">⏱ Étalon de vitesse</button>
+    <button class="fantome" id="c-envoyer">☁ Envoyer les scans</button>
+    <button class="fantome" id="c-export">⭳ Exporter (JSON)</button>
+    <button class="fantome" id="c-vider">Vider l'historique</button>
+  </div>
+  <div id="c-appareil" class="sub" style="margin:0 0 10px;"></div>
+  <div id="c-zone" style="display:none;">
+    <div style="position:relative; max-width:460px;">
+      <video id="c-video" playsinline muted style="width:100%; border-radius:8px; background:#000; display:block;"></video>
+      <canvas id="c-overlay" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;"></canvas>
+    </div>
+    <div id="c-indice" class="sub" style="margin-top:8px;">—</div>
+  </div>
+  <div id="c-verdict" style="display:none; margin-top:12px; border-top:1px solid var(--bord); padding-top:12px;"></div>
+</div>
+
+<div class="panneau">
   <h2>Résultat</h2>
   <div class="chiffres" id="chiffres"><span class="sub">Aucune passe pour l'instant.</span></div>
   <div id="verdict" class="sub" style="margin:6px 0 0;"></div>
@@ -122,24 +151,44 @@
 </div>
 
 <div class="panneau">
+  <h2>Historique caméra — conservé sur l'appareil</h2>
+  <div id="c-resume" class="sub">Aucun scan caméra.</div>
+  <div class="defilant"><table id="t-camera">
+    <thead><tr><th>Heure</th><th>Trouvé</th><th>Verdict</th><th>Cat.</th><th>Fiab.</th><th>Inl.</th><th>ms</th><th>emb</th><th>refs</th><th>orb</th><th>Batt.</th><th>Étalon</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</div>
+
+<div class="panneau">
   <h2>Journal</h2>
   <pre id="journal">—</pre>
 </div>
 
 <div class="panneau">
   <h2>Pilotage depuis la console</h2>
-  <pre>await BANC.init()                      // charge l'index, renvoie le moteur retenu
+  <pre>// ── corpus (photos-test/)
+await BANC.init()                      // charge l'index, renvoie le moteur retenu
 BANC.config({SHORT:30})                // réglages de scan-v2.js (reglagesV2)
 BANC.degrader({flou:2})                // dégrade l'image de requête avant identification
 await BANC.froid({disque:true})        // vide les caches ORB — mesurer un démarrage à froid
 await BANC.lancer(8)                   // passe 8 photos (par paquets : évite les délais d'attente)
 BANC.resultats()                       // résumé + détail de la passe en cours
 BANC.cloturer('worker off')            // fige la passe et l'ajoute au tableau comparatif
-BANC.passes()                          // toutes les passes closes</pre>
+BANC.passes()                          // toutes les passes closes
+
+// ── téléphone (caméra)
+await BANC.camera()                    // ouvre la caméra et lance la détection
+await BANC.capturer()                  // déclenche à la main
+await BANC.etalon()                    // vitesse de l'appareil + batterie
+await BANC.appareil()                  // état courant, sans remesurer
+BANC.scans()                           // tous les scans caméra conservés
+await BANC.envoyer()                   // remonte les scans vers /api/scan-log
+BANC.exporter()                        // fichier JSON (photos comprises)
+await BANC.viderScans()                // efface l'historique de cet appareil</pre>
 </div>
 
 <script type="module">
-import * as V2 from './scan-v2.js?v=15';
+import * as V2 from './scan-v2.js?v=16';
 window.SCAN_V2 = V2;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,7 +368,7 @@ async function init(){
                  diag: V2.diagV2(), msInit: Math.round(performance.now() - t0) };
   journal('index prêt — ' + info.moteur + ', ' + corpus.length + ' photos, ' + info.msInit + ' ms');
   etat('Index prêt (' + info.moteur + '). ' + corpus.length + ' photos au corpus.');
-  for(const b of ['b-run','b-froid','b-froid-disque','b-reset']) $(b).disabled = false;
+  for(const b of ['b-run','b-froid','b-froid-disque','b-reset','c-start']) $(b).disabled = false;
   return info;
 }
 
@@ -430,9 +479,311 @@ async function froid(opts){
   return r;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════
+// MODE CAMÉRA — scanner de vraies cartes, avec verdict
+//
+// Le corpus dit si la chaîne sait reconnaître ; il ne dit rien de ce qui arrive quand
+// c'est une main, une lumière de salon et une carte qu'on pose. Ce mode-là mesure ça, et
+// surtout il demande le verdict : les journaux de l'application comparent `predit` à
+// `attendu` alors que les deux valent la prédiction, donc annoncent 100 % quoi qu'il
+// arrive. Une seule main humaine peut lever cette ambiguïté, et c'est ici qu'on la lui
+// demande, carte par carte, pendant qu'elle est encore sous les yeux.
+// ═════════════════════════════════════════════════════════════════════════════
+const IDB_BANC = 'banc_v2', IDB_SCANS = 'scans';
+let dbBanc = null;
+function banque(){
+  if(dbBanc) return dbBanc;
+  dbBanc = new Promise((res, rej)=>{
+    const r = indexedDB.open(IDB_BANC, 1);
+    r.onupgradeneeded = ()=>{ if(!r.result.objectStoreNames.contains(IDB_SCANS)) r.result.createObjectStore(IDB_SCANS, {keyPath:'id'}); };
+    r.onsuccess = ()=>res(r.result); r.onerror = ()=>rej(r.error);
+  });
+  return dbBanc;
+}
+async function banqueEcrire(o){
+  try{ const db = await banque(); await new Promise(r=>{ const t = db.transaction(IDB_SCANS,'readwrite').objectStore(IDB_SCANS).put(o); t.onsuccess = r; t.onerror = r; }); }catch(e){}
+}
+async function banqueTout(){
+  try{ const db = await banque(); return await new Promise(r=>{ const q = db.transaction(IDB_SCANS).objectStore(IDB_SCANS).getAll(); q.onsuccess = ()=>r(q.result || []); q.onerror = ()=>r([]); }); }catch(e){ return []; }
+}
+async function banqueVider(){
+  try{ const db = await banque(); await new Promise(r=>{ const t = db.transaction(IDB_SCANS,'readwrite').objectStore(IDB_SCANS).clear(); t.onsuccess = r; t.onerror = r; }); }catch(e){}
+}
+
+let scansCam = [], etalonCourant = null, batterie = null;
+
+// État de l'appareil. Ajouté après une session entière perdue à 6 % de batterie : tout
+// avait triplé (emb, refs, orb) et rien dans les journaux ne permettait de distinguer un
+// code lent d'un téléphone bridé. Désormais chaque scan porte la charge et l'étalon.
+async function relireBatterie(){
+  try{
+    if(!navigator.getBattery) return null;
+    const b = await navigator.getBattery();
+    batterie = { pct: Math.round(b.level * 100), charge: b.charging };
+    return batterie;
+  }catch(e){ return null; }
+}
+function decrireAppareil(){
+  const b = batterie ? (batterie.pct + ' %' + (batterie.charge ? ' (en charge)' : '')) : 'inconnue';
+  const e = etalonCourant ? (etalonCourant.median + ' ms · ' + etalonCourant.moteur) : 'non mesuré';
+  $('c-appareil').textContent = 'Batterie : ' + b + ' · Étalon : ' + e
+    + (batterie && !batterie.charge && batterie.pct <= 20
+       ? ' — ⚠ sous 20 % Android bride le processeur, les temps ne veulent plus rien dire' : '');
+}
+
+async function etalon(){
+  etat('Mesure de la vitesse de l\'appareil…');
+  etalonCourant = await V2.etalonV2(3);
+  await relireBatterie();
+  decrireAppareil();
+  journal('étalon ' + JSON.stringify(etalonCourant) + (batterie ? ' · batterie ' + batterie.pct + '%' : ''));
+  etat('Étalon : ' + etalonCourant.median + ' ms (' + etalonCourant.moteur + ').');
+  return { etalon: etalonCourant, batterie };
+}
+
+// ── Boucle caméra. Elle reprend le déclenchement de la V2 dans l'application : score
+//    franc, deux images immobiles, et verrou jusqu'au retrait de la carte. Le banc doit
+//    mesurer CE déclenchement-là, pas un plus commode.
+let flux = null, boucle = false, dernierCoins = null, streak = 0, absence = 0, retiree = true, occupeCam = false;
+
+async function ouvrirCamera(){
+  if(flux) return;
+  try{
+    flux = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: {ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false
+    });
+  }catch(e){ etat('Caméra refusée : ' + e.message); return; }
+  const v = $('c-video');
+  v.srcObject = flux; await v.play().catch(()=>{});
+  $('c-zone').style.display = '';
+  $('c-stop').disabled = false; $('c-shoot').disabled = false; $('c-start').disabled = true;
+  await relireBatterie(); if(!etalonCourant) await etalon(); else decrireAppareil();
+  boucle = true; tourner();
+  journal('caméra ouverte — ' + v.videoWidth + '×' + v.videoHeight);
+}
+function fermerCamera(){
+  boucle = false;
+  if(flux){ flux.getTracks().forEach(t=>t.stop()); flux = null; }
+  $('c-zone').style.display = 'none';
+  $('c-stop').disabled = true; $('c-shoot').disabled = true; $('c-start').disabled = false;
+}
+
+function dessinerCadre(coins, couleur){
+  const cv = $('c-overlay'), v = $('c-video');
+  if(cv.width !== v.clientWidth || cv.height !== v.clientHeight){ cv.width = v.clientWidth; cv.height = v.clientHeight; }
+  const g = cv.getContext('2d');
+  g.clearRect(0,0,cv.width,cv.height);
+  if(!coins) return;
+  g.strokeStyle = couleur; g.lineWidth = 3; g.beginPath();
+  const p = (c)=>[c[0]*cv.width, c[1]*cv.height];
+  const [a,b,c2,d] = [p(coins.tl),p(coins.tr),p(coins.br),p(coins.bl)];
+  g.moveTo(...a); g.lineTo(...b); g.lineTo(...c2); g.lineTo(...d); g.closePath(); g.stroke();
+}
+
+async function tourner(){
+  while(boucle){
+    const v = $('c-video');
+    if(!v.videoWidth || occupeCam){ await new Promise(r=>setTimeout(r,120)); continue; }
+    try{
+      const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
+      const bmp = await createImageBitmap(v, {
+        resizeWidth: Math.round(v.videoWidth*e0), resizeHeight: Math.round(v.videoHeight*e0), resizeQuality:'medium'
+      });
+      const d = await workerDetection().detecter(bmp);
+      const bon = d && d.ok && d.corners && d.score != null && d.score >= MIN_SCORE;
+      if(!bon){
+        dessinerCadre(null);
+        streak = 0;
+        if(++absence >= 2){ retiree = true; }
+        $('c-indice').textContent = 'Vise la carte';
+        dernierCoins = null;
+      }else{
+        absence = 0;
+        const bouge = dernierCoins ? ecartCoins(dernierCoins, d.corners) : Infinity;
+        dernierCoins = d.corners;
+        if(bouge < 0.049) streak++; else streak = 0;
+        dessinerCadre(d.corners, streak >= 2 ? '#3fb950' : '#d29922');
+        if($('c-auto').checked && retiree && d.score >= 0.5 && streak >= 2){
+          streak = 0;
+          await capturer('auto');
+        }else{
+          $('c-indice').textContent = retiree ? (streak >= 2 ? 'Prêt' : 'Stabilise…') : '✓ lue — retire la carte';
+        }
+      }
+    }catch(e){ /* une image ratée ne casse pas la boucle */ }
+    await new Promise(r=>setTimeout(r, 60));
+  }
+}
+function ecartCoins(a, b){
+  let m = 0;
+  for(const k of ['tl','tr','br','bl']) m = Math.max(m, Math.hypot(a[k][0]-b[k][0], a[k][1]-b[k][1]));
+  return m;
+}
+
+async function capturer(mode){
+  if(occupeCam) return;
+  occupeCam = true;
+  $('c-indice').textContent = '🔎 identification…';
+  try{
+    const v = $('c-video');
+    const cv = await redresserVideo(v);
+    if(!cv){ $('c-indice').textContent = 'Carte non cadrée — recommence'; return; }
+    const res = await V2.identifierV2(cv);
+    await relireBatterie();
+    const scan = {
+      id: Date.now() + '-' + Math.random().toString(36).slice(2,7),
+      at: new Date().toISOString(), source:'camera', mode,
+      trouve: res.pick && res.pick.cle, nom: res.pick && res.pick.name,
+      categorie: res.categorie, fiabilite: res.fiabilite, inliers: res.inliers, marge: res.marge,
+      ms: res.ms, T: res.T, ocr: res.ocrLance, ocrOk: res.ocrOk, moteur: res.moteur,
+      packTelecharge: res.packTelecharge,
+      alts: (res.alts || []).slice(0, 6),
+      photo: cv.toDataURL('image/jpeg', 0.55),
+      batterie: batterie ? {...batterie} : null,
+      etalon: etalonCourant ? etalonCourant.median : null,
+      config: nomConfig(),
+      juste: null, verifie: false, corrige: null,   // ← renseignés par le verdict
+    };
+    scansCam.push(scan);
+    await banqueEcrire(scan);
+    retiree = false;
+    montrerVerdict(scan);
+    rendreCamera();
+  }catch(e){ journal('capture : ' + e.message); }
+  finally{ occupeCam = false; }
+}
+
+async function redresserVideo(v){
+  const long = Math.max(v.videoWidth, v.videoHeight);
+  const e0 = Math.min(1, DETECT_LONG_EDGE / long);
+  const bmp = await createImageBitmap(v, {resizeWidth:Math.round(v.videoWidth*e0), resizeHeight:Math.round(v.videoHeight*e0), resizeQuality:'medium'});
+  const d = await workerDetection().detecter(bmp);
+  if(!d || !d.ok || !d.corners || d.score == null || d.score < MIN_SCORE) return null;
+
+  const sc = await scanic();
+  const ech = Math.min(1, EXTRACT_LONG_EDGE / long);
+  const vw = Math.round(v.videoWidth*ech), vh = Math.round(v.videoHeight*ech);
+  const frame = document.createElement('canvas');
+  frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(v, 0, 0, vw, vh);
+  const c = d.corners;
+  const cx = (c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4, cy = (c.tl[1]+c.tr[1]+c.br[1]+c.bl[1])/4;
+  const M = 0.04, p = (q)=>({x:(cx+(q[0]-cx)*(1+M))*vw, y:(cy+(q[1]-cy)*(1+M))*vh});
+  const r = await sc.extractDocument(frame, {topLeft:p(c.tl), topRight:p(c.tr), bottomRight:p(c.br), bottomLeft:p(c.bl)}, {output:'canvas'});
+  if(!r || !r.success || !r.output) return null;
+  const out = r.output, ratio = out.height/out.width;
+  if(Math.abs(ratio-CARD_RATIO)/CARD_RATIO <= 0.25) return out;
+  if(Math.abs(ratio-1/CARD_RATIO)*CARD_RATIO > 0.25) return null;
+  const rot = document.createElement('canvas');
+  rot.width = out.height; rot.height = out.width;
+  const g = rot.getContext('2d');
+  g.translate(rot.width/2, rot.height/2); g.rotate(-Math.PI/2);
+  g.drawImage(out, -out.width/2, -out.height/2);
+  return rot;
+}
+
+// ── Verdict. Il reste à l'écran tant qu'on n'a pas tranché, mais ne bloque PAS la caméra :
+//    on peut enchaîner et revenir corriger — sinon on ne mesure plus la cadence réelle.
+function montrerVerdict(scan){
+  const z = $('c-verdict');
+  z.style.display = '';
+  const alts = (scan.alts || []).map((a, i)=>
+    '<button class="fantome" data-alt="' + i + '" style="padding:4px 8px; font-size:12px;">'
+    + a.localId + ' · ' + (a.name || '') + ' (' + a.inliers + ')</button>').join(' ');
+  z.innerHTML =
+    '<div style="display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap;">'
+    + '<img src="' + scan.photo + '" style="width:88px; border-radius:6px;">'
+    + '<div style="flex:1; min-width:220px;">'
+    + '<div style="font-weight:600;">' + (scan.nom || '—') + ' <span class="sub">' + (scan.trouve || '') + '</span></div>'
+    + '<div class="sub">' + scan.categorie + ' · ' + scan.fiabilite + ' % · ' + scan.inliers + ' inliers · ' + scan.ms + ' ms</div>'
+    + '<div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">'
+    + '<button data-v="oui">✓ C\'est la bonne</button>'
+    + '<button class="fantome" data-v="non">✕ Fausse</button>'
+    + '<button class="fantome" data-v="passer">Passer</button>'
+    + '</div>'
+    + (alts ? '<div class="sub" style="margin-top:8px;">Ou la vraie carte : ' + alts + '</div>' : '')
+    + '</div></div>';
+
+  const clore = async (juste, corrige)=>{
+    scan.juste = juste; scan.verifie = juste !== null; scan.corrige = corrige || null;
+    await banqueEcrire(scan);
+    z.style.display = 'none';
+    rendreCamera();
+  };
+  z.querySelectorAll('[data-v]').forEach(b=> b.onclick = ()=>{
+    const v = b.dataset.v;
+    clore(v === 'oui' ? true : (v === 'non' ? false : null));
+  });
+  z.querySelectorAll('[data-alt]').forEach(b=> b.onclick = ()=>{
+    const a = scan.alts[+b.dataset.alt];
+    clore(false, a && a.cle);
+  });
+}
+
+function rendreCamera(){
+  const verifies = scansCam.filter(s=>s.verifie);
+  const justes = verifies.filter(s=>s.juste).length;
+  const sures = verifies.filter(s=>s.categorie === 'sure');
+  const rebuts = scansCam.filter(s=>s.categorie === 'rebut').length;
+  $('c-resume').textContent = scansCam.length
+    ? scansCam.length + ' scans · ' + verifies.length + ' vérifiés · ' + justes + '/' + verifies.length + ' justes'
+      + (sures.length ? ' · sûres justes ' + sures.filter(s=>s.juste).length + '/' + sures.length : '')
+      + ' · rebuts ' + rebuts + ' (' + Math.round(100*rebuts/scansCam.length) + ' %)'
+      + ' · ms médian ' + (med(scansCam.map(s=>s.ms)) ?? '—')
+    : 'Aucun scan caméra.';
+  $('t-camera').tBodies[0].innerHTML = scansCam.slice().reverse().map(s=>{
+    const v = s.verifie ? (s.juste ? '<span class="ok">✓</span>' : '<span class="ko">✕ ' + (s.corrige || '') + '</span>') : '<span class="sub">?</span>';
+    const cls = s.categorie === 'sure' ? 'ok' : (s.categorie === 'rebut' ? 'ko' : 'tiede');
+    return '<tr><td>' + s.at.slice(11,19) + '</td><td>' + (s.trouve || '—') + '</td><td>' + v
+      + '</td><td class="' + cls + '">' + s.categorie + '</td><td>' + s.fiabilite + '</td><td>' + s.inliers
+      + '</td><td>' + s.ms + '</td><td>' + (s.T.emb ?? '') + '</td><td>' + (s.T.refs ?? '') + '</td><td>' + (s.T.orb ?? '')
+      + '</td><td>' + (s.batterie ? s.batterie.pct + '%' : '—') + '</td><td>' + (s.etalon ?? '—') + '</td></tr>';
+  }).join('');
+}
+
+// ── Remontée vers /api/scan-log, pour que l'analyse se fasse depuis un poste. La photo
+//    n'est PAS envoyée (elle pèse, et le relais est un gist) : elle reste sur l'appareil,
+//    consultable dans le tableau et dans l'export.
+async function envoyer(){
+  const aEnvoyer = scansCam.filter(s=>!s.envoye);
+  if(!aEnvoyer.length){ etat('Rien de neuf à envoyer.'); return {envoyes:0}; }
+  const entries = aEnvoyer.map(s=>({
+    fichier:'banc', outil:'banc-v2', source:s.source, mode:s.mode,
+    predit:s.trouve, attendu:s.corrige || (s.juste ? s.trouve : null),
+    juste:s.juste, verifie:s.verifie,
+    categorie:s.categorie, conf:s.categorie === 'sure' ? 'high' : (s.categorie === 'rebut' ? 'rebut' : 'uncertain'),
+    fiabilite:s.fiabilite, inliers:s.inliers, marge:s.marge,
+    ocrLance:s.ocr, ocrOk:s.ocrOk, packTelecharge:s.packTelecharge,
+    ms:s.ms, T:s.T, moteur:s.moteur, batterie:s.batterie, etalon:s.etalon, config:s.config, tAt:s.at,
+  }));
+  try{
+    const r = await fetch('/api/scan-log', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({device:'banc', outil:'banc-v2', entries})});
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    for(const s of aEnvoyer){ s.envoye = true; await banqueEcrire(s); }
+    etat(aEnvoyer.length + ' scans envoyés.');
+    journal('envoyés : ' + aEnvoyer.length);
+    return {envoyes:aEnvoyer.length};
+  }catch(e){ etat('Envoi impossible : ' + e.message); return {erreur:String(e.message)}; }
+}
+
+function exporter(){
+  const blob = new Blob([JSON.stringify({exporte:new Date().toISOString(), scans:scansCam, passes}, null, 1)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'banc-v2-' + new Date().toISOString().slice(0,19).replace(/[:T]/g,'-') + '.json';
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+}
+
 // ── API console. C'est par elle que le banc se pilote pour de vrai : par paquets, pour
 //    qu'aucun appel ne dépasse le délai d'attente d'un outil, et sans dépendre des clics.
 window.BANC = {
+  camera: ouvrirCamera, fermer: fermerCamera, capturer: ()=>capturer('manuel'),
+  etalon, envoyer, exporter,
+  scans: ()=>scansCam,
+  viderScans: async ()=>{ await banqueVider(); scansCam = []; rendreCamera(); return 'vidé'; },
+  appareil: async ()=>({ batterie: await relireBatterie(), etalon: etalonCourant }),
   init, lancer, froid, cloturer, resume, passes: ()=>passes,
   reinit, resultats: ()=>({ resume: resume(), detail: resultats }),
   config: (patch)=>{
@@ -465,6 +816,26 @@ $('b-stop').onclick = ()=>{ arret = true; };
 $('b-reset').onclick = reinit;
 $('b-froid').onclick = ()=> froid({});
 $('b-froid-disque').onclick = ()=> froid({disque:true});
+
+$('c-start').onclick = ouvrirCamera;
+$('c-stop').onclick = fermerCamera;
+$('c-shoot').onclick = ()=> capturer('manuel');
+$('c-etalon').onclick = ()=> etalon();
+$('c-envoyer').onclick = ()=> envoyer();
+$('c-export').onclick = exporter;
+$('c-vider').onclick = async ()=>{
+  if(!confirm('Effacer tout l\'historique caméra de cet appareil ?')) return;
+  await banqueVider(); scansCam = []; rendreCamera();
+};
+
+// L'historique caméra revient au chargement : une session de test se fait debout, carte
+// en main, et un rechargement accidentel ne doit pas effacer une demi-heure de verdicts.
+(async ()=>{
+  scansCam = (await banqueTout()).sort((a,b)=> a.at < b.at ? -1 : 1);
+  rendreCamera();
+  await relireBatterie(); decrireAppareil();
+  if(scansCam.length) journal('historique repris : ' + scansCam.length + ' scans caméra');
+})();
 </script>
 </body>
 </html>

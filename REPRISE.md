@@ -210,6 +210,30 @@ l'autre.
 dans `net` — un `net` à 0 veut dire « Worker désactivé », pas « aucun réseau ». Regarder
 `viaWorker`.
 
+### Mode caméra — scanner de vraies cartes depuis le téléphone
+
+Ouvrir `https://poke-scan-drab.vercel.app/bench-v2.html` sur le téléphone (HTTPS exigé par
+la caméra), « Charger l'index », puis « Ouvrir la caméra ». Même chaîne que le corpus,
+même déclenchement que l'application (score franc, 2 images immobiles, verrou jusqu'au
+retrait).
+
+**Chaque carte lue demande un verdict** — c'est le point. Les journaux de l'application
+comparent `predit` à `attendu` alors que les deux valent la prédiction : ils annoncent donc
+100 % quoi qu'il arrive. Ici, « ✓ C'est la bonne » / « ✕ Fausse » / choisir la vraie carte
+parmi les alternatives. Le verdict ne bloque pas la caméra : on peut enchaîner et revenir.
+
+- **Tout est conservé sur l'appareil** (IndexedDB `banc_v2`) et **survit à un
+  rechargement** — une session se fait debout, carte en main, un rechargement accidentel
+  ne doit pas effacer une demi-heure de verdicts.
+- **Chaque scan porte l'état de l'appareil** : charge de la batterie et étalon de vitesse
+  (`etalonV2` — même embedding sur la même image, ~300 ms sur un poste correct). Ajouté
+  après une session entière perdue à 6 % de batterie, où emb/refs/orb avaient tous triplé
+  sans qu'on puisse distinguer un code lent d'un téléphone bridé. Le banc prévient
+  désormais sous 20 %.
+- **`☁ Envoyer les scans`** remonte tout vers `/api/scan-log` (`outil:'banc-v2'`, ~580
+  octets par scan, **sans les photos**) — lisible ensuite depuis un poste, avec un taux de
+  justesse enfin réel. `⭳ Exporter` donne un JSON complet, photos comprises.
+
 ### Ce que le banc a déjà répondu (2026-08-31)
 
 - **Worker Cloudflare** : `refs` 212 ms (203 réseau + 9 cpu) contre 266 ms sans lui, à

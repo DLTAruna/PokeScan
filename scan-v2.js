@@ -470,6 +470,31 @@ export function setV2() { return setsCharges(); }
 export function trancheV2() { return manifest?.slice || null; }
 export function surEtatV2(cb) { onEtat = typeof cb === 'function' ? cb : (() => {}); }
 
+// Étalon de vitesse : le MÊME embedding sur la MÊME image, mesuré à la demande. Une
+// session de test a été perdue faute de pouvoir répondre à « le téléphone est-il bridé ? »
+// — tout avait triplé à la fois (emb, refs, orb) sans qu'on sache accuser le code ou
+// l'appareil. C'était l'économie d'énergie à 6 % de batterie. Cet étalon tranche en deux
+// secondes, et se relance en cours de session pour voir la chauffe arriver.
+export async function etalonV2(n = 3) {
+  const c = document.createElement('canvas');
+  c.width = 224; c.height = 224;
+  const g = c.getContext('2d');
+  // Motif déterministe : deux appels doivent mesurer l'appareil, jamais l'image.
+  for (let y = 0; y < 224; y += 16) for (let x = 0; x < 224; x += 16) {
+    g.fillStyle = `rgb(${(x * 7) % 256},${(y * 11) % 256},${((x + y) * 5) % 256})`;
+    g.fillRect(x, y, 16, 16);
+  }
+  const url = c.toDataURL('image/jpeg', 0.9);
+  const t = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = performance.now();
+    try { await embed(url); } catch (e) { return { erreur: String(e && e.message || e) }; }
+    t.push(Math.round(performance.now() - t0));
+  }
+  const tri = t.slice().sort((a, b) => a - b);
+  return { median: tri[Math.floor(tri.length / 2)], mesures: t, moteur: moteurEmb };
+}
+
 // Initialise V2 : télécharge (une fois) l'index d'empreintes global, démarre les moteurs.
 // Aucun set à préciser — l'index couvre toute la tranche.
 export async function initV2(opts = {}) {
