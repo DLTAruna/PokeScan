@@ -83,9 +83,13 @@
     <div>
       <label>Redimensionnement des références</label>
       <select id="cfg-res">
-        <option value="low">low.webp (rapide)</option>
-        <option value="high" selected>high.webp (fidèle, plus lent)</option>
+        <option value="low" selected>low.webp (rapide)</option>
+        <option value="high">high.webp (fidèle, plus lent)</option>
       </select>
+    </div>
+    <div>
+      <label>Sets distracteurs (ids TCGdex, séparés par virgule)</label>
+      <input type="text" id="cfg-distracteurs" placeholder="ex : sv01, sv02, swsh12 — ajoutés au pool, jamais la bonne réponse">
     </div>
   </div>
   <div class="checks">
@@ -93,7 +97,7 @@
     <label><input type="checkbox" id="m-dhash" checked> B · dHash (référence plancher)</label>
     <label><input type="checkbox" id="m-emb" checked> B · embedding CNN</label>
     <label><input type="checkbox" id="m-orb" checked> B · ORB + RANSAC (OpenCV.js)</label>
-    <label><input type="checkbox" id="m-fusion" checked> Fusion (visuel top-5 → OCR départage)</label>
+    <label><input type="checkbox" id="m-fusion" checked> Fusion (embedding top-15 → ORB reclasse → OCR départage)</label>
   </div>
   <div style="margin-top:12px; display:flex; gap:9px; flex-wrap:wrap;">
     <button id="btn-run">▶ Lancer le banc</button>
@@ -466,8 +470,43 @@ function demarrerOrbWorker(){
       return { des, kp: pts };
     }
 
+    // Un appariement query↔référence : nombre d'inliers d'une homographie RANSAC sur les
+    // correspondances retenues par le ratio de Lowe. C'est le score de similarité.
+    function apparieUne(bf, qdes, qkp, r){
+      let score = 0, good = 0;
+      if(qdes.rows >= 8 && r.des.rows >= 8){
+        const knn = new cv.DMatchVectorVector();
+        try{
+          bf.knnMatch(qdes, r.des, knn, 2);
+          const src = [], dst = [];
+          for(let i=0;i<knn.size();i++){
+            const pair = knn.get(i);
+            if(pair.size() < 2) continue;
+            const m0 = pair.get(0), m1 = pair.get(1);
+            if(m0.distance < 0.75 * m1.distance){
+              good++;
+              src.push(qkp[m0.queryIdx].x, qkp[m0.queryIdx].y);
+              dst.push(r.kp[m0.trainIdx].x, r.kp[m0.trainIdx].y);
+            }
+          }
+          if(good >= 8){
+            const mSrc = cv.matFromArray(good, 1, cv.CV_32FC2, src);
+            const mDst = cv.matFromArray(good, 1, cv.CV_32FC2, dst);
+            const mask = new cv.Mat();
+            const H = cv.findHomography(mSrc, mDst, cv.RANSAC, 5, mask);
+            let inliers = 0;
+            for(let i=0;i<mask.rows;i++) inliers += mask.data[i];
+            score = inliers;
+            mSrc.delete(); mDst.delete(); mask.delete(); H.delete();
+          } else score = good * 0.1;
+        }catch(err){ score = good * 0.1; }
+        knn.delete();
+      }
+      return { score, good };
+    }
+
     self.onmessage = async (e)=>{
-      const { id, type, cle, dataUrl } = e.data;
+      const { id, type, cle, cles, dataUrl } = e.data;
       try{
         await ensure();
         if(type === 'ref'){
@@ -479,43 +518,18 @@ function demarrerOrbWorker(){
           postMessage({ id, ok:true, n: kp.length });
           return;
         }
-        if(type === 'query'){
+        if(type === 'query' || type === 'querySubset'){
           const t0 = performance.now();
           const g = await matDepuis(dataUrl);
           const { des:qdes, kp:qkp } = detecte(g);
           g.delete();
           const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+          const cibles = type === 'querySubset'
+            ? cles.filter(c => refs.has(c))
+            : [...refs.keys()];
           const out = [];
-          for(const [rcle, r] of refs){
-            let score = 0, good = 0;
-            if(qdes.rows >= 8 && r.des.rows >= 8){
-              const knn = new cv.DMatchVectorVector();
-              try{
-                bf.knnMatch(qdes, r.des, knn, 2);
-                const src = [], dst = [];
-                for(let i=0;i<knn.size();i++){
-                  const pair = knn.get(i);
-                  if(pair.size() < 2) continue;
-                  const m0 = pair.get(0), m1 = pair.get(1);
-                  if(m0.distance < 0.75 * m1.distance){
-                    good++;
-                    src.push(qkp[m0.queryIdx].x, qkp[m0.queryIdx].y);
-                    dst.push(r.kp[m0.trainIdx].x, r.kp[m0.trainIdx].y);
-                  }
-                }
-                if(good >= 8){
-                  const mSrc = cv.matFromArray(good, 1, cv.CV_32FC2, src);
-                  const mDst = cv.matFromArray(good, 1, cv.CV_32FC2, dst);
-                  const mask = new cv.Mat();
-                  const H = cv.findHomography(mSrc, mDst, cv.RANSAC, 5, mask);
-                  let inliers = 0;
-                  for(let i=0;i<mask.rows;i++) inliers += mask.data[i];
-                  score = inliers;
-                  mSrc.delete(); mDst.delete(); mask.delete(); H.delete();
-                } else score = good * 0.1;
-              }catch(err){ score = good * 0.1; }
-              knn.delete();
-            }
+          for(const rcle of cibles){
+            const { score, good } = apparieUne(bf, qdes, qkp, refs.get(rcle));
             out.push({ cle: rcle, score, good });
           }
           bf.delete(); qdes.delete();
@@ -571,6 +585,7 @@ async function lancer(){
   $('log').textContent = ''; $('detail').innerHTML = ''; $('scores').innerHTML = ''; $('verdict').textContent = '';
 
   const setId = $('cfg-set').value.trim();
+  const distracteurs = $('cfg-distracteurs').value.split(',').map(s => s.trim()).filter(Boolean).filter(s => s !== setId);
   const modele = $('cfg-modele').value;
   const resSuffixe = $('cfg-res').value;
   const use = {
@@ -580,8 +595,8 @@ async function lancer(){
     orb:    $('m-orb').checked,
     fusion: $('m-fusion').checked,
   };
-  if(use.fusion && !(use.ocr && (use.dhash || use.emb || use.orb))){
-    log('ℹ️ Fusion ignorée : elle demande l\'OCR + au moins un backend visuel.');
+  if(use.fusion && !(use.dhash || use.emb || use.orb)){
+    log('ℹ️ Fusion ignorée : elle demande au moins un backend visuel (idéalement embedding + ORB, + OCR pour le départage).');
     use.fusion = false;
   }
 
@@ -591,12 +606,31 @@ async function lancer(){
 
   try{
     // ---- références ----
+    // Pool = set principal (celui des photos, seul à contenir la bonne réponse) + sets
+    // distracteurs éventuels, purs parasites qui durcissent le classement sans jamais être
+    // la cible. La vérité terrain est donc un cardId (set + numéro), pas un simple numéro :
+    // sans ça, la carte n°25 d'un autre set compterait comme une bonne réponse.
     statut('Chargement des cartes du set ' + setId + '…');
+    const chargerSet = async (id) => {
+      const d = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + id)).json();
+      const cartes = (d.cards || []).filter(c => c.image && /^\d+$/.test(String(c.localId || '')));
+      return cartes.map(c => ({
+        cle: id + '-' + c.localId, numero: String(parseInt(c.localId, 10)),
+        localId: c.localId, image: c.image, setId: id,
+      }));
+    };
     const setData = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId)).json();
     const official = setData.cardCount && setData.cardCount.official;
-    const refs = (setData.cards || []).filter(c => c.image && /^\d+$/.test(String(c.localId || '')));
+    const refs = (setData.cards || []).filter(c => c.image && /^\d+$/.test(String(c.localId || '')))
+      .map(c => ({ cle: setId + '-' + c.localId, numero: String(parseInt(c.localId, 10)),
+                   localId: c.localId, image: c.image, setId }));
     log(`Set « ${setData.name} » — ${refs.length} carte(s) numérotées, dénominateur officiel ${official}.`);
     if(!refs.length) throw new Error('aucune carte illustrée numérotée dans ce set');
+    for(const id of distracteurs){
+      try{ const d = await chargerSet(id); refs.push(...d); log(`+ distracteur ${id} : ${d.length} carte(s).`); }
+      catch(e){ log(`  ⚠️ distracteur ${id} ignoré : ${e.message}`); }
+    }
+    if(distracteurs.length) log(`Pool total : ${refs.length} référence(s).`);
 
     if(use.ocr){
       statut('Extraction de la logique de parsing depuis index.html…');
@@ -617,25 +651,33 @@ async function lancer(){
       const imgs = await Promise.all(tranche.map(r =>
         chargerImage(r.image + '/' + resSuffixe + '.webp').then(img => ({r, img})).catch(err => ({r, err}))));
       for(const { r, img, err } of imgs){
-        if(err){ log(`  ⚠️ réf #${r.localId} ignorée : ${err.message}`); continue; }
-        const entry = { numero: String(parseInt(r.localId, 10)), localId: r.localId, image: r.image };
+        if(err){ log(`  ⚠️ réf ${r.cle} ignorée : ${err.message}`); continue; }
+        const entry = { cle: r.cle, numero: r.numero, localId: r.localId, setId: r.setId, image: r.image };
         if(use.dhash) entry.hash = empreinte(img, ZONE_ILLUSTRATION);
         if(use.emb){
           try{
             const e = await embedding(versDataUrl(img, ZONE_ILLUSTRATION));
             entry.vec = e.v;
             if(premiereEmb){ premiereEmb = false; log(`Embedding — 1re inférence : ${e.ms} ms (modèle chargé), ${e.v.length} dims.`); }
-          }catch(e2){ log(`  ⚠️ embedding réf #${r.localId} : ${e2.message}`); }
+          }catch(e2){ log(`  ⚠️ embedding réf ${r.cle} : ${e2.message}`); }
         }
         if(use.orb){
-          try{ await orbCall('ref', { cle: entry.numero, dataUrl: versDataUrl(img, null) }); }
-          catch(e3){ log(`  ⚠️ ORB réf #${r.localId} : ${e3.message}`); }
+          // ORB veut du détail : ses points d'intérêt naissent de la micro-texture de
+          // l'illustration. Mesuré sur ce banc — low.webp : 90 % rang 1, high.webp : 97 %.
+          // Il charge donc TOUJOURS high.webp, quel que soit le réglage (qui ne concerne
+          // que dHash et l'embedding, qui sous-échantillonnent leur entrée de toute façon).
+          try{
+            const hi = resSuffixe === 'high' ? img : await chargerImage(r.image + '/high.webp').catch(() => img);
+            await orbCall('ref', { cle: entry.cle, dataUrl: versDataUrl(hi, null) });
+          }catch(e3){ log(`  ⚠️ ORB réf ${r.cle} : ${e3.message}`); }
         }
         base.push(entry);
       }
       statut(`Références : ${Math.min(i + LOT, refs.length)}/${refs.length}…`);
     }
     log(`${base.length} référence(s) indexée(s).`);
+    const cleToNumero = new Map(base.map(b => [b.cle, b.numero]));
+    const cleToSet = new Map(base.map(b => [b.cle, b.setId]));
 
     // Contrôle de dégénérescence de l'embedding, avant de toucher aux photos.
     if(use.emb){
@@ -677,7 +719,10 @@ async function lancer(){
       traitees++;
 
       const cell = { ocr:'—', dhash:'—', emb:'—', orb:'—', fusion:'—' };
-      let ocrCands = null, shortlist = null;
+      let ocrCands = null, dhashArr = null, embArr = null, orbArr = null;
+      // cardId de la bonne réponse : la carte du set principal qui porte ce numéro.
+      const bonCle = (base.find(b => b.setId === setId && b.numero === vt.numero) || {}).cle || null;
+      const lbl = cle => cleToNumero.get(cle) + (cleToSet.get(cle) !== setId ? '·' + cleToSet.get(cle) : '');
 
       // ---- Solution A : OCR ----
       if(use.ocr){
@@ -693,62 +738,77 @@ async function lancer(){
         }catch(e){ cell.ocr = `<span class="mut">err</span>`; log(`  OCR ${photoNom} : ${e.message}`); }
       }
 
-      // ---- Solution B : classements visuels ----
+      // ---- Solution B : classements visuels (par cardId) ----
       const classe = (arr, keyName) => {
-        // arr : [{numero, s}] trié décroissant sur s
-        const i1 = arr[0] && arr[0].numero === vt.numero;
-        const i5 = arr.slice(0,5).some(x => x.numero === vt.numero);
-        const vrai = arr.find(x => x.numero === vt.numero);
-        const autre = arr.find(x => x.numero !== vt.numero);
+        const i1 = arr[0] && arr[0].cle === bonCle;
+        const i5 = arr.slice(0,5).some(x => x.cle === bonCle);
+        const vrai = arr.find(x => x.cle === bonCle);
+        const autre = arr.find(x => x.cle !== bonCle);
         const M = R[keyName];
         M.n++; if(i1) M.r1++; if(i5) M.r5++;
         if(vrai && autre) M.marges.push(vrai.s - autre.s);
-        return { i1, i5, top: arr.slice(0,5).map(x => x.numero) };
+        return { i1, i5 };
       };
 
       if(use.dhash){
         const h = empreinte(carte, ZONE_ILLUSTRATION);
-        const arr = base.filter(b => b.hash != null)
-          .map(b => ({ numero: b.numero, s: -hamming(h, b.hash) }))
+        dhashArr = base.filter(b => b.hash != null)
+          .map(b => ({ cle: b.cle, s: -hamming(h, b.hash) }))
           .sort((x,y) => y.s - x.s);
-        const v = classe(arr, 'dhash');
-        cell.dhash = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${arr[0].numero}</span>`;
-        if(!shortlist) shortlist = v.top;
+        const v = classe(dhashArr, 'dhash');
+        cell.dhash = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${lbl(dhashArr[0].cle)}</span>`;
       }
       if(use.emb){
         try{
           const e = await embedding(versDataUrl(carte, ZONE_ILLUSTRATION));
           R.emb.ms.push(e.ms);
-          const arr = base.filter(b => b.vec)
-            .map(b => ({ numero: b.numero, s: cosinus(e.v, b.vec) }))
+          embArr = base.filter(b => b.vec)
+            .map(b => ({ cle: b.cle, s: cosinus(e.v, b.vec) }))
             .sort((x,y) => y.s - x.s);
-          const v = classe(arr, 'emb');
-          cell.emb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${arr[0].numero}</span>`;
-          shortlist = v.top;
+          const v = classe(embArr, 'emb');
+          cell.emb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${lbl(embArr[0].cle)}</span>`;
         }catch(e){ cell.emb = `<span class="mut">err</span>`; }
       }
       if(use.orb){
         try{
           const r = await orbCall('query', { dataUrl: versDataUrl(carte, null) });
           R.orb.ms.push(r.ms);
-          const arr = r.out.map(o => ({ numero: o.cle, s: o.score }));
-          const v = classe(arr, 'orb');
-          cell.orb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${arr[0].numero} <span class="mut">(${arr[0].s|0}in)</span></span>`;
-          shortlist = v.top;   // ORB prioritaire pour la fusion : la shortlist la plus fiable
+          orbArr = r.out.map(o => ({ cle: o.cle, s: o.score }));
+          const v = classe(orbArr, 'orb');
+          cell.orb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${lbl(orbArr[0].cle)} <span class="mut">(${orbArr[0].s|0}in)</span></span>`;
         }catch(e){ cell.orb = `<span class="mut">err</span>`; log(`  ORB ${photoNom} : ${e.message}`); }
       }
 
-      // ---- Fusion : shortlist visuelle, l'OCR départage ----
-      if(use.fusion && shortlist){
-        let pick = null;
-        if(ocrCands && ocrCands.length){
-          for(const c of ocrCands){ if(shortlist.includes(c.number)){ pick = c.number; break; } }
+      // ---- Fusion : embedding cadre une shortlist large, ORB la reclasse finement sur ses
+      //      inliers, l'OCR départage si un de ses candidats numéro tombe dans le haut du
+      //      classement. Chaque étage ne voit qu'une poignée de cartes → coût quasi constant
+      //      quelle que soit la taille du catalogue.
+      if(use.fusion){
+        const SHORT = 15, TIEBREAK = 6;
+        const base15 = (embArr || dhashArr || orbArr || []).slice(0, SHORT).map(x => x.cle);
+        let ranked = base15;
+        let orbMs = 0;
+        if(use.orb && base15.length){
+          try{
+            const rr = await orbCall('querySubset', { dataUrl: versDataUrl(carte, null), cles: base15 });
+            orbMs = rr.ms;
+            ranked = rr.out.map(o => o.cle);
+          }catch(e){ log(`  Fusion/ORB ${photoNom} : ${e.message}`); }
         }
-        if(!pick) pick = shortlist[0];
+        let pick = ranked[0];
+        if(ocrCands && ocrCands.length){
+          const nums = new Set(ocrCands.map(c => c.number));
+          const hit = ranked.slice(0, TIEBREAK).find(c => nums.has(cleToNumero.get(c)));
+          if(hit) pick = hit;
+        }
         R.fusion.n++;
-        const bon = pick === vt.numero;
+        const embMs = (use.emb && R.emb.ms.length) ? R.emb.ms[R.emb.ms.length-1] : 0;
+        R.fusion.ms.push(embMs + orbMs);
+        const bon = pick === bonCle;
         if(bon){ R.fusion.r1++; R.fusion.r5++; }
-        cell.fusion = `<span class="${bon?'ok':'ko'}">${bon?'✓':'✗'} ${pick}</span>`;
+        cell.fusion = pick
+          ? `<span class="${bon?'ok':'ko'}">${bon?'✓':'✗'} ${lbl(pick)}</span>`
+          : `<span class="mut">∅</span>`;
       }
 
       const tr = document.createElement('tr');
@@ -794,10 +854,14 @@ function rendreScores(R, nom, traitees, echecs, fini){
   if(!fini) return;
   const best = Object.keys(R).filter(k => R[k].n).sort((a,b) => (R[b].r1/R[b].n) - (R[a].r1/R[a].n))[0];
   if(best){
-    $('verdict').innerHTML = `Meilleur rang 1 : <b>${nom[best]}</b> (${(100*R[best].r1/R[best].n).toFixed(1)} %). ` +
-      `Le <b>rang 5</b> compte autant que le rang 1 pour un backend visuel : un rang 5 fiable + l'OCR ` +
-      `en départage (colonne Fusion) est le design de prod le plus prometteur. La <b>marge</b> dit si un ` +
-      `seuil de décision automatique est possible — une marge quasi nulle rend le taux brut inexploitable.`;
+    const pct = k => R[k] && R[k].n ? (100*R[k].r1/R[k].n).toFixed(1) + ' %' : '—';
+    $('verdict').innerHTML =
+      `Meilleur rang 1 : <b>${nom[best]}</b> (${pct(best)}). ` +
+      `<b>ORB</b> (complet) est le plus juste mais coûte O(N) homographies. La <b>Fusion</b> ` +
+      `(${pct('fusion')}) plafonne au rappel de la shortlist embedding — si la bonne carte n'est ` +
+      `pas dans le top-15 DINOv2, ORB ne la voit jamais ; élargir la shortlist rapproche la fusion ` +
+      `d'ORB complet à coût quasi constant. La <b>marge</b> (bonne carte vs meilleure fausse) dit si ` +
+      `un seuil de décision automatique tient : large pour ORB (inliers), étroite pour l'embedding (cosinus).`;
   }
 }
 
