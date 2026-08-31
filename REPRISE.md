@@ -19,6 +19,15 @@ consigne antérieure « c'est Nikos qui pousse » ne vaut plus). Chaque push par
 déploiement Vercel automatique — donc pousser du travail vérifié, et dire ce qui ne l'est
 pas encore.
 
+**⚠️ `VERSION_APP` (dans `index.html`, juste après `BUILD_VERSION`) : +1 À CHAQUE PUSH.**
+C'est le « V.n » affiché en haut à droite (en-tête sur téléphone, barre latérale au-delà
+de 1024 px) : Nikos vérifie d'un coup d'œil que son téléphone a bien pris le déploiement,
+le service worker pouvant servir la version d'avant sans le dire. Le numéro part aussi
+dans `/api/scan-log` (champ `v`), donc les logs disent quelle version a produit chaque
+scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sinon il ne sert
+à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
+automatique en cas de doute — il est dans l'infobulle du badge.
+
 ## Où on en est (2026-08-31, nuit — commit `d336e61`)
 
 **Tout est poussé** (la section « Non poussé » plus bas était périmée, elle a été retirée).

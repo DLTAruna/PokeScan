@@ -125,6 +125,16 @@
   }
   .pkb-fleche{opacity:.55; font-weight:600; margin:0 1px;}
   .pkb-brand:hover h1{color:var(--accent);}
+  /* Numéro de mise en ligne, poussé au bord droit. Discret par construction : on ne le
+     cherche que lorsqu'on doute d'avoir la dernière version, et le reste du temps il ne
+     doit pas disputer l'attention au titre. */
+  .pkb-version{
+    margin-left:auto; flex:0 0 auto; position:relative; z-index:2;
+    font-size:11px; font-weight:600; letter-spacing:.3px; font-variant-numeric:tabular-nums;
+    color:var(--muted, #9aa3ae); opacity:.75;
+    padding:2px 7px; border:1px solid var(--border); border-radius:999px;
+    background:rgba(0,0,0,.25); white-space:nowrap;
+  }
   @media (max-width:400px){
     /* Sous cette largeur, le titre complet rogne le nom de l'application : on garde le nom
        et on laisse tomber la destination, qui est ecrite partout ailleurs. */
@@ -3862,6 +3872,11 @@
     <span class="pokeball"></span>
     <h1>PokéScan</h1>
   </button>
+  <!-- Numéro de mise en ligne (voir VERSION_APP) : la seule façon de savoir, depuis le
+       téléphone, si le déploiement est bien arrivé — un service worker peut servir la
+       version précédente sans rien en dire. Rempli par le script, jamais écrit ici : un
+       second endroit à tourner à la main finirait par diverger du premier. -->
+  <span class="pkb-version"></span>
 </header>
 
 
@@ -3903,7 +3918,9 @@
 </div>
 
 <aside class="lateral" id="lateral">
-  <div class="lat-logo"><img src="icone-192.png" alt=""><span>PokéScan</span></div>
+  <!-- Au-delà de 1024px l'en-tête disparaît au profit de cette barre : le numéro de mise
+       en ligne doit donc exister ici aussi, sinon il n'est visible que sur téléphone. -->
+  <div class="lat-logo"><img src="icone-192.png" alt=""><span>PokéScan</span><span class="pkb-version"></span></div>
 
   <div class="lat-modes modes-bascule" data-actif="vendeur" role="tablist">
     <button class="lat-mode" data-mode="collection" role="tab"><svg class="mico" viewBox="0 0 24 24" aria-hidden="true"><rect x="9.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7" transform="rotate(11 14.6 11.9)" opacity=".55"/><rect x="4.4" y="4.6" width="10.4" height="14.6" rx="2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7.2 8.6h4.8M7.2 11.4h3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".75"/></svg><span>Collectionneur</span></button>
@@ -5705,6 +5722,27 @@ const BUILD_VERSION = (()=>{
            ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
   }catch(e){ return 'inconnue'; }
 })();
+
+// Compteur de mise en ligne, incrémenté de 1 à CHAQUE push. Il répond à une question que
+// l'horodatage ci-dessus pose mal : sur un téléphone, « 2026-08-31 22:14 » ne se compare
+// pas d'un coup d'œil, alors que « V.4 » se confronte sans effort à « je viens de pousser
+// la V.4 ». Le reproche fait plus haut aux marqueurs écrits à la main — ils mentent dès
+// qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
+// Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
+// déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
+const VERSION_APP = 1;
+
+// Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
+// disparaît quand l'application va mal est précisément muet au moment où on le consulte.
+// Deux emplacements — l'en-tête sur téléphone, la barre latérale au-delà de 1024px, où
+// l'en-tête est masqué —, remplis ensemble : deux textes à tenir à jour séparément
+// divergeraient, et c'est justement la divergence qu'on cherche à détecter ici.
+try{
+  document.querySelectorAll('.pkb-version').forEach((_v)=>{
+    _v.textContent = 'V.' + VERSION_APP;
+    _v.title = 'Mise en ligne du ' + BUILD_VERSION;
+  });
+}catch(e){}
 
 // ---------------- STATE ----------------
 let pendingQueue = [];   // {id, photo(dataUrl)}
@@ -12074,7 +12112,7 @@ async function gererScanV2(sourceForRead, corners, score, t0){
       SCAN_V2.relayV2({ fichier:'live', predit:(res&&res.pick&&res.pick.cle)||'', categorie:'rebut', conf:'rebut',
         fiabilite:(res&&res.fiabilite)||0, inliers:(res&&res.inliers)||0, marge:(res&&res.marge)||0,
         ocrLance:(res&&res.ocrLance)||false, ms:(res&&res.ms)||0, T:(res&&res.T)||{}, moteur:(res&&res.moteur)||'?',
-        diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score).toFixed(2) });
+        diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score).toFixed(2), v:VERSION_APP });
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
       v2RebutsConsecutifs = 0;
@@ -12135,7 +12173,10 @@ async function gererScanV2(sourceForRead, corners, score, t0){
     inliers: res.inliers, marge: res.marge, ocrLance: res.ocrLance, ocrOk: res.ocrOk,
     packTelecharge: !!res.packTelecharge,
     ms: res.ms, T: res.T, moteur: res.moteur, diag: (SCAN_V2.diagV2 && SCAN_V2.diagV2()) || null,
-    sets: res.setsCharges || SCAN_V2.setV2(), score: +Number(score).toFixed(2)
+    sets: res.setsCharges || SCAN_V2.setV2(), score: +Number(score).toFixed(2),
+    // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
+    // à supposer que le téléphone avait bien pris le déploiement entre les deux.
+    v: VERSION_APP
   });
 
   // 2) EN ARRIÈRE-PLAN : file d'attente + fiche complète + validation auto.
