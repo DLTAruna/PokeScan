@@ -341,8 +341,11 @@ function faireWorker(src, type){
   w.onmessage = e => { const p = pending.get(e.data.id); if(!p) return; pending.delete(e.data.id);
     e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error)); };
   w.onerror = e => { for(const p of pending.values()) p.reject(new Error(e.message || 'worker KO')); pending.clear(); };
-  return { call: (payload, transfer) => new Promise((resolve,reject)=>{ const id = ++seq;
-    pending.set(id, {resolve,reject}); w.postMessage(Object.assign({id}, payload), transfer||[]); }) };
+  return {
+    call: (payload, transfer) => new Promise((resolve,reject)=>{ const id = ++seq;
+      pending.set(id, {resolve,reject}); w.postMessage(Object.assign({id}, payload), transfer||[]); }),
+    terminate: () => { try{ w.terminate(); }catch(e){} }
+  };
 }
 
 let ocr = null, emb = null, orb = null;
@@ -722,9 +725,19 @@ async function boucleDetection(){
   const v = $('video'), ov = $('overlay');
   let ratesConsecutifs = 0;
   while(boucleActive && stream){
-    if(!v.videoWidth || dBroken){ await new Promise(r=>setTimeout(r,120)); continue; }
-    // La détection tourne EN CONTINU, même pendant une identification (elle est dans un
-    // worker, ça ne coûte rien au fil principal). Seule la capture auto est suspendue.
+    if(!v.videoWidth || dBroken){ await new Promise(r=>setTimeout(r,150)); continue; }
+
+    // Détection en PAUSE pendant une identification ou une révision : la laisser tourner
+    // pendant que les 3 workers (emb/orb/ocr) chauffent le CPU ne fait qu'ajouter de la
+    // contention et de la chaleur — mesuré : sur une salve de 16 scans, ORB passe de 300 ms
+    // à 2500 ms et l'OCR de 500 ms à 5000 ms (throttle thermique). La boucle continue de
+    // tourner (elle n'est PAS tuée), elle attend juste. Elle reprend dès que c'est fini.
+    if(identifEnCours || $('p-revue').style.display !== 'none'){
+      $('hud-hint').textContent = identifEnCours ? 'analyse…' : 'révision en cours';
+      await new Promise(r=>setTimeout(r, 250));
+      continue;
+    }
+
     let det = null;
     try{
       const dScale = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
@@ -770,9 +783,11 @@ async function boucleDetection(){
       dernierScore = 0; dernierCoins = null; bonsFrames = 0;
       pretProchaine = true;   // carte hors champ → prêt pour la suivante
       $('hud-score').textContent = '—';
-      $('hud-hint').textContent = $('p-revue').style.display === 'none' ? 'cherche une carte…' : 'révision en cours';
+      $('hud-hint').textContent = 'cherche une carte…';
     }
-    await new Promise(r=>requestAnimationFrame(r));
+    // Détection cadencée à ~3/s, pas à la fréquence d'affichage : suffisant pour viser, et
+    // ça divise par 2-3 la charge CPU soutenue (donc l'échauffement).
+    await new Promise(r=>setTimeout(r, dernierCoins ? 260 : 380));
   }
 }
 function bougeBeaucoup(a, b){
@@ -784,6 +799,28 @@ function bougeBeaucoup(a, b){
 let identifEnCours = false, dernierePhotoBlob = null;
 let dernierCapAt = 0, dernierCapCoins = null, pretProchaine = true;
 let pile = [], pileSeq = 0, revueIdx = 0;
+let dureesRecentes = [], scansDepuisRecyclage = 0;
+
+// Recrée le worker ORB à partir du cache IndexedDB (≈ 1 s pour ~200 cartes) : remet à zéro
+// le tas WASM d'OpenCV, qui se fragmente au fil des centaines d'appels d'une longue salve.
+// Ne touche pas à DINOv2 (coûteux à recharger) ni au throttle thermique (ça, c'est le SoC).
+let orbOccupe = false;
+async function recyclerOrb(){
+  if(orbOccupe) return;
+  orbOccupe = true; identifEnCours = true;   // bloque toute capture le temps de la remise à zéro
+  statut('Réinitialisation du moteur ORB…');
+  try{
+    try{ orb && orb.terminate(); }catch(e){}
+    demarrerOrb();
+    const rows = await idbAll('refs');
+    for(const r of rows){
+      try{ await orb.call({type:'refImport', cle:r.cle, bytes:new Uint8Array(r.orbBytes), rows:r.orbRows, kp:r.orbKp}); }catch(e){}
+    }
+    await orb.call({type:'warm'}).catch(()=>{});
+    scansDepuisRecyclage = 0;
+    statut('Moteur ORB réinitialisé — reprends le scan.');
+  }finally{ orbOccupe = false; identifEnCours = false; }
+}
 
 async function capturer(sourceExplicite, manuel){
   if(identifEnCours || !pretIdentif) return;
@@ -810,15 +847,25 @@ async function capturer(sourceExplicite, manuel){
     r.ms = Math.round(performance.now() - tW);
 
     if(coins){ dernierCapAt = Date.now(); dernierCapCoins = coins; pretProchaine = false; }
+    dureesRecentes.push(r.ms); if(dureesRecentes.length > 6) dureesRecentes.shift();
+    scansDepuisRecyclage++;
     if(r.pick){
       pile.push({ id: ++pileSeq, blob, carte: rr.carte, r, verite: null });
       rendrePile();
-      statut(`Carte ${pile.length} : ${cleToCard.get(r.pick).name || r.pick} (${r.conf === 'ok' ? 'sûre' : r.conf === 'mid' ? 'à vérifier' : 'peu sûre'}) — ${(r.ms/1000).toFixed(1)} s`);
+      const med = [...dureesRecentes].sort((a,b)=>a-b)[dureesRecentes.length>>1] || 0;
+      const chaud = dureesRecentes.length >= 4 && med > 3500;
+      statut(`Carte ${pile.length} : ${cleToCard.get(r.pick).name || r.pick} (${r.conf === 'ok' ? 'sûre' : r.conf === 'mid' ? 'à vérifier' : 'peu sûre'}) — ${(r.ms/1000).toFixed(1)} s`
+        + (chaud ? ' · ⚠️ le téléphone chauffe, pense à faire une pause' : ''));
     }else{
       statut('Carte non identifiée — recadre');
     }
   }catch(err){ statut('⚠️ ' + err.message); console.error(err); }
   identifEnCours = false;
+
+  // Recyclage automatique du worker ORB toutes les ~15 identifications : contre la
+  // fragmentation du tas WASM d'OpenCV sur les longues salves. Fait hors identification,
+  // sans bloquer (la boucle de détection est en pause de toute façon si une revue est ouverte).
+  if(scansDepuisRecyclage >= 15 && !identifEnCours){ recyclerOrb(); }
 }
 
 // ─────────────────────────────── file : rendu, révision, validation
