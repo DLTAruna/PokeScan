@@ -141,6 +141,10 @@
       <span class="sub" id="c-zoom-info"></span>
     </div>
     <div id="c-indice" class="sub" style="margin-top:8px;">—</div>
+    <!-- Les trois verrous, en direct. Sans ça, « ça ne déclenche pas » est indiscernable de
+         « le score est bas », « la main tremble » ou « la carte précédente est encore là » —
+         et on règle au hasard. -->
+    <div id="c-jauges" class="sub" style="margin-top:4px; font-variant-numeric:tabular-nums;"></div>
   </div>
   <div id="c-verdict" style="display:none; margin-top:12px; border-top:1px solid var(--bord); padding-top:12px;"></div>
 </div>
@@ -794,6 +798,23 @@ function dessinerCadre(coins, couleur){
   g.moveTo(...a); g.lineTo(...b); g.lineTo(...c2); g.lineTo(...d); g.closePath(); g.stroke();
 }
 
+// ── PATIENCE : c'est à l'application de s'adapter, pas à la main de se figer.
+//
+//    Les trois verrous d'origine (score franc, deux images immobiles, carte précédente
+//    retirée) sont un ET strict, avec des seuils fixes. Tenus à bout de bras, ils se
+//    liguent : le détecteur estime les coins à nouveau à chaque image, la main tremble d'un
+//    ou deux pour cent, et il suffit qu'une image sur deux dépasse le seuil pour que la
+//    série ne se referme jamais. On peut alors tenir une carte parfaitement lisible pendant
+//    plusieurs secondes sans rien déclencher — constaté.
+//
+//    Or une carte tenue en cadre DEUX SECONDES est une intention, pas un hasard. Les seuils
+//    se desserrent donc avec le temps de présence : d'abord la tolérance au mouvement et au
+//    score, puis l'exigence de deux images concordantes. Le verrou « déjà lue », lui, ne
+//    bouge PAS — le desserrer ferait relire en boucle la carte qu'on tient encore.
+const PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
+const BOUGE_BASE = 0.049;          // = MAX_CORNER_SHIFT × 1,4 dans index.html
+let presentDepuis = 0, coinsCapture = null;
+
 async function tourner(){
   while(boucle){
     const v = $('c-video');
@@ -805,23 +826,51 @@ async function tourner(){
       });
       const d = await workerDetection().detecter(bmp);
       const bon = d && d.ok && d.corners && d.score != null && d.score >= MIN_SCORE;
+
       if(!bon){
         dessinerCadre(null);
-        streak = 0;
-        if(++absence >= 2){ retiree = true; }
+        streak = 0; presentDepuis = 0; dernierCoins = null;
+        if(++absence >= 2) retiree = true;
         $('c-indice').textContent = 'Vise la carte';
-        dernierCoins = null;
+        $('c-jauges').textContent = 'score ' + (d && d.score != null ? d.score.toFixed(2) : '—')
+          + ' · aucune carte' + (retiree ? '' : ' · verrou actif');
       }else{
         absence = 0;
+        if(!presentDepuis) presentDepuis = Date.now();
+        const attente = Date.now() - presentDepuis;
+
+        // Déplacement franc depuis la dernière capture = c'est une AUTRE carte, même si la
+        // caméra n'a jamais vu de vide entre les deux (on fait glisser l'une, on pose
+        // l'autre). L'application a déjà cette échappatoire ; sans elle, un tas se
+        // dépouille au rythme des retraits complets.
+        if(!retiree && coinsCapture && ecartCoins(coinsCapture, d.corners) > BOUGE_BASE * 3) retiree = true;
+
         const bouge = dernierCoins ? ecartCoins(dernierCoins, d.corners) : Infinity;
         dernierCoins = d.corners;
-        if(bouge < 0.049) streak++; else streak = 0;
-        dessinerCadre(d.corners, streak >= 2 ? '#3fb950' : '#d29922');
-        if($('c-auto').checked && retiree && d.score >= 0.5 && streak >= 2){
-          streak = 0;
+
+        const seuilBouge = attente >= PATIENCE.franche ? Infinity
+                         : attente >= PATIENCE.douce   ? BOUGE_BASE * PATIENCE.facteurBouge
+                         : BOUGE_BASE;
+        const seuilScore  = attente >= PATIENCE.douce ? MIN_SCORE : 0.5;
+        const streakRequis = attente >= PATIENCE.franche ? 1 : 2;
+
+        if(bouge < seuilBouge) streak++; else streak = 0;
+        const stable = streak >= streakRequis;
+        dessinerCadre(d.corners, stable ? '#3fb950' : '#d29922');
+
+        $('c-jauges').textContent =
+          'score ' + d.score.toFixed(2) + '/' + seuilScore
+          + ' · bougé ' + bouge.toFixed(3) + '/' + (seuilBouge === Infinity ? '∞' : seuilBouge.toFixed(3))
+          + ' · stable ' + streak + '/' + streakRequis
+          + ' · ' + (retiree ? 'armé' : 'VERROU (carte déjà lue)')
+          + ' · tenue ' + (attente/1000).toFixed(1) + ' s';
+
+        if($('c-auto').checked && retiree && d.score >= seuilScore && stable){
+          streak = 0; presentDepuis = 0;
           await capturer('auto');
         }else{
-          $('c-indice').textContent = retiree ? (streak >= 2 ? 'Prêt' : 'Stabilise…') : '✓ lue — retire la carte';
+          $('c-indice').textContent = !retiree ? '✓ lue — retire la carte ou déplace-la'
+            : stable ? 'Prêt' : (attente >= PATIENCE.douce ? 'Tiens encore un instant…' : 'Stabilise…');
         }
       }
     }catch(e){ /* une image ratée ne casse pas la boucle */ }
@@ -861,6 +910,7 @@ async function capturer(mode){
     scansCam.push(scan);
     await banqueEcrire(scan);
     retiree = false;
+    coinsCapture = dernierCoins;   // repère du « déplacement franc » qui réarmera
     rendreEnAttente();
     rendreCamera();
     $('c-indice').textContent = '✓ ' + (scan.nom || scan.trouve || '?') + ' — carte suivante';
@@ -1022,6 +1072,7 @@ function exporter(){
 window.BANC = {
   camera: ouvrirCamera, fermer: fermerCamera, capturer: ()=>capturer('manuel'),
   zoom: (z)=> z == null ? {caps:capsZoom, courant:zoomCourant, memorise:localStorage.getItem(CLE_ZOOM)} : appliquerZoom(z, true),
+  patience: (p)=>{ if(p) Object.assign(PATIENCE, p); return {...PATIENCE, bougeBase:BOUGE_BASE}; },
   objectifSuivant, objectifs: ()=>camerasArriere.map(d=>({id:d.deviceId.slice(0,8), label:d.label})),
   etalon, envoyer, exporter,
   scans: ()=>scansCam,
