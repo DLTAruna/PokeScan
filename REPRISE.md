@@ -50,8 +50,11 @@ après session de test, via `/api/scan-log`.
 
 ### Non poussé
 
-- **`7035bec`** — « la prise manuelle 📸 identifie aussi, et affiche le résultat en bas ».
-  À pousser : `git -C C:/Users/Aruna/pokescan push origin main`.
+- **`e79c62b`** — « tuer les doubles captures » : le test de stabilité V2 était cassé
+  (comparait les coins à eux-mêmes) → déclenchait carte encore en mouvement, d'où 1er scan
+  faible + 2e « pour de vrai ». Maintenant : `v2StableStreak >= 2` images immobiles, et
+  verrou « déjà lue » catégorie-conscient (`v2DerniereCat`).
+- (`7035bec` prise manuelle + `d92dccf` REPRISE : **poussés**, en ligne.)
 
 ### Ce qui reste
 
@@ -76,10 +79,12 @@ après session de test, via `/api/scan-log`.
 4. **Étendre la tranche** aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
    xy,sm`) quand la V2 sera validée. `SERIES=base,neo,... bash tools/build-packs/run.sh` —
    le script reprend et reconstruit l'index global avec tout. Compter ~2 h de plus.
-5. **Worker Cloudflare optionnel** (`tools/build-packs/worker-orb.js`) : regroupe les ~18
-   blobs d'un scan en une requête (au lieu de ~18 requêtes). Non déployé. Instructions dans
-   le fichier (dashboard, sans CLI). Une fois déployé : mettre son URL dans `WORKER_ORB` en
-   tête de `scan-v2.js`.
+5. **Worker Cloudflare** (`tools/build-packs/worker-orb.js`) — **décidé, à déployer par
+   Nikos.** Regroupe les ~18 blobs d'un scan en 1 requête. Étapes dans le fichier
+   (dashboard, sans CLI ; binding R2 nommé `PACKS` → `pokescan-packs`). Quand c'est fait,
+   Nikos donne l'URL `*.workers.dev` → la mettre dans `WORKER_ORB` en tête de `scan-v2.js`
+   + bumper `?v=`. Le client s'en sert dès qu'`aTelecharger.length >= 4` (sinon requêtes
+   séparées). Format réponse : `[uint16 n]` puis n×`[uint8 lenClé][clé][uint32 lenBlob][blob]`.
 6. **Le log ne mesure pas la justesse** : `predit == attendu == cardId` (tous mis à la
    prédiction). Il faut que Nikos corrige les cartes fausses (→ `verifie:true`) ou dise ce
    qui a raté. Les tests navigateur sur `photos-test/`, eux, connaissent la vérité.
