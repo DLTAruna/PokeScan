@@ -67,6 +67,18 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (req.method === 'DELETE') {
+      // Efface un pack (pour en régénérer un meilleur). L'API Gist supprime un fichier
+      // quand on lui passe `null` à sa clé.
+      const del = await fetch(`https://api.github.com/gists/${GIST_ID}`, {
+        method: 'PATCH',
+        headers: { ...gh, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: { [FILE]: null } }),
+      });
+      res.status(del.ok ? 200 : 502).json({ ok: del.ok });
+      return;
+    }
+
     res.status(405).json({ error: 'méthode non supportée' });
   } catch (err) {
     res.status(500).json({ error: 'exception', message: err.message });
