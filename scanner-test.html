@@ -70,9 +70,10 @@
   </div>
   <div class="prog" id="prog" style="display:none;"><div id="prog-bar"></div></div>
   <p class="sub" id="idx-etat" style="margin:8px 0 0;">Index non chargé.</p>
-  <p class="sub" style="margin:6px 0 0;">
-    <button class="ghost" id="btn-pack" style="font-size:11.5px; padding:5px 9px;">⬇️ Générer le pack (.pack)</button>
-    <span style="font-size:11px;">— sérialise l'index chargé (embeddings + descripteurs ORB) pour le déposer dans <code>packs/</code>. Ensuite les autres appareils ne calculent plus rien.</span>
+  <p class="sub" style="margin:6px 0 0; font-size:11px;">
+    Le premier appareil qui ouvre une collection construit l'index une fois (~5 min) puis
+    le <b>partage automatiquement</b>. Tous les suivants le récupèrent en quelques secondes.
+    Rien à installer.
   </p>
 </div>
 
@@ -547,9 +548,10 @@ let moteurEmb = '?';
 const PACK_MAGIC_V = 1;
 function nomPack(setId){ return setId.replace(/[^\w.-]/g, '_'); }
 
-async function genererPack(){
-  const rows = await idbAll('refs');
-  if(!rows.length){ statut('index vide — charge-le d\'abord'); return; }
+// Sérialise l'index actuellement en cache IDB (une seule collection). Renvoie un Uint8Array.
+async function serialiserPack(){
+  const rows = (await idbAll('refs')).filter(r => (r.orbBytes||[]).length);
+  if(!rows.length) return null;
   const embDim = rows[0].vec.length;
   const header = { v: PACK_MAGIC_V, set: rows[0].setId, model: MODELE, embDim, cards: [] };
   const corps = [];
@@ -562,14 +564,34 @@ async function genererPack(){
     corps.push(emb.buffer, new Uint8Array(r.orbBytes).buffer, kp.buffer);
   }
   const hj = new TextEncoder().encode(JSON.stringify(header));
-  const head = new Uint8Array(4 + hj.length);
-  new DataView(head.buffer).setUint32(0, hj.length, true);
-  head.set(hj, 4);
-  const blob = new Blob([head, ...corps], { type:'application/octet-stream' });
+  const blob = await new Blob([(() => { const h = new Uint8Array(4 + hj.length);
+    new DataView(h.buffer).setUint32(0, hj.length, true); h.set(hj, 4); return h; })(), ...corps]).arrayBuffer();
+  return { set: rows[0].setId, bytes: new Uint8Array(blob) };
+}
+
+// Envoie le pack fraîchement construit au serveur : le PROCHAIN appareil qui ouvre ce set
+// le télécharge en quelques secondes au lieu de refaire 5 min de calcul. Silencieux si ça
+// échoue (localhost sans backend, hors ligne…). Aucun fichier à manipuler.
+async function partagerPack(){
+  try{
+    const p = await serialiserPack();
+    if(!p) return;
+    const r = await fetch('/api/pack?set=' + encodeURIComponent(nomPack(p.set)), {
+      method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: p.bytes
+    });
+    if(r.ok){ const j = await r.json();
+      statut(`Index partagé (${(p.bytes.length/1e6).toFixed(1)} Mo)` + (j.existait ? ' — déjà présent' : ' — les prochains scans seront instantanés') + '.'); }
+  }catch(e){ /* pas grave */ }
+}
+
+// Téléchargement manuel du .pack — pour committer un pack statique (chemin CDN le plus
+// rapide). Réservé au debug ; le flux normal est entièrement automatique.
+async function telechargerPack(){
+  const p = await serialiserPack();
+  if(!p){ statut('index vide'); return; }
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = nomPack(rows[0].setId) + '.pack'; a.click();
+  a.href = URL.createObjectURL(new Blob([p.bytes])); a.download = nomPack(p.set) + '.pack'; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 4000);
-  statut(`Pack généré : ${rows.length} cartes, ${(blob.size/1e6).toFixed(1)} Mo — à déposer dans packs/`);
 }
 
 // Charge BASE + le worker ORB à partir d'un pack. Renvoie les cartes ou lève.
@@ -619,16 +641,24 @@ async function chargerIndex(){
     const metaSig = await idbGet('meta', 'sig');
     let source = null;
 
-    // ── 1. pack précalculé (un seul set pour l'instant)
+    // ── 1. pack précalculé, sans aucune manipulation de fichier (un seul set pour l'instant).
+    //    D'abord le fichier statique commité (chemin CDN le plus rapide), sinon le pack
+    //    partagé par un autre appareil via /api/pack. Les deux : ~5 Mo, quelques secondes,
+    //    zéro calcul.
     if(!(metaSig && metaSig.v === sig) && sets.length === 1){
-      try{
-        $('idx-etat').textContent = 'Téléchargement du pack précalculé…';
-        const res = await fetch('packs/' + nomPack(sets[0]) + '.pack', { cache:'force-cache' });
-        if(res.ok){
+      const sources = [
+        { url: 'packs/' + nomPack(sets[0]) + '.pack', nom: 'pack' },
+        { url: '/api/pack?set=' + encodeURIComponent(nomPack(sets[0])), nom: 'pack partagé' },
+      ];
+      for(const s of sources){
+        try{
+          $('idx-etat').textContent = 'Téléchargement de l\'index précalculé…';
+          const res = await fetch(s.url, { cache:'force-cache' });
+          if(!res.ok) continue;
           const buf = await res.arrayBuffer();
+          if(buf.byteLength < 500) continue;
           const cartes = await chargerDepuisPack(buf, setBar);
           BASE = cartes;
-          // cache IDB pour les rechargements suivants ET le recyclage du worker ORB
           await idbClear('refs');
           for(const c of cartes){
             await idbPut('refs', { cle:c.cle, numero:c.numero, setId:c.setId, localId:c.localId,
@@ -637,10 +667,11 @@ async function chargerIndex(){
             delete c._des; delete c._rows; delete c._kp;
           }
           await idbPut('meta', { k:'sig', v:sig, viaPack:true });
-          source = 'pack';
-          $('idx-etat').textContent = `Index chargé (pack) — ${BASE.length} carte(s), ${(buf.byteLength/1e6).toFixed(1)} Mo.`;
-        }
-      }catch(e){ /* pas de pack ou pack invalide : on continue */ }
+          source = s.nom;
+          $('idx-etat').textContent = `Index chargé (${s.nom}) — ${BASE.length} carte(s), ${(buf.byteLength/1e6).toFixed(1)} Mo.`;
+          break;
+        }catch(e){ /* source suivante */ }
+      }
     }
 
     if(!source && metaSig && metaSig.v === sig){
@@ -696,6 +727,9 @@ async function chargerIndex(){
       }
       await idbPut('meta', { k:'sig', v:sig });
       $('idx-etat').textContent = `Index construit — ${BASE.length} carte(s), ${sets.length} set(s). Prochain chargement : instantané.`;
+      // Construit localement une fois → on l'envoie pour que personne d'autre n'ait à le
+      // refaire. Aucun fichier, aucune action de l'utilisateur.
+      if(sets.length === 1) partagerPack();
     }
 
     cleToCard = new Map(BASE.map(c => [c.cle, c]));
@@ -1133,7 +1167,6 @@ async function exporter(){
 
 // ─────────────────────────────── câblage
 $('btn-charger').onclick = chargerIndex;
-$('btn-pack').onclick = genererPack;
 $('btn-cam').onclick = ouvrirCamera;
 $('btn-stopcam').onclick = fermerCamera;
 $('btn-capture').onclick = () => capturer(null, true);
@@ -1173,7 +1206,7 @@ majCompte();
 if(location.hostname === 'localhost' || location.hostname === '127.0.0.1'){
   window.__scanner = {
     get BASE(){ return BASE; }, get pile(){ return pile; },
-    identifier, redresser, capturer, validerTout, exporter,
+    identifier, redresser, capturer, validerTout, exporter, telechargerPack, partagerPack,
     async rejouer(url){ const img = await chargerImage(url); const rr = await redresser(img);
       if(rr.echec) return {echec:rr.echec}; return identifier(rr.carte); }
   };
