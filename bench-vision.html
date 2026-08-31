@@ -1,0 +1,861 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PokéScan — banc identification : OCR vs recherche visuelle</title>
+<style>
+  :root{
+    --bg:#0b0d13; --panel:#141821; --border:#242b3a; --text:#e6e9f0;
+    --muted:#8e97a9; --accent:#d4af37; --ok:#4ec27e; --ko:#e5484d; --info:#7fb2ef;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0; padding:18px; background:var(--bg); color:var(--text);
+       font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:14px; line-height:1.5;}
+  h1{font-size:19px; margin:0 0 4px;}
+  h2{font-size:15px; margin:0 0 8px;}
+  .sub{color:var(--muted); font-size:13px; margin:0 0 14px; max-width:900px;}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:12px;
+         padding:14px 16px; margin-bottom:14px;}
+  label{display:block; font-size:12px; color:var(--muted); margin-bottom:4px;}
+  select,input[type=text]{background:#0e1119; color:var(--text); border:1px solid var(--border);
+               border-radius:8px; padding:7px 9px; font:inherit; width:100%;}
+  .row{display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px;}
+  .checks{display:flex; flex-wrap:wrap; gap:14px; margin-top:6px;}
+  .checks label{display:flex; align-items:center; gap:6px; color:var(--text); font-size:13px; margin:0;}
+  .checks input{width:auto;}
+  button{background:var(--accent); color:#1a1206; border:0; border-radius:9px;
+         padding:9px 15px; font:inherit; font-weight:700; cursor:pointer;}
+  button.ghost{background:transparent; color:var(--text); border:1px solid var(--border); font-weight:500;}
+  button:disabled{opacity:.5; cursor:default;}
+  #status{margin:12px 0 0; font-size:13px; color:var(--info); min-height:20px;}
+  .warn{background:rgba(224,161,42,.1); border:1px solid rgba(224,161,42,.35); border-radius:9px;
+        padding:10px 12px; font-size:12.5px; line-height:1.6; color:#f0dcb0; margin:0 0 14px;}
+  pre#log{background:#080a0f; border:1px solid var(--border); border-radius:9px; padding:11px;
+          max-height:280px; overflow:auto; font-size:11.5px; white-space:pre-wrap; margin:0;}
+  table{width:100%; border-collapse:collapse; font-size:12px;}
+  th,td{text-align:left; padding:6px 7px; border-bottom:1px solid var(--border); vertical-align:top;}
+  th{color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.4px;}
+  .ok{color:var(--ok);} .ko{color:var(--ko);} .mut{color:var(--muted);}
+  .table-wrap{overflow-x:auto; max-height:460px; overflow-y:auto;}
+  .score{display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:6px;}
+  .card{background:#0e1119; border:1px solid var(--border); border-radius:10px; padding:12px;}
+  .card .n{font-size:24px; font-weight:800; color:var(--accent); line-height:1.1;}
+  .card .l{font-size:11px; color:var(--muted); margin-top:3px;}
+  code{background:#0b0e14; padding:1px 5px; border-radius:4px; font-size:11.5px;}
+</style>
+</head>
+<body>
+
+<h1>Banc d'identification — OCR du numéro vs recherche visuelle</h1>
+<p class="sub">
+  Sur les <b>photos réelles</b> de <code>photos-test/</code> (la bonne réponse est dans le nom,
+  <code>PKMN-{set}-{numéro}-…</code>). Chaque photo passe par le pipeline de l'app
+  (détection scanic → redressement), puis les deux solutions sont mesurées sur <b>la même
+  carte redressée</b> :
+</p>
+<div class="warn">
+  <b>Solution A — OCR du numéro</b> : découpe la bande basse, PaddleOCR, extraction
+  <code>XXX/XXX</code> avec la logique de parsing <b>extraite en direct de <code>index.html</code></b>
+  (jamais recopiée). Reproduction fidèle mais simplifiée : un seul appel <code>recognize()</code>,
+  pleine largeur, sans les passes multiples ni la validation adaptative de la prod.<br>
+  <b>Solution B — recherche visuelle</b> : découpe l'illustration (ou la carte entière pour ORB),
+  calcule un descripteur, classe les cartes de référence du set. Trois backends au choix.<br>
+  <b>Antériorité</b> (git, <code>embtest.html</code>, aoû. 2025) : dHash ≈ 16 %, MobileViT-small
+  3,2 %, OCR ≈ 71 %. L'embedding échouait par <i>écart de domaine</i> (photo vs scan officiel).
+  DINOv2 (auto-supervisé) et ORB+RANSAC n'avaient jamais été mesurés — c'est l'objet d'ici.
+</div>
+
+<div class="panel">
+  <div class="row">
+    <div>
+      <label>Set de référence (id TCGdex)</label>
+      <input type="text" id="cfg-set" value="sv03.5">
+    </div>
+    <div>
+      <label>Modèle d'embedding (backend « CNN »)</label>
+      <select id="cfg-modele">
+        <option value="onnx-community/dinov2-small">DINOv2 small — auto-supervisé, ~23 Mo (jeton CLS)</option>
+        <option value="Xenova/mobilevit-small">MobileViT small — ~6 Mo (déjà mesuré : 3,2 %)</option>
+        <option value="onnx-community/dinov2-base">DINOv2 base — ~86 Mo (lourd, plafond de qualité)</option>
+      </select>
+    </div>
+    <div>
+      <label>Redimensionnement des références</label>
+      <select id="cfg-res">
+        <option value="low">low.webp (rapide)</option>
+        <option value="high" selected>high.webp (fidèle, plus lent)</option>
+      </select>
+    </div>
+  </div>
+  <div class="checks">
+    <label><input type="checkbox" id="m-ocr" checked> Solution A — OCR du numéro</label>
+    <label><input type="checkbox" id="m-dhash" checked> B · dHash (référence plancher)</label>
+    <label><input type="checkbox" id="m-emb" checked> B · embedding CNN</label>
+    <label><input type="checkbox" id="m-orb" checked> B · ORB + RANSAC (OpenCV.js)</label>
+    <label><input type="checkbox" id="m-fusion" checked> Fusion (visuel top-5 → OCR départage)</label>
+  </div>
+  <div style="margin-top:12px; display:flex; gap:9px; flex-wrap:wrap;">
+    <button id="btn-run">▶ Lancer le banc</button>
+    <button class="ghost" id="btn-sep">⚡ Test de séparation embedding (~1 min)</button>
+    <button class="ghost" id="btn-stop" disabled>■ Arrêter</button>
+  </div>
+  <div id="status">Prêt.</div>
+</div>
+
+<div class="panel">
+  <h2>Résultats</h2>
+  <div class="score" id="scores"></div>
+  <p class="sub" id="verdict" style="margin:8px 0 0;"></p>
+</div>
+
+<div class="panel">
+  <h2>Détail par photo</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>Photo</th><th>Attendu</th><th>A · OCR</th>
+        <th>B · dHash</th><th>B · CNN</th><th>B · ORB</th><th>Fusion</th>
+      </tr></thead>
+      <tbody id="detail"></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="panel">
+  <h2>Journal</h2>
+  <pre id="log"></pre>
+</div>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const log = m => { const el = $('log'); el.textContent += m + '\n'; el.scrollTop = el.scrollHeight; };
+const statut = m => { $('status').textContent = m; };
+
+// Constantes reprises telles quelles de l'application — la mesure n'a de sens que si la
+// géométrie (détection, redressement, zone d'illustration) est EXACTEMENT celle de la prod.
+const ZONE_ILLUSTRATION = {x:0.07, y:0.11, w:0.86, h:0.43};
+const CARD_RATIO = 88/63;
+const DETECT_LONG_EDGE = 512;
+const EXTRACT_LONG_EDGE = 1200;
+const MIN_SCORE = 0.35;
+const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+const TRANSFORMERS  = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+const OCR_MODULE    = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web/+esm';
+const OPENCV        = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.11.0-release.1/dist/opencv.js';
+
+// Bande basse lue par la Solution A : pleine largeur (le numéro est à gauche sur le moderne,
+// à droite sur l'ère Wizards — mesuré +11,6 pts au banc OCR précédent), agrandie ×2 pour
+// amener les chiffres dans la plage de hauteur où PaddleOCR travaille le mieux.
+const BANDE = {y:0.83, h:0.17, zoom:2};
+
+let stop = false;
+
+// ════════════════════════════════════════════ empreinte perceptuelle (identique à l'app)
+function dHashDepuisContexte(ctx, w, h){
+  const d = ctx.getImageData(0, 0, w, h).data;
+  const gris = [];
+  for(let i = 0; i < w*h; i++) gris.push(0.299*d[i*4] + 0.587*d[i*4+1] + 0.114*d[i*4+2]);
+  let bits = 0n;
+  for(let y = 0; y < h; y++)
+    for(let x = 0; x < w-1; x++)
+      bits = (bits << 1n) | (gris[y*w+x] > gris[y*w+x+1] ? 1n : 0n);
+  return bits;
+}
+function hamming(a, b){ let x = a ^ b, n = 0; while(x){ n += Number(x & 1n); x >>= 1n; } return n; }
+function empreinte(source, zone){
+  const c = document.createElement('canvas');
+  c.width = 9; c.height = 8;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  const W = source.width, H = source.height;
+  if(zone) ctx.drawImage(source, W*zone.x, H*zone.y, W*zone.w, H*zone.h, 0, 0, 9, 8);
+  else ctx.drawImage(source, 0, 0, 9, 8);
+  return dHashDepuisContexte(ctx, 9, 8);
+}
+
+// ════════════════════════════════════════════ découpes
+function versCanvas(source, zone){
+  const c = document.createElement('canvas');
+  const W = source.width, H = source.height;
+  if(zone){
+    c.width = Math.round(W*zone.w); c.height = Math.round(H*zone.h);
+    c.getContext('2d').drawImage(source, W*zone.x, H*zone.y, W*zone.w, H*zone.h, 0, 0, c.width, c.height);
+  } else {
+    c.width = W; c.height = H;
+    c.getContext('2d').drawImage(source, 0, 0);
+  }
+  return c;
+}
+function versDataUrl(source, zone){ return versCanvas(source, zone).toDataURL('image/jpeg', 0.92); }
+function bandeBasse(carte){
+  const W = carte.width, H = carte.height;
+  const sw = W, sh = Math.round(H*BANDE.h), sy = Math.round(H*BANDE.y);
+  const c = document.createElement('canvas');
+  c.width = Math.round(sw*BANDE.zoom); c.height = Math.round(sh*BANDE.zoom);
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(carte, 0, sy, sw, sh, 0, 0, c.width, c.height);
+  return c;
+}
+
+function chargerImage(src){
+  return new Promise((resolve, reject)=>{
+    const i = new Image();
+    i.crossOrigin = 'anonymous';
+    i.onload = ()=> (i.naturalWidth ? resolve(i) : reject(new Error('image vide')));
+    i.onerror = ()=> reject(new Error('image non chargée : ' + src.slice(0, 70)));
+    i.src = src;
+  });
+}
+
+// ════════════════════════════════════════════ pipeline de l'app : détection + redressement
+let scanicMod = null, scanner = null;
+async function getScanner(){
+  if(scanner) return scanner;
+  if(!scanicMod) scanicMod = await import(SCANIC_MODULE);
+  const sc = new scanicMod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+  await sc.initialize();
+  scanner = sc;
+  return sc;
+}
+async function redresser(photo){
+  const sc = await getScanner();
+  const d = Math.min(1, DETECT_LONG_EDGE / Math.max(photo.width, photo.height));
+  const dw = Math.round(photo.width*d), dh = Math.round(photo.height*d);
+  const petit = document.createElement('canvas');
+  petit.width = dw; petit.height = dh;
+  const pctx = petit.getContext('2d', {willReadFrequently:true});
+  pctx.drawImage(photo, 0, 0, dw, dh);
+
+  let res = null;
+  try{ res = await sc.scan(pctx.getImageData(0, 0, dw, dh), { mode:'detect', detector:'ml' }); }
+  catch(e){ return {echec:'détection : ' + e.message}; }
+  if(!res || !res.corners) return {echec:'aucune détection'};
+  if(res.score != null && res.score < MIN_SCORE) return {echec:'score ' + res.score.toFixed(2) + ' < ' + MIN_SCORE};
+
+  const c = res.corners;
+  const coins = {
+    tl:[c.topLeft.x/dw, c.topLeft.y/dh], tr:[c.topRight.x/dw, c.topRight.y/dh],
+    br:[c.bottomRight.x/dw, c.bottomRight.y/dh], bl:[c.bottomLeft.x/dw, c.bottomLeft.y/dh]
+  };
+  const MARGE = 0.04;
+  const mx = (coins.tl[0]+coins.tr[0]+coins.br[0]+coins.bl[0])/4;
+  const my = (coins.tl[1]+coins.tr[1]+coins.br[1]+coins.bl[1])/4;
+  const e = Math.min(1, EXTRACT_LONG_EDGE / Math.max(photo.width, photo.height));
+  const vw = Math.round(photo.width*e), vh = Math.round(photo.height*e);
+  const grow = p => ({x:(mx+(p[0]-mx)*(1+MARGE))*vw, y:(my+(p[1]-my)*(1+MARGE))*vh});
+  const frame = document.createElement('canvas');
+  frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(photo, 0, 0, vw, vh);
+
+  let ex;
+  try{
+    ex = await scanicMod.extractDocument(frame, {
+      topLeft:grow(coins.tl), topRight:grow(coins.tr),
+      bottomRight:grow(coins.br), bottomLeft:grow(coins.bl)
+    }, {output:'canvas'});
+  }catch(err){ return {echec:'redressement : ' + err.message}; }
+  if(!ex || !ex.success || !ex.output) return {echec:'redressement échoué'};
+
+  const ratio = ex.output.height / ex.output.width;
+  const portrait = Math.abs(ratio - CARD_RATIO)/CARD_RATIO <= 0.25;
+  const paysage  = Math.abs(ratio - 1/CARD_RATIO)*CARD_RATIO <= 0.25;
+  if(!portrait && !paysage) return {echec:'forme incompatible (ratio ' + ratio.toFixed(2) + ')'};
+
+  let sortie = ex.output;
+  if(paysage && !portrait){
+    const r = document.createElement('canvas');
+    r.width = ex.output.height; r.height = ex.output.width;
+    const rc = r.getContext('2d');
+    rc.translate(r.width/2, r.height/2); rc.rotate(-Math.PI/2);
+    rc.drawImage(ex.output, -ex.output.width/2, -ex.output.height/2);
+    sortie = r;
+  }
+  // Ramené à une largeur de travail fixe : les fractions de découpe ont alors le même sens
+  // que dans le pipeline réel, et les descripteurs sont calculés à échelle constante.
+  const W = 700, H = Math.round(W*CARD_RATIO);
+  const norm = document.createElement('canvas');
+  norm.width = W; norm.height = H;
+  norm.getContext('2d').drawImage(sortie, 0, 0, W, H);
+  return {carte: norm};
+}
+
+// ════════════════════════════════════════════ worker OCR (Solution A)
+// La logique de parsing du numéro est EXTRAITE de index.html à l'exécution, jamais recopiée :
+// sans ça le banc finirait par mesurer une copie divergente du vrai code.
+let ocrWorker = null, ocrSeq = 0;
+const ocrPending = new Map();
+async function chargerParsing(){
+  const res = await fetch('index.html?nocache=' + Date.now(), {cache:'no-store'});
+  if(!res.ok) throw new Error('index.html introuvable (HTTP ' + res.status + ')');
+  const html = await res.text();
+  const a = html.indexOf('const LOOKALIKES =');
+  const b = html.indexOf('// Netteté : variance du laplacien');
+  if(a < 0 || b < 0 || b <= a) throw new Error('bloc de parsing introuvable dans index.html');
+  const raw = html.slice(a, b);
+  // Ré-évalué comme template littéral, EXACTEMENT comme index.html construit son worker : le
+  // bloc contient `${JSON.stringify({...})}` (la table des sosies) qui doit être interpolé, et
+  // des `\\d` qui deviennent `\d`. Le bloc ne contient volontairement aucun backtick.
+  const resolved = new Function('return `' + raw + '`')();
+  if(!/function extractNumbers/.test(resolved)) throw new Error('extractNumbers absent du bloc extrait');
+  return resolved;
+}
+function demarrerOcrWorker(parsingSrc){
+  const src = `
+    import { PaddleOcrService } from ${JSON.stringify(OCR_MODULE)};
+    ${parsingSrc}
+    let svc = null, svcPromise = null;
+    async function ensure(){
+      if(svc) return svc;
+      if(!svcPromise) svcPromise = (async ()=>{
+        // Le dictionnaire de caractères par défaut est servi depuis raw.githubusercontent.com,
+        // que certains réseaux (dont cet environnement de test) renvoient en HTTP 400. Le
+        // miroir jsdelivr/gh sert ce .txt tel quel (ce n'est pas un fichier LFS). Les modèles
+        // .ort, eux, restent sur media.githubusercontent.com (LFS), qui répond normalement.
+        const s = new PaddleOcrService({ model: {
+          charactersDictionary: 'https://cdn.jsdelivr.net/gh/PT-Perkasa-Pilar-Utama/ppu-paddle-ocr-models@main/recognition/ppocrv6_tiny_dict.txt'
+        }});
+        await s.initialize();
+        svc = s; return s;
+      })();
+      return svcPromise;
+    }
+    self.onmessage = async (e)=>{
+      const { id, bitmap } = e.data;
+      try{
+        const s = await ensure();
+        const cv = new OffscreenCanvas(bitmap.width, bitmap.height);
+        cv.getContext('2d').drawImage(bitmap, 0, 0);
+        bitmap.close();
+        const t0 = performance.now();
+        const res = await s.recognize(cv, { noCache:true });
+        const ms = Math.round(performance.now() - t0);
+        const text = (res && res.text) || '';
+        postMessage({ id, ok:true, text, cands: extractNumbers(text), ms });
+      }catch(err){ postMessage({ id, ok:false, error:(err && err.message) || String(err) }); }
+    };
+  `;
+  ocrWorker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+  ocrWorker.onmessage = e => {
+    const p = ocrPending.get(e.data.id); if(!p) return;
+    ocrPending.delete(e.data.id);
+    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+  };
+  ocrWorker.onerror = e => {
+    for(const p of ocrPending.values()) p.reject(new Error('worker OCR : ' + (e.message || 'chargement impossible')));
+    ocrPending.clear();
+  };
+}
+function ocrLire(canvas){
+  return new Promise(async (resolve, reject)=>{
+    const id = ++ocrSeq;
+    ocrPending.set(id, {resolve, reject});
+    const bmp = await createImageBitmap(canvas);
+    ocrWorker.postMessage({ id, bitmap: bmp }, [bmp]);
+  });
+}
+
+// ════════════════════════════════════════════ worker embedding CNN (Solution B · CNN)
+let embWorker = null, embSeq = 0;
+const embPending = new Map();
+function demarrerEmbWorker(modele){
+  if(embWorker){ embWorker.terminate(); embPending.clear(); }
+  const src = `
+    import { pipeline, env } from ${JSON.stringify(TRANSFORMERS)};
+    env.allowLocalModels = false;
+    let extr = null, pret = null;
+    async function ensure(){
+      if(pret) return pret;
+      pret = (async ()=>{
+        try{ extr = await pipeline('image-feature-extraction', ${JSON.stringify(modele)}, { dtype:'q8' }); }
+        catch(e){ extr = await pipeline('image-feature-extraction', ${JSON.stringify(modele)}, { dtype:'fp32' }); }
+      })();
+      return pret;
+    }
+    self.onmessage = async (e)=>{
+      const { id, dataUrl } = e.data;
+      try{
+        const t0 = performance.now();
+        await ensure();
+        const sortie = await extr(dataUrl);
+        let v = Float32Array.from(sortie.data);
+        const dims = sortie.dims || [];
+        // Sortie [1, T, D] (last_hidden_state) : DINOv2 met une représentation d'image
+        // globale sur le jeton CLS (indice 0). MobileViT renvoie déjà un vecteur réduit.
+        if(dims.length === 3 && dims[1] > 1){
+          const D = dims[2];
+          v = v.slice(0, D);
+        }
+        let n = 0; for(let i=0;i<v.length;i++) n += v[i]*v[i];
+        n = Math.sqrt(n) || 1;
+        for(let i=0;i<v.length;i++) v[i] /= n;
+        postMessage({ id, ok:true, v, ms: Math.round(performance.now()-t0) }, [v.buffer]);
+      }catch(err){ postMessage({ id, ok:false, error:(err && err.message) || String(err) }); }
+    };
+  `;
+  embWorker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+  embWorker.onmessage = e => {
+    const p = embPending.get(e.data.id); if(!p) return;
+    embPending.delete(e.data.id);
+    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+  };
+  embWorker.onerror = e => {
+    for(const p of embPending.values()) p.reject(new Error('worker embedding : ' + (e.message || 'chargement impossible')));
+    embPending.clear();
+  };
+}
+function embedding(dataUrl){
+  return new Promise((resolve, reject)=>{
+    const id = ++embSeq;
+    embPending.set(id, {resolve, reject});
+    embWorker.postMessage({ id, dataUrl });
+  });
+}
+function cosinus(a, b){ let s = 0; for(let i=0;i<a.length;i++) s += a[i]*b[i]; return s; }
+
+// ════════════════════════════════════════════ worker ORB + RANSAC (Solution B · ORB)
+// Appariement de points d'intérêt : on cherche l'illustration officielle qui partage le plus
+// de correspondances GÉOMÉTRIQUEMENT COHÉRENTES avec la photo (inliers d'une homographie
+// RANSAC). Invariant à la lumière, aux reflets et à la perspective par construction — c'est
+// la réponse classique au problème d'écart de domaine qui bloquait l'embedding.
+let orbWorker = null, orbSeq = 0;
+const orbPending = new Map();
+function demarrerOrbWorker(){
+  if(orbWorker){ orbWorker.terminate(); orbPending.clear(); }
+  const src = `
+    self.cv = undefined;
+    importScripts(${JSON.stringify(OPENCV)});
+    let pret = null;
+    async function ensure(){
+      if(pret) return pret;
+      pret = (async ()=>{
+        if(cv instanceof Promise) cv = await cv;
+        else if(typeof cv === 'function') cv = await cv();
+        else if(!cv.Mat) await new Promise(r => { cv.onRuntimeInitialized = r; });
+      })();
+      return pret;
+    }
+    const NFEATURES = 700;
+    // Descripteurs des références, gardés vivants entre les messages (≈ 700×32 o × N réfs).
+    const refs = new Map();   // cle -> { des: cv.Mat, kp: [{x,y}], w, h }
+
+    function matDepuis(dataUrl){
+      return fetch(dataUrl).then(r => r.blob()).then(createImageBitmap).then(bmp => {
+        const c = new OffscreenCanvas(bmp.width, bmp.height);
+        const ctx = c.getContext('2d', { willReadFrequently:true });
+        ctx.drawImage(bmp, 0, 0);
+        bmp.close();
+        // cv.imread() touche HTMLImageElement/document, absents d'un worker : on passe par
+        // l'ImageData brute.
+        const m = cv.matFromImageData(ctx.getImageData(0, 0, c.width, c.height));
+        const g = new cv.Mat();
+        cv.cvtColor(m, g, cv.COLOR_RGBA2GRAY);
+        m.delete();
+        return g;
+      });
+    }
+    function detecte(gray){
+      const orb = new cv.ORB(NFEATURES);
+      const kp = new cv.KeyPointVector();
+      const des = new cv.Mat();
+      const noMask = new cv.Mat();
+      orb.detectAndCompute(gray, noMask, kp, des);
+      const pts = [];
+      for(let i=0;i<kp.size();i++){ const p = kp.get(i).pt; pts.push({x:p.x, y:p.y}); }
+      kp.delete(); orb.delete(); noMask.delete();
+      return { des, kp: pts };
+    }
+
+    self.onmessage = async (e)=>{
+      const { id, type, cle, dataUrl } = e.data;
+      try{
+        await ensure();
+        if(type === 'ref'){
+          const g = await matDepuis(dataUrl);
+          const { des, kp } = detecte(g);
+          const w = g.cols, h = g.rows; g.delete();
+          if(refs.has(cle)) refs.get(cle).des.delete();
+          refs.set(cle, { des, kp, w, h });
+          postMessage({ id, ok:true, n: kp.length });
+          return;
+        }
+        if(type === 'query'){
+          const t0 = performance.now();
+          const g = await matDepuis(dataUrl);
+          const { des:qdes, kp:qkp } = detecte(g);
+          g.delete();
+          const bf = new cv.BFMatcher(cv.NORM_HAMMING, false);
+          const out = [];
+          for(const [rcle, r] of refs){
+            let score = 0, good = 0;
+            if(qdes.rows >= 8 && r.des.rows >= 8){
+              const knn = new cv.DMatchVectorVector();
+              try{
+                bf.knnMatch(qdes, r.des, knn, 2);
+                const src = [], dst = [];
+                for(let i=0;i<knn.size();i++){
+                  const pair = knn.get(i);
+                  if(pair.size() < 2) continue;
+                  const m0 = pair.get(0), m1 = pair.get(1);
+                  if(m0.distance < 0.75 * m1.distance){
+                    good++;
+                    src.push(qkp[m0.queryIdx].x, qkp[m0.queryIdx].y);
+                    dst.push(r.kp[m0.trainIdx].x, r.kp[m0.trainIdx].y);
+                  }
+                }
+                if(good >= 8){
+                  const mSrc = cv.matFromArray(good, 1, cv.CV_32FC2, src);
+                  const mDst = cv.matFromArray(good, 1, cv.CV_32FC2, dst);
+                  const mask = new cv.Mat();
+                  const H = cv.findHomography(mSrc, mDst, cv.RANSAC, 5, mask);
+                  let inliers = 0;
+                  for(let i=0;i<mask.rows;i++) inliers += mask.data[i];
+                  score = inliers;
+                  mSrc.delete(); mDst.delete(); mask.delete(); H.delete();
+                } else score = good * 0.1;
+              }catch(err){ score = good * 0.1; }
+              knn.delete();
+            }
+            out.push({ cle: rcle, score, good });
+          }
+          bf.delete(); qdes.delete();
+          out.sort((a,b)=> b.score - a.score);
+          postMessage({ id, ok:true, out, ms: Math.round(performance.now()-t0) });
+          return;
+        }
+      }catch(err){ postMessage({ id, ok:false, error:(err && err.message) || String(err) }); }
+    };
+  `;
+  orbWorker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})));
+  orbWorker.onmessage = e => {
+    const p = orbPending.get(e.data.id); if(!p) return;
+    orbPending.delete(e.data.id);
+    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error));
+  };
+  orbWorker.onerror = e => {
+    for(const p of orbPending.values()) p.reject(new Error('worker ORB : ' + (e.message || 'chargement impossible')));
+    orbPending.clear();
+  };
+}
+function orbCall(type, payload){
+  return new Promise((resolve, reject)=>{
+    const id = ++orbSeq;
+    orbPending.set(id, {resolve, reject});
+    orbWorker.postMessage(Object.assign({ id, type }, payload));
+  });
+}
+
+// ════════════════════════════════════════════ photos de test + vérité terrain
+async function listerPhotos(){
+  const res = await fetch('photos-test/');
+  if(!res.ok) throw new Error('dossier photos-test/ inaccessible (HTTP ' + res.status + ')');
+  const html = await res.text();
+  // `serve` sur Windows génère des liens à antislash (href="\photos-test\PKMN-…") : on
+  // coupe sur les deux séparateurs pour ne garder que le nom de fichier.
+  const noms = [...html.matchAll(/href="([^"]*PKMN-[^"]+\.(?:jpg|jpeg|png))"/gi)]
+    .map(m => decodeURIComponent(m[1].split(/[\/\\]/).pop()));
+  return [...new Set(noms)];
+}
+function veriteTerrain(nom){
+  const m = nom.match(/^PKMN-(.+?)-([0-9]+)-[0-9]+\./i);
+  return m ? { set: m[1], numero: String(parseInt(m[2], 10)) } : null;
+}
+
+// ════════════════════════════════════════════ boucle principale
+function mediane(a){ if(!a.length) return 0; const t = a.slice().sort((x,y)=>x-y); return t[Math.floor(t.length/2)]; }
+function moyenne(a){ return a.length ? a.reduce((s,x)=>s+x,0)/a.length : 0; }
+
+async function lancer(){
+  stop = false;
+  $('btn-run').disabled = true; $('btn-sep').disabled = true; $('btn-stop').disabled = false;
+  $('log').textContent = ''; $('detail').innerHTML = ''; $('scores').innerHTML = ''; $('verdict').textContent = '';
+
+  const setId = $('cfg-set').value.trim();
+  const modele = $('cfg-modele').value;
+  const resSuffixe = $('cfg-res').value;
+  const use = {
+    ocr:    $('m-ocr').checked,
+    dhash:  $('m-dhash').checked,
+    emb:    $('m-emb').checked,
+    orb:    $('m-orb').checked,
+    fusion: $('m-fusion').checked,
+  };
+  if(use.fusion && !(use.ocr && (use.dhash || use.emb || use.orb))){
+    log('ℹ️ Fusion ignorée : elle demande l\'OCR + au moins un backend visuel.');
+    use.fusion = false;
+  }
+
+  const R = {};   // méthode -> { r1, r5, n, marges:[], ms:[] }
+  const nom = { ocr:'A · OCR', dhash:'B · dHash', emb:'B · CNN', orb:'B · ORB', fusion:'Fusion' };
+  for(const k of Object.keys(use)) if(use[k]) R[k] = { r1:0, r5:0, n:0, marges:[], ms:[] };
+
+  try{
+    // ---- références ----
+    statut('Chargement des cartes du set ' + setId + '…');
+    const setData = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId)).json();
+    const official = setData.cardCount && setData.cardCount.official;
+    const refs = (setData.cards || []).filter(c => c.image && /^\d+$/.test(String(c.localId || '')));
+    log(`Set « ${setData.name} » — ${refs.length} carte(s) numérotées, dénominateur officiel ${official}.`);
+    if(!refs.length) throw new Error('aucune carte illustrée numérotée dans ce set');
+
+    if(use.ocr){
+      statut('Extraction de la logique de parsing depuis index.html…');
+      const parsing = await chargerParsing();
+      log('Parsing extrait de index.html : ' + parsing.length + ' caractères.');
+      demarrerOcrWorker(parsing);
+    }
+    if(use.emb) demarrerEmbWorker(modele);
+    if(use.orb) demarrerOrbWorker();
+
+    statut('Indexation des références (1re inférence = téléchargement du modèle)…');
+    const base = [];   // { numero, localId, image, hash, vec }
+    const LOT = 8;
+    let premiereEmb = true;
+    for(let i = 0; i < refs.length; i += LOT){
+      if(stop) throw new Error('arrêté');
+      const tranche = refs.slice(i, i + LOT);
+      const imgs = await Promise.all(tranche.map(r =>
+        chargerImage(r.image + '/' + resSuffixe + '.webp').then(img => ({r, img})).catch(err => ({r, err}))));
+      for(const { r, img, err } of imgs){
+        if(err){ log(`  ⚠️ réf #${r.localId} ignorée : ${err.message}`); continue; }
+        const entry = { numero: String(parseInt(r.localId, 10)), localId: r.localId, image: r.image };
+        if(use.dhash) entry.hash = empreinte(img, ZONE_ILLUSTRATION);
+        if(use.emb){
+          try{
+            const e = await embedding(versDataUrl(img, ZONE_ILLUSTRATION));
+            entry.vec = e.v;
+            if(premiereEmb){ premiereEmb = false; log(`Embedding — 1re inférence : ${e.ms} ms (modèle chargé), ${e.v.length} dims.`); }
+          }catch(e2){ log(`  ⚠️ embedding réf #${r.localId} : ${e2.message}`); }
+        }
+        if(use.orb){
+          try{ await orbCall('ref', { cle: entry.numero, dataUrl: versDataUrl(img, null) }); }
+          catch(e3){ log(`  ⚠️ ORB réf #${r.localId} : ${e3.message}`); }
+        }
+        base.push(entry);
+      }
+      statut(`Références : ${Math.min(i + LOT, refs.length)}/${refs.length}…`);
+    }
+    log(`${base.length} référence(s) indexée(s).`);
+
+    // Contrôle de dégénérescence de l'embedding, avant de toucher aux photos.
+    if(use.emb){
+      const withVec = base.filter(b => b.vec);
+      if(withVec.length > 20){
+        const ech = [];
+        for(let i = 0; i < 20; i++) ech.push(withVec[Math.floor(i * withVec.length / 20)]);
+        let mini = 1, maxi = -1, somme = 0, k = 0;
+        for(let i=0;i<ech.length;i++) for(let j=i+1;j<ech.length;j++){
+          const s = cosinus(ech[i].vec, ech[j].vec);
+          mini = Math.min(mini, s); maxi = Math.max(maxi, s); somme += s; k++;
+        }
+        log(`Séparation embedding sur 20 cartes différentes : cosinus min ${mini.toFixed(3)}, moyen ${(somme/k).toFixed(3)}, max ${maxi.toFixed(3)}.`);
+        if(mini > 0.98) log('  ⛔ DESCRIPTEUR DÉGÉNÉRÉ — les chiffres CNN ci-dessous ne veulent rien dire.');
+      }
+    }
+
+    // ---- photos ----
+    statut('Lecture des photos de test…');
+    const noms = await listerPhotos();
+    log(`${noms.length} photo(s) réelle(s).`);
+    if(!noms.length) throw new Error('aucune photo dans photos-test/');
+
+    let echecsPipeline = 0, traitees = 0;
+
+    for(const photoNom of noms){
+      if(stop) break;
+      const vt = veriteTerrain(photoNom);
+      if(!vt){ log(`  ⚠️ ${photoNom} : nom non exploitable`); continue; }
+      statut(`Photo ${traitees + echecsPipeline + 1}/${noms.length} — ${photoNom}`);
+
+      let carte = null, raisonEchec = '';
+      try{
+        const photo = await chargerImage('photos-test/' + encodeURIComponent(photoNom));
+        const rr = await redresser(photo);
+        if(rr.carte) carte = rr.carte; else raisonEchec = rr.echec || 'redressement';
+      }catch(err){ raisonEchec = err.message; }
+      if(!carte){ echecsPipeline++; log(`  ⚠️ ${photoNom} : ${raisonEchec}`); continue; }
+      traitees++;
+
+      const cell = { ocr:'—', dhash:'—', emb:'—', orb:'—', fusion:'—' };
+      let ocrCands = null, shortlist = null;
+
+      // ---- Solution A : OCR ----
+      if(use.ocr){
+        try{
+          const r = await ocrLire(bandeBasse(carte));
+          R.ocr.ms.push(r.ms);
+          ocrCands = r.cands || [];
+          const choisi = ocrCands.find(c => String(c.denominator) === String(official)) || ocrCands[0] || null;
+          R.ocr.n++;
+          const bon = choisi && choisi.number === vt.numero;
+          if(bon){ R.ocr.r1++; R.ocr.r5++; }
+          cell.ocr = `<span class="${bon?'ok':'ko'}">${bon?'✓':'✗'} ${choisi ? choisi.number+'/'+choisi.denominator : '∅'}</span>`;
+        }catch(e){ cell.ocr = `<span class="mut">err</span>`; log(`  OCR ${photoNom} : ${e.message}`); }
+      }
+
+      // ---- Solution B : classements visuels ----
+      const classe = (arr, keyName) => {
+        // arr : [{numero, s}] trié décroissant sur s
+        const i1 = arr[0] && arr[0].numero === vt.numero;
+        const i5 = arr.slice(0,5).some(x => x.numero === vt.numero);
+        const vrai = arr.find(x => x.numero === vt.numero);
+        const autre = arr.find(x => x.numero !== vt.numero);
+        const M = R[keyName];
+        M.n++; if(i1) M.r1++; if(i5) M.r5++;
+        if(vrai && autre) M.marges.push(vrai.s - autre.s);
+        return { i1, i5, top: arr.slice(0,5).map(x => x.numero) };
+      };
+
+      if(use.dhash){
+        const h = empreinte(carte, ZONE_ILLUSTRATION);
+        const arr = base.filter(b => b.hash != null)
+          .map(b => ({ numero: b.numero, s: -hamming(h, b.hash) }))
+          .sort((x,y) => y.s - x.s);
+        const v = classe(arr, 'dhash');
+        cell.dhash = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${arr[0].numero}</span>`;
+        if(!shortlist) shortlist = v.top;
+      }
+      if(use.emb){
+        try{
+          const e = await embedding(versDataUrl(carte, ZONE_ILLUSTRATION));
+          R.emb.ms.push(e.ms);
+          const arr = base.filter(b => b.vec)
+            .map(b => ({ numero: b.numero, s: cosinus(e.v, b.vec) }))
+            .sort((x,y) => y.s - x.s);
+          const v = classe(arr, 'emb');
+          cell.emb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${arr[0].numero}</span>`;
+          shortlist = v.top;
+        }catch(e){ cell.emb = `<span class="mut">err</span>`; }
+      }
+      if(use.orb){
+        try{
+          const r = await orbCall('query', { dataUrl: versDataUrl(carte, null) });
+          R.orb.ms.push(r.ms);
+          const arr = r.out.map(o => ({ numero: o.cle, s: o.score }));
+          const v = classe(arr, 'orb');
+          cell.orb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${arr[0].numero} <span class="mut">(${arr[0].s|0}in)</span></span>`;
+          shortlist = v.top;   // ORB prioritaire pour la fusion : la shortlist la plus fiable
+        }catch(e){ cell.orb = `<span class="mut">err</span>`; log(`  ORB ${photoNom} : ${e.message}`); }
+      }
+
+      // ---- Fusion : shortlist visuelle, l'OCR départage ----
+      if(use.fusion && shortlist){
+        let pick = null;
+        if(ocrCands && ocrCands.length){
+          for(const c of ocrCands){ if(shortlist.includes(c.number)){ pick = c.number; break; } }
+        }
+        if(!pick) pick = shortlist[0];
+        R.fusion.n++;
+        const bon = pick === vt.numero;
+        if(bon){ R.fusion.r1++; R.fusion.r5++; }
+        cell.fusion = `<span class="${bon?'ok':'ko'}">${bon?'✓':'✗'} ${pick}</span>`;
+      }
+
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="mut">${photoNom.replace(/^PKMN-/, '').replace(/\.(jpg|jpeg|png)$/i, '')}</td>
+        <td><code>#${vt.numero}</code></td>
+        <td>${use.ocr ? cell.ocr : ''}</td>
+        <td>${use.dhash ? cell.dhash : ''}</td>
+        <td>${use.emb ? cell.emb : ''}</td>
+        <td>${use.orb ? cell.orb : ''}</td>
+        <td>${use.fusion ? cell.fusion : ''}</td>`;
+      $('detail').appendChild(tr);
+      rendreScores(R, nom, traitees, echecsPipeline, false);
+    }
+
+    rendreScores(R, nom, traitees, echecsPipeline, true);
+    statut(`Terminé — ${traitees} photo(s) exploitée(s)` + (echecsPipeline ? `, ${echecsPipeline} non redressée(s).` : '.'));
+    log('Terminé.');
+  }catch(err){
+    statut('⚠️ ' + err.message);
+    log('ERREUR : ' + (err.stack || err.message));
+  }finally{
+    $('btn-run').disabled = false; $('btn-sep').disabled = false; $('btn-stop').disabled = true;
+  }
+}
+
+function rendreScores(R, nom, traitees, echecs, fini){
+  const cards = [];
+  for(const k of Object.keys(R)){
+    const M = R[k];
+    if(!M.n) continue;
+    const p1 = (100*M.r1/M.n).toFixed(1);
+    const p5 = (100*M.r5/M.n).toFixed(1);
+    const detail = (k === 'ocr' || k === 'fusion')
+      ? (M.ms.length ? `${Math.round(moyenne(M.ms))} ms/photo` : '')
+      : `rang 5 : ${p5} %` + (M.marges.length ? ` · marge méd. ${mediane(M.marges).toFixed(k==='orb'||k==='dhash'?1:3)}` : '')
+        + (M.ms.length ? ` · ${Math.round(moyenne(M.ms))} ms` : '');
+    cards.push(`<div class="card"><div class="n">${p1} %</div><div class="l">${nom[k]} — rang 1 (${M.r1}/${M.n})<br>${detail}</div></div>`);
+  }
+  cards.push(`<div class="card"><div class="n">${echecs}</div><div class="l">Photos non redressées (échec pipeline commun)</div></div>`);
+  $('scores').innerHTML = cards.join('');
+
+  if(!fini) return;
+  const best = Object.keys(R).filter(k => R[k].n).sort((a,b) => (R[b].r1/R[b].n) - (R[a].r1/R[a].n))[0];
+  if(best){
+    $('verdict').innerHTML = `Meilleur rang 1 : <b>${nom[best]}</b> (${(100*R[best].r1/R[best].n).toFixed(1)} %). ` +
+      `Le <b>rang 5</b> compte autant que le rang 1 pour un backend visuel : un rang 5 fiable + l'OCR ` +
+      `en départage (colonne Fusion) est le design de prod le plus prometteur. La <b>marge</b> dit si un ` +
+      `seuil de décision automatique est possible — une marge quasi nulle rend le taux brut inexploitable.`;
+  }
+}
+
+// ════════════════════════════════════════════ test de séparation embedding seul
+async function testSeparation(){
+  stop = false;
+  $('btn-run').disabled = true; $('btn-sep').disabled = true; $('btn-stop').disabled = false;
+  $('log').textContent = ''; $('scores').innerHTML = ''; $('verdict').textContent = '';
+  const setId = $('cfg-set').value.trim();
+  const modele = $('cfg-modele').value;
+  const resSuffixe = $('cfg-res').value;
+  try{
+    log('Test de séparation — ' + modele);
+    const setData = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId)).json();
+    const toutes = (setData.cards || []).filter(c => c.image);
+    const ech = [];
+    for(let i = 0; i < 20 && i < toutes.length; i++) ech.push(toutes[Math.floor(i * toutes.length / 20)]);
+    demarrerEmbWorker(modele);
+    const vecs = [];
+    let msTotal = 0;
+    for(let i = 0; i < ech.length; i++){
+      if(stop) throw new Error('arrêté');
+      statut(`Séparation : ${i+1}/${ech.length}…`);
+      const img = await chargerImage(ech[i].image + '/' + resSuffixe + '.webp');
+      const e = await embedding(versDataUrl(img, ZONE_ILLUSTRATION));
+      vecs.push(e.v);
+      if(i === 0) log(`1re inférence : ${e.ms} ms (modèle chargé) · ${e.v.length} dims`);
+      else msTotal += e.ms;
+    }
+    let mini = 1, maxi = -1, somme = 0, k = 0;
+    for(let i=0;i<vecs.length;i++) for(let j=i+1;j<vecs.length;j++){
+      const s = cosinus(vecs[i], vecs[j]);
+      mini = Math.min(mini, s); maxi = Math.max(maxi, s); somme += s; k++;
+    }
+    const msMoyen = Math.round(msTotal / Math.max(1, vecs.length - 1));
+    log(`Coût par inférence (hors chargement) : ${msMoyen} ms — à comparer aux ~1700 ms de l'OCR.`);
+    log(`Cosinus entre cartes différentes : min ${mini.toFixed(4)} · moyen ${(somme/k).toFixed(4)} · max ${maxi.toFixed(4)}`);
+    $('scores').innerHTML = `
+      <div class="card"><div class="n">${mini.toFixed(3)}</div><div class="l">cosinus le plus élevé entre 2 cartes différentes (plus BAS = mieux)</div></div>
+      <div class="card"><div class="n">${(somme/k).toFixed(3)}</div><div class="l">cosinus moyen</div></div>
+      <div class="card"><div class="n">${msMoyen} ms</div><div class="l">coût par inférence</div></div>
+      <div class="card"><div class="n">${vecs[0].length}</div><div class="l">dimensions</div></div>`;
+    $('verdict').innerHTML = mini > 0.98
+      ? '⛔ <b>Descripteur dégénéré.</b> Inutile de lancer le banc complet avec ce modèle.'
+      : mini > 0.9
+      ? '⚠️ <b>Séparation faible.</b> Le banc complet vaut la peine, mais un seuil sera fragile.'
+      : '✅ <b>Le modèle sépare les illustrations.</b> Lance le banc complet : retrouver la bonne carte depuis une PHOTO est une question plus difficile (écart de domaine).';
+    statut('Test de séparation terminé.');
+  }catch(err){
+    statut('⚠️ ' + err.message); log('ERREUR : ' + err.message);
+  }finally{
+    $('btn-run').disabled = false; $('btn-sep').disabled = false; $('btn-stop').disabled = true;
+  }
+}
+
+$('btn-run').addEventListener('click', lancer);
+$('btn-sep').addEventListener('click', testSeparation);
+$('btn-stop').addEventListener('click', () => { stop = true; statut('Arrêt demandé…'); });
+</script>
+</body>
+</html>
