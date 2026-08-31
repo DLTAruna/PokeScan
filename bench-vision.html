@@ -91,13 +91,22 @@
       <label>Sets distracteurs (ids TCGdex, séparés par virgule)</label>
       <input type="text" id="cfg-distracteurs" placeholder="ex : sv01, sv02, swsh12 — ajoutés au pool, jamais la bonne réponse">
     </div>
+    <div>
+      <label>Largeur de shortlist (fusion : embedding → ORB)</label>
+      <select id="cfg-shortlist">
+        <option value="15">15 (le moins cher)</option>
+        <option value="30" selected>30</option>
+        <option value="50">50</option>
+        <option value="100">100 (proche d'ORB complet)</option>
+      </select>
+    </div>
   </div>
   <div class="checks">
     <label><input type="checkbox" id="m-ocr" checked> Solution A — OCR du numéro</label>
     <label><input type="checkbox" id="m-dhash" checked> B · dHash (référence plancher)</label>
     <label><input type="checkbox" id="m-emb" checked> B · embedding CNN</label>
     <label><input type="checkbox" id="m-orb" checked> B · ORB + RANSAC (OpenCV.js)</label>
-    <label><input type="checkbox" id="m-fusion" checked> Fusion (embedding top-15 → ORB reclasse → OCR départage)</label>
+    <label><input type="checkbox" id="m-fusion" checked> Fusion (embedding shortlist → ORB reclasse → OCR départage)</label>
   </div>
   <div style="margin-top:12px; display:flex; gap:9px; flex-wrap:wrap;">
     <button id="btn-run">▶ Lancer le banc</button>
@@ -588,6 +597,7 @@ async function lancer(){
   const distracteurs = $('cfg-distracteurs').value.split(',').map(s => s.trim()).filter(Boolean).filter(s => s !== setId);
   const modele = $('cfg-modele').value;
   const resSuffixe = $('cfg-res').value;
+  const SHORT = parseInt($('cfg-shortlist').value, 10) || 30;
   const use = {
     ocr:    $('m-ocr').checked,
     dhash:  $('m-dhash').checked,
@@ -784,13 +794,13 @@ async function lancer(){
       //      classement. Chaque étage ne voit qu'une poignée de cartes → coût quasi constant
       //      quelle que soit la taille du catalogue.
       if(use.fusion){
-        const SHORT = 15, TIEBREAK = 6;
-        const base15 = (embArr || dhashArr || orbArr || []).slice(0, SHORT).map(x => x.cle);
-        let ranked = base15;
+        const TIEBREAK = 6;
+        const court = (embArr || dhashArr || orbArr || []).slice(0, SHORT).map(x => x.cle);
+        let ranked = court;
         let orbMs = 0;
-        if(use.orb && base15.length){
+        if(use.orb && court.length){
           try{
-            const rr = await orbCall('querySubset', { dataUrl: versDataUrl(carte, null), cles: base15 });
+            const rr = await orbCall('querySubset', { dataUrl: versDataUrl(carte, null), cles: court });
             orbMs = rr.ms;
             ranked = rr.out.map(o => o.cle);
           }catch(e){ log(`  Fusion/ORB ${photoNom} : ${e.message}`); }

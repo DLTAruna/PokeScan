@@ -1565,6 +1565,58 @@ cache, modèle de segmentation opérationnel. C'est la vraie réponse à « est-
 aiderait » — pas sur la détection de carte (déjà à 4 % d'échecs) ni sur l'OCR, mais sur
 **l'identification par l'illustration**.
 
+### 4.54 Identification visuelle : l'embedding échoue avec un classifieur, réussit avec DINOv2 ; ORB fait mieux encore
+
+Reprise de la piste de §4.53 avec un banc dédié (`bench-vision.html`), qui oppose la
+**Solution A** — OCR du numéro, la chaîne actuelle — à la **Solution B** — retrouver la
+carte par l'illustration, sans jamais lire de chiffre. Mesure sur les 31 photos réelles de
+`photos-test/`, même redressement scanic pour tout le monde, vérité terrain tirée du nom de
+fichier. La logique de parsing du numéro est **extraite en direct de `index.html`** (bloc
+`const LOOKALIKES =` → `// Netteté : variance du laplacien`), jamais recopiée.
+
+| méthode | rang 1 | marge (bonne vs meilleure fausse) | coût / photo |
+|---|---|---|---|
+| OCR du numéro (Solution A) | 64,5 % | — | ~800 ms |
+| dHash 64 bits | ~19 % | −6 bits (distributions recouvrantes) | négligeable |
+| **embedding DINOv2-small** (jeton CLS, 384 dims) | **84 %** | +0,15 cosinus (étroite) | **~650 ms** |
+| **ORB + RANSAC** (inliers d'homographie) | **~97 %** | **+50 à +130 inliers** (franche) | ~5 s (N homographies) |
+
+Deux enseignements, l'un corrige §4.7 et §4.53, l'autre est nouveau.
+
+**L'embedding ne « marche » qu'avec le bon type de modèle.** Un premier banc (retiré depuis,
+`embtest.html`) avait conclu que l'embedding échouait par écart de domaine photo/scan.
+C'était vrai *pour les modèles testés* : MobileNetV4 (dégénéré, cosinus 1.000 partout),
+MobileViT-small (3,2 %) — des **classifieurs ImageNet**, dont la sortie est un vecteur de
+scores de classes, pas une représentation d'image. DINOv2 est **auto-supervisé** : ses
+features encodent la structure visuelle elle-même, et franchissent l'écart photo/scan là où
+les logits de classification s'y noient. 84 % de rang 1, en une seule inférence de 650 ms —
+soit **2,5× plus rapide que l'appel `recognize()` de l'OCR actuel** (§4.24), et scalable à
+tout le catalogue par simple produit scalaire.
+
+**ORB fait mieux et pour une raison de fond.** L'appariement de points d'intérêt cherche
+l'illustration officielle qui partage le plus de correspondances *géométriquement
+cohérentes* (inliers d'une homographie RANSAC) avec la photo. Il apparie la **micro-texture
+du dessin**, invariante à la lumière, aux reflets et à la perspective par construction —
+exactement l'écart de domaine qui noyait l'embedding. ~97 % de rang 1, et surtout une
+**marge énorme** : la bonne carte a 50 à 130 inliers, la meilleure fausse en a une poignée.
+Un seuil de décision automatique devient trivial, ce que ni dHash ni l'embedding ne
+permettaient. Sensible à la définition : les références doivent être chargées en `high.webp`
+(mesuré : `low.webp` fait chuter de 97 % à 90 %, le sous-échantillonnage efface les points
+d'intérêt).
+
+**Chaîne de production proposée** (implémentée dans le banc, colonne « Fusion », pas encore
+dans l'app) : l'embedding cadre une shortlist (produit scalaire sur tout le catalogue,
+négligeable), ORB ne reclasse que cette shortlist sur ses inliers (coût fixe, pas O(N)),
+l'OCR tranche si un de ses candidats numéro tombe dans le haut du classement. Chaque étage
+ne voit qu'une poignée de cartes → coût quasi constant quelle que soit la taille du
+catalogue. La fusion **plafonne au rappel de la shortlist** : si la bonne carte n'est pas
+dans le top-K de l'embedding, ORB ne la voit jamais — la largeur de shortlist (15 → 100) est
+le seul réglage, et l'élargir rapproche la fusion d'ORB complet sans changer le coût.
+
+À valider avant intégration : robustesse du classement avec des milliers de cartes
+distractrices (le banc accepte des sets parasites pour ça), et sur des photos d'autres sets
+que le 151.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
@@ -1604,6 +1656,11 @@ numéro lisible.
 11. ~~Mise au point caméra (Samsung)~~ — correctif posé (§4.17), résultat réel à confirmer
     par le prochain diagnostic (capacités remontées).
 12. ~~Préchauffage table des sets TCGdex~~ — fait, voir §4.19.
+13. **Identification par l'illustration (chantier majeur)** — mesuré viable, voir §4.54.
+    DINOv2 (embedding) + ORB (points d'intérêt) battent l'OCR du numéro sur photos réelles
+    (84 % et ~97 % contre 64 %), sans jamais dépendre d'un chiffre lisible. Chaîne proposée :
+    embedding → shortlist → ORB reclasse → OCR départage. Reste à valider à l'échelle du
+    catalogue et à intégrer au pipeline (`bench-vision.html` sert de prototype).
 
 ## 7. Risques
 
