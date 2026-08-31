@@ -123,7 +123,9 @@ le détail des durées par étage.</p>
       <button class="ghost" id="btn-vider">Vider</button>
     </span>
   </div>
-  <p class="sub" style="margin:8px 0 0;">Les photos sont stockées dans le navigateur (IndexedDB) et survivent à un rechargement.
+  <p class="sub" style="margin:8px 0 0;">Chaque scan <b>confirmé ou corrigé</b> (un tap sur « Correct » suffit) est enregistré ici
+  <b>et transmis</b> à <code>/api/scan-log</code> — prédiction, vérité, inliers, confiance, durées par étage.
+  Les photos sont stockées dans le navigateur (IndexedDB) et survivent à un rechargement.
   Le .zip contient <code>PKMN-{set}-{n°}-{horodatage}.jpg</code> (l'image caméra brute) + <code>verite.json</code> —
   prêt pour <code>photos-test/</code> et le banc.</p>
 </div>
@@ -737,26 +739,53 @@ function afficherResultat(r){
   $('p-res').scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
+// ─────────────────────────────── relais des résultats vers /api/scan-log
+// Chaque identification confirmée (ou corrigée) est envoyée à /api/scan-log — même relais
+// gist que les diagnostics de l'app. Permet de suivre les tests à distance, sans
+// copier/coller. Silencieux en cas d'échec (localhost sans backend, hors ligne…).
+function idAppareil(){
+  let v; try{ v = localStorage.getItem('scan_device'); }catch(e){}
+  if(!v){ v = Math.random().toString(36).slice(2, 8); try{ localStorage.setItem('scan_device', v); }catch(e){} }
+  return v;
+}
+async function relayer(entree){
+  try{
+    const r = await fetch('/api/scan-log', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({ device: idAppareil(), ...entree })
+    });
+    return r.ok;
+  }catch(e){ return false; }
+}
+
 // ─────────────────────────────── confirmation + conservation
 async function confirmer(cle, corrige){
   const c = cleToCard.get(cle);
   if(!c){ statut('carte inconnue : ' + cle); return; }
   const ts = Date.now().toString().slice(-8);
   const nom = `PKMN-${c.setId}-${c.numero}-${ts}.jpg`;   // numéro sans zéros de tête, comme l'export de l'app
+  const R = dernierResultat || {};
+  const juste = R.pick === cle;
   await idbPut('photos', {
     nom, blob: dernierePhotoBlob, cle, setId:c.setId, localId:c.localId, name:c.name,
-    predit: dernierResultat ? dernierResultat.pick : null,
-    juste: dernierResultat ? (dernierResultat.pick === cle) : null,
-    inliers: dernierResultat ? dernierResultat.inl : null,
-    conf: dernierResultat ? dernierResultat.conf : null,
-    ocr: dernierResultat ? dernierResultat.ocrTxt : '',
+    predit: R.pick || null, juste,
+    inliers: R.inl ?? null, conf: R.conf || null, ocr: R.ocrTxt || '',
     at: new Date().toISOString()
   });
   await majCompte();
   $('p-res').style.display = 'none';
-  statut(corrige && dernierResultat && dernierResultat.pick !== cle
-    ? `Corrigé → ${nom} conservée (prédiction ratée, notée).`
-    : `${nom} conservée.`);
+
+  const relaye = await relayer({
+    fichier: nom, cardId: cle, attendu: cle,
+    predit: R.pick || null, preditNum: R.pick ? cleToCard.get(R.pick)?.numero : null,
+    juste, conf: R.conf || null, inliers: Math.round(R.inl || 0), marge: Math.round(R.marge || 0),
+    ocrLance: !!R.ocrLance, ocr: (R.ocrTxt || '').slice(0, 40), ocrOk: !!R.ocrOk,
+    ms: R.ms || null, T: R.T || null, moteur: moteurEmb, sets: $('cfg-sets').value.trim(),
+    corrige: corrige && !juste
+  });
+
+  statut((corrige && !juste ? `Corrigé → ${nom}` : `${nom} conservée`)
+    + (relaye ? ' · transmis' : ''));
 }
 
 async function majCompte(){
