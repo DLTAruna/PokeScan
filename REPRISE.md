@@ -28,6 +28,25 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⚠️ Le piège `qualite` en V2 (V.2) — à connaître avant de toucher au scanner
+
+En V2, `demarrerQualite()` coupe l'échantillonnage et `arreterQualite()` remet `qualite`
+à **zéro**. Rien ne le réécrit ensuite. Tout code qui lit `qualite` en V2 lit donc des
+zéros, et les interprète comme « image catastrophique ». Deux fonctions s'y sont fait
+prendre, et ça coûtait cher :
+
+- `indiceVisee()` — `qualite.net = 0 < 0.4` → **tous** les messages de la V2 devenaient
+  « Flou — éloigne un peu le téléphone », y compris sur une carte nette.
+- `surveillerNettete()` — `netBrut = 0 < NET_MIN` → au bout de 2,5 s elle **changeait le
+  zoom de la caméra**, palier par palier. Chaque changement force une remise au point : la
+  carte devenait vraiment floue, bougeait, `v2StableStreak` repartait à zéro. Toutes les
+  2,5 s. **C'était l'essentiel du délai ressenti en auto** — le correctif contre le flou
+  fabriquait le flou.
+
+**Règle posée : aucun lecteur de `qualite` ne doit agir quand `qualiteTimer` est nul.**
+La garde porte sur la mesure, pas sur le mode — un futur mode qui coupe l'échantillonnage
+est couvert d'office. Si tu ajoutes un lecteur de `qualite`, mets cette garde.
+
 ## Où on en est (2026-08-31, nuit — commit `d336e61`)
 
 **Tout est poussé** (la section « Non poussé » plus bas était périmée, elle a été retirée).

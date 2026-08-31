@@ -5730,7 +5730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 1;
+const VERSION_APP = 2;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9379,6 +9379,13 @@ function preparerCorrectionObjectif(track, caps){
 // Appelée depuis la boucle de détection, uniquement quand une carte EST détectée : un flou
 // sans carte dans le cadre ne dit rien sur l'objectif.
 function surveillerNettete(){
+  // Même garde que dans indiceVisee, et pour une raison plus sérieuse qu'un message faux :
+  // sans mesure, `netBrut` vaut 0, donc « flou » en permanence — et cette fonction agit,
+  // elle change le zoom de la caméra palier par palier. Chaque changement force une remise
+  // au point : la carte devient réellement floue, se déplace, les coins bougent, la série
+  // de stabilité de la V2 repart à zéro. Toutes les 2,5 s. C'était l'essentiel du délai
+  // ressenti en auto — le correctif contre le flou fabriquait le flou.
+  if(!qualiteTimer){ flouDepuis = 0; return; }
   if(!correctionObjectifActive || !pisteObjectif) return;
   // La netteté doit être franchement mauvaise, pas seulement moyenne : on utilise le seuil
   // du rouge de la jauge, celui-là même qu'aucune des 37 captures réussies du relevé réel
@@ -10792,6 +10799,14 @@ function rendreJauges(){
 // premier tueur de lecture sur les holos), puis l'obscurité, puis le flou.
 let conseilActif = false;
 function indiceVisee(base){
+  // Ne JAMAIS juger une image qu'on ne mesure plus. En V2 l'échantillonnage est coupé
+  // (demarrerQualite) et `qualite` reste à zéro : `net = 0` passait sous le seuil de flou
+  // à chaque appel, donc TOUS les messages de la V2 devenaient « Flou — éloigne un peu le
+  // téléphone », y compris sur une carte parfaitement nette. Pire qu'un message faux : il
+  // fait reculer le téléphone, la carte bouge, et la capture attend une stabilité qu'on
+  // vient soi-même de détruire. La garde porte sur la mesure, pas sur le mode — tout futur
+  // mode qui coupe l'échantillonnage est couvert d'office.
+  if(!qualiteTimer){ conseilActif = false; return base; }
   conseilActif = true;
   if(qualite.clip > CLIP_MAX) return 'Reflet — incline un peu la carte';
   if(qualite.lumMoy && qualite.lumMoy < LUM_BONNE_MIN) return 'Trop sombre — rapproche une lampe';
@@ -11428,7 +11443,15 @@ async function attemptRead(corners, score){
     const vw = Math.max(1, Math.round(video.videoWidth * extractScale));
     const vh = Math.max(1, Math.round(video.videoHeight * extractScale));
     const tChoix0 = performance.now();
-    const choix = await meilleureDeDeuxImages(video, vw, vh, corners);
+    // Départager deux images sur leur netteté sert à lire un NUMÉRO : quelques pixels de
+    // haut, où le flou est rédhibitoire. L'ORB, lui, travaille sur toute l'illustration et
+    // encaisse un flou léger. En V2 on garde donc la première image venue : attendre la
+    // trame suivante puis relire deux fois les pixels sur le fil principal ne rachetait
+    // rien, et retardait la seule chose qui compte, l'identification.
+    const v2Actif = !!(window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2());
+    const choix = v2Actif
+      ? { bmp: await createImageBitmap(video, {resizeWidth: vw, resizeHeight: vh, resizeQuality:'medium'}), nettete: 0, choisie: 'V2', ecart: 0 }
+      : await meilleureDeDeuxImages(video, vw, vh, corners);
     const tChoix = Math.round(performance.now() - tChoix0);
     const frame = document.createElement('canvas');
     frame.width = vw; frame.height = vh;
@@ -12100,7 +12123,10 @@ function carteDepuisPack(p){
            image: p.image, set: { id: p.setId, name: nomDeSet(p.setId) || '' }, rarity: '', variants: {}, _pack: true };
 }
 let v2RebutsConsecutifs = 0;
-async function gererScanV2(sourceForRead, corners, score, t0){
+// `dejaAcquitte` : la prise manuelle a déjà rendu l'éclair et la vibration au moment de
+// l'appui (voir captureFrameInterne). Les rejouer ici ferait un second flash une seconde
+// et demie plus tard, sur une carte déjà acquittée.
+async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte){
   const res = await SCAN_V2.identifierV2(sourceForRead).catch(()=> null);
 
   // Pas d'identification fiable. On NE retombe PAS sur l'OCR (l'utilisateur a choisi la
@@ -12158,8 +12184,7 @@ async function gererScanV2(sourceForRead, corners, score, t0){
   showLiveResultDone(carteMin, confiance);
   ajouterAuTotalSession(carteMin);
   setAimHint(`${confiance === 'high' ? '✅' : '🤔'} ${carteMin.name} — V2 ${res.fiabilite}%`);
-  flashScreen(dataUrl);
-  if(navigator.vibrate) navigator.vibrate(40);
+  if(!dejaAcquitte){ flashScreen(dataUrl); if(navigator.vibrate) navigator.vibrate(40); }
   setOverlayTarget('ok', corners);
   validerObjectifCourant();
   capturedThisSession++;
@@ -12631,9 +12656,22 @@ async function captureFrameInterne(video){
   // Scanner V2 actif : la prise manuelle passe par la MÊME identification que la capture
   // auto (panneau du bas, lot, fiche complète). Sans ça, la carte n'apparaissait pas en
   // bas — elle était juste mise en file pour une analyse OCR de fond.
+  let acquitte = false;
   if(window.SCAN_V2 && SCAN_V2.actifV2()){
     v2DerniereCle = null;   // une pression sur 📸 force une nouvelle identification
-    const rV2 = await gererScanV2(source, overlayTargetCorners || null, 1, performance.now())
+    // ACQUITTER L'APPUI TOUT DE SUITE. L'éclair et la vibration vivaient dans gererScanV2,
+    // donc APRÈS l'identification : on appuyait sur 📸 et l'application ne donnait aucun
+    // signe de vie pendant une seconde et demie, puis tout arrivait d'un coup. D'où
+    // « ça met 1 s à prendre la photo mais ça reconnaît tout de suite » — c'était déjà
+    // reconnu. Un appareil photo accuse la prise à l'instant du déclenchement ; ce qui
+    // suit est du traitement, et il a le droit de durer tant qu'on le dit.
+    // Seulement en manuel : en auto, rien n'a été « pris » tant que la V2 n'a pas tranché
+    // (elle peut demander de recadrer sans rien capturer), et un éclair mentirait.
+    try{ flashScreen(source.toDataURL('image/jpeg', 0.5)); }catch(e){}
+    if(navigator.vibrate) navigator.vibrate(40);
+    setAimHint('🔎 Identification…');
+    acquitte = true;
+    const rV2 = await gererScanV2(source, overlayTargetCorners || null, 1, performance.now(), true)
       .catch(e => { console.warn('V2 manuel', e); return null; });
     if(rV2 === 'traite' || rV2 === 'rebut' || rV2 === 'rejet-doublon') return;
     // 'reessai' ou null : la V2 n'a rien donné, mais un appui manuel doit TOUJOURS
@@ -12644,8 +12682,9 @@ async function captureFrameInterne(video){
   source.toBlob((blob)=> pushToQueue(dataUrl, blob, 'caméra'), 'image/png');
 
   capturedThisSession++;
-  flashScreen(dataUrl);
-  if(navigator.vibrate) navigator.vibrate(40);
+  // Pas de second éclair : quand la V2 a déjà acquitté l'appui, il tomberait une seconde
+  // et demie plus tard sur une carte dont l'utilisateur a fini de s'occuper.
+  if(!acquitte){ flashScreen(dataUrl); if(navigator.vibrate) navigator.vibrate(40); }
   setAimHint(redressee ? '📸 Ajoutée et redressée' : '📸 Ajoutée — analyse en arrière-plan');
 }
 
