@@ -16,8 +16,11 @@
 const CARD_RATIO = 88 / 63;
 const ZONE_ILLUSTRATION = { x: 0.07, y: 0.11, w: 0.86, h: 0.43 };
 const BANDE = { y: 0.83, h: 0.17, zoom: 2 };
-const SHORT = 12;      // largeur de shortlist embedding → ORB (12 : ORB reste ~2× plus rapide qu'à 18 sur mobile)
-const TIEBREAK = 6;    // profondeur où l'OCR peut départager
+const SHORT = 30;      // largeur de shortlist embedding → ORB. Remonté de 12 : à 12, la bonne
+                      // carte tombait hors shortlist ~1 fois sur 8 → faux positif à basse
+                      // confiance. Coûte ~300 ms de plus, la fiabilité les vaut.
+const TIEBREAK = 8;    // profondeur où l'OCR peut départager
+const INLIERS_MIN = 10; // en dessous, ORB n'a PAS confirmé géométriquement : on ne devine pas
 // Centre de l'illustration (fractions de carte) : c'est CE point que l'autofocus doit
 // viser en V2, pas la bande du numéro. Exporté pour index.html.
 export const CENTRE_ILLUSTRATION = { u: 0.5, v: 0.32 };
@@ -122,7 +125,7 @@ function demarrerOrb() {
       else if(typeof cv==='function') cv=await cv();
       else if(!cv.Mat) await new Promise(r=>{cv.onRuntimeInitialized=r;});
     })(); return p; }
-    const NFQ=320;   // points d'intérêt de la REQUÊTE (les réfs restent à 700) — 320 suffit et va plus vite
+    const NFQ=480;   // points d'intérêt de la REQUÊTE (les réfs restent à 700)
     const refs=new Map();
     function grisDepuis(b){
       const c=new OffscreenCanvas(b.width,b.height); const x=c.getContext('2d',{willReadFrequently:true});
@@ -168,8 +171,11 @@ function demarrerOrb() {
           const bf=new cv.BFMatcher(cv.NORM_HAMMING,false);
           const cibles = cles.filter(c=>refs.has(c));
           const pre = cibles.map(rc => ({cle:rc, ...correspondances(bf, qd, qk, refs.get(rc))})).sort((a,b)=> b.good - a.good);
+          // Homographie RANSAC sur les 16 meilleurs candidats par nombre de correspondances
+          // (au lieu de 6) : à 6, la bonne carte classée 7e-12e sur le nombre brut ne
+          // recevait jamais de vraie vérification géométrique et perdait contre un faux.
           const out = pre.map((p,i) => ({ cle: p.cle, good: p.good,
-            score: (i < 6 && p.good >= 10) ? inliers(p.s, p.d, p.good) : p.good*0.1 }));
+            score: (i < 16 && p.good >= 8) ? inliers(p.s, p.d, p.good) : p.good*0.1 }));
           bf.delete(); qd.delete(); out.sort((a,b)=>b.score-a.score);
           postMessage({id, ok:true, out}); return;
         }
@@ -298,12 +304,14 @@ export async function identifierV2(carte) {
   let inl = orbScores[pick] || 0;
   const second = ranked.find(c => c !== pick);
   let marge = inl - (orbScores[second] || 0);
+  const dominance0 = inl > 0 ? marge / inl : 0;
+  const orbFranc = inl >= 18 && dominance0 >= 0.6;
 
-  // 3. OCR — quasiment jamais en live V2 : sur photos réelles il n'a jamais départagé quoi
-  //    que ce soit et coûte ~1 s. On ne le lance QUE si ORB n'a strictement rien trouvé
-  //    (moins de 6 inliers partout) — dernier filet, pas un étage régulier.
+  // 3. OCR — en cas de doute réel (ORB pas franc). C'est le garde-fou contre le faux
+  //    positif : quand ORB hésite, un numéro lu qui pointe vers un candidat de la shortlist
+  //    tranche ; sinon la carte reste « douteuse » et l'utilisateur confirme.
   let ocrCands = [], ocrTxt = '', ocrLance = false;
-  if (ocr && inl < 6) {
+  if (ocr && !orbFranc) {
     ocrLance = true;
     try { const r = await chrono('ocr', ocrLire(bandeBasse(carte))); ocrCands = r.cands || []; ocrTxt = r.text || ''; } catch (e) {}
     if (ocrCands.length) {
@@ -316,13 +324,15 @@ export async function identifierV2(carte) {
   const cible = pick && cleToCard.get(pick);
   const ocrOk = !!cible && ocrCands.some(c => c.number === cible.numero);
   const dom = inl > 0 ? marge / inl : 0;
-  const x = 0.05 * inl + 3.2 * dom + (ocrOk ? 1.2 : 0) - 2.4;
+  const x = 0.05 * inl + 3.2 * dom + (ocrOk ? 1.5 : 0) - 2.4;
   const fiabilite = Math.round(Math.max(5, Math.min(99, 100 / (1 + Math.exp(-x)))));
 
-  const meilleurAlt = ranked.length > 1 ? (orbScores[ranked[1]] || 0) : 0;
+  // Prétri. « rebut » = pas d'identification exploitable : ORB n'a pas confirmé
+  // géométriquement (< INLIERS_MIN inliers) ET l'OCR n'a pas non plus pointé vers une carte.
+  // Dans ce cas on préfère « non identifiée, re-scanne » à une carte fausse.
   let categorie;
-  if (!pick || (inl < 3 && embTop < 0.42 && meilleurAlt < 3)) categorie = 'rebut';
-  else if (fiabilite >= 82) categorie = 'sure';
+  if (!pick || (inl < INLIERS_MIN && !ocrOk)) categorie = 'rebut';
+  else if (fiabilite >= 80 || ocrOk) categorie = 'sure';
   else categorie = 'douteuse';
 
   return {

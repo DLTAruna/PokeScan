@@ -12025,6 +12025,9 @@ async function gererScanV2(sourceForRead, corners, score, t0){
   cardConfirmedAbsentSinceCapture = false;
 
   // 1) TOUT DE SUITE : panneau + retours haptiques, à partir du pack.
+  // La vignette du bas doit montrer LA photo qu'on vient de prendre (elle y reste :
+  // showLiveResultDone ne touche pas à l'image, seulement au texte).
+  showLiveResultPending(dataUrl, stripLeadingZero(String(carteMin.number)), '');
   showLiveResultDone(carteMin, confiance);
   ajouterAuTotalSession(carteMin);
   setAimHint(`${confiance === 'high' ? '✅' : '🤔'} ${carteMin.name} — V2 ${res.fiabilite}%`);
@@ -12038,7 +12041,7 @@ async function gererScanV2(sourceForRead, corners, score, t0){
 
   SCAN_V2.relayV2({
     fichier: 'live', cardId: res.pick.cle, attendu: res.pick.cle, predit: res.pick.cle,
-    preditNum: res.pick.numero, juste: true, verifie: false,
+    preditNum: res.pick.numero, juste: null, verifie: false,
     fiabilite: res.fiabilite, categorie: res.categorie, conf: confiance,
     inliers: res.inliers, marge: res.marge, ocrLance: res.ocrLance, ocrOk: res.ocrOk,
     ms: res.ms, T: res.T, moteur: res.moteur, sets: SCAN_V2.setV2(), score: +Number(score).toFixed(2)
@@ -20257,7 +20260,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
      pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=2';
+import * as V2 from './scan-v2.js?v=3';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
