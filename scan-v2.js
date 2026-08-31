@@ -165,6 +165,7 @@ function demarrerOrb() {
         if(type==='refImport'){ if(refs.has(cle)) refs.get(cle).des.delete();
           refs.set(cle,{des:matDepuisBytes(bytes, rows), kp}); postMessage({id, ok:true}); return; }
         if(type==='clear'){ for(const r of refs.values()) r.des.delete(); refs.clear(); postMessage({id, ok:true}); return; }
+        if(type==='dropSet'){ for(const c of cles){ const r=refs.get(c); if(r){ r.des.delete(); refs.delete(c); } } postMessage({id, ok:true, restants:refs.size}); return; }
         if(type==='querySubset'){
           const g = await matDeBitmap(bitmap);
           const {des:qd, kp:qk}=detecte(g, NFQ); g.delete();
@@ -197,66 +198,168 @@ async function chargerParsing() {
   return resolved;
 }
 
-// ─────────────────────────────── pack précalculé
+// ─────────────────────────────── index global + packs ORB à la demande
+//
+// L'utilisateur ne choisit JAMAIS de set. Au démarrage on télécharge une seule fois un
+// index d'empreintes qui couvre toute la tranche du catalogue (~8 Mo, gardé en IndexedDB).
+// Les descripteurs ORB, eux, sont lourds : on ne récupère le pack d'un set QUE quand une
+// carte de ce set apparaît dans la shortlist d'un scan, et on le garde en cache.
+const R2 = 'https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev';
+const MAX_SETS_ORB = 6;                 // packs ORB gardés en mémoire du worker (LRU)
 const nomPack = setId => String(setId).replace(/[^\w.-]/g, '_');
-async function chargerDepuisPack(buf, onProgress) {
+
+// —— petit cache IndexedDB (l'index global et les packs y vivent « pour toujours »)
+const IDB_NOM = 'pokescan_v2', IDB_STORE = 'blobs';
+let _db = null;
+function idb() {
+  if (_db) return _db;
+  _db = new Promise((res, rej) => {
+    const r = indexedDB.open(IDB_NOM, 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(IDB_STORE)) r.result.createObjectStore(IDB_STORE); };
+    r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+  });
+  return _db;
+}
+async function idbGet(k) {
+  try { const db = await idb(); return await new Promise((res) => { const t = db.transaction(IDB_STORE).objectStore(IDB_STORE).get(k); t.onsuccess = () => res(t.result || null); t.onerror = () => res(null); }); }
+  catch (e) { return null; }
+}
+async function idbSet(k, v) {
+  try { const db = await idb(); await new Promise((res) => { const t = db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE).put(v, k); t.onsuccess = res; t.onerror = res; }); } catch (e) {}
+}
+async function idbDelPrefixe(prefixe, sauf) {
+  try {
+    const db = await idb();
+    await new Promise((res) => {
+      const s = db.transaction(IDB_STORE, 'readwrite').objectStore(IDB_STORE);
+      const cur = s.openCursor();
+      cur.onsuccess = () => { const c = cur.result; if (!c) return res();
+        if (String(c.key).startsWith(prefixe) && c.key !== sauf) c.delete(); c.continue(); };
+      cur.onerror = () => res();
+    });
+  } catch (e) {}
+}
+
+async function telechargerR2(chemin, { json, gunzip } = {}) {
+  const r = await fetch(R2 + '/' + chemin, { cache: 'no-store' });
+  if (!r.ok) throw new Error(chemin + ' : HTTP ' + r.status);
+  let buf = await r.arrayBuffer();
+  if (gunzip) {
+    const u = new Uint8Array(buf);
+    if (u[0] === 0x1f && u[1] === 0x8b && typeof DecompressionStream === 'function') {   // encore compressé
+      const ds = new DecompressionStream('gzip');
+      buf = await new Response(new Blob([buf]).stream().pipeThrough(ds)).arrayBuffer();
+    }
+  }
+  return json ? JSON.parse(new TextDecoder().decode(buf)) : buf;
+}
+
+// —— parse un pack de set (format navigateur) : n'en garde QUE l'ORB (l'embedding vient
+//    déjà de l'index global) et l'injecte dans le worker.
+async function injecterPackOrb(setId, buf) {
   const dv = new DataView(buf);
   const hLen = dv.getUint32(0, true);
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hLen)));
-  if (header.model !== MODELE) throw new Error('pack pour un autre modèle');
   let off = 4 + hLen;
-  const cartes = [];
-  for (let ci = 0; ci < header.cards.length; ci++) {
-    const c = header.cards[ci];
-    const embI8 = new Int8Array(buf.slice(off, off + header.embDim)); off += header.embDim;
+  const cles = [];
+  for (const c of header.cards) {
+    off += header.embDim;
     const des = new Uint8Array(buf.slice(off, off + c.or * 32)); off += c.or * 32;
     const kpI16 = new Int16Array(buf.slice(off, off + c.or * 4)); off += c.or * 4;
-    const vec = new Float32Array(header.embDim);
-    let n = 0; for (let i = 0; i < header.embDim; i++) { vec[i] = embI8[i] / 127; n += vec[i] * vec[i]; }
-    n = Math.sqrt(n) || 1; for (let i = 0; i < header.embDim; i++) vec[i] /= n;
     const kp = []; for (let i = 0; i < c.or; i++) kp.push({ x: kpI16[i * 2], y: kpI16[i * 2 + 1] });
-    const localId = c.cle.slice(header.set.length + 1);
-    cartes.push({ cle: c.cle, numero: c.num, setId: header.set, localId, image: c.img, name: c.name, vec, _des: des, _rows: c.or, _kp: kp });
+    await orb.call({ type: 'refImport', cle: c.cle, bytes: des, rows: c.or, kp });
+    cles.push(c.cle);
   }
-  for (let i = 0; i < cartes.length; i++) {
-    const c = cartes[i];
-    await orb.call({ type: 'refImport', cle: c.cle, bytes: c._des, rows: c._rows, kp: c._kp });
-    delete c._des; delete c._rows; delete c._kp;
-    if (onProgress && i % 12 === 0) onProgress(i / cartes.length);
+  return cles;
+}
+
+// —— s'assure que les packs ORB des sets donnés sont chargés dans le worker (LRU).
+//    Renvoie true si un téléchargement a eu lieu (le scan a été ralenti d'autant).
+async function assurerPacksOrb(setIds) {
+  let telecharge = false;
+  for (const setId of setIds) {
+    if (orbCharges.has(setId)) { orbCharges.get(setId).ts = Date.now(); continue; }
+    onEtat('Chargement du set ' + setId + '…');
+    let buf = await idbGet('pack:' + setId + ':' + (manifest?.updatedAt || '0'));
+    if (!buf) {
+      try { buf = await telechargerR2('pack-' + nomPack(setId) + '.pack'); telecharge = true; }
+      catch (e) { orbCharges.set(setId, { ts: Date.now(), cles: [], absent: true }); continue; }
+      idbDelPrefixe('pack:' + setId + ':');
+      idbSet('pack:' + setId + ':' + (manifest?.updatedAt || '0'), buf);
+    }
+    const cles = await injecterPackOrb(setId, buf);
+    orbCharges.set(setId, { ts: Date.now(), cles });
   }
-  return cartes;
+  // éviction LRU des sets les plus anciens qu'on ne vient pas d'utiliser
+  const besoin = new Set(setIds);
+  while (orbCharges.size > MAX_SETS_ORB) {
+    let vieux = null, vieuxTs = Infinity;
+    for (const [id, v] of orbCharges) if (!besoin.has(id) && v.ts < vieuxTs) { vieux = id; vieuxTs = v.ts; }
+    if (!vieux) break;
+    const v = orbCharges.get(vieux);
+    if (v.cles.length) { try { await orb.call({ type: 'dropSet', cles: v.cles }); } catch (e) {} }
+    orbCharges.delete(vieux);
+  }
+  return telecharge;
 }
 
 // ─────────────────────────────── état + API publique
-let BASE = [], cleToCard = new Map(), pret = false, actif = false, moteurEmb = '?', setCourant = null;
+let BASE = [], cleToCard = new Map(), pret = false, actif = false, moteurEmb = '?';
+let EMB_Q8 = null, EMB_DIM = 384;
+let manifest = null;
+let onEtat = () => {};
+const orbCharges = new Map();   // setId -> { ts, cles:[...], absent? }
 
-export function pretV2() { return pret; }            // l'index est chargé
-export function actifV2() { return pret && actif; }  // ...ET l'utilisateur a activé le scan V2
+export function pretV2() { return pret; }
+export function actifV2() { return pret && actif; }
 export function basculerV2(on) { actif = !!on; }
 export function moteurV2() { return moteurEmb; }
-export function setV2() { return setCourant; }
+export function setV2() { return [...orbCharges.keys()]; }
+export function trancheV2() { return manifest?.slice || null; }
+export function surEtatV2(cb) { onEtat = typeof cb === 'function' ? cb : (() => {}); }
 
-// Initialise (ou réinitialise) V2 pour un set : télécharge le pack, démarre les moteurs.
-export async function initV2(setId, opts = {}) {
+// Initialise V2 : télécharge (une fois) l'index d'empreintes global, démarre les moteurs.
+// Aucun set à préciser — l'index couvre toute la tranche.
+export async function initV2(opts = {}) {
   const onProgress = opts.onProgress || (() => {});
-  pret = false; setCourant = null;
-  if (!setId) throw new Error('aucun set verrouillé — verrouille un set pour V2');
+  pret = false;
 
   if (!emb) demarrerEmb();
-  if (orb) { try { await orb.call({ type: 'clear' }); } catch (e) {} } else demarrerOrb();
+  if (!orb) demarrerOrb();
 
-  onProgress(0.02, 'Téléchargement de l\'index…');
-  const urls = [
-    'packs/' + nomPack(setId) + '.pack',
-    '/api/pack?set=' + encodeURIComponent(nomPack(setId)),
-  ];
-  let buf = null;
-  for (const u of urls) {
-    try { const r = await fetch(u, { cache: 'force-cache' }); if (r.ok) { const b = await r.arrayBuffer(); if (b.byteLength > 500) { buf = b; break; } } } catch (e) {}
+  onProgress(0.02, 'Manifeste…');
+  manifest = await telechargerR2('manifest.json', { json: true });
+  if (manifest.model && manifest.model !== MODELE) throw new Error('index pour un autre modèle (' + manifest.model + ')');
+  const version = manifest.updatedAt || '0';
+
+  onProgress(0.05, 'Index visuel…');
+  const cleIdx = 'idx:' + version;
+  let bin = await idbGet(cleIdx);
+  let meta = await idbGet('meta:' + version);
+  if (!bin || !meta) {
+    bin = await telechargerR2('index-global.bin');
+    meta = await telechargerR2('index-global-meta.json.gz', { json: true, gunzip: true });
+    idbDelPrefixe('idx:', cleIdx); idbDelPrefixe('meta:', 'meta:' + version);
+    idbSet(cleIdx, bin); idbSet('meta:' + version, meta);
   }
-  if (!buf) throw new Error('pas de pack pour ' + setId + ' — ouvre-le une fois dans le scanner de test pour le générer');
 
-  BASE = await chargerDepuisPack(buf, p => onProgress(0.05 + 0.7 * p, 'Chargement de l\'index…'));
+  onProgress(0.55, 'Décodage…');
+  const dv = new DataView(bin);
+  const count = dv.getUint32(0, true), embDim = dv.getUint32(4, true);
+  EMB_DIM = embDim;
+  // On garde les embeddings quantifiés int8 (2× moins de mémoire que du float32 pour
+  // ~8 000 cartes) + un facteur inv = 1/(127·‖v‖) par carte : le cosinus se ramène alors
+  // à un produit scalaire d'entiers × inv, la requête étant déjà normalisée L2.
+  const q8 = new Int8Array(bin.slice(8, 8 + count * embDim));
+  BASE = new Array(count);
+  for (let i = 0; i < count; i++) {
+    let n = 0; for (let j = 0; j < embDim; j++) { const v = q8[i * embDim + j]; n += v * v; }
+    const inv = 1 / (Math.sqrt(n) || 1);
+    const m = meta[i];
+    BASE[i] = { cle: m.c, numero: m.n, setId: m.s, name: m.m, image: m.i,
+                localId: String(m.c).slice(String(m.s).length + 1), off: i * embDim, inv };
+  }
+  EMB_Q8 = q8;
   cleToCard = new Map(BASE.map(c => [c.cle, c]));
 
   onProgress(0.8, 'OCR…');
@@ -271,9 +374,8 @@ export async function initV2(setId, opts = {}) {
     ocr ? ocrLire(warm).catch(() => {}) : null,
   ]);
   moteurEmb = m;
-  setCourant = setId;
   pret = true;
-  onProgress(1, `V2 prête — ${BASE.length} cartes (${m}).`);
+  onProgress(1, `V2 prête — ${BASE.length} cartes, ${manifest.sets ? Object.keys(manifest.sets).length : '?'} sets (${m}).`);
   return { cartes: BASE.length, moteur: m };
 }
 
@@ -287,11 +389,22 @@ export async function identifierV2(carte) {
   const petit = document.createElement('canvas'); petit.width = 320; petit.height = Math.round(320 * CARD_RATIO);
   petit.getContext('2d').drawImage(carte, 0, 0, petit.width, petit.height);
   const e = await chrono('emb', embed(versDataUrl(petit, ZONE_ILLUSTRATION)));
-  const parEmb = BASE.map(c => ({ cle: c.cle, s: cosinus(e.v, c.vec) })).sort((a, b) => b.s - a.s);
+  const ev = e.v, q8 = EMB_Q8, D = EMB_DIM;
+  const parEmb = BASE.map(c => {
+    let s = 0; const o = c.off;
+    for (let j = 0; j < D; j++) s += q8[o + j] * ev[j];
+    return { cle: c.cle, s: s * c.inv };
+  }).sort((a, b) => b.s - a.s);
   const embTop = parEmb[0].s;
   const court = parEmb.slice(0, SHORT).map(x => x.cle);
 
-  // 2. ORB reclasse la shortlist
+  // 2. packs ORB des sets de la shortlist (téléchargés à la demande, puis en cache)
+  const setsCourt = [...new Set(court.map(cle => cleToCard.get(cle).setId))];
+  let packTelecharge = false;
+  try { packTelecharge = await chrono('packs', assurerPacksOrb(setsCourt)); } catch (err) {}
+  onEtat('');
+
+  // 3. ORB reclasse la shortlist
   let ranked = court, orbScores = {};
   try {
     const bmp = await createImageBitmap(carte);
@@ -307,7 +420,7 @@ export async function identifierV2(carte) {
   const dominance0 = inl > 0 ? marge / inl : 0;
   const orbFranc = inl >= 18 && dominance0 >= 0.6;
 
-  // 3. OCR — en cas de doute réel (ORB pas franc). C'est le garde-fou contre le faux
+  // 4. OCR — en cas de doute réel (ORB pas franc). C'est le garde-fou contre le faux
   //    positif : quand ORB hésite, un numéro lu qui pointe vers un candidat de la shortlist
   //    tranche ; sinon la carte reste « douteuse » et l'utilisateur confirme.
   let ocrCands = [], ocrTxt = '', ocrLance = false;
@@ -338,6 +451,7 @@ export async function identifierV2(carte) {
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
     fiabilite, categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, ocrTxt, ocrLance, ocrOk,
+    packTelecharge, setsCharges: [...orbCharges.keys()],
     ms: Object.values(T).reduce((a, b) => a + b, 0), T, moteur: moteurEmb,
     alts: ranked.slice(0, 8).map(cle => { const c = cleToCard.get(cle); return { cle, numero: c.numero, name: c.name, image: c.image, localId: c.localId, inliers: Math.round(orbScores[cle] || 0) }; }),
   };

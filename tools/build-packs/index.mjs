@@ -121,7 +121,7 @@ async function construireIndexGlobal(tousLesEmb) {
 
   const meta = tousLesEmb.map(r => ({ c: r.cle, n: r.numero, s: r.setId, m: r.name, i: r.image }));
   const gz = zlib.gzipSync(Buffer.from(JSON.stringify(meta)));
-  await put('index-global-meta.json.gz', gz, 'application/json');   // servi tel quel, décompressé côté client
+  await put('index-global-meta.json.gz', gz, 'application/octet-stream');   // gzip brut, décompressé côté client (DecompressionStream)
   journal(`Index global : ${count} cartes, ${((8 + body.length) / 1e6).toFixed(1)} Mo + méta ${(gz.length / 1e3).toFixed(0)} Ko`);
 }
 

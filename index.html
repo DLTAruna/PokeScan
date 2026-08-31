@@ -4620,10 +4620,10 @@
 
         <label class="dest-case" style="margin-top:12px;">
           <input type="checkbox" id="chk-scan-v2">
-          <span><b>Scanner V2 <span style="color:var(--accent)">[BÊTA]</span></b><small>Identifie la carte
-          par son <b>illustration</b> (DINOv2 + points d'intérêt), pas par le numéro — marche même
-          quand le chiffre est illisible. Demande un set choisi ci-dessus. Chaque scan est
-          enregistré pour analyse.</small></span>
+          <span><b>Scanner V2 — reconnaissance visuelle <span style="color:var(--accent)">[BÊTA]</span></b><small>Identifie la
+          carte par son <b>illustration</b> (DINOv2 + points d'intérêt), pas par le numéro — marche
+          même quand le chiffre est illisible, et sur <b>tous les sets à la fois</b> : rien à choisir.
+          Décoché, c'est la V1 (lecture du numéro) qui scanne. Chaque scan est enregistré pour analyse.</small></span>
         </label>
         <p class="hint" id="v2-etat" style="margin:6px 0 0; display:none;"></p>
 
@@ -12044,7 +12044,8 @@ async function gererScanV2(sourceForRead, corners, score, t0){
     preditNum: res.pick.numero, juste: null, verifie: false,
     fiabilite: res.fiabilite, categorie: res.categorie, conf: confiance,
     inliers: res.inliers, marge: res.marge, ocrLance: res.ocrLance, ocrOk: res.ocrOk,
-    ms: res.ms, T: res.T, moteur: res.moteur, sets: SCAN_V2.setV2(), score: +Number(score).toFixed(2)
+    packTelecharge: !!res.packTelecharge,
+    ms: res.ms, T: res.T, moteur: res.moteur, sets: res.setsCharges || SCAN_V2.setV2(), score: +Number(score).toFixed(2)
   });
 
   // 2) EN ARRIÈRE-PLAN : file d'attente + fiche complète + validation auto.
@@ -20260,11 +20261,11 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
      pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=3';
+import * as V2 from './scan-v2.js?v=4';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
-const chk = $$('chk-scan-v2'), etat = $$('v2-etat'), sel = $$('capture-set'), chip = $$('cam-v2-chip');
+const chk = $$('chk-scan-v2'), etat = $$('v2-etat'), chip = $$('cam-v2-chip');
 if(chk){
   const sauver = () => { try{ localStorage.setItem('pokescan_v2', chk.checked ? '1' : '0'); }catch(e){} };
   function majChip(txt){
@@ -20274,38 +20275,33 @@ if(chk){
     chip.classList.toggle('on', chk.checked && pret);
     chip.classList.toggle('charge', chk.checked && !pret);
     chip.lastChild.textContent = chk.checked ? (pret ? 'V2' : '…') : 'V2';
-    chip.title = txt || (chk.checked ? (pret ? 'Scanner V2 actif — appuie pour revenir à l\'OCR' : 'V2 en préparation…')
-                                     : 'Scanner V2 (illustration) — appuie pour activer');
+    chip.title = txt || (chk.checked ? (pret ? 'Scanner V2 (illustration) actif — appuie pour revenir à la V1 (numéro)'
+                                             : 'V2 en préparation…')
+                                     : 'Scanner V1 (numéro) actif — appuie pour la V2 (illustration)');
   }
   const dire = (txt, err) => {
     if(etat){ etat.style.display = txt ? '' : 'none'; etat.textContent = txt || '';
       etat.style.color = err ? 'var(--red, #e5484d)' : ''; }
     majChip(txt);
   };
+  // Pendant un scan, scan-v2 signale ici quand il télécharge le pack ORB d'un set.
+  V2.surEtatV2(m => { if(m) dire(m); });
 
   let enCours = false;
   async function activer(){
     if(!chk.checked){ dire(''); return; }
-    const setId = sel && sel.value;
-    if(!setId){
-      dire('Choisis un set (⚙️) pour activer la V2.', true);
-      chk.checked = false; sauver(); majChip();
-      // ouvre la feuille de réglages pour que le set soit à portée
-      try{ window.ouvrirFeuilleReglages && window.ouvrirFeuilleReglages(); }catch(e){}
-      return;
-    }
-    if(V2.pretV2() && V2.setV2() === setId){ dire(`V2 active — ${setId}.`); return; }
+    if(V2.pretV2()){ dire('V2 active.'); return; }
     if(enCours) return;
     enCours = true;
     try{
-      await V2.initV2(setId, { onProgress: (p, m) => dire(m || `V2 : ${Math.round(p*100)} %`) });
+      await V2.initV2({ onProgress: (p, m) => dire(m || `V2 : ${Math.round(p*100)} %`) });
+      dire('V2 active.');
     }catch(e){ dire('V2 indisponible : ' + e.message, true); chk.checked = false; sauver(); }
     enCours = false;
     majChip();
   }
 
   chk.addEventListener('change', () => { sauver(); activer(); });
-  if(sel) sel.addEventListener('change', () => { if(chk.checked) activer(); });
   if(chip) chip.addEventListener('click', () => {
     chk.checked = !chk.checked;
     chk.dispatchEvent(new Event('change'));
@@ -20314,12 +20310,7 @@ if(chk){
   try{ if(localStorage.getItem('pokescan_v2') === '1') chk.checked = true; }catch(e){}
   if(new URLSearchParams(location.search).has('v2')) chk.checked = true;
   majChip();
-  if(chk.checked){
-    let essais = 0;
-    const t = setInterval(() => {
-      if(++essais > 20 || (sel && sel.value)){ clearInterval(t); activer(); }
-    }, 500);
-  }
+  if(chk.checked) activer();
 }
 </script>
 </body>
