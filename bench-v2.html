@@ -92,7 +92,9 @@
   <h2>Lancer</h2>
   <div class="rang">
     <button id="b-init">1 · Charger l'index V2</button>
-    <button id="b-run" disabled>2 · Passer le corpus</button>
+    <button id="b-run" disabled>2 · Passer le corpus (31 photos)</button>
+    <button id="b-cat" disabled>2b · Passer le catalogue</button>
+    <label>Cartes tirées<input type="number" id="b-cat-n" value="30" min="5" max="300"></label>
     <button class="fantome" id="b-froid" disabled>Vider le cache ORB (mémoire)</button>
     <button class="fantome" id="b-froid-disque" disabled>Vider aussi IndexedDB</button>
     <button class="fantome" id="b-reset" disabled>Effacer les résultats</button>
@@ -414,14 +416,32 @@ async function init(){
   etat('Chargement de l\'index d\'empreintes…');
   const t0 = performance.now();
   await V2.initV2({ onProgress:(p, m)=> etat(m || ('Chargement… ' + Math.round(p*100) + ' %')) });
-  const r = await fetch('photos-test/liste.json', {cache:'no-store'});
-  const j = await r.json();
-  corpus = j.photos || [];
+
+  // Le corpus de photos réelles est OPTIONNEL, et son absence ne doit rien empêcher.
+  // `photos-test/` est délibérément exclu du dépôt (voir .gitignore : photos personnelles
+  // et volumineuses), donc absent du site déployé — c'est-à-dire précisément là où on
+  // vient scanner avec un téléphone. Faire échouer tout le chargement pour ça rendait le
+  // banc inutilisable sur mobile, alors que la caméra et le catalogue n'en ont pas besoin.
+  corpus = [];
+  try{
+    const r = await fetch('photos-test/liste.json', {cache:'no-store'});
+    if(r.ok && (r.headers.get('content-type') || '').includes('json')){
+      corpus = (await r.json()).photos || [];
+    }
+  }catch(e){ /* corpus absent : les autres modes restent entiers */ }
+
   const info = { moteur: V2.moteurV2(), tranche: V2.trancheV2(), photos: corpus.length,
+                 catalogue: V2.catalogueV2().length,
                  diag: V2.diagV2(), msInit: Math.round(performance.now() - t0) };
-  journal('index prêt — ' + info.moteur + ', ' + corpus.length + ' photos, ' + info.msInit + ' ms');
-  etat('Index prêt (' + info.moteur + '). ' + corpus.length + ' photos au corpus.');
-  for(const b of ['b-run','b-froid','b-froid-disque','b-reset','c-start']) $(b).disabled = false;
+  journal('index prêt — ' + info.moteur + ', ' + info.catalogue + ' cartes, corpus '
+          + (corpus.length || 'absent') + ', ' + info.msInit + ' ms');
+  etat('Index prêt (' + info.moteur + ', ' + info.catalogue + ' cartes). '
+       + (corpus.length ? corpus.length + ' photos au corpus.'
+                        : 'Corpus de photos absent (normal hors poste de développement) — caméra et catalogue disponibles.'));
+
+  for(const b of ['b-froid','b-froid-disque','b-reset','c-start','b-cat']) $(b).disabled = false;
+  $('b-run').disabled = !corpus.length;
+  if(!corpus.length) $('b-run').title = 'photos-test/ n\'est pas déployé (exclu du dépôt)';
   return info;
 }
 
@@ -933,6 +953,7 @@ window.BANC = {
 
 $('b-init').onclick = ()=>{ $('b-init').disabled = true; init().catch(e=>{ etat('Échec : ' + e.message); $('b-init').disabled = false; }); };
 $('b-run').onclick = ()=> lancer();
+$('b-cat').onclick = ()=>{ preparer({n:+$('b-cat-n').value || 30, graine: Date.now() % 10000}); lancerCatalogue(); };
 $('b-stop').onclick = ()=>{ arret = true; };
 $('b-reset').onclick = reinit;
 $('b-froid').onclick = ()=> froid({});
