@@ -14,53 +14,75 @@ n°1 des scanners.
 
 Commits en français, style sobre/littéraire. Terminer par
 `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`. Git user « Nikos ».
+**Le `git push` est souvent bloqué pour Claude par le classificateur — c'est Nikos qui
+pousse.** Claude commite en local, liste les commits à pousser, Nikos fait `git push`.
 
-## Où on en est (2026-08-31)
+## Où on en est (2026-08-31, soir)
 
-Le gros chantier en cours = **Scanner V2**, l'identification par l'**illustration** au lieu
-du numéro. Mesuré : ~90-97 % de rang 1 contre ~64 % pour l'OCR du numéro.
-
+Le gros chantier = **Scanner V2**, identification par l'**illustration** au lieu du numéro.
 Chaîne : DINOv2 (embedding) → shortlist → ORB + homographie RANSAC reclasse → OCR du
 numéro départage en cas de doute. Code dans **`scan-v2.js`** (module autonome, ses propres
 Workers), branché dans `index.html` via `<script type="module">` en bas + le hook
-`gererScanV2()` dans `attemptRead()`.
+`gererScanV2()` dans `attemptRead()` **et** dans `captureFrame()` (prise manuelle).
 
-### Ce qui est fait et déployé
+**État : fonctionne, en cours de réglage sur le téléphone de Nikos.** L'identification est
+bonne ; c'est la latence et l'ergonomie du déclenchement qu'on peaufine, session de test
+après session de test, via `/api/scan-log`.
 
-- **V2 « tous sets, aucun choix »**. L'utilisateur active la V2 (case dans ⚙️ ou pastille
-  dans la caméra) et scanne n'importe quelle carte — plus de sélection de set.
-- **Index d'empreintes global** sur R2 : `index-global.bin` (int8, ~3 Mo, 7 591 cartes =
-  séries **swsh + sv + me**) + `index-global-meta.json.gz`. Téléchargé une fois, gardé en
-  IndexedDB (`pokescan_v2`).
-- **Descripteurs ORB par carte** : blob `orb/<clé>.orb` (~25 Ko) récupéré à la demande pour
-  les ~18 cartes de la shortlist de chaque scan, puis gardé (LRU 900 cartes).
-- Sélecteur **V1 / V2** conservé. V1 = lecture du numéro (l'existant), V2 = illustration.
-- Import du module : `./scan-v2.js?v=11` dans `index.html` (bumper à chaque modif de
+### Fait et déployé (jusqu'à `86e2581`)
+
+- **V2 « tous sets, aucun choix »**. Activation : case dans ⚙️ ou pastille dans la caméra.
+  Plus aucune sélection de set.
+- **Index d'empreintes global** sur R2 : `index-global.bin` (int8, ~3 Mo, **7 591 cartes**
+  = séries **swsh + sv + me**) + `index-global-meta.json.gz`. Téléchargé une fois, gardé
+  en IndexedDB (`pokescan_v2`).
+- **Descripteurs ORB par carte** : blob `orb/<clé>.orb` (~25 Ko), récupéré à la demande
+  pour les ~18 cartes de la shortlist, puis gardé (LRU 900).
+- Sélecteur **V1 / V2** (V1 = numéro, V2 = illustration). En V2 : les 3 jauges
+  netteté/lumière/cadrage sont **masquées** (elles ne conditionnent rien) ; seules les
+  équerres du cadre restent.
+- **Aucun repli sur l'OCR en V2** : `gererScanV2` gère ses échecs — 2 essais (« recentre la
+  carte »), au 3e la photo part dans « À vérifier ».
+- **Prise manuelle 📸 identifie aussi** (`7035bec`, voir plus bas) : passe par
+  `gererScanV2`, affiche le résultat dans le panneau du bas comme la capture auto.
+- Import du module : **`./scan-v2.js?v=13`** dans `index.html` (bumper à chaque modif de
   `scan-v2.js`).
-- **Tests navigateur** (31 photos réelles set 151, index 7 591, vrai redressement) :
-  25/31 exactes, 25/26 des « sûres » exactes (la 26e erreur « sûre » = photo mal
-  étiquetée, connue). Latence ~0,9-1,2 s/scan sur WebGPU.
+
+### Non poussé
+
+- **`7035bec`** — « la prise manuelle 📸 identifie aussi, et affiche le résultat en bas ».
+  À pousser : `git -C C:/Users/Aruna/pokescan push origin main`.
 
 ### Ce qui reste
 
-1. **Nikos teste la V2 sur son téléphone** (version `?v=11`). Retour via `/api/scan-log`.
-   Historique des sessions de test : (a) emb lent car WebGPU met ~8 scans à s'initialiser
-   (les premiers passent en WASM) ; (b) une fois WebGPU actif, l'**ORB** devenait le goulot
-   (1,6-3,4 s) + l'**OCR** explosait (4,3 s) sur salve longue = throttle thermique.
-   Corrigé en `817c6ed` : homographie top-8, NFQ 360, worker ORB recyclé toutes les 12
-   cartes, OCR coupé quand `dernierOrbMs > 1800`. **À reconfirmer sur l'appareil.**
-2. **3 commits locaux non poussés** : `2b91aec` `03ae0fa` `817c6ed`. `git push origin main`
-   (le push est parfois bloqué pour Claude par le classificateur — c'est Nikos qui pousse).
-3. **Révoquer le jeton R2 fuité** — il était en clair dans `run.sh` au commit `872c039`
-   (poussé sur GitHub). Cloudflare → R2 → Manage API Tokens → supprimer. En refaire un pour
-   les builds suivants (le mettre dans `tools/build-packs/.env`, non commité).
-4. **Étendre la tranche** aux séries antérieures (`base`, `neo`, `ecard`, `ex`, `pop`,
-   `dp`, `pl`, `hgss`, `col`, `bw`, `xy`, `sm`) une fois la V2 validée sur téléphone.
-   `SERIES=base,neo,... bash tools/build-packs/run.sh` — le script reprend et reconstruit
-   l'index global avec tout.
+1. **Réglage vitesse / déclenchement, avec Nikos.** Constats des dernières sessions
+   (`/api/scan-log`) :
+   - L'**ORB** est réparé : ~340 ms (contre 2 000-3 400 ms avant `817c6ed` : homographie
+     top-8, `NFQ` 360). Total médian **~1,7 s** (contre 3-8 s).
+   - **WebGPU capricieux** sur ce téléphone (tantôt `webgpu/fp16`, tantôt `wasm/q8` — il
+     met ~8 scans à s'initialiser) **et ne gagne quasi rien** (fp16 ~650 ms ≈ WASM).
+     Ne pas s'acharner dessus.
+   - **Déclenchement auto trop pressé** : ~6 cartes sur 13 scannées deux fois en 2-3 s,
+     1er scan faible (`douteuse`, 12-20 inliers), 2e bon (`sure`, 40-150). La caméra
+     capture avant que la carte soit calée. `dejaLue` (dans `detectLoop`, déployé) coupe le
+     2e scan — **risque : figer le mauvais 1er résultat**. Piste : autoriser une relance si
+     le 1er résultat était `douteuse` ; ou durcir la condition de stabilité avant capture.
+   - `packTelecharge:true` à chaque scan sur un tas mélangé (la shortlist couvre 15+ sets,
+     ~18 blobs neufs). Envisager le Worker Cloudflare (`worker-orb.js`, point 5).
+2. **Nikos va comparer manuel vs auto** maintenant que le manuel identifie (`7035bec`).
+3. **Révoquer le jeton R2 fuité** — était en clair dans `run.sh` au commit `872c039`
+   (poussé sur GitHub). Cloudflare → R2 → Manage R2 API Tokens → supprimer. En refaire un
+   pour les builds suivants, le mettre dans `tools/build-packs/.env` (non commité).
+4. **Étendre la tranche** aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
+   xy,sm`) quand la V2 sera validée. `SERIES=base,neo,... bash tools/build-packs/run.sh` —
+   le script reprend et reconstruit l'index global avec tout. Compter ~2 h de plus.
 5. **Worker Cloudflare optionnel** (`tools/build-packs/worker-orb.js`) : regroupe les ~18
-   blobs d'un scan en une requête. Non déployé. Si déployé, mettre son URL dans
-   `WORKER_ORB` en tête de `scan-v2.js`. Instructions de déploiement dans le fichier.
+   blobs d'un scan en une requête (au lieu de ~18 requêtes). Non déployé. Instructions dans
+   le fichier (dashboard, sans CLI). Une fois déployé : mettre son URL dans `WORKER_ORB` en
+   tête de `scan-v2.js`.
+6. **Le log ne mesure pas la justesse** : `predit == attendu == cardId` (tous mis à la
+   prédiction). Il faut que Nikos corrige les cartes fausses (→ `verifie:true`) ou dise ce
+   qui a raté. Les tests navigateur sur `photos-test/`, eux, connaissent la vérité.
 
 ## R2 (stockage de l'index V2)
 
@@ -68,30 +90,31 @@ Workers), branché dans `index.html` via `<script type="module">` en bas + le ho
   Account ID `8a7457771cfa724d62c8fd4fb97dbaf9`.
   URL publique `https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev`.
 - CORS posé (dashboard) pour `poke-scan-drab.vercel.app` + `http://localhost:8802`.
-- Objets : `index-global.bin`, `index-global-meta.json.gz`, `pack-<set>.pack` (un par set,
-  format navigateur), `orb/<clé>.orb` (par carte), `manifest.json`, `status.json`.
+- Objets : `index-global.bin`, `index-global-meta.json.gz`, `manifest.json`, `status.json`,
+  `pack-<set>.pack` (un par set, format navigateur), `orb/<clé>.orb` (un par carte).
 - Clés d'écriture : `tools/build-packs/.env` (non commité, à recréer après révocation).
-- `api/pack.js` (gist, pas R2) sert encore `scanner-test.html` — ne pas y toucher.
+- `api/pack.js` (gist, **pas** R2) sert encore `scanner-test.html` — ne pas y toucher.
+- `api/build-control.js` (gist) : pilotage du build depuis `build.html`.
+- `api/scan-log.js` (gist, fichier `pokescan-scan.log`) : relais des scans V2.
 
 ## Outils de build — `tools/build-packs/`
 
 ```bash
 cd tools/build-packs
-npm i --include=optional --os=win32 --cpu=x64     # voir pièges ci-dessous
-# .env :  R2_ACCOUNT_ID= R2_ACCESS_KEY_ID= R2_SECRET_ACCESS_KEY= R2_BUCKET=pokescan-packs
-SERIES=swsh,sv,me bash run.sh                     # build une tranche, reprend après crash
+npm i --include=optional --os=win32 --cpu=x64          # voir pièges ci-dessous
+# .env :  R2_ACCOUNT_ID=  R2_ACCESS_KEY_ID=  R2_SECRET_ACCESS_KEY=  R2_BUCKET=pokescan-packs
+SERIES=swsh,sv,me bash run.sh                          # build une tranche, reprend après crash
 ```
 
 - `index.mjs` — construit embeddings + ORB + dHash (format navigateur exact), envoie packs
   + blobs + `index-global.bin` + `manifest.json` sur R2, écrit `status.json` en continu.
 - `run.sh` — boucle de relance. `lib.mjs` — fonctions partagées.
-- `split-orb.mjs` — redécoupe des packs R2 existants en blobs `orb/<clé>.orb` (le builder le
-  fait maintenant tout seul ; utile seulement pour rattraper d'anciens packs).
-- `verify-orb.mjs` / `verify-global.mjs` — tests de fidélité (Node↔navigateur : embeddings
-  207/207, ORB self=700 ; recall shortlist 100 % top-30).
+- `split-orb.mjs` — redécoupe des packs R2 en blobs par carte (le builder le fait tout seul
+  désormais ; utile pour rattraper d'anciens packs).
+- `verify-orb.mjs` / `verify-global.mjs` — fidélité Node↔navigateur (embeddings 207/207,
+  ORB self=700) et recall de shortlist (100 % top-30 sur 7 591 cartes).
 - **`build.html`** (racine, déployé) — tableau de bord live lisant `status.json`.
-  **`api/build-control.js`** — relancer/passer/tout reprendre/stopper depuis la page.
-- Build complet ~2 h pour 7 591 cartes (~585 ms/carte).
+- Build complet ~2 h pour 7 591 cartes (~585 ms/carte : dl 166 + emb 218 + orb 170 + hash 30).
 
 ### Pièges d'install (machine de Nikos, Windows)
 
@@ -99,55 +122,74 @@ SERIES=swsh,sv,me bash run.sh                     # build une tranche, reprend a
   `"overrides"` dans `tools/build-packs/package.json`.
 - **`sharp` 0.35 ne charge pas** → **0.34.5**, avec `npm i --include=optional --os=win32
   --cpu=x64`.
-- **transformers.js WebGPU** : `dtype:'fp16'` exige la fonctionnalité `shader-f16`, absente
-  de beaucoup de GPU mobiles → toujours prévoir `webgpu/fp32` en repli avant WASM.
+- Test de fidélité fait : le décodage `sharp` (Node) donne des embeddings et un ORB
+  interchangeables avec le navigateur → on construit tout hors appareil sans risque.
 
 ## Tester la V2 en local
 
 ```bash
-npx serve -l 8802 .
+npx serve -l 8802 .        # ou l'outil preview_start name "pokescan" (.claude/launch.json existe)
 ```
-(ou l'outil `preview_start` name `pokescan` — `.claude/launch.json` existe déjà.)
 
 Puis `http://localhost:8802/index.html?v2`. Dans la console :
 
 ```js
 await window.SCAN_V2.initV2({onProgress:(p,m)=>console.log(m)});
-window.SCAN_V2.moteurV2();  window.SCAN_V2.diagV2();   // quel moteur, pourquoi
-// tester sur une vraie photo (redressement réel de l'app) :
-const dew = await window.redresserPhotoImportee('/photos-test/PKMN-151-001-03434.jpg');
+window.SCAN_V2.moteurV2();  window.SCAN_V2.diagV2();          // moteur + raisons d'échec + warm1/warm2
+// vraie photo, redressement réel de l'app :
+const dew = await window.redresserPhotoImportee('/photos-test/PKMN-151-025-40899.jpg');
 await window.SCAN_V2.identifierV2(dew);
+// chaîne complète (panneau du bas + lot) :
+window.v2DerniereCle = null; await window.gererScanV2(dew, null, 1, performance.now());
 ```
 
-- `photos-test/` : 31 vraies photos (set 151), servies en même origine. Les cartes y sont
+- `photos-test/` : 31 vraies photos (set 151, = `sv03.5`), servies en même origine. Cartes
   en paysage → `redresserPhotoImportee` fait le redressement comme l'app.
-- Les images `assets.tcgdex.net` **n'ont pas de CORS** : impossible de les dessiner sur un
-  canvas cross-origin. Passer par `photos-test/` ou par le redressement.
-- Le navigateur intégré a un **WebGPU logiciel** (lent) — pas représentatif pour le temps
-  d'embedding ; sur GPU réel c'est ~2-3× plus rapide.
+- Images `assets.tcgdex.net` : **pas de CORS**, impossible de les dessiner sur un canvas
+  cross-origin. Passer par `photos-test/`.
+- Le navigateur intégré a un **WebGPU logiciel** (lent, ~450 ms pour l'emb) — pas
+  représentatif ; sur GPU réel c'est plus rapide.
+- Résultat de référence des tests navigateur (31 photos, index 7 591) : **25/31 exactes,
+  ~24/25 des « sûres » exactes** (la ou les erreurs « sûres » = photos mal étiquetées
+  connues : #169 montre en fait la #168). Les ratés restants sont tous en `douteuse` /
+  `rebut`, jamais affichés avec assurance.
 
 ## Lire les logs de scan (retours téléphone)
 
-Naviguer le navigateur intégré sur le domaine Vercel (le fetch same-origin marche ;
-cross-origin depuis localhost échoue) :
+Naviguer le navigateur intégré **sur le domaine Vercel d'abord** (`https://poke-scan-drab.
+vercel.app/`), puis `fetch('/api/scan-log?format=json')` en console (same-origin). Ou
+naviguer direct sur `.../api/scan-log?format=json` et lire le corps.
 
-- `https://poke-scan-drab.vercel.app/api/scan-log?format=json` → `{count, resume, entries}`.
-  Par entrée : `predit`, `categorie`, `fiabilite`, `inliers`, `marge`, `ms`,
-  `T:{emb,refs,orb,ocr}`, `moteur`, `diag`, `packTelecharge`, `sets`.
-- `?format=clear` pour vider avant une session de test.
-- **`predit` == `attendu` == `cardId` dans le log** (tous mis à la prédiction) : le log ne
-  mesure PAS la justesse tout seul. Il faut que Nikos corrige les cartes fausses (→
-  `verifie:true`) ou qu'il dise ce qui a raté.
+Par entrée : `predit`, `categorie` (`sure`/`douteuse`/`rebut`), `fiabilite`, `inliers`,
+`marge`, `ms`, `T:{emb,refs,orb,ocr}`, `moteur`, `diag`, `packTelecharge`, `sets`,
+`ocrLance`, `ocrOk`. `?format=clear` pour vider avant une session.
 
 ## Réglages clés de `scan-v2.js`
 
-- `SHORT = 18` · `NFQ = 360` (points requête) · homographie sur les 8 premiers.
+- `SHORT = 18` · `NFQ = 360` (points d'intérêt de la requête) · homographie sur les 8 premiers.
 - `INLIERS_MIN = 10` — sous ce seuil sans OCR concordant → `rebut` (on ne devine pas).
-- `geoFranche = inl >= 20 && dom >= 0.6` → `sure` même si la sigmoïde est basse.
+- `geoFranche = inl >= 20 && dom >= 0.6` → `sure` même si la sigmoïde est basse (~77 %).
 - `MAX_CARTES_ORB = 900` — descripteurs gardés en mémoire du worker (LRU).
-- `recyclerOrbSiBesoin()` — worker ORB recyclé tous les 12 scans (fragmentation WASM).
-- OCR sauté si `dernierOrbMs >= 1800` (session chaude).
-- `noterPickV2()` — 3 scans du même set → charge le pack entier en fond (« mode classeur »).
-- `WORKER_ORB = null` — mettre l'URL du Worker si déployé.
-- Moteur emb : essais `webgpu/fp16 → fp32 → q4 → wasm/q8 → wasm/fp32`. `diagV2()` = raisons
-  d'échec + `warm1/warm2` (temps 1re et 2e inférence).
+- `recyclerOrbSiBesoin()` — worker ORB recyclé tous les 12 scans (fragmentation du tas WASM
+  d'OpenCV). Réinjection depuis le cache IDB au scan suivant.
+- OCR sauté si `dernierOrbMs >= 1800` (session chaude — l'OCR y prendrait > 3 s).
+- `noterPickV2()` — 3 picks du même set → charge le pack entier en fond (« mode classeur » ;
+  aide peu en pratique car la shortlist est cross-set).
+- `WORKER_ORB = null` — URL du Worker Cloudflare si déployé.
+- Moteur emb : essais `webgpu/fp16 → fp32 → q4 → wasm/q8 → wasm/fp32`.
+
+## Réglages clés côté `index.html` (V2)
+
+- `detectLoop()` branche V2 (~ligne 11110) : déclenche sur `d.score >= 0.5 && stable`,
+  **aucune** dépendance aux jauges. `dejaLue` empêche de re-scanner une carte déjà lue et
+  toujours en place.
+- `attemptRead()` hook V2 (~ligne 11440) : `gererScanV2()` gère tout, jamais de repli OCR.
+  Retours : `'traite'` / `'rebut'` / `'reessai'` / `'rejet-doublon'`.
+- `gererScanV2()` (~ligne 12025) : identif → si rebut, 2 `'reessai'` puis
+  `capturerSansLecture`. Succès : `showLiveResultPending` (photo prise) + `showLiveResultDone`
+  (depuis le pack) tout de suite, fiche complète + validation auto en arrière-plan.
+- `captureFrame()` / `captureFrameInterne()` (~ligne 12517) : prise manuelle, route par
+  `gererScanV2` si V2 actif.
+- `demarrerQualite()` / `majJaugesSelonMode()` : masquent les jauges + coupent
+  l'échantillonnage quand V2 actif.
+- `SCAN_V2.relayV2({...})` appelé dans `gererScanV2` (succès et rebut) → `/api/scan-log`.
