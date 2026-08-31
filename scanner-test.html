@@ -817,11 +817,27 @@ async function identifier(carte){
   const cible = pick && cleToCard.get(pick);
   const ocrOk = !!cible && ocrCands.some(c => c.number === cible.numero);
   const dom2 = inl > 0 ? marge / inl : 0;
-  let conf = 'lo';
-  if((inl >= 12 && dom2 >= 0.7) || ocrOk) conf = 'ok';
-  else if(inl >= 8 && dom2 >= 0.45) conf = 'mid';
+
+  // Fiabilité estimée (%). Heuristique calibrée sur ~40 photos réelles : le nombre d'inliers
+  // ORB et la DOMINANCE du gagnant (marge/inliers) portent presque tout le signal, l'accord
+  // du numéro OCR ajoute un peu. Ce n'est pas une probabilité mesurée — un repère.
+  //   inl 143, dom 0.88 → 99 %      inl 20, dom 0.95 → 84 %
+  //   inl 15,  dom 0.95 → 80 %      inl 11, dom 0.64 → 55 %
+  //   inl 16,  dom 0.13 → 23 %      inl 1,  dom 0    → 9 %  (les deux vraies erreurs mesurées)
+  const x = 0.05*inl + 3.2*dom2 + (ocrOk ? 1.2 : 0) - 2.4;
+  const fiabilite = Math.round(Math.max(5, Math.min(99, 100 / (1 + Math.exp(-x)))));
+
+  // Prétri en 3 bacs : sûre / à vérifier / rebut (mal cadrée ou hors collection).
+  const meilleurAlt = ranked.length > 1 ? (orbScores[ranked[1]] || 0) : 0;
+  let categorie;
+  if(!pick || (inl < 3 && embTop != null && embTop < 0.42 && meilleurAlt < 3)) categorie = 'rebut';
+  else if(fiabilite >= 82) categorie = 'sure';
+  else categorie = 'douteuse';
+
+  let conf = categorie === 'sure' ? 'ok' : categorie === 'douteuse' ? 'mid' : 'lo';
+
   return {
-    pick, inl, marge, ocrOk, ocrTxt, ocrLance, T, mode: 'DINOv2→ORB',
+    pick, inl, marge, ocrOk, ocrTxt, ocrLance, T, mode: 'DINOv2→ORB', fiabilite, categorie,
     ms: Object.values(T).reduce((a,b)=>a+b,0),
     alts: ranked.slice(0, 8).map(cle => ({card: cleToCard.get(cle), inl: orbScores[cle] || 0})),
     conf, embTop
@@ -975,26 +991,31 @@ async function capturer(sourceExplicite, manuel){
 
     const tW = performance.now();
     const rr = coins ? await redresserAvecCoins(source, coins) : await redresser(source, manuel ? 0.18 : MIN_SCORE);
-    if(rr.echec){ statut('⚠️ ' + rr.echec + (manuel ? ' — recadre et réessaie' : '')); identifEnCours = false; return; }
+    if(coins){ dernierCapAt = Date.now(); dernierCapCoins = coins; pretProchaine = false; }
+
+    if(rr.echec){
+      // Carte mal cadrée / non détectée : on garde quand même la photo dans la file, dans le
+      // bac « à recadrer » — utile pour la base de photos et pour comprendre les ratés.
+      pile.push({ id: ++pileSeq, blob, carte: null, r: { categorie:'rebut', echec: rr.echec, alts: [], fiabilite: 0 }, verite: null });
+      rendrePile();
+      statut(`Carte ${pile.length} : mal cadrée (${rr.echec})`);
+      identifEnCours = false; return;
+    }
     const msRedress = Math.round(performance.now() - tW);
 
     const r = await identifier(rr.carte);
     r.T = { redress: msRedress, ...r.T };
     r.ms = Math.round(performance.now() - tW);
 
-    if(coins){ dernierCapAt = Date.now(); dernierCapCoins = coins; pretProchaine = false; }
     dureesRecentes.push(r.ms); if(dureesRecentes.length > 6) dureesRecentes.shift();
     scansDepuisRecyclage++;
-    if(r.pick){
-      pile.push({ id: ++pileSeq, blob, carte: rr.carte, r, verite: null });
-      rendrePile();
-      const med = [...dureesRecentes].sort((a,b)=>a-b)[dureesRecentes.length>>1] || 0;
-      const chaud = dureesRecentes.length >= 4 && med > 3500;
-      statut(`Carte ${pile.length} : ${cleToCard.get(r.pick).name || r.pick} (${r.conf === 'ok' ? 'sûre' : r.conf === 'mid' ? 'à vérifier' : 'peu sûre'}) — ${(r.ms/1000).toFixed(1)} s`
-        + (chaud ? ' · ⚠️ le téléphone chauffe, pense à faire une pause' : ''));
-    }else{
-      statut('Carte non identifiée — recadre');
-    }
+    pile.push({ id: ++pileSeq, blob, carte: rr.carte, r, verite: null });
+    rendrePile();
+    const med = [...dureesRecentes].sort((a,b)=>a-b)[dureesRecentes.length>>1] || 0;
+    const chaud = dureesRecentes.length >= 4 && med > 3500;
+    const etiq = r.categorie === 'sure' ? 'sûre' : r.categorie === 'douteuse' ? 'à vérifier' : 'hors collection ?';
+    statut(`Carte ${pile.length} : ${r.pick ? (cleToCard.get(r.pick).name || r.pick) : '?'} — ${r.fiabilite}% (${etiq}) — ${(r.ms/1000).toFixed(1)} s`
+      + (chaud ? ' · ⚠️ le téléphone chauffe, pause conseillée' : ''));
   }catch(err){ statut('⚠️ ' + err.message); console.error(err); }
   identifEnCours = false;
 
@@ -1005,20 +1026,28 @@ async function capturer(sourceExplicite, manuel){
 }
 
 // ─────────────────────────────── file : rendu, révision, validation
-const badgeGenre = c => c === 'ok' ? 'b-ok' : c === 'mid' ? 'b-mid' : 'b-lo';
-const badgeBord = c => c === 'ok' ? 'var(--ok)' : c === 'mid' ? 'var(--warn)' : 'var(--ko)';
+const bordCat = it => it.verite ? 'var(--ok)'
+  : it.r.categorie === 'sure' ? 'var(--ok)'
+  : it.r.categorie === 'douteuse' ? 'var(--warn)' : 'var(--ko)';
 
 function rendrePile(){
   $('pile-zone').style.display = pile.length ? '' : 'none';
-  const nSures = pile.filter(it => it.verite || it.r.conf === 'ok').length;
-  $('pile-compte').textContent = `${pile.length} en file · ${nSures} prête${nSures>1?'s':''}`;
+  const n = { sure:0, douteuse:0, rebut:0 };
+  for(const it of pile){ if(it.verite) n.sure++; else n[it.r.categorie]++; }
+  $('pile-compte').textContent =
+    `${pile.length} en file — ${n.sure} sûre${n.sure>1?'s':''}` +
+    (n.douteuse ? ` · ${n.douteuse} à vérifier` : '') +
+    (n.rebut ? ` · ${n.rebut} à recadrer` : '');
   $('pile').innerHTML = pile.map((it, i) => {
-    const c = cleToCard.get(it.verite || it.r.pick);
-    const genre = it.verite ? 'b-ok' : badgeGenre(it.r.conf);
+    const cle = it.verite || it.r.pick;
+    const c = cle && cleToCard.get(cle);
+    const vign = c ? `<img src="${c.image}/low.webp" style="width:64px; height:89px; object-fit:cover; border-radius:6px; border:2px solid ${bordCat(it)}; display:block;">`
+      : `<div style="width:64px; height:89px; border-radius:6px; border:2px dashed var(--ko); display:flex; align-items:center; justify-content:center; font-size:20px;">✕</div>`;
+    const lbl = it.verite ? `✓ #${c.localId}`
+      : it.r.categorie === 'rebut' ? 'recadrer'
+      : `${it.r.fiabilite}%`;
     return `<div data-i="${i}" style="flex:0 0 auto; width:64px; text-align:center; cursor:pointer;">
-      <img src="${c.image}/low.webp" style="width:64px; border-radius:6px; border:2px solid ${it.verite ? 'var(--ok)' : badgeBord(it.r.conf)}; display:block;">
-      <div style="font-size:10px; color:var(--muted); margin-top:2px;">${it.verite ? '✓ ' : ''}#${c.localId}</div>
-    </div>`;
+      ${vign}<div style="font-size:10px; color:var(--muted); margin-top:2px;">${lbl}</div></div>`;
   }).join('');
   $('pile').querySelectorAll('[data-i]').forEach(el => el.onclick = () => ouvrirRevue(+el.dataset.i));
 }
@@ -1033,29 +1062,43 @@ function ouvrirRevue(idx){
 function fermerRevue(){ $('p-revue').style.display = 'none'; }
 
 function afficherItem(it){
-  const r = it.r, c = cleToCard.get(it.verite || r.pick);
+  const r = it.r, rebut = r.categorie === 'rebut';
+  const c = cleToCard.get(it.verite || r.pick);
   $('rev-pos').textContent = `${revueIdx + 1} / ${pile.length}`;
-  const cap = $('res-capture'); cap.width = it.carte.width; cap.height = it.carte.height;
-  cap.getContext('2d').drawImage(it.carte, 0, 0);
-  $('res-img').src = c.image + '/high.webp';
-  $('res-nom').textContent = c.name || '(sans nom)';
-  $('res-set').textContent = `${c.setId} · #${c.localId}${c.rarity ? ' · ' + c.rarity : ''}`;
-  const tb = r.T ? Object.entries(r.T).map(([k,v]) => `${k} ${v}`).join(' · ') : '';
-  $('res-detail').innerHTML =
-    `${r.mode} · ORB ${Math.round(r.inl)} inliers (marge +${Math.round(r.marge)})`
-    + (r.embTop != null ? ` · emb ${r.embTop.toFixed(2)}` : '')
-    + (r.ocrLance ? ` · OCR « ${(r.ocrTxt||'').replace(/[<>]/g,'').slice(0,28)} »` : ' · OCR sauté')
-    + `<br><span style="color:var(--muted)">${(r.ms/1000).toFixed(1)} s — ${tb}</span>`;
-  if(!c.rarity){
-    fetch('https://api.tcgdex.net/v2/fr/cards/' + c.cle).then(x=>x.json()).then(d=>{
+
+  // « ta photo » : la carte redressée si on l'a, sinon l'image brute (item mal cadré)
+  const cap = $('res-capture'), ctx = cap.getContext('2d');
+  if(it.carte){ cap.width = it.carte.width; cap.height = it.carte.height; ctx.drawImage(it.carte, 0, 0); }
+  else if(it.blob){ const im = new Image(); im.onload = () => { cap.width = im.width; cap.height = im.height; ctx.drawImage(im, 0, 0); }; im.src = URL.createObjectURL(it.blob); }
+
+  if(c){
+    $('res-img').style.display = ''; $('res-img').src = c.image + '/high.webp';
+    $('res-nom').textContent = c.name || '(sans nom)';
+    $('res-set').textContent = `${c.setId} · #${c.localId}${c.rarity ? ' · ' + c.rarity : ''}`;
+    if(!c.rarity) fetch('https://api.tcgdex.net/v2/fr/cards/' + c.cle).then(x=>x.json()).then(d=>{
       c.rarity = d.rarity || ''; if(c.rarity && pile[revueIdx] === it) $('res-set').textContent = `${c.setId} · #${c.localId} · ${c.rarity}`;
     }).catch(()=>{});
+  }else{
+    $('res-img').style.display = 'none';
+    $('res-nom').textContent = 'Non identifiée';
+    $('res-set').textContent = rebut && r.echec ? r.echec : 'hors de la collection chargée ?';
   }
+
+  const tb = r.T ? Object.entries(r.T).map(([k,v]) => `${k} ${v}`).join(' · ') : '';
+  $('res-detail').innerHTML = rebut
+    ? `<span style="color:var(--muted)">Recadre et re-scanne, ou saisis la carte manuellement, ou jette.</span>`
+    : `${r.mode} · ORB ${Math.round(r.inl)} inliers (marge +${Math.round(r.marge)})`
+      + (r.embTop != null ? ` · emb ${r.embTop.toFixed(2)}` : '')
+      + (r.ocrLance ? ` · OCR « ${(r.ocrTxt||'').replace(/[<>]/g,'').slice(0,28)} »` : ' · OCR sauté')
+      + `<br><span style="color:var(--muted)">${(r.ms/1000).toFixed(1)} s — ${tb}</span>`;
+
   const badge = $('res-badge');
-  badge.textContent = it.verite ? 'validé' : r.conf === 'ok' ? 'confiance élevée' : r.conf === 'mid' ? 'à vérifier' : 'peu sûr';
-  badge.className = 'badge ' + (it.verite ? 'b-ok' : badgeGenre(r.conf));
-  $('corr').style.display = 'none';
-  $('alts').innerHTML = r.alts.map(a =>
+  badge.textContent = it.verite ? 'validé' : rebut ? 'à recadrer' : `${r.fiabilite}% — ${r.categorie === 'sure' ? 'sûre' : 'à vérifier'}`;
+  badge.className = 'badge ' + (it.verite || r.categorie === 'sure' ? 'b-ok' : rebut ? 'b-lo' : 'b-mid');
+
+  $('btn-ok').style.display = r.pick ? '' : 'none';
+  $('corr').style.display = rebut ? '' : 'none';
+  $('alts').innerHTML = (r.alts || []).map(a =>
     `<div class="alt" data-cle="${a.card.cle}"><img src="${a.card.image}/low.webp" loading="lazy">
       #${a.card.localId} · ${Math.round(a.inl)}in</div>`).join('');
   $('alts').querySelectorAll('.alt').forEach(el => el.onclick = () => fixerVerite(el.dataset.cle));
@@ -1065,12 +1108,14 @@ function fixerVerite(cle){
   if(!cleToCard.get(cle)){ statut('carte inconnue : ' + cle); return; }
   pile[revueIdx].verite = cle;
   rendrePile();
-  // avance vers le prochain item non validé, sinon ferme
-  const prochain = pile.findIndex((it, i) => i > revueIdx && !it.verite);
+  const prochain = pile.findIndex((it, i) => i > revueIdx && !it.verite && !aTraiter(it));
+  const restant = pile.findIndex(it => !it.verite);
   if(prochain >= 0) ouvrirRevue(prochain);
-  else if(pile.some(it => !it.verite)) ouvrirRevue(pile.findIndex(it => !it.verite));
-  else { fermerRevue(); statut('Tout est vérifié — « Tout valider » pour enregistrer.'); }
+  else if(restant >= 0) ouvrirRevue(restant);
+  else { fermerRevue(); statut('Tout est traité — « Tout valider » pour enregistrer.'); }
 }
+// un item « à traiter » : douteux non validé, ou rebut non validé
+const aTraiter = it => !it.verite && (it.r.categorie === 'douteuse' || it.r.categorie === 'rebut');
 function jeterItem(){
   pile.splice(revueIdx, 1);
   rendrePile();
@@ -1080,37 +1125,52 @@ function jeterItem(){
 
 async function validerTout(){
   if(!pile.length) return;
-  const nonVus = pile.filter(it => !it.verite && it.r.conf !== 'ok');
-  if(nonVus.length && !confirm(`${nonVus.length} carte(s) peu sûre(s) non vérifiée(s) — enregistrer quand même (prédiction acceptée) ?`)) return;
+  // Les « sûres » passent sans intervention (c'est le gain). Les « à vérifier » et « à
+  // recadrer » doivent être traitées (gardée / corrigée / jetée) — sinon on pollue la base
+  // avec des étiquettes fausses.
+  const reste = pile.findIndex(aTraiter);
+  if(reste >= 0){
+    const n = pile.filter(aTraiter).length;
+    statut(`${n} carte(s) à traiter avant de valider (garder, corriger ou jeter).`);
+    ouvrirRevue(reste);
+    return;
+  }
 
   const relais = [], sets = $('cfg-sets').value.trim();
+  let enregistrees = 0;
   for(const it of pile){
-    const cle = it.verite || it.r.pick;
-    const c = cleToCard.get(cle), R = it.r;
+    const R = it.r;
+    const cle = it.verite || R.pick;
+    if(!cle){ continue; }   // rebut sans label : on ne garde pas
+    const c = cleToCard.get(cle);
     const ts = (Date.now() + it.id).toString().slice(-8);
     const nom = `PKMN-${c.setId}-${c.numero}-${ts}.jpg`;
-    const juste = R.pick === cle;
+    const juste = !!R.pick && R.pick === cle;
     await idbPut('photos', {
       nom, blob: it.blob, cle, setId:c.setId, localId:c.localId, name:c.name,
-      predit: R.pick, juste, inliers: R.inl ?? null, conf: R.conf, ocr: R.ocrTxt || '',
+      predit: R.pick || null, juste, verifie: !!it.verite, fiabilite: R.fiabilite ?? null,
+      categorie: R.categorie, inliers: R.inl ?? null, conf: R.conf || null, ocr: R.ocrTxt || '',
       at: new Date().toISOString()
     });
+    enregistrees++;
     relais.push({
-      fichier: nom, cardId: cle, attendu: cle, predit: R.pick,
-      preditNum: cleToCard.get(R.pick)?.numero, juste, conf: R.conf,
+      fichier: nom, cardId: cle, attendu: cle, predit: R.pick || null,
+      preditNum: R.pick ? cleToCard.get(R.pick)?.numero : null, juste,
+      fiabilite: R.fiabilite ?? null, categorie: R.categorie, conf: R.conf || null,
       inliers: Math.round(R.inl || 0), marge: Math.round(R.marge || 0),
       ocrLance: !!R.ocrLance, ocr: (R.ocrTxt || '').slice(0, 40), ocrOk: !!R.ocrOk,
       ms: R.ms || null, T: R.T || null, moteur: moteurEmb, sets,
       corrige: !!it.verite && !juste, verifie: !!it.verite
     });
   }
-  const n = pile.length;
   pile = []; revueIdx = 0; rendrePile(); fermerRevue();
   await majCompte();
   let ok = false;
-  try{ ok = (await fetch('/api/scan-log', { method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ device: idAppareil(), entries: relais }) })).ok; }catch(e){}
-  statut(`${n} carte(s) enregistrée(s)` + (ok ? ` · ${n} transmise(s)` : ''));
+  if(relais.length){
+    try{ ok = (await fetch('/api/scan-log', { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ device: idAppareil(), entries: relais }) })).ok; }catch(e){}
+  }
+  statut(`${enregistrees} carte(s) enregistrée(s)` + (ok ? ` · transmise(s)` : ''));
 }
 function viderPile(){
   if(pile.length && !confirm(`Jeter les ${pile.length} carte(s) en file ?`)) return;
@@ -1153,7 +1213,8 @@ async function exporter(){
   for(const r of rows){
     zip.file(r.nom, r.blob);
     manifeste.push({ fichier:r.nom, cardId:r.cle, set:r.setId, numero:r.localId, nom:r.name,
-      predit:r.predit, juste:r.juste, inliers:r.inliers, confiance:r.conf, ocr:r.ocr, date:r.at });
+      predit:r.predit, juste:r.juste, verifie:r.verifie, fiabilite:r.fiabilite, categorie:r.categorie,
+      inliers:r.inliers, confiance:r.conf, ocr:r.ocr, date:r.at });
   }
   zip.file('verite.json', JSON.stringify(manifeste, null, 2));
   const blob = await zip.generateAsync({type:'blob'});
@@ -1176,13 +1237,16 @@ $('file').onchange = async e => {
   const img = await chargerImage(URL.createObjectURL(f));
   capturer(img, true);
 };
-$('btn-reviser').onclick = () => ouvrirRevue(Math.max(0, pile.findIndex(it => !it.verite)));
+$('btn-reviser').onclick = () => {
+  const i = pile.findIndex(aTraiter);   // d'abord ce qui a besoin d'attention
+  ouvrirRevue(i >= 0 ? i : 0);
+};
 $('btn-valider-tout').onclick = validerTout;
 $('btn-vider-pile').onclick = viderPile;
 $('rev-prev').onclick = () => ouvrirRevue(revueIdx - 1);
 $('rev-next').onclick = () => ouvrirRevue(revueIdx + 1);
 $('rev-fermer').onclick = fermerRevue;
-$('btn-ok').onclick = () => { if(pile[revueIdx]) fixerVerite(pile[revueIdx].r.pick); };
+$('btn-ok').onclick = () => { const it = pile[revueIdx]; if(it && it.r.pick) fixerVerite(it.r.pick); };
 $('btn-jeter').onclick = jeterItem;
 $('btn-corr').onclick = () => { $('corr').style.display = $('corr').style.display === 'none' ? '' : 'none'; };
 $('btn-manuel').onclick = () => {
