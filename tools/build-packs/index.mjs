@@ -104,7 +104,18 @@ async function construireSet(setId) {
   await pousserStatut(true);
   const pack = serialiserPack(setId, rows);
   await put(`pack-${setId}.pack`, pack, 'application/octet-stream');
-  journal(`Set ${setId} : pack envoyé (${(pack.length / 1e6).toFixed(1)} Mo, ${rows.length} cartes)`);
+
+  // blobs ORB par carte : [uint16 rows][desc rows*32][kp int16 rows*2] — c'est ce que le
+  // client récupère à la volée (≈25 Ko/carte au lieu d'un pack de 5 Mo par set).
+  for (let i = 0; i < rows.length; i += 12) {
+    await Promise.all(rows.slice(i, i + 12).map(r => {
+      const head = Buffer.alloc(2); head.writeUInt16LE(r.rows, 0);
+      const blob = Buffer.concat([head, Buffer.from(r.bytes.buffer, r.bytes.byteOffset, r.bytes.byteLength),
+        Buffer.from(r.kp.buffer, r.kp.byteOffset, r.kp.byteLength)]);
+      return put(`orb/${r.cle}.orb`, blob, 'application/octet-stream');
+    }));
+  }
+  journal(`Set ${setId} : pack + ${rows.length} blobs ORB envoyés (${(pack.length / 1e6).toFixed(1)} Mo)`);
   S.current = null;
   return { cards: rows.length, bytes: pack.length, embRows: rows.map(r => ({ cle: r.cle, numero: r.numero, name: r.name, image: r.image, setId, emb: r.emb })) };
 }
@@ -196,6 +207,7 @@ async function main() {
   await put('manifest.json', JSON.stringify(manifest), 'application/json');
 
   S.phase = 'done'; S.current = null;
+  S.cards.total = S.cards.done;   // le total nominal comptait des sets promos sans illustration
   await pousserStatut(true);
   journal(`TERMINÉ — ${S.sets.done}/${S.sets.total} sets, ${embGlobal.length} cartes, ${S.timing.elapsedSec}s`);
 }

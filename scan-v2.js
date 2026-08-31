@@ -205,8 +205,7 @@ async function chargerParsing() {
 // Les descripteurs ORB, eux, sont lourds : on ne récupère le pack d'un set QUE quand une
 // carte de ce set apparaît dans la shortlist d'un scan, et on le garde en cache.
 const R2 = 'https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev';
-const MAX_SETS_ORB = 6;                 // packs ORB gardés en mémoire du worker (LRU)
-const nomPack = setId => String(setId).replace(/[^\w.-]/g, '_');
+const MAX_CARTES_ORB = 500;             // descripteurs ORB gardés en mémoire du worker (LRU, ~13 Mo)
 
 // —— petit cache IndexedDB (l'index global et les packs y vivent « pour toujours »)
 const IDB_NOM = 'pokescan_v2', IDB_STORE = 'blobs';
@@ -254,51 +253,44 @@ async function telechargerR2(chemin, { json, gunzip } = {}) {
   return json ? JSON.parse(new TextDecoder().decode(buf)) : buf;
 }
 
-// —— parse un pack de set (format navigateur) : n'en garde QUE l'ORB (l'embedding vient
-//    déjà de l'index global) et l'injecte dans le worker.
-async function injecterPackOrb(setId, buf) {
+// —— blob ORB d'une carte : [uint16 rows][uint8 rows*32 desc][int16 rows*2 kp] (~25 Ko)
+function parseBlobOrb(buf) {
   const dv = new DataView(buf);
-  const hLen = dv.getUint32(0, true);
-  const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hLen)));
-  let off = 4 + hLen;
-  const cles = [];
-  for (const c of header.cards) {
-    off += header.embDim;
-    const des = new Uint8Array(buf.slice(off, off + c.or * 32)); off += c.or * 32;
-    const kpI16 = new Int16Array(buf.slice(off, off + c.or * 4)); off += c.or * 4;
-    const kp = []; for (let i = 0; i < c.or; i++) kp.push({ x: kpI16[i * 2], y: kpI16[i * 2 + 1] });
-    await orb.call({ type: 'refImport', cle: c.cle, bytes: des, rows: c.or, kp });
-    cles.push(c.cle);
-  }
-  return cles;
+  const rows = dv.getUint16(0, true);
+  const des = new Uint8Array(buf, 2, rows * 32);
+  const kpI16 = new Int16Array(buf.slice(2 + rows * 32, 2 + rows * 32 + rows * 4));
+  const kp = []; for (let i = 0; i < rows; i++) kp.push({ x: kpI16[i * 2], y: kpI16[i * 2 + 1] });
+  return { rows, des, kp };
 }
 
-// —— s'assure que les packs ORB des sets donnés sont chargés dans le worker (LRU).
-//    Renvoie true si un téléchargement a eu lieu (le scan a été ralenti d'autant).
-async function assurerPacksOrb(setIds) {
+// —— s'assure que les descripteurs ORB des cartes de la shortlist sont dans le worker.
+//    Récupère UN petit blob par carte (≈25 Ko), quel que soit le nombre de sets couverts —
+//    puis garde les ~MAX_CARTES_ORB dernières (LRU). Renvoie true si un téléchargement a eu lieu.
+async function assurerOrbCartes(cles) {
+  const version = manifest?.updatedAt || '0';
+  const manquantes = cles.filter(c => !orbCharges.has(c));
   let telecharge = false;
-  for (const setId of setIds) {
-    if (orbCharges.has(setId)) { orbCharges.get(setId).ts = Date.now(); continue; }
-    onEtat('Chargement du set ' + setId + '…');
-    let buf = await idbGet('pack:' + setId + ':' + (manifest?.updatedAt || '0'));
-    if (!buf) {
-      try { buf = await telechargerR2('pack-' + nomPack(setId) + '.pack'); telecharge = true; }
-      catch (e) { orbCharges.set(setId, { ts: Date.now(), cles: [], absent: true }); continue; }
-      idbDelPrefixe('pack:' + setId + ':');
-      idbSet('pack:' + setId + ':' + (manifest?.updatedAt || '0'), buf);
-    }
-    const cles = await injecterPackOrb(setId, buf);
-    orbCharges.set(setId, { ts: Date.now(), cles });
+  if (manquantes.length) {
+    onEtat(manquantes.length > 3 ? 'Chargement des références…' : '');
+    await Promise.all(manquantes.map(async cle => {
+      let buf = await idbGet('orbc:' + cle);
+      if (!buf) {
+        try { buf = await telechargerR2('orb/' + cle + '.orb'); telecharge = true; idbSet('orbc:' + cle, buf); }
+        catch (e) { orbCharges.set(cle, { ts: Date.now(), absent: true }); return; }
+      }
+      const o = parseBlobOrb(buf);
+      await orb.call({ type: 'refImport', cle, bytes: o.des, rows: o.rows, kp: o.kp });
+      orbCharges.set(cle, { ts: Date.now() });
+    }));
   }
-  // éviction LRU des sets les plus anciens qu'on ne vient pas d'utiliser
-  const besoin = new Set(setIds);
-  while (orbCharges.size > MAX_SETS_ORB) {
-    let vieux = null, vieuxTs = Infinity;
-    for (const [id, v] of orbCharges) if (!besoin.has(id) && v.ts < vieuxTs) { vieux = id; vieuxTs = v.ts; }
-    if (!vieux) break;
-    const v = orbCharges.get(vieux);
-    if (v.cles.length) { try { await orb.call({ type: 'dropSet', cles: v.cles }); } catch (e) {} }
-    orbCharges.delete(vieux);
+  for (const c of cles) { const v = orbCharges.get(c); if (v) v.ts = Date.now(); }
+  // éviction LRU
+  if (orbCharges.size > MAX_CARTES_ORB) {
+    const tries = [...orbCharges.entries()].sort((a, b) => a[1].ts - b[1].ts);
+    const aJeter = tries.slice(0, orbCharges.size - MAX_CARTES_ORB).map(x => x[0]);
+    const reels = aJeter.filter(c => !orbCharges.get(c).absent);
+    if (reels.length) { try { await orb.call({ type: 'dropSet', cles: reels }); } catch (e) {} }
+    for (const c of aJeter) orbCharges.delete(c);
   }
   return telecharge;
 }
@@ -308,13 +300,15 @@ let BASE = [], cleToCard = new Map(), pret = false, actif = false, moteurEmb = '
 let EMB_Q8 = null, EMB_DIM = 384;
 let manifest = null;
 let onEtat = () => {};
-const orbCharges = new Map();   // setId -> { ts, cles:[...], absent? }
+const orbCharges = new Map();   // cle -> { ts, absent? }  (descripteurs ORB en mémoire du worker)
+
+const setsCharges = () => [...new Set([...orbCharges.keys()].map(c => String(c).slice(0, String(c).lastIndexOf('-'))))];
 
 export function pretV2() { return pret; }
 export function actifV2() { return pret && actif; }
 export function basculerV2(on) { actif = !!on; }
 export function moteurV2() { return moteurEmb; }
-export function setV2() { return [...orbCharges.keys()]; }
+export function setV2() { return setsCharges(); }
 export function trancheV2() { return manifest?.slice || null; }
 export function surEtatV2(cb) { onEtat = typeof cb === 'function' ? cb : (() => {}); }
 
@@ -398,10 +392,9 @@ export async function identifierV2(carte) {
   const embTop = parEmb[0].s;
   const court = parEmb.slice(0, SHORT).map(x => x.cle);
 
-  // 2. packs ORB des sets de la shortlist (téléchargés à la demande, puis en cache)
-  const setsCourt = [...new Set(court.map(cle => cleToCard.get(cle).setId))];
+  // 2. descripteurs ORB des cartes de la shortlist (un petit blob par carte, à la demande)
   let packTelecharge = false;
-  try { packTelecharge = await chrono('packs', assurerPacksOrb(setsCourt)); } catch (err) {}
+  try { packTelecharge = await chrono('refs', assurerOrbCartes(court)); } catch (err) {}
   onEtat('');
 
   // 3. ORB reclasse la shortlist
@@ -451,7 +444,7 @@ export async function identifierV2(carte) {
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
     fiabilite, categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, ocrTxt, ocrLance, ocrOk,
-    packTelecharge, setsCharges: [...orbCharges.keys()],
+    packTelecharge, setsCharges: setsCharges(),
     ms: Object.values(T).reduce((a, b) => a + b, 0), T, moteur: moteurEmb,
     alts: ranked.slice(0, 8).map(cle => { const c = cleToCard.get(cle); return { cle, numero: c.numero, name: c.name, image: c.image, localId: c.localId, inliers: Math.round(orbScores[cle] || 0) }; }),
   };
