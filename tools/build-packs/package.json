@@ -1,0 +1,12 @@
+{
+  "name": "pokescan-build-packs",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.0.0",
+    "@huggingface/transformers": "^3.5.0",
+    "@techstark/opencv-js": "4.11.0-release.1",
+    "sharp": "0.34.5"
+  },
+  "overrides": { "onnxruntime-node": "1.20.1" }
+}
