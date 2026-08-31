@@ -11435,15 +11435,15 @@ async function attemptRead(corners, score){
     }
 
     // ─────────────────────────── SCANNER V2 (bêta) ───────────────────────────
-    // Identification par l'illustration (DINOv2 → ORB → OCR de départage), court-circuite
-    // toute la lecture du numéro ci-dessous. Actif seulement si l'utilisateur a coché la
-    // case ET qu'un pack de référence est chargé pour le set. Voir scan-v2.js.
-    // En cas d'échec (rien d'exploitable), on retombe sur la lecture OCR normale.
+    // Identification par l'illustration (DINOv2 → ORB → OCR de départage). Quand la V2 est
+    // active, elle gère TOUT — succès comme échec. Pas de repli silencieux sur la lecture
+    // du numéro : l'utilisateur a choisi la V2, un message « numéro non lu » sous une
+    // pastille verte n'aurait aucun sens (voir gererScanV2, branche rebut).
     if(window.SCAN_V2 && SCAN_V2.actifV2()){
-      const rV2 = await gererScanV2(sourceForRead, corners, score, t0).catch(e => { console.warn('V2', e); return null; });
-      if(rV2 === 'traite'){ captureFaite = true; return; }
-      if(rV2 === 'rejet-doublon'){ return; }
-      // sinon : rV2 === null → repli sur la lecture OCR
+      const rV2 = await gererScanV2(sourceForRead, corners, score, t0).catch(e => { console.warn('V2', e); return 'erreur'; });
+      if(rV2 === 'rejet-doublon') return;
+      captureFaite = (rV2 === 'traite' || rV2 === 'rebut');
+      return;   // en V2, on ne retombe jamais sur l'OCR
     }
 
     // Raccourci visuel : compare la carte redressée aux cartes déjà confirmées cette
@@ -12010,9 +12010,10 @@ function registerSessionCardHash(card, liveHash){
 
 // ─────────────────────────── SCANNER V2 : traitement d'une carte redressée ───────────────
 // Appelé depuis attemptRead quand la V2 est active. Retourne :
-//   'traite'        → identifiée, panneau + lot gérés, attemptRead doit s'arrêter
+//   'traite'        → identifiée, panneau + lot gérés
+//   'rebut'         → pas d'identification fiable : photo envoyée dans « À vérifier »
 //   'rejet-doublon' → même carte que la précédente, toujours en place : ne rien faire
-//   null            → rien d'exploitable, attemptRead retombe sur la lecture OCR
+// Aucun repli sur l'OCR : en V2, la V2 gère tout.
 let v2DerniereCle = null;
 // Carte minimale à partir des seules données du pack (nom, image, numéro) — de quoi
 // afficher le résultat SANS attendre le réseau. La fiche complète (prix, rareté, variantes)
@@ -12021,9 +12022,36 @@ function carteDepuisPack(p){
   return { id: p.cle, name: p.name || '', number: p.numero, localId: p.localId,
            image: p.image, set: { id: p.setId, name: p.setId }, rarity: '', variants: {}, _pack: true };
 }
+let v2RebutsConsecutifs = 0;
 async function gererScanV2(sourceForRead, corners, score, t0){
-  const res = await SCAN_V2.identifierV2(sourceForRead);
-  if(!res || !res.pick || res.categorie === 'rebut') return null;   // rien de solide → repli OCR
+  const res = await SCAN_V2.identifierV2(sourceForRead).catch(()=> null);
+
+  // Pas d'identification fiable. On NE retombe PAS sur l'OCR (l'utilisateur a choisi la
+  // V2). D'abord on laisse deux ou trois chances de recadrer ; si ça persiste, la photo
+  // part dans « À vérifier » avec un message qui parle bien de la V2.
+  if(!res || !res.pick || res.categorie === 'rebut'){
+    v2RebutsConsecutifs++;
+    try{
+      SCAN_V2.relayV2({ fichier:'live', predit:(res&&res.pick&&res.pick.cle)||'', categorie:'rebut', conf:'rebut',
+        fiabilite:(res&&res.fiabilite)||0, inliers:(res&&res.inliers)||0, marge:(res&&res.marge)||0,
+        ocrLance:(res&&res.ocrLance)||false, ms:(res&&res.ms)||0, T:(res&&res.T)||{}, moteur:(res&&res.moteur)||'?',
+        diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score).toFixed(2) });
+    }catch(e){}
+    if(v2RebutsConsecutifs >= 3){
+      v2RebutsConsecutifs = 0;
+      const cvR = document.createElement('canvas');
+      cvR.width = sourceForRead.width; cvR.height = sourceForRead.height;
+      cvR.getContext('2d').drawImage(sourceForRead, 0, 0);
+      capturerSansLecture(cvR, 'V2 non reconnue', true);
+      setAimHint('🤔 V2 : non reconnue — envoyée dans « À vérifier »');
+      lastCaptureCorners = corners; cardConfirmedAbsentSinceCapture = false; v2DerniereCle = null;
+      return 'rebut';
+    }
+    setAimHint('🤔 V2 : recentre la carte, bien à plat et plein cadre');
+    return 'reessai';   // rien capturé : la carte reste, on retente
+  }
+  v2RebutsConsecutifs = 0;
+
   if(res.pick.cle === v2DerniereCle && !cardConfirmedAbsentSinceCapture) return 'rejet-doublon';
 
   const confiance = res.categorie === 'sure' ? 'high' : 'uncertain';
