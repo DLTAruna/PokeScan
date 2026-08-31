@@ -12514,10 +12514,15 @@ async function redresserDepuisDetection(video){
   return redresserAvecCoins(video, overlayTargetCorners, video.videoWidth, video.videoHeight);
 }
 
+let captureFrameEnCours = false;
 async function captureFrame(){
   const video = $('video');
-  if(!video || !video.videoWidth) return;
-
+  if(!video || !video.videoWidth || captureFrameEnCours) return;
+  captureFrameEnCours = true;
+  try{ await captureFrameInterne(video); }
+  finally{ captureFrameEnCours = false; }
+}
+async function captureFrameInterne(video){
   // Redressée si le détecteur tient la carte, sinon le contenu du cadre de visée.
   let source = await redresserDepuisDetection(video);
   const redressee = !!source;
@@ -12539,6 +12544,18 @@ async function captureFrame(){
   lastCaptureCorners = null;
   cardConfirmedAbsentSinceCapture = true;
   lastCaptureAt = Date.now();
+
+  // Scanner V2 actif : la prise manuelle passe par la MÊME identification que la capture
+  // auto (panneau du bas, lot, fiche complète). Sans ça, la carte n'apparaissait pas en
+  // bas — elle était juste mise en file pour une analyse OCR de fond.
+  if(window.SCAN_V2 && SCAN_V2.actifV2()){
+    v2DerniereCle = null;   // une pression sur 📸 force une nouvelle identification
+    const rV2 = await gererScanV2(source, overlayTargetCorners || null, 1, performance.now())
+      .catch(e => { console.warn('V2 manuel', e); return null; });
+    if(rV2 === 'traite' || rV2 === 'rebut' || rV2 === 'rejet-doublon') return;
+    // 'reessai' ou null : la V2 n'a rien donné, mais un appui manuel doit TOUJOURS
+    // produire quelque chose → on tombe sur la capture brute ci-dessous.
+  }
 
   const dataUrl = source.toDataURL('image/jpeg', 0.8);
   source.toBlob((blob)=> pushToQueue(dataUrl, blob, 'caméra'), 'image/png');
