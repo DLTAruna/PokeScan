@@ -234,6 +234,21 @@ parmi les alternatives. Le verdict ne bloque pas la caméra : on peut enchaîner
   octets par scan, **sans les photos**) — lisible ensuite depuis un poste, avec un taux de
   justesse enfin réel. `⭳ Exporter` donne un JSON complet, photos comprises.
 
+### Mode CATALOGUE — tirer au hasard dans toute la tranche
+
+`BANC.preparer({n:50, graine:7, series:['sv','swsh']})` puis `await BANC.catalogue(25)`.
+Tire un échantillon **reproductible** (même graine = même échantillon) parmi les 7 591
+cartes, télécharge l'illustration officielle (`/high.webp`, la source même du constructeur
+de packs) et la passe dans la chaîne.
+
+**⚠️ XY et SM ne sont PAS dans l'index** (tranche = swsh + sv + me, soit 2020→aujourd'hui).
+Les tester ne produirait que des rebuts. Il faut d'abord étendre la tranche (§ « Ce qui
+reste », point 3).
+
+**⚠️ À dégradation nulle c'est un auto-appariement** — l'index a été construit sur ces
+images-là. Le 80/80 obtenu ne prouve rien sur la reconnaissance : c'est un contrôle
+d'intégrité de l'index et un étalon de vitesse. **Tout l'intérêt est dans la dégradation.**
+
 ### Ce que le banc a déjà répondu (2026-08-31)
 
 - **Worker Cloudflare** : `refs` 212 ms (203 réseau + 9 cpu) contre 266 ms sans lui, à
@@ -253,6 +268,57 @@ parmi les alternatives. Le verdict ne bloque pas la caméra : on peut enchaîner
   choix entre deux images. **Le taux de rebut est donc la métrique à surveiller sur
   téléphone** ; s'il dépasse nettement les ~13 % du banc à image nette, c'est que la
   capture arrive floue et qu'il faut remettre la sélection.
+
+### Campagne catalogue (80 puis 50 cartes tirées au hasard, 34 sets, 2026-08-31)
+
+**Image parfaite : 80/80** (contrôle d'intégrité — auto-appariement, voir l'avertissement
+plus haut). Fait notable au passage : **10 cartes sur 80 déclenchent l'OCR même en image
+parfaite**, c'est-à-dire ont une quasi-jumelle visuelle dans le catalogue. La chaîne les
+départage correctement.
+
+**Profil « photo réaliste »** (flou 1,5 · réduc 0,5 · jpeg 0,7 · rotation 1,5° · lumière
+0,85) : **45/50 justes, et 45/45 des « sûres » justes.** Les 5 échecs sont tous
+correctement rangés en douteuse ou rebut. **La séparation est béante** : la plus faible
+« sûre » a **45 inliers**, les échecs en ont 5, 6 et 10. Un cas instructif : 72 inliers
+mais 3 de marge (une jumelle juste derrière) → correctement jugé douteux par le critère de
+dominance.
+
+**La falaise flou × réduction.** Pris séparément, aucun facteur ne gêne (réduc 0,4 seule :
+25/25, inliers médians 184 ; rotation 3° seule : 25/25, médiane 226 ; flou 3 seul : 25/25,
+médiane 65). **C'est leur combinaison qui tue** — un passe-bas composé qui efface la texture
+dont l'ORB vit :
+
+| réduc \ flou | 1,5 px | 3 px |
+|---|---|---|
+| 1,0 | 25/25 · 0 rebut | 25/25 · 0 rebut · inl 65 |
+| 0,7 | 15/16 · 0 rebut · inl 93 | 12/16 · 4 rebuts · inl 28 |
+| 0,55 | 15/16 · 1 rebut · inl 69 | 10/16 · 6 rebuts · **inl 12** |
+| 0,4 | 21/25 · 2 rebuts | **0 exploitable · inl 0** |
+
+**Précision des « sûres » : 100 % dans TOUTES les cases.** La chaîne ne ment jamais, elle
+se tait. Et **`inliers` médian est l'indicateur de santé de la capture** : à l'aise
+au-dessus de ~50, sur le fil vers 15-20, aveugle à 0. Il est affiché dans le résumé du mode
+caméra — s'il s'effondre sur téléphone, c'est la PHOTO qu'il faut soigner, pas les seuils.
+
+**Repli sur l'embedding quand l'ORB est aveugle : mesuré, puis ABANDONNÉ.** L'idée était de
+sauver les cas à 0 inlier en gardant le premier de la shortlist embedding. Mesure sur les
+19 cas aveugles d'une passe : l'embedding seul n'a raison que **6 fois sur 19 (32 %)**.
+Faire relire 19 cartes pour en sauver 6, en réintroduisant la devinette que `INLIERS_MIN`
+avait justement supprimée, n'en vaut pas la peine. `res.embPremier` reste exposé pour
+pouvoir refaire la mesure.
+
+### Optimisation des paramètres : rien à changer, et c'est un résultat
+
+- **`SHORT = 18` confirmé.** À 30 : justesse identique (21/25 dans les deux cas) pour
+  **+58 % de temps** (836 ms contre 528). Élargir la shortlist n'achète rien.
+- **Seuils confirmés bien placés.** Au profil réaliste, la précision des « sûres » est de
+  100 % et l'écart entre la plus faible « sûre » (45 inliers) et le plus fort échec (10)
+  est d'un facteur 4,5. Les échecs ne sont pas des cas limites qu'un seuil rattraperait :
+  ce sont de vrais échecs de l'ORB. Y toucher ne ferait qu'abîmer la précision.
+- **Seule correction retenue** : le message de rebut ne disait que « recentre la carte »,
+  un contresens quand la carte est déjà centrée et que le problème est le flou ou la
+  distance. Il se différencie désormais sur les inliers (≤ 2 → « rapproche-toi et tiens la
+  carte immobile » ; au-dessus → « peut-être hors catalogue »).
 
 ## Tester la V2 en local
 

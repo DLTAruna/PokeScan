@@ -468,6 +468,12 @@ export function moteurV2() { return moteurEmb; }
 export function diagV2() { return diagEmb; }
 export function setV2() { return setsCharges(); }
 export function trancheV2() { return manifest?.slice || null; }
+// Catalogue chargé, pour le banc : de quoi tirer un échantillon au hasard dans TOUTE la
+// tranche plutôt que dans le seul set des 31 photos. Copie superficielle — le banc n'a
+// aucune raison de tenir l'index par référence.
+export function catalogueV2() {
+  return BASE.map(c => ({ cle: c.cle, setId: c.setId, numero: c.numero, name: c.name, image: c.image }));
+}
 export function surEtatV2(cb) { onEtat = typeof cb === 'function' ? cb : (() => {}); }
 
 // Étalon de vitesse : le MÊME embedding sur la MÊME image, mesuré à la demande. Une
@@ -580,6 +586,10 @@ export async function identifierV2(carte) {
   }).sort((a, b) => b.s - a.s);
   const embTop = parEmb[0].s;
   const court = parEmb.slice(0, R.SHORT).map(x => x.cle);
+  // Ce que l'embedding SEUL proposait, avant que l'ORB ne reclasse. Sans cette trace, on ne
+  // peut pas savoir ce qu'on jette quand l'ORB devient aveugle (image floue ET réduite :
+  // zéro inlier sur toute la shortlist) — or il reste peut-être une bonne réponse dedans.
+  const embPremier = court[0];
 
   // 2. descripteurs ORB des cartes de la shortlist (un petit blob par carte, à la demande)
   await recyclerOrbSiBesoin();
@@ -646,7 +656,7 @@ export async function identifierV2(carte) {
 
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
-    fiabilite, categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, ocrTxt, ocrLance, ocrOk,
+    fiabilite, categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, embPremier, ocrTxt, ocrLance, ocrOk,
     packTelecharge, setsCharges: setsCharges(),
     // Somme des seules ÉTAPES : T porte aussi refsDetail, qui est une ventilation de
     // `refs` et non une durée de plus — l'additionner compterait deux fois, et comme c'est

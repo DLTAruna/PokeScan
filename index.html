@@ -5730,7 +5730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 4;
+const VERSION_APP = 5;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -12151,7 +12151,15 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte){
       v2CarteRetiree = false;
       return 'rebut';
     }
-    setAimHint('🤔 V2 : recentre la carte, bien à plat et plein cadre');
+    // Le conseil dépend de CE qui a manqué, et les inliers le disent. Au banc, un rebut à
+    // 0-2 inliers vient toujours d'une image que l'ORB ne peut pas exploiter — floue,
+    // ou carte trop petite dans le cadre ; « recentre » y était un contresens, la carte
+    // étant souvent parfaitement centrée. Au-dessus, l'homographie a bien travaillé mais
+    // n'a rien trouvé de convaincant : c'est plutôt une carte hors catalogue.
+    const inl = (res && res.inliers) || 0;
+    setAimHint(inl <= 2
+      ? '🤔 V2 : rapproche-toi et tiens la carte immobile'
+      : '🤔 V2 : carte non reconnue — peut-être hors catalogue');
     return 'reessai';   // rien capturé : la carte reste, on retente
   }
   v2RebutsConsecutifs = 0;
@@ -20448,7 +20456,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
      pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=16';
+import * as V2 from './scan-v2.js?v=17';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);

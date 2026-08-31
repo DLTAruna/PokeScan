@@ -83,6 +83,8 @@
     <label>Flou (px)<input type="number" id="d-flou" value="0" min="0" max="12" step="0.5"></label>
     <label>Réduction (×)<input type="number" id="d-reduc" value="1" min="0.2" max="1" step="0.1"></label>
     <label>Qualité JPEG<input type="number" id="d-jpeg" value="1" min="0.2" max="1" step="0.05"></label>
+    <label>Rotation (°)<input type="number" id="d-rot" value="0" min="-15" max="15" step="0.5"></label>
+    <label>Lumière (×)<input type="number" id="d-lum" value="1" min="0.3" max="2" step="0.05"></label>
   </div>
 </div>
 
@@ -188,7 +190,7 @@ await BANC.viderScans()                // efface l'historique de cet appareil</p
 </div>
 
 <script type="module">
-import * as V2 from './scan-v2.js?v=16';
+import * as V2 from './scan-v2.js?v=17';
 window.SCAN_V2 = V2;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -293,17 +295,38 @@ async function redresser(src){
   return rot;
 }
 
-// ── Dégradation contrôlée de l'image de requête. Flou et réduction imitent une capture
-//    prise sur une carte encore en mouvement ; le JPEG imite la compression du transport.
+// ── Dégradation contrôlée de l'image de requête.
+//
+//    Elle sert à approcher, depuis une illustration officielle parfaite, ce qu'une vraie
+//    photo apporte de moins : bougé (flou), distance et capteur (réduction), compression
+//    (jpeg), éclairage de salon (lumière), et redressement jamais parfait (rotation).
+//    C'est un SUBSTITUT, pas une photo : il ne reproduit ni les reflets, ni la
+//    perspective résiduelle, ni l'usure de la carte. Il a en revanche l'avantage décisif
+//    de s'appliquer à des milliers de cartes — les 31 vraies photos restent l'étalon de
+//    vérité, celles-ci donnent la forme de la courbe.
 function degrader(cv, d){
-  if(!d || (!d.flou && d.reduc >= 1 && d.jpeg >= 1)) return Promise.resolve(cv);
+  const neutre = !d || (!d.flou && (d.reduc ?? 1) >= 1 && (d.jpeg ?? 1) >= 1
+                        && !d.rotation && (d.lumiere ?? 1) === 1);
+  if(neutre) return Promise.resolve(cv);
+
   const W = Math.max(1, Math.round(cv.width * (d.reduc || 1)));
   const H = Math.max(1, Math.round(cv.height * (d.reduc || 1)));
   const petit = document.createElement('canvas');
   petit.width = W; petit.height = H;
   const ctx = petit.getContext('2d');
-  if(d.flou) ctx.filter = 'blur(' + d.flou + 'px)';
+  const filtres = [];
+  if(d.flou) filtres.push('blur(' + d.flou + 'px)');
+  if(d.lumiere && d.lumiere !== 1) filtres.push('brightness(' + d.lumiere + ')');
+  if(filtres.length) ctx.filter = filtres.join(' ');
+
+  if(d.rotation){
+    // Rotation autour du centre, puis recadrage à l'identique : imite un redressement
+    // légèrement de travers, ce que le détecteur produit régulièrement sur une carte
+    // tenue à la main. L'homographie doit l'absorber — c'est ce qu'on vérifie.
+    ctx.translate(W/2, H/2); ctx.rotate(d.rotation * Math.PI/180); ctx.translate(-W/2, -H/2);
+  }
   ctx.drawImage(cv, 0, 0, W, H);
+
   // Retour à la taille d'origine : la chaîne doit voir une image de même dimension, sinon
   // on mesurerait l'effet de la taille et non celui du flou.
   const plein = document.createElement('canvas');
@@ -316,6 +339,31 @@ function degrader(cv, d){
     const i = new Image();
     i.onload = ()=>{ plein.getContext('2d').drawImage(i, 0, 0, cv.width, cv.height); res(plein); };
     i.src = petit.toDataURL('image/jpeg', d.jpeg);
+  });
+}
+
+// ── Mode CATALOGUE : tirer au hasard dans toute la tranche plutôt que dans le seul set
+//    des 31 photos. L'illustration officielle sert de requête.
+//
+//    ATTENTION à l'interprétation : l'index a été CONSTRUIT sur ces images-là. À
+//    dégradation nulle, c'est un auto-appariement — près de 100 % par construction, ce qui
+//    ne prouve rien sur la reconnaissance et sert seulement d'étalon de vitesse et de
+//    contrôle d'intégrité de l'index. Tout l'intérêt est dans la DÉGRADATION : à quel
+//    moment la chaîne lâche, et si elle lâche en se trompant ou en se taisant.
+function tirage(graine){   // générateur reproductible : deux passes doivent comparer le même échantillon
+  let s = graine >>> 0;
+  return ()=>{ s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+// `image` dans l'index est une BASE d'URL TCGdex, sans suffixe. On lui ajoute le même que
+// le constructeur des packs (`/high.webp`, voir tools/build-packs/index.mjs) : tester sur
+// une autre qualité comparerait la chaîne à des références construites ailleurs.
+function chargerIllustration(base){
+  const url = /\.(webp|png|jpg|jpeg)$/i.test(base) ? base : base + '/high.webp';
+  return new Promise((res, rej)=>{
+    const i = new Image();
+    i.crossOrigin = 'anonymous';   // sans quoi le canvas est teinté et l'embedding impossible
+    i.onload = ()=>res(i); i.onerror = ()=>rej(new Error('image indisponible : ' + url));
+    i.src = url;
   });
 }
 
@@ -345,15 +393,20 @@ function lireReglages(){
   };
 }
 function lireDegradation(){
-  return { flou:+$('d-flou').value, reduc:+$('d-reduc').value, jpeg:+$('d-jpeg').value };
+  return { flou:+$('d-flou').value, reduc:+$('d-reduc').value, jpeg:+$('d-jpeg').value,
+           rotation:+$('d-rot').value, lumiere:+$('d-lum').value };
 }
 function nomConfig(){
   const r = V2.reglagesV2();
-  const bouts = ['S' + r.SHORT, r.WORKER_ORB ? 'worker' : 'direct'];
+  const bouts = ['S' + r.SHORT];
   if(r.INLIERS_MIN !== 10) bouts.push('inl' + r.INLIERS_MIN);
+  if(r.OCR_INLIERS_MIN !== 25) bouts.push('ocr≥' + r.OCR_INLIERS_MIN);
+  if(r.GEO_INLIERS !== 20 || r.GEO_DOM !== 0.6) bouts.push('geo' + r.GEO_INLIERS + '/' + r.GEO_DOM);
   if(degradation.flou) bouts.push('flou' + degradation.flou);
   if(degradation.reduc < 1) bouts.push('réduc' + degradation.reduc);
   if(degradation.jpeg < 1) bouts.push('jpeg' + degradation.jpeg);
+  if(degradation.rotation) bouts.push('rot' + degradation.rotation + '°');
+  if(degradation.lumiere !== 1) bouts.push('lum' + degradation.lumiere);
   return bouts.join(' · ');
 }
 
@@ -406,6 +459,66 @@ async function lancer(n){
                                  : 'En pause — ' + curseur + '/' + corpus.length);
   }
   return curseur + '/' + corpus.length;
+}
+
+let catalogue = [], echantillon = [], curseurCat = 0;
+
+// Prépare un échantillon aléatoire mais REPRODUCTIBLE. `series` filtre par préfixe de set
+// (ex : ['sv','swsh']) ; sans filtre, toute la tranche chargée.
+function preparer({n = 60, graine = 1, series = null} = {}){
+  if(!catalogue.length) catalogue = V2.catalogueV2();
+  let pool = catalogue.filter(c => c.image);
+  if(series && series.length){
+    pool = pool.filter(c => series.some(s => String(c.setId).startsWith(s)));
+  }
+  const rnd = tirage(graine);
+  const copie = pool.slice();
+  for(let i = copie.length - 1; i > 0; i--){ const j = Math.floor(rnd() * (i+1)); [copie[i], copie[j]] = [copie[j], copie[i]]; }
+  echantillon = copie.slice(0, n);
+  curseurCat = 0;
+  const parSet = echantillon.reduce((a,c)=>(a[c.setId]=(a[c.setId]||0)+1,a),{});
+  journal('échantillon : ' + echantillon.length + ' cartes sur ' + pool.length + ' (graine ' + graine + ', ' + Object.keys(parSet).length + ' sets)');
+  return { n: echantillon.length, pool: pool.length, sets: Object.keys(parSet).length };
+}
+
+async function lancerCatalogue(n){
+  if(occupe) return 'occupé';
+  if(!echantillon.length) preparer({});
+  occupe = true; arret = false;
+  V2.reglagesV2(lireReglages());
+  degradation = lireDegradation();
+  $('b-stop').disabled = false;
+  const fin = Math.min(curseurCat + (n || echantillon.length), echantillon.length);
+  try{
+    while(curseurCat < fin && !arret){
+      const c = echantillon[curseurCat++];
+      etat('Catalogue ' + curseurCat + '/' + echantillon.length + ' — ' + c.cle);
+      const ligne = { fichier: c.cle, attendu: c.cle, setId: c.setId };
+      try{
+        const img = await chargerIllustration(c.image);
+        let cv = document.createElement('canvas');
+        // Proportions de carte : identifierV2 découpe lui-même la zone d'illustration en
+        // fractions, il faut donc lui donner une carte entière, comme la caméra le ferait.
+        cv.width = 600; cv.height = Math.round(600 * CARD_RATIO);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        cv = await degrader(cv, degradation);
+        const res = await V2.identifierV2(cv);
+        Object.assign(ligne, {
+          trouve: res.pick && res.pick.cle, juste: !!res.pick && res.pick.cle === c.cle,
+          categorie: res.categorie, fiabilite: res.fiabilite, inliers: res.inliers, marge: res.marge,
+          ms: res.ms, T: res.T, ocr: res.ocrLance,
+          embPremier: res.embPremier, embJuste: res.embPremier === c.cle,
+        });
+      }catch(e){ ligne.erreur = String(e.message || e); }
+      resultats.push(ligne);
+      rendre();
+      await new Promise(r=>setTimeout(r, 0));
+    }
+  } finally {
+    occupe = false; $('b-stop').disabled = true;
+    etat(curseurCat >= echantillon.length ? 'Catalogue terminé — ' + curseurCat : 'En pause — ' + curseurCat + '/' + echantillon.length);
+  }
+  return curseurCat + '/' + echantillon.length;
 }
 
 function resume(){
@@ -470,7 +583,7 @@ function cloturer(nom){
   return p;
 }
 
-function reinit(){ resultats = []; curseur = 0; rendre(); etat('Résultats effacés.'); }
+function reinit(){ resultats = []; curseur = 0; curseurCat = 0; rendre(); etat('Résultats effacés.'); }
 
 async function froid(opts){
   const r = await V2.viderCachesV2(opts || {});
@@ -729,6 +842,11 @@ function rendreCamera(){
     ? scansCam.length + ' scans · ' + verifies.length + ' vérifiés · ' + justes + '/' + verifies.length + ' justes'
       + (sures.length ? ' · sûres justes ' + sures.filter(s=>s.juste).length + '/' + sures.length : '')
       + ' · rebuts ' + rebuts + ' (' + Math.round(100*rebuts/scansCam.length) + ' %)'
+      // Inliers médians : l'indicateur de santé de la capture. Au banc, la chaîne est à
+      // l'aise au-dessus de ~50, sur le fil vers 15-20, et aveugle à 0 — et elle ne se
+      // trompe jamais en chemin, elle se tait. Si ce chiffre s'effondre sur téléphone,
+      // c'est la PHOTO qu'il faut soigner (netteté, distance), pas les seuils.
+      + ' · inliers médian ' + (med(scansCam.map(s=>s.inliers)) ?? '—')
       + ' · ms médian ' + (med(scansCam.map(s=>s.ms)) ?? '—')
     : 'Aucun scan caméra.';
   $('t-camera').tBodies[0].innerHTML = scansCam.slice().reverse().map(s=>{
@@ -785,6 +903,7 @@ window.BANC = {
   viderScans: async ()=>{ await banqueVider(); scansCam = []; rendreCamera(); return 'vidé'; },
   appareil: async ()=>({ batterie: await relireBatterie(), etalon: etalonCourant }),
   init, lancer, froid, cloturer, resume, passes: ()=>passes,
+  preparer, catalogue: lancerCatalogue, echantillon: ()=>echantillon,
   reinit, resultats: ()=>({ resume: resume(), detail: resultats }),
   config: (patch)=>{
     const r = V2.reglagesV2(patch);
@@ -803,6 +922,8 @@ window.BANC = {
       if('flou' in d) $('d-flou').value = d.flou;
       if('reduc' in d) $('d-reduc').value = d.reduc;
       if('jpeg' in d) $('d-jpeg').value = d.jpeg;
+      if('rotation' in d) $('d-rot').value = d.rotation;
+      if('lumiere' in d) $('d-lum').value = d.lumiere;
       degradation = lireDegradation();
     }
     return lireDegradation();
