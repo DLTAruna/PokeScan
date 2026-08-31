@@ -385,6 +385,17 @@ Par entrée : `predit`, `categorie` (`sure`/`douteuse`/`rebut`), `fiabilite`, `i
 
 ## Réglages clés côté `index.html` (V2)
 
+- **PATIENCE (V.8)** — le déclenchement était un ET strict à seuils fixes, et il demandait
+  à la main de se figer. Mesuré au banc : seuil de stabilité 0,049, main qui tremble 0,054
+  → une image sur deux dépassait, la série de deux images concordantes ne se refermait
+  **jamais**. On pouvait tenir une carte lisible plusieurs secondes sans rien déclencher.
+  Les seuils se desserrent désormais avec la durée de présence (`v2PresentDepuis`) :
+  à 1,2 s tolérance au mouvement ×3 et score au minimum ; à 2,5 s une seule image suffit,
+  quel que soit le bougé. **Valeurs de départ inchangées** — une carte posée nette part
+  toujours aussi vite. **Le verrou « déjà lue » ne se desserre PAS** (il relirait en boucle
+  la carte qu'on tient). Même logique dans `bench-v2.html`, qui affiche les trois verrous
+  en direct (`#c-jauges`) — c'est ce qui a permis de lire 0,054 contre 0,049 au lieu de le
+  supposer.
 - `detectLoop()` branche V2 (~ligne 11130) : déclenche sur `d.score >= 0.5 && stable`
   (`v2StableStreak >= 2`), **aucune** dépendance aux jauges. `dejaLue` empêche de
   re-scanner une carte déjà lue et toujours en place ; il se relâche sur `v2CarteRetiree`
