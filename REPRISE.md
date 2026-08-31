@@ -17,7 +17,37 @@ Commits en français, style sobre/littéraire. Terminer par
 **Le `git push` est souvent bloqué pour Claude par le classificateur — c'est Nikos qui
 pousse.** Claude commite en local, liste les commits à pousser, Nikos fait `git push`.
 
-## Où on en est (2026-08-31, soir)
+## Où on en est (2026-08-31, nuit — commit `d336e61`)
+
+**Tout est poussé** (la section « Non poussé » plus bas était périmée, elle a été retirée).
+
+Dernière passe, à partir des logs de la session de 20h44 (17 scans) :
+
+- **Worker Cloudflare déployé** par Nikos → `https://pokescan-orb.inox62.workers.dev`,
+  posé dans `WORKER_ORB` (`scan-v2.js`). Vérifié en local : 1 requête par scan au lieu de
+  ~15, plus aucun appel direct à `r2.dev/orb/`. C'était le poste `T.refs` (médiane 667 ms,
+  pics à 1 380).
+- **OCR resserré** : `orbEgalite = inl >= 25 && dominance < 0.6`. Sur 15 lancements réels
+  il n'a changé le verdict que 2 fois (inliers 35 et 53, dominance 0,57 et 0) ; les 13
+  autres avaient ≤ 20 inliers et coûtaient 0,3 à 4,3 s pour rien. Re-test 31 photos :
+  **2 OCR seulement, 25/31 justes, 23/24 des sûres** — inchangé.
+- **Lenteur du mode auto = le déclenchement, pas l'identification** (constat de Nikos : la
+  prise manuelle est immédiate). Cause trouvée : le verrou « déjà lue » se relâchait sur
+  `cardConfirmedAbsentSinceCapture`, qui exige **4 images ET 1,2 s de champ vide** — il
+  fallait montrer du vide entre chaque carte. Remplacé en V2 par `v2CarteRetiree` /
+  `v2AbsenceStreak` (2 images, ~300 ms) ; le filet reste `gererScanV2` qui compare la carte
+  identifiée à la précédente. Tolérance de position ramenée de ×8 à ×4 / ×2,5 : le ×8 posé
+  contre les doubles ne les empêchait pas (ils naissent de cartes **en transit**, donc hors
+  tolérance) et bloquait la carte suivante posée au même endroit du cadre.
+- **« sv03.5 puis 151 » dans le panneau du bas** : pas deux scanners, juste
+  `carteDepuisPack` qui mettait l'identifiant du set comme nom en attendant la fiche
+  complète. Résolu par `nomDeSet()` tout de suite, vide sinon.
+
+**À vérifier sur téléphone à la prochaine session** : cadence carte-à-carte (le point
+central), gain réel du Worker sur `T.refs`, et si les doubles reviennent maintenant que la
+tolérance est plus basse.
+
+## État antérieur (2026-08-31, soir)
 
 Le gros chantier = **Scanner V2**, identification par l'**illustration** au lieu du numéro.
 Chaîne : DINOv2 (embedding) → shortlist → ORB + homographie RANSAC reclasse → OCR du
@@ -45,47 +75,32 @@ après session de test, via `/api/scan-log`.
   carte »), au 3e la photo part dans « À vérifier ».
 - **Prise manuelle 📸 identifie aussi** (`7035bec`, voir plus bas) : passe par
   `gererScanV2`, affiche le résultat dans le panneau du bas comme la capture auto.
-- Import du module : **`./scan-v2.js?v=13`** dans `index.html` (bumper à chaque modif de
+- Import du module : **`./scan-v2.js?v=14`** dans `index.html` (bumper à chaque modif de
   `scan-v2.js`).
-
-### Non poussé
-
-- **`e79c62b`** — « tuer les doubles captures » : le test de stabilité V2 était cassé
-  (comparait les coins à eux-mêmes) → déclenchait carte encore en mouvement, d'où 1er scan
-  faible + 2e « pour de vrai ». Maintenant : `v2StableStreak >= 2` images immobiles, et
-  verrou « déjà lue » catégorie-conscient (`v2DerniereCat`).
-- (`7035bec` prise manuelle + `d92dccf` REPRISE : **poussés**, en ligne.)
 
 ### Ce qui reste
 
-1. **Réglage vitesse / déclenchement, avec Nikos.** Constats des dernières sessions
-   (`/api/scan-log`) :
-   - L'**ORB** est réparé : ~340 ms (contre 2 000-3 400 ms avant `817c6ed` : homographie
-     top-8, `NFQ` 360). Total médian **~1,7 s** (contre 3-8 s).
+1. **Valider sur téléphone la passe `d336e61`** (cadence carte-à-carte, `T.refs` avec le
+   Worker, retour éventuel des doubles). Reste à surveiller côté moteur :
    - **WebGPU capricieux** sur ce téléphone (tantôt `webgpu/fp16`, tantôt `wasm/q8` — il
      met ~8 scans à s'initialiser) **et ne gagne quasi rien** (fp16 ~650 ms ≈ WASM).
      Ne pas s'acharner dessus.
-   - **Déclenchement auto trop pressé** : ~6 cartes sur 13 scannées deux fois en 2-3 s,
-     1er scan faible (`douteuse`, 12-20 inliers), 2e bon (`sure`, 40-150). La caméra
-     capture avant que la carte soit calée. `dejaLue` (dans `detectLoop`, déployé) coupe le
-     2e scan — **risque : figer le mauvais 1er résultat**. Piste : autoriser une relance si
-     le 1er résultat était `douteuse` ; ou durcir la condition de stabilité avant capture.
-   - `packTelecharge:true` à chaque scan sur un tas mélangé (la shortlist couvre 15+ sets,
-     ~18 blobs neufs). Envisager le Worker Cloudflare (`worker-orb.js`, point 5).
-2. **Nikos va comparer manuel vs auto** maintenant que le manuel identifie (`7035bec`).
-3. **Révoquer le jeton R2 fuité** — était en clair dans `run.sh` au commit `872c039`
+   - **`T.orb` dérive sur la salve** (360 ms au début → 900-1 600 ms au 15e scan) malgré
+     `recyclerOrbSiBesoin()` tous les 12 scans : c'est du throttle thermique, pas de la
+     fragmentation. Le recyclage n'y change rien de visible — à réévaluer.
+   - **`chargerSetComplet()` (mode « classeur ») télécharge ~5 Mo en fond** dès 3 picks du
+     même set, alors que `packTelecharge` reste vrai ensuite (la shortlist est cross-set).
+     Il coûte de la bande passante mobile sur le chemin critique pour un gain non mesuré —
+     candidat sérieux à la suppression, à trancher avec Nikos.
+2. **Révoquer le jeton R2 fuité** — était en clair dans `run.sh` au commit `872c039`
    (poussé sur GitHub). Cloudflare → R2 → Manage R2 API Tokens → supprimer. En refaire un
    pour les builds suivants, le mettre dans `tools/build-packs/.env` (non commité).
-4. **Étendre la tranche** aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
+3. **Étendre la tranche** aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
    xy,sm`) quand la V2 sera validée. `SERIES=base,neo,... bash tools/build-packs/run.sh` —
    le script reprend et reconstruit l'index global avec tout. Compter ~2 h de plus.
-5. **Worker Cloudflare** (`tools/build-packs/worker-orb.js`) — **décidé, à déployer par
-   Nikos.** Regroupe les ~18 blobs d'un scan en 1 requête. Étapes dans le fichier
-   (dashboard, sans CLI ; binding R2 nommé `PACKS` → `pokescan-packs`). Quand c'est fait,
-   Nikos donne l'URL `*.workers.dev` → la mettre dans `WORKER_ORB` en tête de `scan-v2.js`
-   + bumper `?v=`. Le client s'en sert dès qu'`aTelecharger.length >= 4` (sinon requêtes
-   séparées). Format réponse : `[uint16 n]` puis n×`[uint8 lenClé][clé][uint32 lenBlob][blob]`.
-6. **Le log ne mesure pas la justesse** : `predit == attendu == cardId` (tous mis à la
+   Les 3 `rebut` de la session de 20h44 (`swsh10-082`, `swsh5-79`, `sv03-175` — clés
+   prédites, donc fausses) étaient sans doute des cartes hors tranche.
+4. **Le log ne mesure pas la justesse** : `predit == attendu == cardId` (tous mis à la
    prédiction). Il faut que Nikos corrige les cartes fausses (→ `verifie:true`) ou dise ce
    qui a raté. Les tests navigateur sur `photos-test/`, eux, connaissent la vérité.
 
@@ -178,16 +193,21 @@ Par entrée : `predit`, `categorie` (`sure`/`douteuse`/`rebut`), `fiabilite`, `i
 - `recyclerOrbSiBesoin()` — worker ORB recyclé tous les 12 scans (fragmentation du tas WASM
   d'OpenCV). Réinjection depuis le cache IDB au scan suivant.
 - OCR sauté si `dernierOrbMs >= 1800` (session chaude — l'OCR y prendrait > 3 s).
+- `INLIERS_MIN = 10` — sous ce seuil sans OCR concordant → `rebut`.
 - `noterPickV2()` — 3 picks du même set → charge le pack entier en fond (« mode classeur » ;
   aide peu en pratique car la shortlist est cross-set).
-- `WORKER_ORB = null` — URL du Worker Cloudflare si déployé.
+- `WORKER_ORB = 'https://pokescan-orb.inox62.workers.dev'` — Worker Cloudflare déployé,
+  regroupe les blobs ORB d'un scan en 1 requête (repli auto par carte s'il ne répond pas).
+- `orbEgalite = inl >= 25 && dominance < 0.6` — seule condition qui lance l'OCR.
 - Moteur emb : essais `webgpu/fp16 → fp32 → q4 → wasm/q8 → wasm/fp32`.
 
 ## Réglages clés côté `index.html` (V2)
 
-- `detectLoop()` branche V2 (~ligne 11110) : déclenche sur `d.score >= 0.5 && stable`,
-  **aucune** dépendance aux jauges. `dejaLue` empêche de re-scanner une carte déjà lue et
-  toujours en place.
+- `detectLoop()` branche V2 (~ligne 11130) : déclenche sur `d.score >= 0.5 && stable`
+  (`v2StableStreak >= 2`), **aucune** dépendance aux jauges. `dejaLue` empêche de
+  re-scanner une carte déjà lue et toujours en place ; il se relâche sur `v2CarteRetiree`
+  (2 images sous le seuil, ~300 ms — **pas** la preuve d'absence V1 à 1,2 s, qui rendait le
+  mode auto deux fois plus lent que le manuel) ou sur un vrai déplacement de la carte.
 - `attemptRead()` hook V2 (~ligne 11440) : `gererScanV2()` gère tout, jamais de repli OCR.
   Retours : `'traite'` / `'rebut'` / `'reessai'` / `'rejet-doublon'`.
 - `gererScanV2()` (~ligne 12025) : identif → si rebut, 2 `'reessai'` puis
