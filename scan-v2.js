@@ -16,12 +16,30 @@
 const CARD_RATIO = 88 / 63;
 const ZONE_ILLUSTRATION = { x: 0.07, y: 0.11, w: 0.86, h: 0.43 };
 const BANDE = { y: 0.83, h: 0.17, zoom: 2 };
-const SHORT = 18;      // largeur de shortlist embedding → ORB. 12 laissait la bonne carte
+// ─── Réglages de la chaîne, en un seul endroit et MODIFIABLES À CHAUD (reglagesV2).
+// Le banc (bench-v2.html) les pilote pour comparer deux configurations sur le même corpus.
+// Ils restent des valeurs de production : le banc joue le module qui tourne sur le
+// téléphone, pas une copie — une copie dérive, et on finirait par régler un scanner qui
+// n'existe pas.
+const R = {
+  SHORT: 18,          // largeur de shortlist embedding → ORB. 12 laissait la bonne carte
                       // dehors ~1 fois sur 8 ; 30 faisait télécharger 30 blobs/scan sur un
                       // classeur varié. 18 : recall quasi intact (rang médian 0, p90 0 au
                       // banc sur 7 591 cartes), 40 % de blobs en moins.
-const TIEBREAK = 8;    // profondeur où l'OCR peut départager
-const INLIERS_MIN = 10; // en dessous, ORB n'a PAS confirmé géométriquement : on ne devine pas
+  TIEBREAK: 8,        // profondeur où l'OCR peut départager
+  INLIERS_MIN: 10,    // en dessous, ORB n'a PAS confirmé géométriquement : on ne devine pas
+  OCR_INLIERS_MIN: 25, // l'OCR ne sert qu'à départager une égalité : beaucoup d'inliers…
+  OCR_DOM_MAX: 0.6,    // …mais un 2e candidat au coude à coude. Voir l'étape 4.
+  OCR_ORB_MS_MAX: 1800, // session chaude (dernier ORB au-delà) → on ne lance pas l'OCR
+  GEO_INLIERS: 20,     // géométrie franche → « sûre » même si la sigmoïde reste basse
+  GEO_DOM: 0.6,
+  MAX_CARTES_ORB: 900, // descripteurs gardés en mémoire du worker (LRU, ~23 Mo)
+  RECYCLE_ORB: 12,     // scans entre deux recyclages du worker ORB
+  WORKER_ORB: 'https://pokescan-orb.inox62.workers.dev', // null → une requête R2 par carte
+};
+// Lecture seule sans argument ; avec un objet, applique le patch et renvoie l'état obtenu.
+// Réservé au banc et au diagnostic — la production ne l'appelle jamais.
+export function reglagesV2(patch) { if (patch) Object.assign(R, patch); return { ...R }; }
 // Centre de l'illustration (fractions de carte) : c'est CE point que l'autofocus doit
 // viser en V2, pas la bande du numéro. Exporté pour index.html.
 export const CENTRE_ILLUSTRATION = { u: 0.5, v: 0.32 };
@@ -218,11 +236,7 @@ async function chargerParsing() {
 // Les descripteurs ORB, eux, sont lourds : on ne récupère le pack d'un set QUE quand une
 // carte de ce set apparaît dans la shortlist d'un scan, et on le garde en cache.
 const R2 = 'https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev';
-// Worker Cloudflare qui regroupe les blobs ORB d'un scan en UNE requête au lieu de ~15
-// (source : tools/build-packs/worker-orb.js). Repli automatique sur une requête par carte
-// s'il ne répond pas ; remettre à null pour le désactiver.
-const WORKER_ORB = 'https://pokescan-orb.inox62.workers.dev';
-const MAX_CARTES_ORB = 900;             // descripteurs ORB gardés en mémoire du worker (LRU, ~23 Mo ; ~3 sets entiers)
+// (Worker Cloudflare et taille du cache ORB : voir R.WORKER_ORB / R.MAX_CARTES_ORB.)
 
 // —— petit cache IndexedDB (l'index global et les packs y vivent « pour toujours »)
 const IDB_NOM = 'pokescan_v2', IDB_STORE = 'blobs';
@@ -333,7 +347,7 @@ export function noterPickV2(setId) {
 // —— récupère plusieurs blobs ORB d'un coup via le Worker (une requête). Renvoie une
 //    Map cle -> ArrayBuffer (ou null si absent).
 async function telechargerLotOrb(cles) {
-  const r = await fetch(WORKER_ORB + '?k=' + cles.join(','), { cache: 'no-store' });
+  const r = await fetch(R.WORKER_ORB + '?k=' + cles.join(','), { cache: 'no-store' });
   if (!r.ok) throw new Error('worker ' + r.status);
   const buf = await r.arrayBuffer();
   const dv = new DataView(buf); const u = new Uint8Array(buf);
@@ -353,18 +367,36 @@ async function telechargerLotOrb(cles) {
 //    Renvoie true si un téléchargement a eu lieu.
 async function assurerOrbCartes(cles) {
   let telecharge = false;
+  detailRefs = { idb: 0, net: 0, imp: 0, nManque: 0, nReseau: 0, viaWorker: false };
   const manquantes = cles.filter(c => !orbCharges.has(c));
+  detailRefs.nManque = manquantes.length;
   if (manquantes.length) {
     onEtat(manquantes.length > 3 ? 'Chargement des références…' : '');
 
     // ce qui n'est pas déjà en IndexedDB
+    const tIdb = performance.now();
     const enIdb = new Map(await Promise.all(manquantes.map(async c => [c, await idbGet('orbc:' + c)])));
+    detailRefs.idb = Math.round(performance.now() - tIdb);
     const aTelecharger = manquantes.filter(c => !enIdb.get(c));
+    detailRefs.nReseau = aTelecharger.length;
+    // Temps de MUR à chaque étape, jamais des sommes : les imports tournent en parallèle,
+    // additionner leurs durées donnerait un total supérieur au temps réellement passé.
+    // `net` = la requête groupée au Worker, qui est séquentielle et donc mesurable telle
+    // quelle. `imp` = tout le reste (injection dans le worker ORB), du CPU. Les séparer est
+    // la seule façon de savoir si un `refs` qui gonfle accuse la connexion ou le processeur
+    // — voir la session à 6 % de batterie, où TOUT avait triplé sans qu'on sache pourquoi.
+    // ATTENTION en lisant : sans Worker (R.WORKER_ORB à null), les téléchargements se font
+    // carte par carte À L'INTÉRIEUR du bloc parallèle, donc comptés dans `imp` et non dans
+    // `net`. Un `net` à 0 avec un `imp` gonflé veut dire « Worker désactivé », pas « aucun
+    // réseau ». Le banc affiche `viaWorker` à côté, qui lève l'ambiguïté.
     let lot = null;
-    if (aTelecharger.length >= 4 && WORKER_ORB) {
-      try { lot = await telechargerLotOrb(aTelecharger); telecharge = true; } catch (e) { lot = null; }
+    if (aTelecharger.length >= 4 && R.WORKER_ORB) {
+      const tNet = performance.now();
+      try { lot = await telechargerLotOrb(aTelecharger); telecharge = true; detailRefs.viaWorker = true; } catch (e) { lot = null; }
+      detailRefs.net = Math.round(performance.now() - tNet);
     }
 
+    const tImp = performance.now();
     await Promise.all(manquantes.map(async cle => {
       let buf = enIdb.get(cle);
       if (!buf && lot && lot.has(cle)) { buf = lot.get(cle); if (buf) idbSet('orbc:' + cle, buf); }
@@ -376,12 +408,13 @@ async function assurerOrbCartes(cles) {
       await orb.call({ type: 'refImport', cle, bytes: o.des, rows: o.rows, kp: o.kp });
       orbCharges.set(cle, { ts: Date.now() });
     }));
+    detailRefs.imp = Math.round(performance.now() - tImp);
   }
   for (const c of cles) { const v = orbCharges.get(c); if (v) v.ts = Date.now(); }
   // éviction LRU — jeter un pack entier invalide le set correspondant
-  if (orbCharges.size > MAX_CARTES_ORB) {
+  if (orbCharges.size > R.MAX_CARTES_ORB) {
     const tries = [...orbCharges.entries()].sort((a, b) => a[1].ts - b[1].ts);
-    const aJeter = tries.slice(0, orbCharges.size - MAX_CARTES_ORB).map(x => x[0]);
+    const aJeter = tries.slice(0, orbCharges.size - R.MAX_CARTES_ORB).map(x => x[0]);
     const reels = aJeter.filter(c => !orbCharges.get(c).absent);
     if (reels.length) { try { await orb.call({ type: 'dropSet', cles: reels }); } catch (e) {} }
     for (const c of aJeter) {
@@ -399,15 +432,31 @@ let manifest = null;
 let onEtat = () => {};
 const orbCharges = new Map();   // cle -> { ts, absent? }  (descripteurs ORB en mémoire du worker)
 let scansV2 = 0, dernierOrbMs = 0;
+// Ventilation du dernier `refs` (voir assurerOrbCartes) : remontée dans T.refsDetail.
+let detailRefs = { idb: 0, net: 0, imp: 0, nManque: 0, nReseau: 0, viaWorker: false };
 
 // Le tas WASM d'OpenCV se fragmente : au bout de ~12 scans l'ORB dérive (300 ms → 2 s+).
 // On recycle le worker et on laisse le prochain scan réinjecter depuis le cache IndexedDB.
 async function recyclerOrbSiBesoin() {
-  if (scansV2 === 0 || scansV2 % 12 !== 0) return;
+  if (!R.RECYCLE_ORB || scansV2 === 0 || scansV2 % R.RECYCLE_ORB !== 0) return;
+  await recyclerOrb();
+}
+async function recyclerOrb() {
   try { orb.terminate(); } catch (e) {}
   demarrerOrb();
   await orb.call({ type: 'warm' }).catch(() => {});
   orbCharges.clear(); setsComplets.clear();
+}
+
+// Remise à zéro des caches, pour le banc : mesurer un démarrage à froid, ou isoler ce que
+// le Worker Cloudflare fait vraiment gagner. `memoire` vide le worker ORB (les descripteurs
+// restent en IndexedDB, donc pas de réseau) ; `disque` vide AUSSI IndexedDB, ce qui force
+// un vrai retéléchargement. L'index d'empreintes global n'est jamais touché : le reprendre
+// coûterait 3 Mo à chaque essai sans rien apprendre.
+export async function viderCachesV2({ memoire = true, disque = false } = {}) {
+  if (disque) await idbDelPrefixe('orbc:');
+  if (memoire || disque) { await recyclerOrb(); scansV2 = 0; dernierOrbMs = 0; }
+  return { memoire: memoire || disque, disque };
 }
 
 const setsCharges = () => [...new Set([...orbCharges.keys()].map(c => String(c).slice(0, String(c).lastIndexOf('-'))))];
@@ -505,12 +554,13 @@ export async function identifierV2(carte) {
     return { cle: c.cle, s: s * c.inv };
   }).sort((a, b) => b.s - a.s);
   const embTop = parEmb[0].s;
-  const court = parEmb.slice(0, SHORT).map(x => x.cle);
+  const court = parEmb.slice(0, R.SHORT).map(x => x.cle);
 
   // 2. descripteurs ORB des cartes de la shortlist (un petit blob par carte, à la demande)
   await recyclerOrbSiBesoin();
   let packTelecharge = false;
   try { packTelecharge = await chrono('refs', assurerOrbCartes(court)); } catch (err) {}
+  T.refsDetail = { ...detailRefs };
   onEtat('');
 
   // 3. ORB reclasse la shortlist
@@ -536,14 +586,14 @@ export async function identifierV2(carte) {
   //    c'est que la photo est mauvaise ou la carte hors index, et l'OCR du numéro échoue pour
   //    les mêmes raisons ; il ne faisait qu'ajouter 0,3 à 4,3 s avant un verdict inchangé.
   //    Garde-fou thermique conservé : session chaude → on ne tente même pas.
-  const orbEgalite = inl >= 25 && dominance0 < 0.6;
+  const orbEgalite = inl >= R.OCR_INLIERS_MIN && dominance0 < R.OCR_DOM_MAX;
   let ocrCands = [], ocrTxt = '', ocrLance = false;
-  if (ocr && orbEgalite && dernierOrbMs < 1800) {
+  if (ocr && orbEgalite && dernierOrbMs < R.OCR_ORB_MS_MAX) {
     ocrLance = true;
     try { const r = await chrono('ocr', ocrLire(bandeBasse(carte))); ocrCands = r.cands || []; ocrTxt = r.text || ''; } catch (e) {}
     if (ocrCands.length) {
       const nums = new Set(ocrCands.map(c => c.number));
-      const hit = ranked.slice(0, TIEBREAK).find(cle => nums.has(cleToCard.get(cle).numero));
+      const hit = ranked.slice(0, R.TIEBREAK).find(cle => nums.has(cleToCard.get(cle).numero));
       if (hit) { pick = hit; inl = orbScores[pick] || 0; marge = inl - (orbScores[second] || 0); }
     }
   }
@@ -560,9 +610,9 @@ export async function identifierV2(carte) {
   // « sûre » aussi quand la géométrie est franche : ≥ 20 inliers vérifiés par l'homographie
   // et un 2e candidat nettement derrière — c'est une identification certaine même si la
   // sigmoïde (calibrée prudemment) reste à ~77 %.
-  const geoFranche = inl >= 20 && dom >= 0.6;
+  const geoFranche = inl >= R.GEO_INLIERS && dom >= R.GEO_DOM;
   let categorie;
-  if (!pick || (inl < INLIERS_MIN && !ocrOk)) categorie = 'rebut';
+  if (!pick || (inl < R.INLIERS_MIN && !ocrOk)) categorie = 'rebut';
   else if (fiabilite >= 80 || ocrOk || geoFranche) categorie = 'sure';
   else categorie = 'douteuse';
 
@@ -573,7 +623,10 @@ export async function identifierV2(carte) {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
     fiabilite, categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, ocrTxt, ocrLance, ocrOk,
     packTelecharge, setsCharges: setsCharges(),
-    ms: Object.values(T).reduce((a, b) => a + b, 0), T, moteur: moteurEmb,
+    // Somme des seules ÉTAPES : T porte aussi refsDetail, qui est une ventilation de
+    // `refs` et non une durée de plus — l'additionner compterait deux fois, et comme c'est
+    // un objet le total serait NaN.
+    ms: Object.values(T).reduce((a, b) => a + (typeof b === 'number' ? b : 0), 0), T, moteur: moteurEmb,
     alts: ranked.slice(0, 8).map(cle => { const c = cleToCard.get(cle); return { cle, numero: c.numero, name: c.name, image: c.image, localId: c.localId, inliers: Math.round(orbScores[cle] || 0) }; }),
   };
 }

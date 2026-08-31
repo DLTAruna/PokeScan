@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banc V2 — la chaîne d'identification, telle qu'elle tourne</title>
+<style>
+  :root{
+    --bg:#0d1117; --panneau:#161b22; --bord:#30363d; --texte:#e6edf3; --faible:#8b949e;
+    --ok:#3fb950; --ko:#f85149; --tiede:#d29922; --accent:#58a6ff;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; padding:20px; background:var(--bg); color:var(--texte);
+    font:14px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  h1{font-size:19px; margin:0 0 4px;}
+  h2{font-size:14px; margin:0 0 10px; text-transform:uppercase; letter-spacing:.7px; color:var(--faible);}
+  .sub{color:var(--faible); margin:0 0 18px; max-width:80ch;}
+  .panneau{background:var(--panneau); border:1px solid var(--bord); border-radius:9px; padding:14px 16px; margin-bottom:14px;}
+  .rang{display:flex; flex-wrap:wrap; gap:14px 18px; align-items:flex-end;}
+  label{display:flex; flex-direction:column; gap:4px; font-size:12px; color:var(--faible);}
+  input,select{
+    background:#0d1117; color:var(--texte); border:1px solid var(--bord);
+    border-radius:6px; padding:5px 8px; font:inherit; font-size:13px; min-width:90px;
+  }
+  input[type=checkbox]{min-width:0;}
+  .caseline{flex-direction:row; align-items:center; gap:7px; color:var(--texte); font-size:13px;}
+  button{
+    background:var(--accent); color:#04121f; border:0; border-radius:6px;
+    padding:7px 13px; font:inherit; font-weight:600; cursor:pointer;
+  }
+  button.fantome{background:transparent; color:var(--texte); border:1px solid var(--bord); font-weight:500;}
+  button:disabled{opacity:.45; cursor:not-allowed;}
+  #etat{margin-top:12px; color:var(--faible); font-size:13px; min-height:1.5em;}
+  .chiffres{display:flex; flex-wrap:wrap; gap:22px; margin-bottom:6px;}
+  .chiffre b{display:block; font-size:23px; line-height:1.1; font-variant-numeric:tabular-nums;}
+  .chiffre span{font-size:11px; color:var(--faible); text-transform:uppercase; letter-spacing:.5px;}
+  table{width:100%; border-collapse:collapse; font-size:12.5px; font-variant-numeric:tabular-nums;}
+  th,td{text-align:right; padding:4px 7px; border-bottom:1px solid var(--bord); white-space:nowrap;}
+  th:first-child,td:first-child,th:nth-child(2),td:nth-child(2){text-align:left;}
+  th{color:var(--faible); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.4px;}
+  .ok{color:var(--ok);} .ko{color:var(--ko);} .tiede{color:var(--tiede);}
+  .defilant{overflow-x:auto;}
+  pre{
+    background:#0d1117; border:1px solid var(--bord); border-radius:6px; padding:10px;
+    font-size:11.5px; max-height:230px; overflow:auto; margin:0; white-space:pre-wrap;
+  }
+  code{background:#0d1117; border:1px solid var(--bord); border-radius:4px; padding:1px 5px; font-size:12px;}
+</style>
+</head>
+<body>
+
+<h1>Banc V2 — la chaîne d'identification, telle qu'elle tourne</h1>
+<p class="sub">
+  Ce banc importe <code>scan-v2.js</code>, le module qui tourne sur le téléphone. Il n'en
+  réimplémente rien : régler une copie reviendrait à régler un scanner qui n'existe pas.
+  Corpus : les vraies photos de <code>photos-test/</code>, redressées comme le fait
+  l'application. Pilotable à la souris, ou depuis la console via <code>window.BANC</code>
+  (voir le bas de page).
+</p>
+
+<div class="panneau">
+  <h2>Réglages de la chaîne</h2>
+  <div class="rang">
+    <label>Shortlist (SHORT)<input type="number" id="r-short" value="18" min="4" max="60"></label>
+    <label>Inliers mini<input type="number" id="r-inliers" value="10" min="0" max="60"></label>
+    <label>OCR — inliers mini<input type="number" id="r-ocrinl" value="25" min="0" max="200"></label>
+    <label>OCR — dominance max<input type="number" id="r-ocrdom" value="0.6" step="0.05" min="0" max="1"></label>
+    <label>Recyclage ORB (scans)<input type="number" id="r-recycle" value="12" min="0" max="99"></label>
+    <label class="caseline"><input type="checkbox" id="r-worker" checked> Worker Cloudflare</label>
+  </div>
+</div>
+
+<div class="panneau">
+  <h2>Dégradation de l'image — ce que la caméra ne donne pas toujours</h2>
+  <p class="sub" style="margin:0 0 10px;">
+    La capture automatique ne choisit plus l'image la plus nette entre deux (retiré en V.2 :
+    inutile pour l'ORB, disait-on). Ces curseurs le vérifient : si la justesse s'effondre au
+    premier flou, la sélection manquait ; si elle tient, elle ne manquait pas.
+  </p>
+  <div class="rang">
+    <label>Flou (px)<input type="number" id="d-flou" value="0" min="0" max="12" step="0.5"></label>
+    <label>Réduction (×)<input type="number" id="d-reduc" value="1" min="0.2" max="1" step="0.1"></label>
+    <label>Qualité JPEG<input type="number" id="d-jpeg" value="1" min="0.2" max="1" step="0.05"></label>
+  </div>
+</div>
+
+<div class="panneau">
+  <h2>Lancer</h2>
+  <div class="rang">
+    <button id="b-init">1 · Charger l'index V2</button>
+    <button id="b-run" disabled>2 · Passer le corpus</button>
+    <button class="fantome" id="b-froid" disabled>Vider le cache ORB (mémoire)</button>
+    <button class="fantome" id="b-froid-disque" disabled>Vider aussi IndexedDB</button>
+    <button class="fantome" id="b-reset" disabled>Effacer les résultats</button>
+    <button class="fantome" id="b-stop" disabled>■ Arrêter</button>
+  </div>
+  <div id="etat">Prêt. Charge l'index pour commencer (~3 Mo la première fois, puis IndexedDB).</div>
+</div>
+
+<div class="panneau">
+  <h2>Résultat</h2>
+  <div class="chiffres" id="chiffres"><span class="sub">Aucune passe pour l'instant.</span></div>
+  <div id="verdict" class="sub" style="margin:6px 0 0;"></div>
+</div>
+
+<div class="panneau">
+  <h2>Passes comparées</h2>
+  <div class="defilant"><table id="t-passes">
+    <thead><tr><th>Passe</th><th>Config</th><th>Justes</th><th>Sûres justes</th><th>ms méd.</th><th>emb</th><th>refs</th><th>· net</th><th>· cpu</th><th>orb</th><th>OCR</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</div>
+
+<div class="panneau">
+  <h2>Détail par photo</h2>
+  <div class="defilant"><table id="t-detail">
+    <thead><tr><th>Photo</th><th>Trouvé</th><th></th><th>Cat.</th><th>Fiab.</th><th>Inl.</th><th>Marge</th><th>ms</th><th>emb</th><th>refs</th><th>orb</th><th>OCR</th></tr></thead>
+    <tbody></tbody>
+  </table></div>
+</div>
+
+<div class="panneau">
+  <h2>Journal</h2>
+  <pre id="journal">—</pre>
+</div>
+
+<div class="panneau">
+  <h2>Pilotage depuis la console</h2>
+  <pre>await BANC.init()                      // charge l'index, renvoie le moteur retenu
+BANC.config({SHORT:30})                // réglages de scan-v2.js (reglagesV2)
+BANC.degrader({flou:2})                // dégrade l'image de requête avant identification
+await BANC.froid({disque:true})        // vide les caches ORB — mesurer un démarrage à froid
+await BANC.lancer(8)                   // passe 8 photos (par paquets : évite les délais d'attente)
+BANC.resultats()                       // résumé + détail de la passe en cours
+BANC.cloturer('worker off')            // fige la passe et l'ajoute au tableau comparatif
+BANC.passes()                          // toutes les passes closes</pre>
+</div>
+
+<script type="module">
+import * as V2 from './scan-v2.js?v=15';
+window.SCAN_V2 = V2;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Redressement des photos du corpus.
+//
+// Il reproduit `redresserPhotoImportee` + `redresserAvecCoins` d'index.html : détection
+// des coins par scanic dans un worker, marge de 4 %, filtre de forme, remise d'aplomb.
+// C'est le seul endroit du banc qui duplique la production — la chaîne d'identification,
+// elle, est le vrai module. Duplication assumée mais surveillée : la passe de référence
+// (corpus intact, réglages d'usine) doit rendre 25/31, chiffre obtenu via l'application
+// elle-même. Si elle dérive, c'est ce bloc qui a bougé, pas la chaîne.
+// ─────────────────────────────────────────────────────────────────────────────
+const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+const DETECT_LONG_EDGE = 512, EXTRACT_LONG_EDGE = 1200, MIN_SCORE = 0.35;
+const CARD_RATIO = 88 / 63;
+
+let detWorker = null;
+function workerDetection(){
+  if(detWorker) return detWorker;
+  const src = `
+    let det = null, p = null;
+    async function ensure(){
+      if(det) return det;
+      if(!p) p = (async ()=>{
+        const mod = await import(${JSON.stringify(SCANIC_MODULE)});
+        const sc = new mod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+        await sc.initialize(); det = sc; return sc;
+      })();
+      return p;
+    }
+    self.onmessage = async (e)=>{
+      const {id, bitmap} = e.data;
+      try{
+        const d = await ensure();
+        const c = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const cx = c.getContext('2d', {willReadFrequently:true});
+        cx.drawImage(bitmap, 0, 0); bitmap.close();
+        const r = await d.scan(cx.getImageData(0,0,c.width,c.height), {mode:'detect', detector:'ml'});
+        // Même extraction que le worker de production (index.html, getDetectWorker) :
+        // res.corners.{topLeft,…}.{x,y} en pixels, ramenés en fractions 0-1.
+        let corners = null;
+        if(r && r.corners){
+          const q = r.corners, w = c.width, h = c.height;
+          corners = { tl:[q.topLeft.x/w, q.topLeft.y/h], tr:[q.topRight.x/w, q.topRight.y/h],
+                      br:[q.bottomRight.x/w, q.bottomRight.y/h], bl:[q.bottomLeft.x/w, q.bottomLeft.y/h] };
+        }
+        postMessage({id, ok:true, score:(r && r.score != null) ? r.score : null, corners});
+      }catch(err){ postMessage({id, ok:false, err:String(err&&err.message||err)}); }
+    };`;
+  const w = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+  const attente = new Map(); let seq = 0;
+  w.onmessage = (e)=>{ const r = attente.get(e.data.id); if(r){ attente.delete(e.data.id); r(e.data); } };
+  detWorker = { detecter: (bmp)=> new Promise(res=>{ const id = ++seq; attente.set(id, res); w.postMessage({id, bitmap:bmp}, [bmp]); }) };
+  return detWorker;
+}
+
+let scanicMod = null;
+async function scanic(){ if(!scanicMod) scanicMod = await import(SCANIC_MODULE); return scanicMod; }
+
+function chargerImage(src){
+  return new Promise((res, rej)=>{ const i = new Image(); i.onload = ()=>res(i); i.onerror = ()=>rej(new Error('image ' + src)); i.src = src; });
+}
+
+async function redresser(src){
+  const img = await chargerImage(src);
+  const long = Math.max(img.naturalWidth, img.naturalHeight);
+  if(!long) return null;
+  const e0 = Math.min(1, DETECT_LONG_EDGE / long);
+  const bmp = await createImageBitmap(img, {
+    resizeWidth: Math.max(1, Math.round(img.naturalWidth * e0)),
+    resizeHeight: Math.max(1, Math.round(img.naturalHeight * e0)), resizeQuality:'medium'
+  });
+  const d = await workerDetection().detecter(bmp);
+  if(!d || !d.ok || !d.corners || d.score == null || d.score < MIN_SCORE) return null;
+
+  const sc = await scanic();
+  const ech = Math.min(1, EXTRACT_LONG_EDGE / long);
+  const vw = Math.max(1, Math.round(img.naturalWidth * ech));
+  const vh = Math.max(1, Math.round(img.naturalHeight * ech));
+  const frame = document.createElement('canvas');
+  frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(img, 0, 0, vw, vh);
+
+  const c = d.corners;
+  const cx = (c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4, cy = (c.tl[1]+c.tr[1]+c.br[1]+c.bl[1])/4;
+  const M = 0.04;
+  const p = (q)=>({x:(cx + (q[0]-cx)*(1+M))*vw, y:(cy + (q[1]-cy)*(1+M))*vh});
+  const r = await sc.extractDocument(frame,
+    {topLeft:p(c.tl), topRight:p(c.tr), bottomRight:p(c.br), bottomLeft:p(c.bl)}, {output:'canvas'});
+  if(!r || !r.success || !r.output) return null;
+
+  const out = r.output, ratio = out.height / out.width;
+  const droit = Math.abs(ratio - CARD_RATIO)/CARD_RATIO <= 0.25;
+  const couche = Math.abs(ratio - 1/CARD_RATIO)*CARD_RATIO <= 0.25;
+  if(!droit && !couche) return null;
+  if(droit) return out;
+  const rot = document.createElement('canvas');
+  rot.width = out.height; rot.height = out.width;
+  const c2 = rot.getContext('2d');
+  c2.translate(rot.width/2, rot.height/2); c2.rotate(-Math.PI/2);
+  c2.drawImage(out, -out.width/2, -out.height/2);
+  return rot;
+}
+
+// ── Dégradation contrôlée de l'image de requête. Flou et réduction imitent une capture
+//    prise sur une carte encore en mouvement ; le JPEG imite la compression du transport.
+function degrader(cv, d){
+  if(!d || (!d.flou && d.reduc >= 1 && d.jpeg >= 1)) return Promise.resolve(cv);
+  const W = Math.max(1, Math.round(cv.width * (d.reduc || 1)));
+  const H = Math.max(1, Math.round(cv.height * (d.reduc || 1)));
+  const petit = document.createElement('canvas');
+  petit.width = W; petit.height = H;
+  const ctx = petit.getContext('2d');
+  if(d.flou) ctx.filter = 'blur(' + d.flou + 'px)';
+  ctx.drawImage(cv, 0, 0, W, H);
+  // Retour à la taille d'origine : la chaîne doit voir une image de même dimension, sinon
+  // on mesurerait l'effet de la taille et non celui du flou.
+  const plein = document.createElement('canvas');
+  plein.width = cv.width; plein.height = cv.height;
+  if(!d.jpeg || d.jpeg >= 1){
+    plein.getContext('2d').drawImage(petit, 0, 0, cv.width, cv.height);
+    return Promise.resolve(plein);
+  }
+  return new Promise((res)=>{
+    const i = new Image();
+    i.onload = ()=>{ plein.getContext('2d').drawImage(i, 0, 0, cv.width, cv.height); res(plein); };
+    i.src = petit.toDataURL('image/jpeg', d.jpeg);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Le banc
+// ─────────────────────────────────────────────────────────────────────────────
+const $ = (id)=>document.getElementById(id);
+const med = (a)=>{ const b = a.filter(x=>typeof x === 'number').sort((x,y)=>x-y); return b.length ? Math.round(b[Math.floor(b.length/2)]) : null; };
+
+let corpus = [], resultats = [], curseur = 0, passes = [], arret = false, occupe = false;
+let degradation = { flou:0, reduc:1, jpeg:1 };
+
+function journal(m){
+  const j = $('journal');
+  const t = new Date().toTimeString().slice(0,8);
+  j.textContent = (j.textContent === '—' ? '' : j.textContent + '\n') + t + '  ' + m;
+  j.scrollTop = j.scrollHeight;
+}
+function etat(m){ $('etat').textContent = m; }
+
+function lireReglages(){
+  return {
+    SHORT: +$('r-short').value, INLIERS_MIN: +$('r-inliers').value,
+    OCR_INLIERS_MIN: +$('r-ocrinl').value, OCR_DOM_MAX: +$('r-ocrdom').value,
+    RECYCLE_ORB: +$('r-recycle').value,
+    WORKER_ORB: $('r-worker').checked ? 'https://pokescan-orb.inox62.workers.dev' : null,
+  };
+}
+function lireDegradation(){
+  return { flou:+$('d-flou').value, reduc:+$('d-reduc').value, jpeg:+$('d-jpeg').value };
+}
+function nomConfig(){
+  const r = V2.reglagesV2();
+  const bouts = ['S' + r.SHORT, r.WORKER_ORB ? 'worker' : 'direct'];
+  if(r.INLIERS_MIN !== 10) bouts.push('inl' + r.INLIERS_MIN);
+  if(degradation.flou) bouts.push('flou' + degradation.flou);
+  if(degradation.reduc < 1) bouts.push('réduc' + degradation.reduc);
+  if(degradation.jpeg < 1) bouts.push('jpeg' + degradation.jpeg);
+  return bouts.join(' · ');
+}
+
+async function init(){
+  etat('Chargement de l\'index d\'empreintes…');
+  const t0 = performance.now();
+  await V2.initV2({ onProgress:(p, m)=> etat(m || ('Chargement… ' + Math.round(p*100) + ' %')) });
+  const r = await fetch('photos-test/liste.json', {cache:'no-store'});
+  const j = await r.json();
+  corpus = j.photos || [];
+  const info = { moteur: V2.moteurV2(), tranche: V2.trancheV2(), photos: corpus.length,
+                 diag: V2.diagV2(), msInit: Math.round(performance.now() - t0) };
+  journal('index prêt — ' + info.moteur + ', ' + corpus.length + ' photos, ' + info.msInit + ' ms');
+  etat('Index prêt (' + info.moteur + '). ' + corpus.length + ' photos au corpus.');
+  for(const b of ['b-run','b-froid','b-froid-disque','b-reset']) $(b).disabled = false;
+  return info;
+}
+
+async function lancer(n){
+  if(occupe) return 'occupé';
+  if(!corpus.length) return 'corpus vide — appelle BANC.init()';
+  occupe = true; arret = false;
+  V2.reglagesV2(lireReglages());
+  degradation = lireDegradation();
+  $('b-stop').disabled = false;
+  const fin = Math.min(curseur + (n || corpus.length), corpus.length);
+  try{
+    while(curseur < fin && !arret){
+      const p = corpus[curseur++];
+      etat('Photo ' + curseur + '/' + corpus.length + ' — ' + p.fichier);
+      const ligne = { fichier:p.fichier, attendu:p.attendu, suspecte:!!p.suspecte };
+      try{
+        let cv = await redresser('photos-test/' + p.fichier);
+        if(!cv) throw new Error('redressement impossible');
+        cv = await degrader(cv, degradation);
+        const res = await V2.identifierV2(cv);
+        Object.assign(ligne, {
+          trouve: res.pick && res.pick.cle, juste: !!res.pick && res.pick.cle === p.attendu,
+          categorie: res.categorie, fiabilite: res.fiabilite, inliers: res.inliers, marge: res.marge,
+          ms: res.ms, T: res.T, ocr: res.ocrLance,
+        });
+      }catch(e){ ligne.erreur = String(e.message || e); }
+      resultats.push(ligne);
+      rendre();
+      await new Promise(r=>setTimeout(r, 0));   // laisse respirer l'affichage
+    }
+  } finally {
+    occupe = false; $('b-stop').disabled = true;
+    etat(curseur >= corpus.length ? 'Passe terminée — ' + curseur + '/' + corpus.length
+                                 : 'En pause — ' + curseur + '/' + corpus.length);
+  }
+  return curseur + '/' + corpus.length;
+}
+
+function resume(){
+  const faits = resultats.filter(r=>!r.erreur);
+  const sures = faits.filter(r=>r.categorie === 'sure');
+  const T = (k)=> med(faits.map(r=>r.T && r.T[k]));
+  const detail = (k)=> med(faits.map(r=>r.T && r.T.refsDetail && r.T.refsDetail[k]));
+  return {
+    n: resultats.length, erreurs: resultats.filter(r=>r.erreur).length,
+    justes: faits.filter(r=>r.juste).length,
+    suresJustes: sures.filter(r=>r.juste).length, sures: sures.length,
+    douteuses: faits.filter(r=>r.categorie === 'douteuse').length,
+    rebuts: faits.filter(r=>r.categorie === 'rebut').length,
+    ocrLances: faits.filter(r=>r.ocr).length,
+    msMed: med(faits.map(r=>r.ms)), embMed: T('emb'), refsMed: T('refs'), orbMed: T('orb'),
+    refsNet: detail('net'), refsCpu: detail('imp'), refsIdb: detail('idb'),
+    config: nomConfig(), moteur: V2.moteurV2(),
+  };
+}
+
+function rendre(){
+  const s = resume();
+  $('chiffres').innerHTML = [
+    ['Justes', s.justes + '/' + (s.n - s.erreurs), s.justes >= (s.n - s.erreurs) * 0.8 ? 'ok' : 'ko'],
+    ['Sûres justes', s.suresJustes + '/' + s.sures, s.suresJustes === s.sures ? 'ok' : 'tiede'],
+    ['ms médian', s.msMed ?? '—', ''],
+    ['emb', s.embMed ?? '—', ''],
+    ['refs', s.refsMed ?? '—', ''],
+    ['orb', s.orbMed ?? '—', ''],
+    ['OCR lancés', s.ocrLances, ''],
+  ].map(([t, v, c])=> '<div class="chiffre"><b class="' + c + '">' + v + '</b><span>' + t + '</span></div>').join('');
+  $('verdict').textContent = s.n
+    ? s.config + ' · ' + s.moteur + ' · ' + s.douteuses + ' douteuses, ' + s.rebuts + ' rebuts'
+      + (s.refsNet != null ? ' · refs = ' + s.refsNet + ' ms réseau + ' + s.refsCpu + ' ms cpu' : '')
+    : '';
+
+  $('t-detail').tBodies[0].innerHTML = resultats.map(r=>{
+    if(r.erreur) return '<tr><td>' + r.fichier + '</td><td colspan="11" class="ko">' + r.erreur + '</td></tr>';
+    const marque = r.juste ? '<span class="ok">✓</span>'
+      : (r.suspecte ? '<span class="tiede">≈</span>' : '<span class="ko">✕</span>');
+    const cls = r.categorie === 'sure' ? 'ok' : (r.categorie === 'rebut' ? 'ko' : 'tiede');
+    return '<tr><td>' + r.fichier.replace('PKMN-151-','').replace('.jpg','') + '</td><td>' + (r.trouve || '—') + '</td><td>' + marque
+      + '</td><td class="' + cls + '">' + r.categorie + '</td><td>' + r.fiabilite + '</td><td>' + r.inliers + '</td><td>' + r.marge
+      + '</td><td>' + r.ms + '</td><td>' + (r.T.emb ?? '') + '</td><td>' + (r.T.refs ?? '') + '</td><td>' + (r.T.orb ?? '')
+      + '</td><td>' + (r.ocr ? (r.T.ocr ?? '✓') : '') + '</td></tr>';
+  }).join('');
+}
+
+function rendrePasses(){
+  $('t-passes').tBodies[0].innerHTML = passes.map(p=>
+    '<tr><td>' + p.nom + '</td><td>' + p.config + '</td><td>' + p.justes + '/' + (p.n - p.erreurs)
+    + '</td><td>' + p.suresJustes + '/' + p.sures + '</td><td>' + (p.msMed ?? '—') + '</td><td>' + (p.embMed ?? '—')
+    + '</td><td>' + (p.refsMed ?? '—') + '</td><td>' + (p.refsNet ?? '—') + '</td><td>' + (p.refsCpu ?? '—')
+    + '</td><td>' + (p.orbMed ?? '—') + '</td><td>' + p.ocrLances + '</td></tr>').join('');
+}
+
+function cloturer(nom){
+  if(!resultats.length) return 'rien à clôturer';
+  const p = Object.assign({ nom: nom || ('passe ' + (passes.length + 1)) }, resume());
+  passes.push(p); rendrePasses();
+  journal('passe close « ' + p.nom + " » : " + p.justes + '/' + (p.n - p.erreurs) + ' justes, ' + p.msMed + ' ms médian');
+  return p;
+}
+
+function reinit(){ resultats = []; curseur = 0; rendre(); etat('Résultats effacés.'); }
+
+async function froid(opts){
+  const r = await V2.viderCachesV2(opts || {});
+  journal('caches vidés — mémoire' + (r.disque ? ' + IndexedDB (vrai démarrage à froid)' : ' seule'));
+  etat('Caches ORB vidés.');
+  return r;
+}
+
+// ── API console. C'est par elle que le banc se pilote pour de vrai : par paquets, pour
+//    qu'aucun appel ne dépasse le délai d'attente d'un outil, et sans dépendre des clics.
+window.BANC = {
+  init, lancer, froid, cloturer, resume, passes: ()=>passes,
+  reinit, resultats: ()=>({ resume: resume(), detail: resultats }),
+  config: (patch)=>{
+    const r = V2.reglagesV2(patch);
+    if(patch){
+      if('SHORT' in patch) $('r-short').value = r.SHORT;
+      if('INLIERS_MIN' in patch) $('r-inliers').value = r.INLIERS_MIN;
+      if('OCR_INLIERS_MIN' in patch) $('r-ocrinl').value = r.OCR_INLIERS_MIN;
+      if('OCR_DOM_MAX' in patch) $('r-ocrdom').value = r.OCR_DOM_MAX;
+      if('RECYCLE_ORB' in patch) $('r-recycle').value = r.RECYCLE_ORB;
+      if('WORKER_ORB' in patch) $('r-worker').checked = !!r.WORKER_ORB;
+    }
+    return r;
+  },
+  degrader: (d)=>{
+    if(d){
+      if('flou' in d) $('d-flou').value = d.flou;
+      if('reduc' in d) $('d-reduc').value = d.reduc;
+      if('jpeg' in d) $('d-jpeg').value = d.jpeg;
+      degradation = lireDegradation();
+    }
+    return lireDegradation();
+  },
+  corpus: ()=>corpus,
+};
+
+$('b-init').onclick = ()=>{ $('b-init').disabled = true; init().catch(e=>{ etat('Échec : ' + e.message); $('b-init').disabled = false; }); };
+$('b-run').onclick = ()=> lancer();
+$('b-stop').onclick = ()=>{ arret = true; };
+$('b-reset').onclick = reinit;
+$('b-froid').onclick = ()=> froid({});
+$('b-froid-disque').onclick = ()=> froid({disque:true});
+</script>
+</body>
+</html>

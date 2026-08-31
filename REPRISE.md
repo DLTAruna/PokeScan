@@ -175,6 +175,61 @@ SERIES=swsh,sv,me bash run.sh                          # build une tranche, repr
 - Test de fidélité fait : le décodage `sharp` (Node) donne des embeddings et un ORB
   interchangeables avec le navigateur → on construit tout hors appareil sans risque.
 
+## Le banc V2 — `bench-v2.html`
+
+**C'est l'outil à ouvrir avant de régler quoi que ce soit.** Il importe le vrai
+`scan-v2.js` (jamais une copie) et passe les 31 photos réelles de `photos-test/`,
+redressées comme le fait l'application. `photos-test/liste.json` porte la vérité terrain
+— ajouter une photo demande d'ajouter sa ligne, le banc ne devine pas le contenu du
+dossier.
+
+**Passe de référence (réglages d'usine) : 25/31 justes, 23/24 des « sûres ».** Ces
+chiffres viennent de l'application elle-même : si le banc en donne d'autres à réglages
+égaux, c'est SON redressement qui a dérivé (le seul bloc qu'il duplique), pas la chaîne.
+
+Pilotage console — c'est ainsi qu'on s'en sert vraiment, par paquets pour ne pas dépasser
+le délai d'attente d'un outil :
+
+```js
+await BANC.init()                  // index + corpus ; renvoie moteur, tranche, warm1/warm2
+BANC.config({SHORT:30})            // réglages de scan-v2.js (voir reglagesV2)
+BANC.degrader({flou:1.5})          // dégrade l'image de requête (flou px, reduc ×, jpeg q)
+await BANC.froid({disque:true})    // vide les caches ORB — vrai démarrage à froid
+await BANC.lancer(10)              // 10 photos ; répéter jusqu'à 31/31
+BANC.cloturer('Worker OFF')        // fige la passe et l'ajoute au tableau comparatif
+BANC.passes()                      // comparer les passes entre elles
+```
+
+`reglagesV2(patch)` (dans `scan-v2.js`) expose SHORT, TIEBREAK, INLIERS_MIN,
+OCR_INLIERS_MIN, OCR_DOM_MAX, GEO_*, RECYCLE_ORB, MAX_CARTES_ORB, WORKER_ORB.
+`viderCachesV2({memoire, disque})` vide le cache ORB. La production n'appelle ni l'un ni
+l'autre.
+
+`T.refsDetail` ventile `refs` en `{idb, net, imp, nManque, nReseau, viaWorker}`.
+**Piège de lecture** : sans Worker, les téléchargements par carte tombent dans `imp`, pas
+dans `net` — un `net` à 0 veut dire « Worker désactivé », pas « aucun réseau ». Regarder
+`viaWorker`.
+
+### Ce que le banc a déjà répondu (2026-08-31)
+
+- **Worker Cloudflare** : `refs` 212 ms (203 réseau + 9 cpu) contre 266 ms sans lui, à
+  disque froid. ~20 % sur connexion filaire — l'intérêt reste le mobile, où chaque
+  connexion coûte, et cela reste à mesurer là-bas.
+- **Sensibilité au flou** (la question ouverte après le retrait de `meilleureDeDeuxImages`) :
+
+  | flou | justes | sûres justes | rebuts |
+  |---|---|---|---|
+  | 0 | 25/31 | 23/24 | 4 |
+  | 1,5 px | 24/31 | 22/23 | 6 |
+  | 3 px | 24/31 | 12/13 | **16** |
+
+  **Le flou ne rend pas la V2 fausse, il la rend muette.** La justesse tient (24-25/31) et
+  les « sûres » restent justes à ~95 % — mais les rebuts quadruplent. Or un rebut coûte un
+  cycle de re-scan entier (~2 s), bien plus que les ~150 ms qu'économisait le retrait du
+  choix entre deux images. **Le taux de rebut est donc la métrique à surveiller sur
+  téléphone** ; s'il dépasse nettement les ~13 % du banc à image nette, c'est que la
+  capture arrive floue et qu'il faut remettre la sélection.
+
 ## Tester la V2 en local
 
 ```bash
