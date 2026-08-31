@@ -9982,22 +9982,29 @@ const FOCUS_DEPLACEMENT_MIN = 0.05;
 
 // Centre de la bande du numéro, exprimé en fractions de la CARTE puis projeté dans le cadre
 // par interpolation sur le quadrilatère détecté (la carte n'est jamais parfaitement de face).
-function centreBandeNumero(corners){
-  const u = 0.22, v = 0.92;   // milieu de la zone 0-45 % × 84-99 %
+// Point de la carte (u = gauche→droite, v = haut→bas, fractions) projeté dans le repère du
+// cadre par interpolation bilinéaire sur le quadrilatère détecté (la carte n'est jamais de
+// face). u=0.22 v=0.92 → bande du numéro (lecture OCR) ; u=0.5 v=0.32 → centre de
+// l'illustration (Scanner V2, qui lit le dessin et pas le chiffre).
+function pointCarte(corners, u, v){
   const haut = [corners.tl[0] + u*(corners.tr[0]-corners.tl[0]),
                 corners.tl[1] + u*(corners.tr[1]-corners.tl[1])];
   const bas  = [corners.bl[0] + u*(corners.br[0]-corners.bl[0]),
                 corners.bl[1] + u*(corners.br[1]-corners.bl[1])];
   return {x: haut[0] + v*(bas[0]-haut[0]), y: haut[1] + v*(bas[1]-haut[1])};
 }
+function centreBandeNumero(corners){ return pointCarte(corners, 0.22, 0.92); }
 
 async function viserMiseAuPoint(corners){
   if(!focusPointSupporte || !cameraStream || !corners) return;
+  // En V2, la netteté qui compte est celle de l'ILLUSTRATION, pas du numéro.
+  const enV2 = window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2();
+  const cibleFocus = enV2 ? (c => pointCarte(c, 0.5, 0.32)) : centreBandeNumero;
   const now = Date.now();
   // Espacé dans le temps : redemander une mise au point à chaque image empêcherait
   // justement l'autofocus de converger — il repartirait en permanence de zéro.
   if(now - dernierFocusAt < FOCUS_INTERVAL_MS) return;
-  const p = centreBandeNumero(corners);
+  const p = cibleFocus(corners);
   if(p.x < 0 || p.x > 1 || p.y < 0 || p.y > 1) return;
   // Et seulement si la cible a réellement bougé : réappliquer la même position relancerait
   // un cycle de mise au point pour rien, avec le flou transitoire que ça implique.
@@ -11093,6 +11100,22 @@ async function detectLoop(){
       if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
+
+        // ── Scanner V2 : déclenchement propre. ORB tolère un flou léger, donc pas besoin
+        //    d'attendre que les jauges soient vertes (c'est ça, le « tenir la carte 2 s »).
+        //    En échange, on EXIGE que la carte soit là et STABLE : score franc + deux
+        //    détections consécutives quasi immobiles. Ça élimine aussi les déclenchements
+        //    sur rien (un faux positif du détecteur ne tient jamais deux images en place).
+        if(window.SCAN_V2 && SCAN_V2.actifV2()){
+          const stable = prevCorners && maxCornerShift(prevCorners, d.corners) < MAX_CORNER_SHIFT * 1.6;
+          if(d.score >= 0.5 && stable){
+            blocageDepuis = 0;
+            lastReadAttemptAt = now;
+            attemptRead(d.corners, d.score);
+          }else{
+            setAimHint(d.score < 0.5 ? 'Approche la carte' : 'Stabilise', conseilActif);
+          }
+        } else {
         // Dernier verrou avant de mobiliser le worker OCR pour ~800 ms : si l'image est
         // dans le rouge, on n'essaie même pas. L'utilisateur voit pourquoi (l'indice
         // nomme la cause) au lieu de subir une tentative qui échouera de toute façon.
@@ -11114,6 +11137,7 @@ async function detectLoop(){
             tenterSecours(null, 'blocage ' + cond.raison);
           }
         }
+        } // fin du else (mode OCR classique)
       }
     }
   }catch(e){
@@ -11971,19 +11995,20 @@ function registerSessionCardHash(card, liveHash){
 //   'rejet-doublon' → même carte que la précédente, toujours en place : ne rien faire
 //   null            → rien d'exploitable, attemptRead retombe sur la lecture OCR
 let v2DerniereCle = null;
+// Carte minimale à partir des seules données du pack (nom, image, numéro) — de quoi
+// afficher le résultat SANS attendre le réseau. La fiche complète (prix, rareté, variantes)
+// est chargée juste après, en arrière-plan, et remplace celle-ci.
+function carteDepuisPack(p){
+  return { id: p.cle, name: p.name || '', number: p.numero, localId: p.localId,
+           image: p.image, set: { id: p.setId, name: p.setId }, rarity: '', variants: {}, _pack: true };
+}
 async function gererScanV2(sourceForRead, corners, score, t0){
   const res = await SCAN_V2.identifierV2(sourceForRead);
-  // Rien de solide : catégorie « rebut » ou pas de proposition → repli OCR.
-  if(!res || !res.pick || res.categorie === 'rebut') return null;
-
-  // Anti-doublon minimal : même carte que la dernière ET la carte n'a pas quitté le champ
-  // depuis (le même signal d'absence que la lecture normale).
+  if(!res || !res.pick || res.categorie === 'rebut') return null;   // rien de solide → repli OCR
   if(res.pick.cle === v2DerniereCle && !cardConfirmedAbsentSinceCapture) return 'rejet-doublon';
 
-  const card = await getCardDetailCached(res.pick.cle);
-  if(!card) return null;   // fiche indisponible → repli OCR
-
   const confiance = res.categorie === 'sure' ? 'high' : 'uncertain';
+  const carteMin = carteDepuisPack(res.pick);
   let liveHash = null;
   try{ liveHash = hashIllustration(sourceForRead); }catch(e){}
 
@@ -11992,47 +12017,55 @@ async function gererScanV2(sourceForRead, corners, score, t0){
   cv.getContext('2d').drawImage(sourceForRead, 0, 0);
   const dataUrl = cv.toDataURL('image/jpeg', 0.8);
   const mySeq = ++liveResultSeq;
-  showLiveResultPending(dataUrl, card.number, '');
 
   v2DerniereCle = res.pick.cle;
-  lastCaptureCorners = corners; lastCaptureAt = Date.now(); lastCaptureCardId = card.id;
-  lastCaptureNumber = {number: stripLeadingZero(String(card.number)), denominator: String(card.set?.cardCount?.official || '')};
+  lastCaptureCorners = corners; lastCaptureAt = Date.now(); lastCaptureCardId = carteMin.id;
+  lastCaptureNumber = {number: stripLeadingZero(String(carteMin.number)), denominator: ''};
   lastCaptureHash = liveHash;
   cardConfirmedAbsentSinceCapture = false;
 
-  cv.toBlob(b => {
-    const item = pushToQueue(dataUrl, b, 'caméra-v2');
-    item._analysis = {
-      status: confiance === 'high' ? 'ok' : 'uncertain',
-      card, note: `V2 · illustration · ${res.fiabilite}%${res.ocrLance ? ' · OCR ' + (res.ocrOk ? '✓' : '?') : ''}`,
-      rawText: res.ocrTxt || '', number: card.number, denominator: ''
-    };
-    showLiveResultDone(card, confiance === 'high' ? 'high' : 'low');
-    ajouterAuTotalSession(card);
-    if(liveHash != null){ registerSessionCardHash(card, liveHash); enregistrerHashPhoto(card, liveHash, confiance); }
-    if(validationAuto && confiance === 'high'){
-      const rr = validerAutomatiquement(card, item, 'v2');
-      setAimHint(rr.fusionnee ? `🔁 ${card.name} — 2e exemplaire (V2 ${res.fiabilite}%)`
-                              : `✅ ${card.name} — V2 ${res.fiabilite}%`);
-    }else{
-      setAimHint(`🤔 ${card.name} — V2 ${res.fiabilite}% · à vérifier`);
-    }
-    SCAN_V2.relayV2({
-      fichier: 'live', cardId: res.pick.cle, attendu: res.pick.cle, predit: res.pick.cle,
-      preditNum: res.pick.numero, juste: true, verifie: false,
-      fiabilite: res.fiabilite, categorie: res.categorie, conf: confiance,
-      inliers: res.inliers, marge: res.marge, ocrLance: res.ocrLance, ocrOk: res.ocrOk,
-      ms: res.ms, T: res.T, moteur: res.moteur, sets: SCAN_V2.setV2(), score: +Number(score).toFixed(2)
-    });
-  }, 'image/png');
-
-  validerObjectifCourant();
-  capturedThisSession++;
+  // 1) TOUT DE SUITE : panneau + retours haptiques, à partir du pack.
+  showLiveResultDone(carteMin, confiance);
+  ajouterAuTotalSession(carteMin);
+  setAimHint(`${confiance === 'high' ? '✅' : '🤔'} ${carteMin.name} — V2 ${res.fiabilite}%`);
   flashScreen(dataUrl);
   if(navigator.vibrate) navigator.vibrate(40);
   setOverlayTarget('ok', corners);
+  validerObjectifCourant();
+  capturedThisSession++;
   diagPush('try', {ok:true, hint:'capture-v2', score, ocrMs:Math.round(performance.now()-t0),
                    fiab:res.fiabilite, cat:res.categorie, inliers:res.inliers, v2ms:res.ms});
+
+  SCAN_V2.relayV2({
+    fichier: 'live', cardId: res.pick.cle, attendu: res.pick.cle, predit: res.pick.cle,
+    preditNum: res.pick.numero, juste: true, verifie: false,
+    fiabilite: res.fiabilite, categorie: res.categorie, conf: confiance,
+    inliers: res.inliers, marge: res.marge, ocrLance: res.ocrLance, ocrOk: res.ocrOk,
+    ms: res.ms, T: res.T, moteur: res.moteur, sets: SCAN_V2.setV2(), score: +Number(score).toFixed(2)
+  });
+
+  // 2) EN ARRIÈRE-PLAN : file d'attente + fiche complète + validation auto.
+  cv.toBlob(async b => {
+    const item = pushToQueue(dataUrl, b, 'caméra-v2');
+    item._analysis = {
+      status: confiance === 'high' ? 'ok' : 'uncertain', card: carteMin,
+      note: `V2 · illustration · ${res.fiabilite}%${res.ocrLance ? ' · OCR ' + (res.ocrOk ? '✓' : '?') : ''}`,
+      rawText: res.ocrTxt || '', number: carteMin.number, denominator: ''
+    };
+    if(liveHash != null){ registerSessionCardHash(carteMin, liveHash); enregistrerHashPhoto(carteMin, liveHash, confiance); }
+
+    const carte = await getCardDetailCached(res.pick.cle).catch(()=> null);
+    const cardComplete = carte || carteMin;
+    item._analysis.card = cardComplete;
+    if(carte && mySeq === liveResultSeq) showLiveResultDone(cardComplete, confiance);   // met à jour prix/rareté si toujours à l'écran
+    if(validationAuto && confiance === 'high' && pendingQueue.includes(item)){
+      const rr = validerAutomatiquement(cardComplete, item, 'v2');
+      if(mySeq === liveResultSeq) setAimHint(rr.fusionnee
+        ? `🔁 ${cardComplete.name} — 2e exemplaire (V2 ${res.fiabilite}%)`
+        : `✅ ${cardComplete.name} — V2 ${res.fiabilite}%`);
+    }
+  }, 'image/png');
+
   return 'traite';
 }
 
