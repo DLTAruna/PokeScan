@@ -345,6 +345,35 @@ rien n'est vu depuis 2,5 s, et « elle est trop petite dans le cadre » quand el
 mais sous le seuil. Avant, « Vise la carte » envoyait corriger un cadrage qui n'était pas en
 cause. Le banc affiche la part du cadre en direct (`cadre 27 %`).
 
+### Banc de DÉCLENCHEMENT — le délai avant capture (V.10)
+
+`BANC.apercu()` montre les séquences en images ; `BANC.declenchement(n)` fait concourir des
+politiques de déclenchement sur les MÊMES séquences simulées (posée lentement, posée vite,
+main tremblante, arrivée de côté, tenue loin), image par image, avec flou de bougé
+proportionnel au déplacement. `BANC.politiques([...])` permet d'en essayer d'autres.
+
+Chaque politique est jugée sur le **temps total par carte** = attente + identification
+(1,2 s) + prix des reprises (une capture inexploitable coûte ~2,7 s).
+
+| Politique | délai médian | identifiable | total |
+|---|---|---|---|
+| immédiate (score ≥ 0,5, aucune stabilité) | 0 ms | **25 %** | 3 225 ms |
+| 2 images stables @0,049 (ancienne) | 768 ms | 100 % | 1 968 ms |
+| **1 image stable @0,030 (retenue)** | **576 ms** | **100 %** | **1 776 ms** |
+| 1 image stable @0,020 | 960 ms | 100 % | 2 160 ms |
+| 2 images stables @0,030 | 1 152 ms | 100 % | 2 352 ms |
+
+**Conclusions appliquées :**
+- **Une seule image immobile suffit** — la deuxième ne prouvait rien de plus et coûtait
+  192 ms sur chaque carte. `V2_BOUGE_BASE` resserré à **0,030** (au lieu de 0,049) : gratuit
+  en temps, et c'est lui qui remplace la seconde image comme garde-fou contre une carte en
+  transit.
+- **Ne rien exiger s'effondre à 25 %** : on capture la carte en vol, floue. Une preuve
+  d'immobilité reste indispensable — c'est le point d'équilibre, pas un excès de prudence.
+- **L'aire NE DOIT PAS être un verrou** : la politique « aire ≥ 15 % » ne déclenchait jamais
+  sur les cartes tenues loin (4 séquences sur 20 jamais capturées). Elle reste un CONSEIL
+  affiché, jamais une condition.
+
 ### Optimisation des paramètres : rien à changer, et c'est un résultat
 
 - **`SHORT = 18` confirmé.** À 30 : justesse identique (21/25 dans les deux cas) pour

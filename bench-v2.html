@@ -121,6 +121,27 @@
 </div>
 
 <div class="panneau">
+  <h2>Banc de DÉCLENCHEMENT — capturer vite, mais pas n'importe quoi</h2>
+  <p class="sub" style="margin:0 0 10px;">
+    Le vrai coût pour l'utilisateur n'est pas l'identification (≈1,2 s) mais l'attente avant
+    qu'elle parte. On simule ici des présentations de carte image par image — posée
+    lentement, posée vite, tenue à main tremblante, arrivant de côté, tenue trop loin — puis
+    on fait concourir plusieurs politiques de déclenchement sur les <em>mêmes</em> séquences.
+    Chacune est jugée sur deux chiffres qui s'opposent : le temps qu'elle fait attendre, et
+    la proportion de captures effectivement identifiables.
+  </p>
+  <div class="rang">
+    <button id="t-run" disabled>Comparer les politiques</button>
+    <label>Cartes<input type="number" id="t-n" value="4" min="1" max="12"></label>
+    <button class="fantome" id="t-apercu" disabled>Voir les séquences</button>
+    <button class="fantome" id="t-stop" disabled>■ Arrêter</button>
+    <span class="sub" id="t-etat"></span>
+  </div>
+  <div id="t-visu" style="margin-top:12px;"></div>
+  <div id="t-res" style="margin-top:12px;"></div>
+</div>
+
+<div class="panneau">
   <h2>Téléphone — scanner de vraies cartes</h2>
   <p class="sub" style="margin:0 0 10px;">
     La même chaîne que le corpus, mais alimentée par la caméra. Chaque carte lue attend ton
@@ -473,7 +494,7 @@ async function init(){
        + (corpus.length ? corpus.length + ' photos au corpus.'
                         : 'Corpus de photos absent (normal hors poste de développement) — caméra et catalogue disponibles.'));
 
-  for(const b of ['b-froid','b-froid-disque','b-reset','c-start','b-cat','d-run']) $(b).disabled = false;
+  for(const b of ['b-froid','b-froid-disque','b-reset','c-start','b-cat','d-run','t-run','t-apercu']) $(b).disabled = false;
   $('b-run').disabled = !corpus.length;
   if(!corpus.length) $('b-run').title = 'photos-test/ n\'est pas déployé (exclu du dépôt)';
   return info;
@@ -822,6 +843,219 @@ function rendreDetection(acc){
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+// BANC DE DÉCLENCHEMENT — le seul temps que l'utilisateur subit vraiment.
+//
+// L'identification coûte ~1,2 s et on ne la raccourcira plus beaucoup. Ce qui reste, et
+// que l'utilisateur ressent comme de la lenteur, c'est l'attente AVANT qu'elle parte : le
+// temps que les conditions de déclenchement se laissent convaincre. Or ce temps s'échange
+// contre de la fiabilité — déclencher à la première image venue capture une carte encore
+// en vol, et coûte un rebut (≈1,2 s perdue) plus une seconde présentation.
+//
+// On simule donc des présentations image par image, et on fait concourir des politiques
+// sur les MÊMES séquences. Chacune rend deux chiffres opposés : le délai qu'elle impose, et
+// la part de ses captures réellement identifiables. Le bon réglage n'est pas le plus rapide
+// ni le plus prudent : c'est celui qui minimise le temps TOTAL, reprises comprises.
+// ═════════════════════════════════════════════════════════════════════════════
+const FPS_DETECT = 5.2;                       // cadence réelle de la boucle (~190 ms/image)
+const MS_IMAGE = Math.round(1000 / FPS_DETECT);
+const COUT_REBUT_MS = 1200 + 1500;            // identification perdue + nouvelle présentation
+
+// Styles de présentation. Chacun décrit une trajectoire : d'où la carte vient, à quelle
+// vitesse elle se cale, et ce qu'il reste de tremblement une fois « immobile ».
+const STYLES = {
+  'posée lentement': { n:16, x0:0.22, y0:0.18, r0:14, s0:0.40, sF:0.74, cale:0.55, tremble:0.004 },
+  'posée vite':      { n:12, x0:0.30, y0:0.24, r0:22, s0:0.30, sF:0.76, cale:0.28, tremble:0.005 },
+  'main tremblante': { n:16, x0:0.10, y0:0.08, r0:8,  s0:0.60, sF:0.70, cale:0.35, tremble:0.022 },
+  'arrive de côté':  { n:16, x0:0.42, y0:0.05, r0:34, s0:0.55, sF:0.72, cale:0.60, tremble:0.008 },
+  'tenue loin':      { n:14, x0:0.14, y0:0.10, r0:10, s0:0.30, sF:0.46, cale:0.45, tremble:0.012 },
+};
+
+// Construit la séquence d'images d'une présentation. Le flou suit le déplacement réel entre
+// deux images : une carte encore en vol est floue, et c'est précisément ce qui rend une
+// capture trop précoce inexploitable.
+function sequence(img, style, graine){
+  const S = STYLES[style];
+  const rnd = tirage(graine);
+  const frames = [];
+  for(let i = 0; i < S.n; i++){
+    const t = i / (S.n - 1);
+    const p = Math.min(1, t / S.cale);                 // progression jusqu'à l'immobilité
+    const e = 1 - Math.pow(1 - p, 3);                  // décélération
+    const trembleX = (rnd() - 0.5) * S.tremble, trembleY = (rnd() - 0.5) * S.tremble;
+    const o = {
+      dx: S.x0 * (1 - e) + trembleX,
+      dy: S.y0 * (1 - e) + trembleY,
+      rot: S.r0 * (1 - e) + (rnd() - 0.5) * 2,
+      taille: S.s0 + (S.sF - S.s0) * e,
+      fond: 'bois', lumiere: 1,
+      flou: Math.max(0, 5.5 * (1 - e) - 0.3),          // flou de bougé
+    };
+    const sc = composerScene(img, o);
+    frames.push({ ...sc, t: i * MS_IMAGE, o });
+  }
+  return frames;
+}
+
+// ── Politiques. Chacune renvoie une fabrique d'état : `voir(f)` reçoit une image analysée
+//    et répond true quand elle déclencherait.
+const POLITIQUES = [
+  { nom:'actuelle (0,5 · 2 stables · patience)', f:()=>{ let s=0, t0=null;
+      return (f)=>{ if(!f.vu){ s=0; t0=null; return false; }
+        if(t0===null) t0=f.t; const att=f.t-t0;
+        const sb = att>=2500 ? Infinity : att>=1200 ? 0.049*3 : 0.049;
+        const ss = att>=1200 ? 0.35 : 0.5, sr = att>=2500 ? 1 : 2;
+        if(f.bouge < sb) s++; else s=0;
+        return f.score >= ss && s >= sr; }; } },
+  { nom:'immédiate (dès score ≥ 0,5)', f:()=>()=>false },   // remplacée ci-dessous
+  { nom:'1 image stable (0,5)', f:()=>{ let s=0;
+      return (f)=>{ if(!f.vu){ s=0; return false; } if(f.bouge<0.049) s++; else s=0;
+        return f.score>=0.5 && s>=1; }; } },
+  { nom:'2 stables, tolérance ×2', f:()=>{ let s=0;
+      return (f)=>{ if(!f.vu){ s=0; return false; } if(f.bouge<0.098) s++; else s=0;
+        return f.score>=0.5 && s>=2; }; } },
+  { nom:'aire ≥ 15 % + 1 stable', f:()=>{ let s=0;
+      return (f)=>{ if(!f.vu){ s=0; return false; } if(f.bouge<0.098) s++; else s=0;
+        return f.score>=0.35 && f.aire>=0.15 && s>=1; }; } },
+  { nom:'aire ≥ 15 % + bougé < 0,03', f:()=>()=>false },    // remplacée ci-dessous
+];
+POLITIQUES[1].f = ()=>(f)=> !!f.vu && f.score >= 0.5;
+POLITIQUES[5].f = ()=>(f)=> !!f.vu && f.score >= 0.35 && f.aire >= 0.15 && f.bouge < 0.03;
+
+let arretTrig = false, sequencesCache = [];
+
+async function apercuSequences(){
+  if(!catalogue.length) catalogue = V2.catalogueV2();
+  const c = catalogue.filter(x=>x.image)[1234];
+  const img = await chargerIllustration(c.image);
+  $('t-visu').innerHTML = Object.keys(STYLES).map(st=>{
+    const fr = sequence(img, st, 1);
+    const vign = fr.map((f,i)=>{
+      const p = document.createElement('canvas');
+      p.width = 74; p.height = 56;
+      p.getContext('2d').drawImage(f.canvas, 0, 0, 74, 56);
+      return '<figure style="margin:0; flex:0 0 auto;"><img src="' + p.toDataURL('image/jpeg',0.7)
+        + '" style="width:74px; border-radius:3px; display:block;">'
+        + '<figcaption class="sub" style="font-size:10px; text-align:center;">'
+        + Math.round(f.t) + ' ms</figcaption></figure>';
+    }).join('');
+    return '<div style="margin-bottom:12px;"><div class="sub" style="margin-bottom:4px;"><b>' + st + '</b></div>'
+      + '<div style="display:flex; gap:5px; overflow-x:auto; padding-bottom:4px;">' + vign + '</div></div>';
+  }).join('');
+  journal('aperçu des séquences rendu');
+}
+
+async function lancerDeclenchement(nCartes){
+  if(!catalogue.length) catalogue = V2.catalogueV2();
+  arretTrig = false;
+  $('t-run').disabled = true; $('t-stop').disabled = false;
+  const pool = catalogue.filter(c=>c.image);
+  const rnd = tirage(4242);
+  const cartes = []; for(let i=0;i<nCartes;i++) cartes.push(pool[Math.floor(rnd()*pool.length)]);
+  const styles = Object.keys(STYLES);
+
+  const res = POLITIQUES.map(p=>({ nom:p.nom, delais:[], ok:0, rebut:0, jamais:0 }));
+  let fait = 0, total = cartes.length * styles.length;
+
+  for(const c of cartes){
+    if(arretTrig) break;
+    let img; try{ img = await chargerIllustration(c.image); }catch(e){ continue; }
+    for(const st of styles){
+      if(arretTrig) break;
+      const frames = sequence(img, st, 7);
+
+      // 1) Détection sur TOUTES les images, une seule fois : les politiques rejouent
+      //    ensuite ces mêmes observations, donc elles sont comparées à armes égales.
+      const obs = [];
+      let precedents = null;
+      for(const f of frames){
+        const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(f.canvas.width, f.canvas.height));
+        const bmp = await createImageBitmap(f.canvas, {
+          resizeWidth: Math.round(f.canvas.width*e0), resizeHeight: Math.round(f.canvas.height*e0), resizeQuality:'medium'
+        });
+        const d = await workerDetection().detecter(bmp);
+        const vu = !!(d && d.ok && d.corners && d.score != null && d.score >= MIN_SCORE);
+        const bouge = (vu && precedents) ? ecartCoins(precedents, d.corners) : Infinity;
+        if(vu) precedents = d.corners;
+        obs.push({ t:f.t, vu, score: vu ? d.score : 0, corners: vu ? d.corners : null,
+                   aire: vu ? airePart(d.corners) : 0, bouge, frame:f });
+      }
+
+      // 2) Chaque politique parcourt ces observations ; on identifie l'image où elle tire.
+      const identCache = new Map();
+      for(let pi = 0; pi < POLITIQUES.length; pi++){
+        const voir = POLITIQUES[pi].f();
+        let tir = -1;
+        for(let i = 0; i < obs.length; i++){ if(voir(obs[i])){ tir = i; break; } }
+        if(tir < 0){ res[pi].jamais++; continue; }
+        res[pi].delais.push(obs[tir].t);
+        if(!identCache.has(tir)){
+          let bon = false;
+          try{
+            const dew = await redresserCanvas(obs[tir].frame.canvas);
+            if(dew){ const r = await V2.identifierV2(dew); bon = r.categorie !== 'rebut' && r.pick && r.pick.cle === c.cle; }
+          }catch(e){}
+          identCache.set(tir, bon);
+        }
+        identCache.get(tir) ? res[pi].ok++ : res[pi].rebut++;
+      }
+      fait++; $('t-etat').textContent = fait + '/' + total + ' — ' + st;
+      await new Promise(r=>setTimeout(r,0));
+    }
+  }
+  $('t-run').disabled = false; $('t-stop').disabled = true;
+  return rendreDeclenchement(res);
+}
+
+// Redresse une scène complète comme le ferait la caméra (détection puis extraction).
+async function redresserCanvas(cv){
+  const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(cv.width, cv.height));
+  const bmp = await createImageBitmap(cv, {resizeWidth:Math.round(cv.width*e0), resizeHeight:Math.round(cv.height*e0), resizeQuality:'medium'});
+  const d = await workerDetection().detecter(bmp);
+  if(!d || !d.ok || !d.corners || d.score == null || d.score < MIN_SCORE) return null;
+  const sc = await scanic();
+  const M = 0.04;
+  const c = d.corners;
+  const cx=(c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4, cy=(c.tl[1]+c.tr[1]+c.br[1]+c.bl[1])/4;
+  const p=(q)=>({x:(cx+(q[0]-cx)*(1+M))*cv.width, y:(cy+(q[1]-cy)*(1+M))*cv.height});
+  const r = await sc.extractDocument(cv, {topLeft:p(c.tl), topRight:p(c.tr), bottomRight:p(c.br), bottomLeft:p(c.bl)}, {output:'canvas'});
+  if(!r || !r.success || !r.output) return null;
+  const out = r.output, ratio = out.height/out.width;
+  if(Math.abs(ratio-CARD_RATIO)/CARD_RATIO <= 0.25) return out;
+  if(Math.abs(ratio-1/CARD_RATIO)*CARD_RATIO > 0.25) return null;
+  const rot = document.createElement('canvas');
+  rot.width = out.height; rot.height = out.width;
+  const g = rot.getContext('2d');
+  g.translate(rot.width/2, rot.height/2); g.rotate(-Math.PI/2);
+  g.drawImage(out, -out.width/2, -out.height/2);
+  return rot;
+}
+
+function rendreDeclenchement(res){
+  const med=(a)=>{const b=a.slice().sort((x,y)=>x-y); return b.length? b[Math.floor(b.length/2)] : null;};
+  const lignes = res.map(r=>{
+    const n = r.ok + r.rebut;
+    const dMed = med(r.delais);
+    const tauxOk = n ? r.ok / n : 0;
+    // Temps TOTAL espéré par carte : l'attente, plus le prix des reprises. C'est le seul
+    // chiffre qui arbitre honnêtement entre « vite » et « fiable ».
+    const total = dMed == null ? null : Math.round(dMed + 1200 + (1 - tauxOk) * COUT_REBUT_MS);
+    return { nom:r.nom, n, delaiMed:dMed, pctOk:Math.round(100*tauxOk), jamais:r.jamais, total };
+  });
+  const best = Math.min(...lignes.filter(l=>l.total != null).map(l=>l.total));
+  $('t-res').innerHTML =
+    '<div class="defilant"><table><thead><tr><th>Politique</th><th>n</th><th>délai médian</th>'
+    + '<th>identifiable</th><th>jamais déclenché</th><th>temps total/carte</th></tr></thead><tbody>'
+    + lignes.map(l=> '<tr><td>' + l.nom + '</td><td>' + l.n + '</td><td>' + (l.delaiMed ?? '—') + ' ms</td>'
+      + '<td class="' + (l.pctOk>=90?'ok':l.pctOk>=70?'tiede':'ko') + '">' + l.pctOk + ' %</td>'
+      + '<td>' + l.jamais + '</td><td class="' + (l.total===best?'ok':'') + '"><b>' + (l.total ?? '—') + ' ms</b></td></tr>').join('')
+    + '</tbody></table></div>'
+    + '<p class="sub" style="margin:8px 0 0;">Temps total = attente + identification (1,2 s) + '
+    + 'prix des reprises (une capture inexploitable coûte ~2,7 s : identification perdue et carte à représenter).</p>';
+  journal('déclenchement : ' + lignes.length + ' politiques comparées');
+  return lignes;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 // MODE CAMÉRA — scanner de vraies cartes, avec verdict
 //
 // Le corpus dit si la chaîne sait reconnaître ; il ne dit rien de ce qui arrive quand
@@ -1004,7 +1238,10 @@ function dessinerCadre(coins, couleur){
 //    score, puis l'exigence de deux images concordantes. Le verrou « déjà lue », lui, ne
 //    bouge PAS — le desserrer ferait relire en boucle la carte qu'on tient encore.
 const PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
-const BOUGE_BASE = 0.049;          // = MAX_CORNER_SHIFT × 1,4 dans index.html
+// Une seule image immobile suffit, mais franchement immobile (banc de déclenchement :
+// deux images coûtaient 768 ms contre 576 pour la même fiabilité). Mêmes valeurs que
+// V2_BOUGE_BASE dans index.html — un banc qui déclencherait autrement ne mesurerait rien.
+const BOUGE_BASE = 0.030;
 let presentDepuis = 0, coinsCapture = null, rienDepuis = 0;
 
 async function tourner(){
@@ -1051,7 +1288,7 @@ async function tourner(){
                          : attente >= PATIENCE.douce   ? BOUGE_BASE * PATIENCE.facteurBouge
                          : BOUGE_BASE;
         const seuilScore  = attente >= PATIENCE.douce ? MIN_SCORE : 0.5;
-        const streakRequis = attente >= PATIENCE.franche ? 1 : 2;
+        const streakRequis = 1;
 
         if(bouge < seuilBouge) streak++; else streak = 0;
         const stable = streak >= streakRequis;
@@ -1101,6 +1338,10 @@ async function capturer(mode){
   if(occupeCam) return;
   occupeCam = true;
   $('c-indice').textContent = '🔎 identification…';
+  // Géométrie du moment où l'on déclenche. La part du cadre est LE facteur qui décide si
+  // le détecteur voit quelque chose (banc de détection) — ne pas l'enregistrer, c'était
+  // analyser une session sans son chiffre le plus explicatif.
+  const aireCapture = dernierCoins ? airePart(dernierCoins) : null;
   try{
     const v = $('c-video');
     const cv = await redresserVideo(v);
@@ -1119,7 +1360,8 @@ async function capturer(mode){
       batterie: batterie ? {...batterie} : null,
       etalon: etalonCourant ? etalonCourant.median : null,
       config: nomConfig(),
-      juste: null, verifie: false, corrige: null,   // ← renseignés par le verdict
+      aire: aireCapture == null ? null : +aireCapture.toFixed(3),
+      juste: null, verifie: false, corrige: null, horsCatalogue: false,   // ← verdict
     };
     scansCam.push(scan);
     await banqueEcrire(scan);
@@ -1170,7 +1412,7 @@ async function redresserVideo(v){
 //    se juge quand on veut : entre deux cartes, ou tout à la fin.
 function rendreEnAttente(){
   const z = $('c-verdict');
-  const attente = scansCam.filter(s=>!s.verifie && s.juste === null && !s.passe);
+  const attente = scansCam.filter(s=>!s.verifie && !s.passe && !s.horsCatalogue);
   if(!attente.length){ z.style.display = 'none'; z.innerHTML = ''; return; }
   z.style.display = '';
   z.innerHTML =
@@ -1192,21 +1434,28 @@ function rendreEnAttente(){
         + '<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">'
         + '<button data-id="' + s.id + '" data-v="oui" style="padding:4px 10px; font-size:12px;">✓ Bonne</button>'
         + '<button class="fantome" data-id="' + s.id + '" data-v="non" style="padding:4px 10px; font-size:12px;">✕ Fausse</button>'
+        // « Hors catalogue » n'est PAS une erreur du scanner : l'index ne couvre que
+        // swsh+sv+me. Sans ce bouton, une carte XY se comptait comme une identification
+        // fausse — sur la session du 31/08, sept scans d'affilée à zéro inlier ont ainsi
+        // été enregistrés comme des échecs alors que la chaîne avait raison de se taire.
+        + '<button class="fantome" data-id="' + s.id + '" data-v="hors" style="padding:4px 10px; font-size:12px;" title="Carte absente de l\'index (XY, SM, séries anciennes)">∅ Hors catalogue</button>'
         + '<button class="fantome" data-id="' + s.id + '" data-v="passer" style="padding:4px 10px; font-size:12px;">Passer</button>'
         + (alts ? ' <span class="sub" style="align-self:center;">vraie :</span> ' + alts : '')
         + '</div></div></div>';
     }).join('');
 
-  const clore = async (id, juste, corrige)=>{
+  const clore = async (id, juste, corrige, hors)=>{
     const s = scansCam.find(x=>x.id === id);
     if(!s) return;
-    if(juste === null) s.passe = true;             // écarté sans jugement : ne fausse aucun taux
+    if(hors){ s.horsCatalogue = true; s.verifie = true; s.juste = null; }
+    else if(juste === null) s.passe = true;        // écarté sans jugement : ne fausse aucun taux
     else { s.juste = juste; s.verifie = true; s.corrige = corrige || null; }
     await banqueEcrire(s);
     rendreEnAttente(); rendreCamera();
   };
   z.querySelectorAll('[data-v]').forEach(b=> b.onclick = ()=>{
     const v = b.dataset.v;
+    if(v === 'hors') return clore(b.dataset.id, null, null, true);
     clore(b.dataset.id, v === 'oui' ? true : (v === 'non' ? false : null));
   });
   z.querySelectorAll('[data-alt]').forEach(b=> b.onclick = ()=>{
@@ -1220,15 +1469,34 @@ function rendreEnAttente(){
   };
 }
 
+// Le bouton d'envoi porte le nombre de scans en attente. Sans ce compte, rien ne distingue
+// « tout est parti » de « rien n'est parti » : une session entière de scans est restée sur
+// le téléphone sans que personne ne s'en aperçoive, de mon côté comme de celui de Nikos.
+function majBoutonEnvoi(){
+  const n = scansCam.filter(s=>!s.envoye).length;
+  const b = $('c-envoyer');
+  if(!b) return;
+  b.textContent = n ? '☁ Envoyer les scans (' + n + ')' : '☁ Envoyer les scans';
+  b.classList.toggle('fantome', !n);
+  b.disabled = !n;
+}
+
 function rendreCamera(){
-  const verifies = scansCam.filter(s=>s.verifie);
+  majBoutonEnvoi();
+  // Les cartes hors catalogue sortent de TOUS les taux : ce ne sont pas des erreurs du
+  // scanner, l'index ne les contient simplement pas. Les compter comme des échecs, c'est
+  // se reprocher de ne pas reconnaître ce qu'on n'a jamais appris.
+  const hors = scansCam.filter(s=>s.horsCatalogue).length;
+  const jugeables = scansCam.filter(s=>!s.horsCatalogue);
+  const verifies = jugeables.filter(s=>s.verifie);
   const justes = verifies.filter(s=>s.juste).length;
   const sures = verifies.filter(s=>s.categorie === 'sure');
-  const rebuts = scansCam.filter(s=>s.categorie === 'rebut').length;
+  const rebuts = jugeables.filter(s=>s.categorie === 'rebut').length;
   $('c-resume').textContent = scansCam.length
-    ? scansCam.length + ' scans · ' + verifies.length + ' vérifiés · ' + justes + '/' + verifies.length + ' justes'
+    ? scansCam.length + ' scans' + (hors ? ' (dont ' + hors + ' hors catalogue, écartés)' : '')
+      + ' · ' + verifies.length + ' vérifiés · ' + justes + '/' + verifies.length + ' justes'
       + (sures.length ? ' · sûres justes ' + sures.filter(s=>s.juste).length + '/' + sures.length : '')
-      + ' · rebuts ' + rebuts + ' (' + Math.round(100*rebuts/scansCam.length) + ' %)'
+      + ' · rebuts ' + rebuts + ' (' + Math.round(100*rebuts/Math.max(1,jugeables.length)) + ' %)'
       // Inliers médians : l'indicateur de santé de la capture. Au banc, la chaîne est à
       // l'aise au-dessus de ~50, sur le fil vers 15-20, et aveugle à 0 — et elle ne se
       // trompe jamais en chemin, elle se tait. Si ce chiffre s'effondre sur téléphone,
@@ -1237,7 +1505,9 @@ function rendreCamera(){
       + ' · ms médian ' + (med(scansCam.map(s=>s.ms)) ?? '—')
     : 'Aucun scan caméra.';
   $('t-camera').tBodies[0].innerHTML = scansCam.slice().reverse().map(s=>{
-    const v = s.verifie ? (s.juste ? '<span class="ok">✓</span>' : '<span class="ko">✕ ' + (s.corrige || '') + '</span>') : '<span class="sub">?</span>';
+    const v = s.horsCatalogue ? '<span class="sub">∅ hors cat.</span>'
+      : s.verifie ? (s.juste ? '<span class="ok">✓</span>' : '<span class="ko">✕ ' + (s.corrige || '') + '</span>')
+      : '<span class="sub">?</span>';
     const cls = s.categorie === 'sure' ? 'ok' : (s.categorie === 'rebut' ? 'ko' : 'tiede');
     return '<tr><td>' + s.at.slice(11,19) + '</td><td>' + (s.trouve || '—') + '</td><td>' + v
       + '</td><td class="' + cls + '">' + s.categorie + '</td><td>' + s.fiabilite + '</td><td>' + s.inliers
@@ -1255,7 +1525,8 @@ async function envoyer(){
   const entries = aEnvoyer.map(s=>({
     fichier:'banc', outil:'banc-v2', source:s.source, mode:s.mode,
     predit:s.trouve, attendu:s.corrige || (s.juste ? s.trouve : null),
-    juste:s.juste, verifie:s.verifie,
+    juste:s.juste, verifie:s.verifie, horsCatalogue:!!s.horsCatalogue,
+    aire:s.aire,
     categorie:s.categorie, conf:s.categorie === 'sure' ? 'high' : (s.categorie === 'rebut' ? 'rebut' : 'uncertain'),
     fiabilite:s.fiabilite, inliers:s.inliers, marge:s.marge,
     ocrLance:s.ocr, ocrOk:s.ocrOk, packTelecharge:s.packTelecharge,
@@ -1266,10 +1537,16 @@ async function envoyer(){
       body: JSON.stringify({device:'banc', outil:'banc-v2', entries})});
     if(!r.ok) throw new Error('HTTP ' + r.status);
     for(const s of aEnvoyer){ s.envoye = true; await banqueEcrire(s); }
-    etat(aEnvoyer.length + ' scans envoyés.');
+    etat('✅ ' + aEnvoyer.length + ' scans envoyés.');
     journal('envoyés : ' + aEnvoyer.length);
+    majBoutonEnvoi();
     return {envoyes:aEnvoyer.length};
-  }catch(e){ etat('Envoi impossible : ' + e.message); return {erreur:String(e.message)}; }
+  }catch(e){
+    // Un échec doit se voir : c'est tout le travail de la session qui reste bloqué ici.
+    etat('⚠️ ENVOI ÉCHOUÉ (' + e.message + ') — les scans sont gardés, réessaie.');
+    journal('envoi échoué : ' + e.message);
+    return {erreur:String(e.message)};
+  }
 }
 
 function exporter(){
@@ -1295,6 +1572,8 @@ window.BANC = {
   init, lancer, froid, cloturer, resume, passes: ()=>passes,
   preparer, catalogue: lancerCatalogue, echantillon: ()=>echantillon,
   detection: lancerDetection,
+  declenchement: lancerDeclenchement, apercu: apercuSequences,
+  politiques: (liste)=>{ if(liste){ POLITIQUES.length = 0; POLITIQUES.push(...liste); } return POLITIQUES.map(p=>p.nom); },
   reinit, resultats: ()=>({ resume: resume(), detail: resultats }),
   config: (patch)=>{
     const r = V2.reglagesV2(patch);
@@ -1332,6 +1611,9 @@ $('b-froid-disque').onclick = ()=> froid({disque:true});
 
 $('d-run').onclick = ()=> lancerDetection(+$('d-n').value || 6);
 $('d-stop').onclick = ()=>{ arretDet = true; };
+$('t-run').onclick = ()=> lancerDeclenchement(+$('t-n').value || 4);
+$('t-apercu').onclick = ()=> apercuSequences();
+$('t-stop').onclick = ()=>{ arretTrig = true; };
 $('c-start').onclick = ()=> ouvrirCamera();
 $('c-stop').onclick = fermerCamera;
 $('c-zoom-moins').onclick = ()=> appliquerZoom((zoomCourant ?? 1) - (capsZoom && capsZoom.step ? Math.max(capsZoom.step, (capsZoom.max-capsZoom.min)/20) : 0.1), true);
@@ -1353,7 +1635,12 @@ $('c-vider').onclick = async ()=>{
   scansCam = (await banqueTout()).sort((a,b)=> a.at < b.at ? -1 : 1);
   rendreCamera(); rendreEnAttente();
   await relireBatterie(); decrireAppareil();
-  if(scansCam.length) journal('historique repris : ' + scansCam.length + ' scans caméra');
+  if(scansCam.length){
+    const enAttente = scansCam.filter(s=>!s.envoye).length;
+    journal('historique repris : ' + scansCam.length + ' scans caméra'
+            + (enAttente ? ', dont ' + enAttente + ' PAS ENCORE ENVOYÉS' : ''));
+    if(enAttente) etat('⚠️ ' + enAttente + ' scans sont encore sur cet appareil — appuie sur « ☁ Envoyer les scans ».');
+  }
 })();
 </script>
 </body>

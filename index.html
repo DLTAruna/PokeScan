@@ -5730,7 +5730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 9;
+const VERSION_APP = 10;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9925,7 +9925,11 @@ const V2_ABSENCE_STREAK = 2;
 // desserrent donc avec la durée de présence. Le verrou « déjà lue », lui, ne bouge pas —
 // le desserrer ferait relire en boucle la carte qu'on tient encore.
 const V2_PATIENCE_DOUCE = 1200;    // au-delà : tolérance au mouvement ×3, score au minimum
-const V2_PATIENCE_FRANCHE = 2500;  // au-delà : une seule image suffit, quel que soit le bougé
+const V2_PATIENCE_FRANCHE = 2500;  // au-delà : on ne regarde plus le bougé du tout
+// Immobilité exigée d'une image à l'autre. Resserré de 0,049 à 0,030 en même temps qu'on
+// passait de deux images concordantes à une seule : c'est ce seuil, désormais, qui
+// distingue une carte posée d'une carte encore en transit (voir la boucle de détection).
+const V2_BOUGE_BASE = MAX_CORNER_SHIFT * 0.86;   // ≈ 0,030
 let v2PresentDepuis = 0;
 
 // TAILLE DE LA CARTE DANS LE CADRE — le facteur dominant, et de très loin.
@@ -11247,15 +11251,24 @@ async function detectLoop(){
           // tremble qui cesse d'être punie.
           if(!v2PresentDepuis) v2PresentDepuis = now;
           const tenue = now - v2PresentDepuis;
+          // UNE SEULE image immobile suffit, mais elle doit l'être franchement.
+          // Banc de déclenchement, 30 présentations simulées (posée lentement, posée vite,
+          // main tremblante, arrivée de côté, tenue loin) : exiger DEUX images concordantes
+          // coûtait 768 ms contre 576, pour exactement la même fiabilité — 100 % de
+          // captures identifiables dans les deux cas. La deuxième image ne prouvait rien
+          // que la première n'ait déjà prouvé, elle faisait seulement attendre une image de
+          // plus. En revanche ne rien exiger du tout s'effondre à 25 % d'identifiables :
+          // on capture alors la carte en vol, floue. Le seuil est resserré (0,030 au lieu
+          // de 0,049) — gratuit en temps d'après le banc, et c'est lui qui remplace la
+          // seconde image comme garde-fou contre une carte simplement en transit.
           const seuilBouge = tenue >= V2_PATIENCE_FRANCHE ? Infinity
-                           : tenue >= V2_PATIENCE_DOUCE   ? MAX_CORNER_SHIFT * 4.2
-                           : MAX_CORNER_SHIFT * 1.4;
+                           : tenue >= V2_PATIENCE_DOUCE   ? V2_BOUGE_BASE * 3
+                           : V2_BOUGE_BASE;
           const seuilScore = tenue >= V2_PATIENCE_DOUCE ? MIN_SCORE : 0.5;
-          const streakRequis = tenue >= V2_PATIENCE_FRANCHE ? 1 : 2;
 
           if(moved < seuilBouge) v2StableStreak++;
           else v2StableStreak = 0;
-          const stable = v2StableStreak >= streakRequis;
+          const stable = v2StableStreak >= 1;
 
           // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
           // que la carte a été retirée (v2AbsenceStreak, ~300 ms de champ vide) OU qu'elle a
