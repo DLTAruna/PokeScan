@@ -9856,6 +9856,18 @@ let prevCorners = null;
 let v2StableStreak = 0;
 let v2DerniereCat = null;   // catégorie du dernier résultat V2 ('sure' verrouille jusqu'au retrait)
 
+// Retrait de carte, version V2. Le verrou « déjà lue » se relâchait sur
+// cardConfirmedAbsentSinceCapture, qui exige 4 images ET 1,2 s de champ vide — un garde-fou
+// taillé pour la V1 (le fantôme d'un numéro relu). En V2 il imposait de montrer 1,2 s de vide
+// entre deux cartes : dépouiller un tas devenait deux fois plus lent qu'en manuel, alors que
+// l'identification, elle, est rapide. Deux images sous le seuil suffisent ici, parce que la
+// V2 a un filet bien plus solide en aval : gererScanV2 compare la CARTE identifiée à la
+// précédente. Une relance inutile coûte une identification en tâche de fond, invisible ;
+// un réarmement raté coûte une carte qu'on n'arrive pas à scanner.
+let v2AbsenceStreak = 0;
+let v2CarteRetiree = true;
+const V2_ABSENCE_STREAK = 2;
+
 // Tolère un score de détection isolé, ponctuellement sous MIN_SCORE (occlusion
 // passagère, reflet, main qui repositionne la carte un instant), sans repartir de zéro
 // sur la comparaison de stabilité. Avant ce compteur, UN SEUL raté suffisait à effacer
@@ -11077,6 +11089,11 @@ async function detectLoop(){
       // étaient des doublons.
       absenceStreak++;
       if(!absenceDepuis) absenceDepuis = Date.now();
+      // Verrou V2 : relâché bien plus tôt que le verrou V1 ci-dessous (voir v2CarteRetiree).
+      if(++v2AbsenceStreak >= V2_ABSENCE_STREAK){
+        v2CarteRetiree = true;
+        v2StableStreak = 0; v2DerniereCat = null;
+      }
       if(absenceStreak >= ABSENCE_STREAK_REQUISE && Date.now() - absenceDepuis >= ABSENCE_MIN_MS){
         cardConfirmedAbsentSinceCapture = true;
         v2StableStreak = 0; v2DerniereCat = null;   // carte partie : le verrou V2 saute
@@ -11091,6 +11108,7 @@ async function detectLoop(){
       lowScoreStreak = 0;
       absenceStreak = 0;
       absenceDepuis = 0;
+      v2AbsenceStreak = 0;
       // Une carte EST là : si elle reste floue, c'est le moment de soupçonner l'objectif.
       surveillerNettete();
       setOverlayTarget('lecture', d.corners);
@@ -11132,11 +11150,13 @@ async function detectLoop(){
           else v2StableStreak = 0;
           const stable = v2StableStreak >= 2;
 
-          // Carte déjà lue et toujours là : ne PAS relancer l'identif. Une identif « sûre »
-          // verrouille jusqu'au retrait de la carte (tolérance large aux tremblements de
-          // main) ; une « douteuse »/« rebut » se laisse retenter si la carte a bougé.
-          const tol = v2DerniereCat === 'sure' ? 8 : 3.5;
-          const dejaLue = !cardConfirmedAbsentSinceCapture && lastCaptureCorners
+          // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
+          // que la carte a été retirée (v2AbsenceStreak, ~300 ms de champ vide) OU qu'elle a
+          // franchement bougé. La tolérance ×8 essayée après les doubles du 31/08 ne les
+          // empêchait pas — ils survenaient sur des cartes en transit, donc hors tolérance —
+          // et bloquait en revanche la carte SUIVANTE posée au même endroit du cadre guide.
+          const tol = v2DerniereCat === 'sure' ? 4 : 2.5;
+          const dejaLue = !v2CarteRetiree && lastCaptureCorners
             && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * tol;
           if(dejaLue){
             setAimHint('✓ lue — retire la carte', conseilActif);
@@ -12033,8 +12053,13 @@ let v2DerniereCle = null;
 // afficher le résultat SANS attendre le réseau. La fiche complète (prix, rareté, variantes)
 // est chargée juste après, en arrière-plan, et remplace celle-ci.
 function carteDepuisPack(p){
+  // Jamais l'identifiant brut du set comme nom : le panneau affichait « sv03.5 » puis
+  // « 151 » une seconde plus tard, ce qui se lit comme deux scanners qui se disputent.
+  // On donne tout de suite le vrai nom si on l'a en mémoire, sinon rien — la fiche
+  // complète le posera. (Même principe que la pastille de set, voir nomDeSet.)
+  assurerNomsDeSets();
   return { id: p.cle, name: p.name || '', number: p.numero, localId: p.localId,
-           image: p.image, set: { id: p.setId, name: p.setId }, rarity: '', variants: {}, _pack: true };
+           image: p.image, set: { id: p.setId, name: nomDeSet(p.setId) || '' }, rarity: '', variants: {}, _pack: true };
 }
 let v2RebutsConsecutifs = 0;
 async function gererScanV2(sourceForRead, corners, score, t0){
@@ -12059,6 +12084,7 @@ async function gererScanV2(sourceForRead, corners, score, t0){
       capturerSansLecture(cvR, 'V2 non reconnue', true);
       setAimHint('🤔 V2 : non reconnue — envoyée dans « À vérifier »');
       lastCaptureCorners = corners; cardConfirmedAbsentSinceCapture = false; v2DerniereCle = null;
+      v2CarteRetiree = false;
       return 'rebut';
     }
     setAimHint('🤔 V2 : recentre la carte, bien à plat et plein cadre');
@@ -12085,6 +12111,7 @@ async function gererScanV2(sourceForRead, corners, score, t0){
   lastCaptureNumber = {number: stripLeadingZero(String(carteMin.number)), denominator: ''};
   lastCaptureHash = liveHash;
   cardConfirmedAbsentSinceCapture = false;
+  v2CarteRetiree = false;
 
   // 1) TOUT DE SUITE : panneau + retours haptiques, à partir du pack.
   // La vignette du bas doit montrer LA photo qu'on vient de prendre (elle y reste :
@@ -20341,7 +20368,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
      pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=13';
+import * as V2 from './scan-v2.js?v=14';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);

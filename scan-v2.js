@@ -218,10 +218,10 @@ async function chargerParsing() {
 // Les descripteurs ORB, eux, sont lourds : on ne récupère le pack d'un set QUE quand une
 // carte de ce set apparaît dans la shortlist d'un scan, et on le garde en cache.
 const R2 = 'https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev';
-// Worker Cloudflare optionnel qui regroupe les blobs ORB en une requête (voir
-// tools/build-packs/worker-orb.js). Laisser null tant qu'il n'est pas déployé — le client
-// retombe alors sur une requête par carte.
-const WORKER_ORB = null;   // ex: 'https://pokescan-orb.xxxx.workers.dev'
+// Worker Cloudflare qui regroupe les blobs ORB d'un scan en UNE requête au lieu de ~15
+// (source : tools/build-packs/worker-orb.js). Repli automatique sur une requête par carte
+// s'il ne répond pas ; remettre à null pour le désactiver.
+const WORKER_ORB = 'https://pokescan-orb.inox62.workers.dev';
 const MAX_CARTES_ORB = 900;             // descripteurs ORB gardés en mémoire du worker (LRU, ~23 Mo ; ~3 sets entiers)
 
 // —— petit cache IndexedDB (l'index global et les packs y vivent « pour toujours »)
@@ -528,14 +528,17 @@ export async function identifierV2(carte) {
   const second = ranked.find(c => c !== pick);
   let marge = inl - (orbScores[second] || 0);
   const dominance0 = inl > 0 ? marge / inl : 0;
-  const orbFranc = inl >= 18 && dominance0 >= 0.6;
 
-  // 4. OCR — en cas de doute réel (ORB pas franc). Garde-fou contre le faux positif : un
-  //    numéro lu qui pointe vers un candidat de la shortlist tranche. MAIS quand la session
-  //    chauffe (dernier ORB > 1,8 s → l'OCR prendra > 3 s), on ne le lance pas : la carte
-  //    reste « douteuse », l'utilisateur la confirme à la revue — ça vaut mieux que +4 s.
+  // 4. OCR — uniquement pour départager une ÉGALITÉ. Sur 15 lancements en session réelle,
+  //    l'OCR n'a changé le verdict que 2 fois, et les deux fois dans le même cas de figure :
+  //    beaucoup d'inliers (35 et 53) mais un 2e candidat au coude à coude (dominance 0,57 et
+  //    0). Les 13 autres avaient ≤ 20 inliers — quand l'homographie ne trouve presque rien,
+  //    c'est que la photo est mauvaise ou la carte hors index, et l'OCR du numéro échoue pour
+  //    les mêmes raisons ; il ne faisait qu'ajouter 0,3 à 4,3 s avant un verdict inchangé.
+  //    Garde-fou thermique conservé : session chaude → on ne tente même pas.
+  const orbEgalite = inl >= 25 && dominance0 < 0.6;
   let ocrCands = [], ocrTxt = '', ocrLance = false;
-  if (ocr && !orbFranc && dernierOrbMs < 1800) {
+  if (ocr && orbEgalite && dernierOrbMs < 1800) {
     ocrLance = true;
     try { const r = await chrono('ocr', ocrLire(bandeBasse(carte))); ocrCands = r.cands || []; ocrTxt = r.text || ''; } catch (e) {}
     if (ocrCands.length) {
