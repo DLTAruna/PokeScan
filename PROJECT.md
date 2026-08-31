@@ -1631,6 +1631,39 @@ shortlist perdu : passer à 50 ou 100 le réduit à coût quasi constant.
 Reste à mesurer sur des photos d'autres sets que le 151 (il n'y en a pas encore dans
 `photos-test/`), puis à intégrer au pipeline.
 
+### 4.55 Scanner V2 : reconnaissance visuelle, tous sets, aucun choix — index global + ORB par carte à la demande
+
+La V2 (chaîne fusionnée §4.54) est passée d'« un set choisi à la main » à « scanne
+n'importe quelle carte, rien à régler ». Ce qui a rendu ça possible sans exploser le
+poids ni le coût :
+
+- **Index d'empreintes global** : un seul `index-global.bin` (embeddings DINOv2 quantifiés
+  int8 de toute la tranche du catalogue, ~3 Mo pour 7 591 cartes = séries Épée-Bouclier +
+  Écarlate-Violet + Méga-Évolution). Téléchargé une fois, gardé en IndexedDB. La recherche
+  cosinus sur 7 591 vecteurs coûte ~20 ms sur le fil principal.
+- **Descripteurs ORB par carte** : un blob `orb/<clé>.orb` de ~25 Ko. À chaque scan, la
+  shortlist embedding (30 cartes) déclenche la récupération des 30 blobs correspondants
+  (~750 Ko la première fois, **quel que soit le nombre de sets couverts**), ensuite en
+  cache. Le premier jet — un pack de 5 Mo par set présent dans la shortlist — mettait un
+  scan à 14 s parce qu'une shortlist de 30 couvre couramment 15-18 sets. La granularité
+  par carte est la bonne.
+- **Stockage** : Cloudflare R2 (palier gratuit, sortie gratuite). Fichiers statiques servis
+  par le CDN, aucune fonction serveur dans le chemin d'un scan.
+- **Construction hors appareil** : `tools/build-packs/` calcule embeddings + ORB de toute
+  la tranche (~2 h), au format navigateur exact — test de fidélité : embeddings 207/207
+  interchangeables Node↔navigateur, ORB self = 700 inliers. `build.html` : tableau de bord
+  live. Personne ne calcule quoi que ce soit sur son téléphone.
+
+**Mesuré** (navigateur, 31 photos réelles du set 151, index de 7 591 cartes, vrai
+redressement de l'app) : **25/31 exactes ; 24 des 25 « sûres » exactes** — la seule erreur
+« sûre » est une photo mal étiquetée (elle montre la 168). Les 5 autres ratés sont tous
+rendus « douteuse » ou « rebut », jamais affichés avec assurance. **Passer de 207 à 7 591
+cartes ne dégrade pas l'identification** (recall de shortlist : 100 % top-30). Latence
+~1,6-2 s/scan sur poste ancien en WASM, ~1-1,4 s attendu sur téléphone WebGPU.
+
+Le sélecteur V1 / V2 reste (case des réglages + pastille dans la caméra) : V1 = lecture du
+numéro, V2 = illustration tous sets.
+
 **Mode « photos simulées » du banc** — en attendant de vraies photos hors 151. Il
 échantillonne le catalogue **par rareté** (tirage stratifié : un secret rare pèse autant
 qu'un commun, alors qu'il y en a 50× moins) **à travers les époques** (Base Set 1999 →
@@ -1683,14 +1716,12 @@ numéro lisible.
 11. ~~Mise au point caméra (Samsung)~~ — correctif posé (§4.17), résultat réel à confirmer
     par le prochain diagnostic (capacités remontées).
 12. ~~Préchauffage table des sets TCGdex~~ — fait, voir §4.19.
-13. **Identification par l'illustration (chantier majeur)** — mesuré viable, voir §4.54.
-    DINOv2 (embedding) + ORB (points d'intérêt) battent l'OCR du numéro sur photos réelles
-    (84 % et ~97 % contre 64 %), sans jamais dépendre d'un chiffre lisible. Chaîne retenue :
-    embedding → shortlist → ORB reclasse → OCR départage (90 % de rang 1, ~1,3 s, coût
-    constant à l'échelle du catalogue). Prototypée en scanner de bout en bout dans
-    `scanner-test.html` — premier essai sur 6 photos réelles : 4/6 justes, les 2 ratés
-    correctement signalés « peu sûr ». Reste à collecter des vraies photos (le scanner les
-    conserve) puis à intégrer au pipeline de `index.html`.
+13. **Identification par l'illustration** — mesuré viable (§4.54), **intégré et testé à
+    l'échelle du catalogue (§4.55)**. Scanner V2 dans `index.html` : index d'empreintes
+    global + descripteurs ORB par carte à la demande depuis R2, aucun choix de set.
+    25/31 photos réelles exactes contre un index de 7 591 cartes, 24/25 des « sûres »
+    exactes. Sélecteur V1 / V2 dans les réglages et la caméra. Reste : étendre la tranche
+    aux séries antérieures (base → Soleil-Lune), tester sur téléphone.
 
 ## 7. Risques
 
@@ -1716,6 +1747,17 @@ numéro lisible.
   L'index de référence (embeddings + descripteurs ORB) est mis en cache IndexedDB : long à
   bâtir une fois (~1,5 s/carte), instantané ensuite. Poignée `window.__scanner` en localhost
   pour rejouer des photos du disque.
+- `scan-v2.js` — module du Scanner V2 (§4.55) : ses Workers DINOv2/ORB/OCR, l'index global
+  et les descripteurs ORB par carte récupérés de R2 à la demande. `initV2()`,
+  `identifierV2(canvas)`, `basculerV2()`, `surEtatV2()`. Branché dans `index.html` via un
+  `<script type="module">` et le hook `gererScanV2()` dans `attemptRead()`.
+- `tools/build-packs/` — construction hors appareil des packs et de l'index global, envoi
+  sur R2 (`index.mjs` + `lib.mjs` + `run.sh`, clés dans `.env` non commité). `split-orb.mjs`
+  redécoupe les packs en blobs par carte. `verify-orb.mjs` / `verify-global.mjs` : fidélité
+  Node↔navigateur et recall de shortlist.
+- `build.html` — tableau de bord live de la construction (lit `status.json` sur R2).
+- `api/build-control.js` — pilotage de la construction depuis `build.html` (relancer /
+  passer / tout reprendre / stopper), via le gist.
 
 ## 9. Références
 
