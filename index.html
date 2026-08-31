@@ -9850,6 +9850,11 @@ const EXTRACT_LONG_EDGE = 1200;
 // vraiment floue.
 const MAX_CORNER_SHIFT = 0.035;
 let prevCorners = null;
+// Scanner V2 : stabilité EXIGÉE avant capture (deux images consécutives quasi immobiles).
+// Sans ça, la V2 déclenchait dès la 1re détection à score franc — sur une carte encore en
+// mouvement, d'où un 1er scan faible suivi d'un 2e « pour de vrai » (les doubles constatés).
+let v2StableStreak = 0;
+let v2DerniereCat = null;   // catégorie du dernier résultat V2 ('sure' verrouille jusqu'au retrait)
 
 // Tolère un score de détection isolé, ponctuellement sous MIN_SCORE (occlusion
 // passagère, reflet, main qui repositionne la carte un instant), sans repartir de zéro
@@ -11074,6 +11079,7 @@ async function detectLoop(){
       if(!absenceDepuis) absenceDepuis = Date.now();
       if(absenceStreak >= ABSENCE_STREAK_REQUISE && Date.now() - absenceDepuis >= ABSENCE_MIN_MS){
         cardConfirmedAbsentSinceCapture = true;
+        v2StableStreak = 0; v2DerniereCat = null;   // carte partie : le verrou V2 saute
         // La carte est partie : les échecs accumulés concernaient CELLE-LÀ, ils ne doivent
         // pas se reporter sur la suivante et déclencher un secours immédiat sur une carte
         // qui n'a même pas encore eu sa chance.
@@ -11119,20 +11125,28 @@ async function detectLoop(){
         //    dépendance aux jauges (netteté/lumière/cadrage) — c'est ça, le « tenir la
         //    carte 2 s ». On EXIGE juste : carte présente (score franc) et immobile.
         if(window.SCAN_V2 && SCAN_V2.actifV2()){
-          const stable = prevCorners && maxCornerShift(prevCorners, d.corners) < MAX_CORNER_SHIFT * 1.6;
-          // Carte déjà lue et toujours posée au même endroit : ne PAS relancer l'identif
-          // (elle tourne 1-3 s et ne ferait que reconfirmer la même carte, en gelant tout
-          // pendant ce temps). On réarme quand elle part, ou si elle bouge nettement.
+          // Stabilité RÉELLE : `moved` est l'écart avec l'image PRÉCÉDENTE (calculé plus
+          // haut, avant que prevCorners ne soit réécrit). On exige deux images de suite
+          // quasi immobiles avant de déclencher.
+          if(moved < MAX_CORNER_SHIFT * 1.4) v2StableStreak++;
+          else v2StableStreak = 0;
+          const stable = v2StableStreak >= 2;
+
+          // Carte déjà lue et toujours là : ne PAS relancer l'identif. Une identif « sûre »
+          // verrouille jusqu'au retrait de la carte (tolérance large aux tremblements de
+          // main) ; une « douteuse »/« rebut » se laisse retenter si la carte a bougé.
+          const tol = v2DerniereCat === 'sure' ? 8 : 3.5;
           const dejaLue = !cardConfirmedAbsentSinceCapture && lastCaptureCorners
-            && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * 3;
+            && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * tol;
           if(dejaLue){
             setAimHint('✓ lue — retire la carte', conseilActif);
           }else if(d.score >= 0.5 && stable){
             blocageDepuis = 0;
+            v2StableStreak = 0;
             lastReadAttemptAt = now;
             attemptRead(d.corners, d.score);
           }else{
-            setAimHint(d.score < 0.5 ? 'Approche la carte' : 'Stabilise', conseilActif);
+            setAimHint(d.score < 0.5 ? 'Approche la carte' : (stable ? 'Prêt' : 'Stabilise'), conseilActif);
           }
         } else {
         // Dernier verrou avant de mobiliser le worker OCR pour ~800 ms : si l'image est
@@ -12066,6 +12080,7 @@ async function gererScanV2(sourceForRead, corners, score, t0){
   const mySeq = ++liveResultSeq;
 
   v2DerniereCle = res.pick.cle;
+  v2DerniereCat = res.categorie;
   lastCaptureCorners = corners; lastCaptureAt = Date.now(); lastCaptureCardId = carteMin.id;
   lastCaptureNumber = {number: stripLeadingZero(String(carteMin.number)), denominator: ''};
   lastCaptureHash = liveHash;
