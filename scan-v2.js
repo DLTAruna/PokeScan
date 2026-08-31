@@ -16,9 +16,10 @@
 const CARD_RATIO = 88 / 63;
 const ZONE_ILLUSTRATION = { x: 0.07, y: 0.11, w: 0.86, h: 0.43 };
 const BANDE = { y: 0.83, h: 0.17, zoom: 2 };
-const SHORT = 30;      // largeur de shortlist embedding → ORB. Remonté de 12 : à 12, la bonne
-                      // carte tombait hors shortlist ~1 fois sur 8 → faux positif à basse
-                      // confiance. Coûte ~300 ms de plus, la fiabilité les vaut.
+const SHORT = 18;      // largeur de shortlist embedding → ORB. 12 laissait la bonne carte
+                      // dehors ~1 fois sur 8 ; 30 faisait télécharger 30 blobs/scan sur un
+                      // classeur varié. 18 : recall quasi intact (rang médian 0, p90 0 au
+                      // banc sur 7 591 cartes), 40 % de blobs en moins.
 const TIEBREAK = 8;    // profondeur où l'OCR peut départager
 const INLIERS_MIN = 10; // en dessous, ORB n'a PAS confirmé géométriquement : on ne devine pas
 // Centre de l'illustration (fractions de carte) : c'est CE point que l'autofocus doit
@@ -93,18 +94,28 @@ function demarrerEmb() {
   emb = faireWorker(`
     import { pipeline, env } from ${JSON.stringify(TRANSFORMERS)};
     env.allowLocalModels = false;
-    let ex=null,p=null,moteur='?';
+    let ex=null,p=null,moteur='?',diag=[];
     async function ensure(){ if(p) return p; p=(async()=>{
-      const essais = [ {device:'webgpu', dtype:'fp16'}, {device:'wasm', dtype:'q8'}, {dtype:'fp32'} ];
+      // fp16 sur WebGPU exige la fonctionnalité 'shader-f16', absente de beaucoup de GPU
+      // mobiles → on tente d'abord fp32/q4 sur WebGPU (2-3× le CPU, sans shader-f16) AVANT
+      // de retomber sur WASM. diag[] remonte la raison de chaque échec.
+      let gpu=false;
+      try{ gpu = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }catch(e){}
+      diag.push('navigator.gpu='+!!(navigator.gpu)+' adapter='+gpu);
+      // fp32 sur GPU d'abord (pas de surcoût de déquantification, temps prévisible), puis q4.
+      const essais = gpu
+        ? [ {device:'webgpu',dtype:'fp32'}, {device:'webgpu',dtype:'q4'}, {device:'wasm',dtype:'q8'}, {dtype:'fp32'} ]
+        : [ {device:'wasm',dtype:'q8'}, {dtype:'fp32'} ];
       for(const opt of essais){
         try{ ex = await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, opt);
-             moteur = (opt.device||'wasm') + '/' + opt.dtype; return; }catch(e){}
+             moteur = (opt.device||'wasm') + '/' + opt.dtype; return; }
+        catch(e){ diag.push((opt.device||'wasm')+'/'+opt.dtype+' KO: '+String(e&&e.message||e).slice(0,90)); }
       }
-      throw new Error('aucun moteur d\\'inférence');
+      throw new Error('aucun moteur d\\'inférence — '+diag.join(' | '));
     })(); return p; }
     self.onmessage = async e => { const {id, dataUrl, type} = e.data;
       try{ await ensure();
-        if(type==='warm'){ postMessage({id, ok:true, moteur}); return; }
+        if(type==='warm'){ postMessage({id, ok:true, moteur, diag}); return; }
         const o=await ex(dataUrl); let v=Float32Array.from(o.data);
         const d=o.dims||[]; if(d.length===3 && d[1]>1) v=v.slice(0,d[2]);
         let n=0; for(let i=0;i<v.length;i++) n+=v[i]*v[i]; n=Math.sqrt(n)||1;
@@ -205,7 +216,11 @@ async function chargerParsing() {
 // Les descripteurs ORB, eux, sont lourds : on ne récupère le pack d'un set QUE quand une
 // carte de ce set apparaît dans la shortlist d'un scan, et on le garde en cache.
 const R2 = 'https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev';
-const MAX_CARTES_ORB = 500;             // descripteurs ORB gardés en mémoire du worker (LRU, ~13 Mo)
+// Worker Cloudflare optionnel qui regroupe les blobs ORB en une requête (voir
+// tools/build-packs/worker-orb.js). Laisser null tant qu'il n'est pas déployé — le client
+// retombe alors sur une requête par carte.
+const WORKER_ORB = null;   // ex: 'https://pokescan-orb.xxxx.workers.dev'
+const MAX_CARTES_ORB = 900;             // descripteurs ORB gardés en mémoire du worker (LRU, ~23 Mo ; ~3 sets entiers)
 
 // —— petit cache IndexedDB (l'index global et les packs y vivent « pour toujours »)
 const IDB_NOM = 'pokescan_v2', IDB_STORE = 'blobs';
@@ -263,17 +278,94 @@ function parseBlobOrb(buf) {
   return { rows, des, kp };
 }
 
-// —— s'assure que les descripteurs ORB des cartes de la shortlist sont dans le worker.
-//    Récupère UN petit blob par carte (≈25 Ko), quel que soit le nombre de sets couverts —
-//    puis garde les ~MAX_CARTES_ORB dernières (LRU). Renvoie true si un téléchargement a eu lieu.
+const nomPack = setId => String(setId).replace(/[^\w.-]/g, '_');
+const setsComplets = new Set();   // sets dont le pack ENTIER est déjà en mémoire du worker
+
+// —— charge d'un coup TOUT l'ORB d'un set (pack de ~5 Mo, une requête) : rentable dès qu'on
+//    dépouille un classeur d'une extension — après le 1er scan, les suivants du même set
+//    ne téléchargent plus rien.
+const setsEnCours = new Set();
+async function chargerSetComplet(setId) {
+  if (setsComplets.has(setId) || setsEnCours.has(setId)) return;
+  setsEnCours.add(setId);
+  try {
+    onEtat('Chargement du set ' + setId + '…');
+    let buf = await idbGet('pack:' + setId);
+    if (!buf) { buf = await telechargerR2('pack-' + nomPack(setId) + '.pack'); idbSet('pack:' + setId, buf); }
+    const dv = new DataView(buf);
+    const hLen = dv.getUint32(0, true);
+    const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hLen)));
+    let off = 4 + hLen;
+    const jobs = [];
+    for (const c of header.cards) {
+      off += header.embDim;
+      const des = new Uint8Array(buf.slice(off, off + c.or * 32)); off += c.or * 32;
+      const kpI16 = new Int16Array(buf.slice(off, off + c.or * 4)); off += c.or * 4;
+      const kp = []; for (let i = 0; i < c.or; i++) kp.push({ x: kpI16[i * 2], y: kpI16[i * 2 + 1] });
+      jobs.push({ cle: c.cle, des, or: c.or, kp });
+    }
+    for (let i = 0; i < jobs.length; i += 20) {
+      await Promise.all(jobs.slice(i, i + 20).map(j =>
+        orb.call({ type: 'refImport', cle: j.cle, bytes: j.des, rows: j.or, kp: j.kp })
+          .then(() => orbCharges.set(j.cle, { ts: Date.now(), pleinSet: true }))));
+    }
+    setsComplets.add(setId);
+    onEtat('');
+  } catch (e) { /* best effort */ }
+  finally { setsEnCours.delete(setId); }
+}
+
+// Détection « classeur » : les 3 derniers scans du même set → on charge son pack entier,
+// le reste du classeur ne télécharge alors plus rien. (Les illustrations Pokémon se
+// ressemblent trop d'un set à l'autre pour que la shortlist se regroupe par set ; c'est
+// l'historique des scans, pas la shortlist, qui dit qu'on dépouille une extension.)
+const recents = [];
+export function noterPickV2(setId) {
+  if (!setId) return;
+  recents.push(setId); if (recents.length > 5) recents.shift();
+  if (setsComplets.has(setId)) return;
+  const memeSet = recents.filter(s => s === setId).length;
+  if (memeSet >= 3) chargerSetComplet(setId).catch(() => {});   // en fond
+}
+
+// —— récupère plusieurs blobs ORB d'un coup via le Worker (une requête). Renvoie une
+//    Map cle -> ArrayBuffer (ou null si absent).
+async function telechargerLotOrb(cles) {
+  const r = await fetch(WORKER_ORB + '?k=' + cles.join(','), { cache: 'no-store' });
+  if (!r.ok) throw new Error('worker ' + r.status);
+  const buf = await r.arrayBuffer();
+  const dv = new DataView(buf); const u = new Uint8Array(buf);
+  let p = 0; const n = dv.getUint16(p, true); p += 2;
+  const m = new Map();
+  for (let i = 0; i < n; i++) {
+    const lk = u[p++]; let k = '';
+    for (let j = 0; j < lk; j++) k += String.fromCharCode(u[p++]);
+    const lb = dv.getUint32(p, true); p += 4;
+    m.set(k, lb ? buf.slice(p, p + lb) : null); p += lb;
+  }
+  return m;
+}
+
+// —— s'assure que les descripteurs ORB des cartes de la shortlist sont dans le worker :
+//    un blob par carte (≈25 Ko), groupés en une requête si le Worker est configuré.
+//    Renvoie true si un téléchargement a eu lieu.
 async function assurerOrbCartes(cles) {
-  const version = manifest?.updatedAt || '0';
-  const manquantes = cles.filter(c => !orbCharges.has(c));
   let telecharge = false;
+  const manquantes = cles.filter(c => !orbCharges.has(c));
   if (manquantes.length) {
     onEtat(manquantes.length > 3 ? 'Chargement des références…' : '');
+
+    // ce qui n'est pas déjà en IndexedDB
+    const enIdb = new Map(await Promise.all(manquantes.map(async c => [c, await idbGet('orbc:' + c)])));
+    const aTelecharger = manquantes.filter(c => !enIdb.get(c));
+    let lot = null;
+    if (aTelecharger.length >= 4 && WORKER_ORB) {
+      try { lot = await telechargerLotOrb(aTelecharger); telecharge = true; } catch (e) { lot = null; }
+    }
+
     await Promise.all(manquantes.map(async cle => {
-      let buf = await idbGet('orbc:' + cle);
+      let buf = enIdb.get(cle);
+      if (!buf && lot && lot.has(cle)) { buf = lot.get(cle); if (buf) idbSet('orbc:' + cle, buf); }
       if (!buf) {
         try { buf = await telechargerR2('orb/' + cle + '.orb'); telecharge = true; idbSet('orbc:' + cle, buf); }
         catch (e) { orbCharges.set(cle, { ts: Date.now(), absent: true }); return; }
@@ -284,19 +376,22 @@ async function assurerOrbCartes(cles) {
     }));
   }
   for (const c of cles) { const v = orbCharges.get(c); if (v) v.ts = Date.now(); }
-  // éviction LRU
+  // éviction LRU — jeter un pack entier invalide le set correspondant
   if (orbCharges.size > MAX_CARTES_ORB) {
     const tries = [...orbCharges.entries()].sort((a, b) => a[1].ts - b[1].ts);
     const aJeter = tries.slice(0, orbCharges.size - MAX_CARTES_ORB).map(x => x[0]);
     const reels = aJeter.filter(c => !orbCharges.get(c).absent);
     if (reels.length) { try { await orb.call({ type: 'dropSet', cles: reels }); } catch (e) {} }
-    for (const c of aJeter) orbCharges.delete(c);
+    for (const c of aJeter) {
+      if (orbCharges.get(c).pleinSet) setsComplets.delete(cleToCard.get(c).setId);
+      orbCharges.delete(c);
+    }
   }
   return telecharge;
 }
 
 // ─────────────────────────────── état + API publique
-let BASE = [], cleToCard = new Map(), pret = false, actif = false, moteurEmb = '?';
+let BASE = [], cleToCard = new Map(), pret = false, actif = false, moteurEmb = '?', diagEmb = [];
 let EMB_Q8 = null, EMB_DIM = 384;
 let manifest = null;
 let onEtat = () => {};
@@ -308,6 +403,7 @@ export function pretV2() { return pret; }
 export function actifV2() { return pret && actif; }
 export function basculerV2(on) { actif = !!on; }
 export function moteurV2() { return moteurEmb; }
+export function diagV2() { return diagEmb; }
 export function setV2() { return setsCharges(); }
 export function trancheV2() { return manifest?.slice || null; }
 export function surEtatV2(cb) { onEtat = typeof cb === 'function' ? cb : (() => {}); }
@@ -362,15 +458,21 @@ export async function initV2(opts = {}) {
   onProgress(0.9, 'Préchauffage…');
   const warm = document.createElement('canvas'); warm.width = 140; warm.height = 196;
   warm.getContext('2d').fillRect(0, 0, 140, 196);
-  const [m] = await Promise.all([
-    embed(versDataUrl(warm, null)).then(r => r.moteur).catch(() => '?'),
+  const [w] = await Promise.all([
+    emb.call({ type: 'warm' }).catch(e => ({ moteur: '?', diag: [String(e && e.message || e)] })),
     orb.call({ type: 'warm' }).catch(() => {}),
     ocr ? ocrLire(warm).catch(() => {}) : null,
   ]);
-  moteurEmb = m;
+  moteurEmb = w.moteur || '?';
+  diagEmb = w.diag || [];
+  const tw = performance.now();
+  await embed(versDataUrl(warm, null)).catch(() => {});   // 1re inférence réelle : compile les kernels
+  const tw2 = performance.now();
+  await embed(versDataUrl(warm, null)).catch(() => {});   // 2e : temps « à froid » réel
+  diagEmb.push('warm1=' + Math.round(tw2 - tw) + 'ms warm2=' + Math.round(performance.now() - tw2) + 'ms');
   pret = true;
-  onProgress(1, `V2 prête — ${BASE.length} cartes, ${manifest.sets ? Object.keys(manifest.sets).length : '?'} sets (${m}).`);
-  return { cartes: BASE.length, moteur: m };
+  onProgress(1, `V2 prête — ${BASE.length} cartes, ${manifest.sets ? Object.keys(manifest.sets).length : '?'} sets (${moteurEmb}).`);
+  return { cartes: BASE.length, moteur: moteurEmb };
 }
 
 // Identifie une carte déjà redressée (canvas). Renvoie pick + fiabilité + catégorie.
@@ -436,10 +538,16 @@ export async function identifierV2(carte) {
   // Prétri. « rebut » = pas d'identification exploitable : ORB n'a pas confirmé
   // géométriquement (< INLIERS_MIN inliers) ET l'OCR n'a pas non plus pointé vers une carte.
   // Dans ce cas on préfère « non identifiée, re-scanne » à une carte fausse.
+  // « sûre » aussi quand la géométrie est franche : ≥ 20 inliers vérifiés par l'homographie
+  // et un 2e candidat nettement derrière — c'est une identification certaine même si la
+  // sigmoïde (calibrée prudemment) reste à ~77 %.
+  const geoFranche = inl >= 20 && dom >= 0.6;
   let categorie;
   if (!pick || (inl < INLIERS_MIN && !ocrOk)) categorie = 'rebut';
-  else if (fiabilite >= 80 || ocrOk) categorie = 'sure';
+  else if (fiabilite >= 80 || ocrOk || geoFranche) categorie = 'sure';
   else categorie = 'douteuse';
+
+  if (categorie !== 'rebut' && cible) noterPickV2(cible.setId);   // détection « classeur »
 
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
