@@ -55,7 +55,9 @@
 
 <h1>Scanner de test — chaîne fusionnée</h1>
 <p class="sub">Identification <b>DINOv2 → shortlist → ORB reclasse → OCR départage</b>, la solution retenue au banc.
-Chaque carte scannée + sa vérité terrain confirmée est <b>conservée</b> pour bâtir une base de vraies photos.</p>
+Chaque carte scannée + sa vérité terrain confirmée est <b>conservée</b> pour bâtir une base de vraies photos.
+L'OCR (lent) ne tourne que si ORB doute — la plupart des scans s'en passent. La fiche résultat affiche
+le détail des durées par étage.</p>
 
 <div class="panel" id="p-config">
   <div class="rangee">
@@ -142,7 +144,7 @@ const DETECT_LONG_EDGE = 512;
 const EXTRACT_LONG_EDGE = 1200;
 const MIN_SCORE = 0.35;
 const BANDE = {y:0.83, h:0.17, zoom:2};
-const SHORT = 30;                 // largeur de shortlist embedding → ORB
+const SHORT = 22;                 // largeur de shortlist embedding → ORB (compromis rappel / coût ORB)
 const TIEBREAK = 6;               // profondeur où l'OCR peut départager
 const MODELE = 'onnx-community/dinov2-small';
 const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
@@ -300,17 +302,30 @@ function demarrerEmb(){
   emb = faireWorker(`
     import { pipeline, env } from ${JSON.stringify(TRANSFORMERS)};
     env.allowLocalModels = false;
-    let ex=null,p=null;
+    let ex=null,p=null,moteur='?';
     async function ensure(){ if(p) return p; p=(async()=>{
-      try{ ex=await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, {dtype:'q8'}); }
-      catch(e){ ex=await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, {dtype:'fp32'}); }
+      // WebGPU d'abord (3-5× plus rapide quand il marche, fréquent sur mobile récent),
+      // repli WASM quantifié sinon.
+      const essais = [
+        {device:'webgpu', dtype:'fp16'},
+        {device:'wasm', dtype:'q8'},
+        {dtype:'fp32'},
+      ];
+      for(const opt of essais){
+        try{ ex = await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, opt);
+             moteur = (opt.device||'wasm') + '/' + opt.dtype; return; }
+        catch(e){ /* essai suivant */ }
+      }
+      throw new Error('aucun moteur d\\'inférence disponible');
     })(); return p; }
-    self.onmessage = async e => { const {id, dataUrl} = e.data;
-      try{ await ensure(); const o=await ex(dataUrl); let v=Float32Array.from(o.data);
+    self.onmessage = async e => { const {id, dataUrl, type} = e.data;
+      try{ await ensure();
+        if(type==='warm'){ postMessage({id, ok:true, moteur}); return; }
+        const o=await ex(dataUrl); let v=Float32Array.from(o.data);
         const d=o.dims||[]; if(d.length===3 && d[1]>1) v=v.slice(0,d[2]);
         let n=0; for(let i=0;i<v.length;i++) n+=v[i]*v[i]; n=Math.sqrt(n)||1;
         for(let i=0;i<v.length;i++) v[i]/=n;
-        postMessage({id, ok:true, v}, [v.buffer]);
+        postMessage({id, ok:true, v, moteur}, [v.buffer]);
       }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); } };
   `, 'module');
 }
@@ -326,42 +341,51 @@ function demarrerOrb(){
       else if(typeof cv==='function') cv=await cv();
       else if(!cv.Mat) await new Promise(r=>{cv.onRuntimeInitialized=r;});
     })(); return p; }
-    const NF=700;
+    const NF=700, NFQ=520;      // références indexées à 700 pts ; requête à 520 (assez, plus rapide)
     const refs=new Map();
-    function matDe(dataUrl){ return fetch(dataUrl).then(r=>r.blob()).then(createImageBitmap).then(b=>{
+    function grisDepuis(b){
       const c=new OffscreenCanvas(b.width,b.height); const x=c.getContext('2d',{willReadFrequently:true});
       x.drawImage(b,0,0); b.close();
       const m=cv.matFromImageData(x.getImageData(0,0,c.width,c.height)); const g=new cv.Mat();
-      cv.cvtColor(m,g,cv.COLOR_RGBA2GRAY); m.delete(); return g; }); }
-    function detecte(g){ const o=new cv.ORB(NF); const kp=new cv.KeyPointVector(); const des=new cv.Mat();
+      cv.cvtColor(m,g,cv.COLOR_RGBA2GRAY); m.delete(); return g;
+    }
+    const matDe = dataUrl => fetch(dataUrl).then(r=>r.blob()).then(createImageBitmap).then(grisDepuis);
+    const matDeBitmap = bmp => Promise.resolve(grisDepuis(bmp));
+    function detecte(g, n){ const o=new cv.ORB(n||NF); const kp=new cv.KeyPointVector(); const des=new cv.Mat();
       const nm=new cv.Mat(); o.detectAndCompute(g,nm,kp,des);
       const pts=[]; for(let i=0;i<kp.size();i++){ const pp=kp.get(i).pt; pts.push({x:pp.x,y:pp.y}); }
       kp.delete(); o.delete(); nm.delete(); return {des, kp:pts}; }
     function matDepuisBytes(bytes, rows){ const m=new cv.Mat(rows,32,cv.CV_8U); m.data.set(bytes); return m; }
-    function apparie(bf, qdes, qkp, r){
-      let score=0, good=0;
+    // Correspondances retenues (ratio de Lowe) entre requête et une référence.
+    function correspondances(bf, qdes, qkp, r){
+      const s=[], d=[];
       if(qdes.rows>=8 && r.des.rows>=8){
         const knn=new cv.DMatchVectorVector();
         try{ bf.knnMatch(qdes, r.des, knn, 2);
-          const s=[],d=[];
           for(let i=0;i<knn.size();i++){ const pr=knn.get(i); if(pr.size()<2) continue;
             const m0=pr.get(0), m1=pr.get(1);
-            if(m0.distance < 0.75*m1.distance){ good++;
+            if(m0.distance < 0.75*m1.distance){
               s.push(qkp[m0.queryIdx].x, qkp[m0.queryIdx].y);
               d.push(r.kp[m0.trainIdx].x, r.kp[m0.trainIdx].y); } }
-          if(good>=8){ const ms=cv.matFromArray(good,1,cv.CV_32FC2,s), md=cv.matFromArray(good,1,cv.CV_32FC2,d);
-            const mk=new cv.Mat(); const H=cv.findHomography(ms,md,cv.RANSAC,5,mk);
-            let inl=0; for(let i=0;i<mk.rows;i++) inl+=mk.data[i]; score=inl;
-            ms.delete(); md.delete(); mk.delete(); H.delete(); }
-          else score=good*0.1;
-        }catch(e){ score=good*0.1; }
-        knn.delete();
+        }catch(e){} knn.delete();
       }
-      return {score, good};
+      return {s, d, good: s.length/2};
+    }
+    // Inliers d'une homographie RANSAC sur des correspondances déjà calculées.
+    function inliers(s, d, good){
+      if(good < 8) return good*0.1;
+      const ms=cv.matFromArray(good,1,cv.CV_32FC2,s), md=cv.matFromArray(good,1,cv.CV_32FC2,d);
+      const mk=new cv.Mat();
+      let n=0;
+      try{ const H=cv.findHomography(ms,md,cv.RANSAC,5,mk);
+        for(let i=0;i<mk.rows;i++) n+=mk.data[i]; H.delete(); }catch(e){ n=good*0.1; }
+      ms.delete(); md.delete(); mk.delete();
+      return n;
     }
     self.onmessage = async e => {
-      const {id, type, cle, cles, dataUrl, bytes, rows, kp} = e.data;
+      const {id, type, cle, cles, dataUrl, bitmap, bytes, rows, kp} = e.data;
       try{ await ensure();
+        if(type==='warm'){ const g=cv.Mat.zeros(200,140,cv.CV_8U); detecte(g,120).des.delete(); g.delete(); postMessage({id, ok:true}); return; }
         if(type==='ref'){ const g=await matDe(dataUrl); const {des,kp}=detecte(g); g.delete();
           if(refs.has(cle)) refs.get(cle).des.delete();
           refs.set(cle,{des,kp});
@@ -369,11 +393,19 @@ function demarrerOrb(){
         if(type==='refImport'){ if(refs.has(cle)) refs.get(cle).des.delete();
           refs.set(cle,{des:matDepuisBytes(bytes, rows), kp}); postMessage({id, ok:true}); return; }
         if(type==='query'||type==='querySubset'){
-          const g=await matDe(dataUrl); const {des:qd, kp:qk}=detecte(g); g.delete();
+          const g = bitmap ? await matDeBitmap(bitmap) : await matDe(dataUrl);
+          const {des:qd, kp:qk}=detecte(g, NFQ); g.delete();
           const bf=new cv.BFMatcher(cv.NORM_HAMMING,false);
           const cibles = type==='querySubset' ? cles.filter(c=>refs.has(c)) : [...refs.keys()];
-          const out=[];
-          for(const rc of cibles){ const {score,good}=apparie(bf,qd,qk,refs.get(rc)); out.push({cle:rc,score,good}); }
+          // 1re passe : correspondances (ratio de Lowe) pour toute la shortlist — on garde
+          // les points appariés. 2e passe : homographie RANSAC seulement sur les 12 meilleurs
+          // par nombre de correspondances — c'est elle qui coûte cher.
+          const pre = cibles.map(rc => ({cle:rc, ...correspondances(bf, qd, qk, refs.get(rc))}))
+                            .sort((a,b)=> b.good - a.good);
+          const out = pre.map((p,i) => ({
+            cle: p.cle, good: p.good,
+            score: (i < 12 && p.good >= 10) ? inliers(p.s, p.d, p.good) : p.good*0.1
+          }));
           bf.delete(); qd.delete(); out.sort((a,b)=>b.score-a.score);
           postMessage({id, ok:true, out}); return;
         }
@@ -426,6 +458,7 @@ async function idbClear(store){ const db = await idb();
 let BASE = [];           // [{cle, numero, setId, localId, image, name, rarity, vec, hash}]
 let cleToCard = new Map();
 let pretIdentif = false;
+let moteurEmb = '?';
 
 // ─────────────────────────────── chargement / indexation de l'index de référence
 async function chargerIndex(){
@@ -478,13 +511,12 @@ async function chargerIndex(){
         const vec = (await embed(versDataUrl(img, ZONE_ILLUSTRATION))).v;
         const hash = dHash(img);
         const o = await orb.call({type:'ref', cle:c.cle, dataUrl:versDataUrl(img, null)});
-        // rareté : fiche détaillée (une par carte, mais on ne bloque pas dessus)
-        let rarity = '';
-        try{ rarity = (await (await fetch('https://api.tcgdex.net/v2/fr/cards/' + c.cle)).json()).rarity || ''; }catch(e){}
-        const entry = {...c, rarity, vec, hash};
+        // rareté : chargée à la demande au moment d'afficher un résultat, pas ici — une
+        // requête HTTP par carte alourdissait l'indexation de ~40 s pour un simple libellé.
+        const entry = {...c, rarity:'', vec, hash};
         BASE.push(entry);
         await idbPut('refs', { cle:c.cle, numero:c.numero, setId:c.setId, localId:c.localId,
-          image:c.image, name:c.name, rarity, vec:Array.from(vec), hash:hash.toString(),
+          image:c.image, name:c.name, rarity:'', vec:Array.from(vec), hash:hash.toString(),
           orbBytes:Array.from(o.bytes), orbRows:o.rows, orbKp:o.kp });
         setBar((i+1)/cartes.length);
         if(i % 5 === 0) await new Promise(r=>setTimeout(r)); // laisse respirer l'UI
@@ -497,6 +529,20 @@ async function chargerIndex(){
     // OCR : optionnel, ne bloque pas le reste
     try{ demarrerOcr(await chargerParsing()); }catch(e){ $('idx-etat').textContent += ' (OCR indisponible : ' + e.message + ')'; }
     await getScanner();
+
+    // Préchauffage : la 1re inférence de chaque worker porte le chargement du modèle
+    // (DINOv2 ~2 s, session ORB, PaddleOCR). Fait maintenant, pas au 1er scan.
+    $('idx-etat').textContent = 'Préchauffage des moteurs…';
+    const warm = document.createElement('canvas'); warm.width = 140; warm.height = 196;
+    warm.getContext('2d').fillRect(0,0,140,196);
+    const [wEmb] = await Promise.all([
+      embed(versDataUrl(warm, null)).then(r => r.moteur).catch(()=>'?'),
+      orb.call({type:'warm'}).catch(()=>{}),
+      ocr ? ocrLire(warm).catch(()=>{}) : null,
+    ]);
+    moteurEmb = wEmb;
+    $('idx-etat').textContent = `Prêt — ${BASE.length} carte(s). Embedding : ${wEmb}.`;
+
     pretIdentif = true;
     $('prog').style.display = 'none';
     $('p-scan').style.display = '';
@@ -508,43 +554,59 @@ async function chargerIndex(){
   }
 }
 
-// ─────────────────────────────── identification (chaîne fusionnée)
+// ─────────────────────────────── identification, optimisée pour la latence
+// DINOv2 cadre une shortlist sur tout le pool (produit scalaire, négligeable), ORB ne
+// reclasse QUE cette shortlist — l'appariement ORB de toute une liste de 200+ cartes est
+// justement ce qui ne passe pas à l'échelle (mesuré ~3 s). L'OCR (~2-4 s sur mobile) ne
+// tourne que si ORB n'a pas tranché franchement.
 async function identifier(carte){
-  const t0 = performance.now();
-  // 1. embedding → shortlist
-  const e = await embed(versDataUrl(carte, ZONE_ILLUSTRATION));
+  const T = {};
+  const chrono = async (k, p) => { const t = performance.now(); const r = await p; T[k] = Math.round(performance.now() - t); return r; };
+
+  const petit = document.createElement('canvas'); petit.width = 320; petit.height = Math.round(320*CARD_RATIO);
+  petit.getContext('2d').drawImage(carte, 0, 0, petit.width, petit.height);
+  const e = await chrono('emb', embed(versDataUrl(petit, ZONE_ILLUSTRATION)));
   const parEmb = BASE.map(c => ({cle:c.cle, s:cosinus(e.v, c.vec)})).sort((a,b)=> b.s - a.s);
+  const embTop = parEmb[0].s;
   const court = parEmb.slice(0, SHORT).map(x => x.cle);
-  // 2. ORB reclasse la shortlist
+
+  // ORB reclasse la shortlist (bitmap transféré au worker : évite un aller-retour dataURL)
   let ranked = court, orbScores = {};
   try{
-    const rr = await orb.call({type:'querySubset', dataUrl:versDataUrl(carte, null), cles:court});
+    const bmp = await createImageBitmap(carte);
+    const rr = await chrono('orb', orb.call({type:'querySubset', bitmap:bmp, cles:court}, [bmp]));
     ranked = rr.out.map(o => o.cle);
     rr.out.forEach(o => orbScores[o.cle] = o.score);
   }catch(err){ console.warn('ORB', err); }
-  // 3. OCR départage
-  let ocrCands = [], ocrTxt = '';
-  if(ocr){
-    try{ const r = await ocrLire(bandeBasse(carte)); ocrCands = r.cands || []; ocrTxt = r.text || ''; }catch(e){}
-  }
+
   let pick = ranked[0];
-  if(ocrCands.length){
-    const nums = new Set(ocrCands.map(c => c.number));
-    const hit = ranked.slice(0, TIEBREAK).find(cle => nums.has(cleToCard.get(cle).numero));
-    if(hit) pick = hit;
-  }
-  const inl = orbScores[pick] || 0;
+  let inl = orbScores[pick] || 0;
   const second = ranked.find(c => c !== pick);
-  const marge = inl - (orbScores[second] || 0);
-  // confiance : ORB franc = sûr ; sinon on se rabat sur l'accord OCR ou l'embedding
-  const ocrOk = ocrCands.some(c => c.number === cleToCard.get(pick).numero);
+  let marge = inl - (orbScores[second] || 0);
+  const orbFranc = inl >= 25 && marge >= 12;
+
+  // 3. OCR — seulement si ORB n'est pas franc (gain : ~2-4 s sur la majorité des scans)
+  let ocrCands = [], ocrTxt = '', ocrLance = false;
+  if(ocr && !orbFranc){
+    ocrLance = true;
+    try{ const r = await chrono('ocr', ocrLire(bandeBasse(carte))); ocrCands = r.cands || []; ocrTxt = r.text || ''; }catch(e){}
+    if(ocrCands.length){
+      const nums = new Set(ocrCands.map(c => c.number));
+      const hit = ranked.slice(0, TIEBREAK).find(cle => nums.has(cleToCard.get(cle).numero));
+      if(hit){ pick = hit; inl = orbScores[pick] || 0; marge = inl - (orbScores[second] || 0); }
+    }
+  }
+
+  const cible = pick && cleToCard.get(pick);
+  const ocrOk = !!cible && ocrCands.some(c => c.number === cible.numero);
   let conf = 'lo';
   if(inl >= 25 && marge >= 12) conf = 'ok';
   else if((inl >= 12 && marge >= 5) || ocrOk) conf = 'mid';
   return {
-    pick, inl, marge, ocrOk, ocrTxt, ms: Math.round(performance.now() - t0),
+    pick, inl, marge, ocrOk, ocrTxt, ocrLance, T, mode: 'DINOv2→ORB',
+    ms: Object.values(T).reduce((a,b)=>a+b,0),
     alts: ranked.slice(0, 8).map(cle => ({card: cleToCard.get(cle), inl: orbScores[cle] || 0})),
-    conf, embTop: parEmb[0].s
+    conf, embTop
   };
 }
 
@@ -573,7 +635,9 @@ async function boucleDetection(){
   const v = $('video'), ov = $('overlay');
   const loop = async () => {
     if(!stream) return;
-    if(!detectBusy && v.videoWidth){
+    // Pendant une identification (redressement sur le fil principal) ou quand un résultat
+    // est affiché, on met la détection en pause : inutile, et elle vole du temps CPU.
+    if(!detectBusy && v.videoWidth && !identifEnCours && $('p-res').style.display === 'none'){
       detectBusy = true;
       const det = await detecter(v).catch(()=>null);
       detectBusy = false;
@@ -621,13 +685,18 @@ async function capturer(sourceExplicite){
     // photo brute conservée (image telle que capturée, avant redressement)
     dernierePhotoBlob = await new Promise(r => (source.toBlob ? source : versCanvas(source, null)).toBlob(r, 'image/jpeg', 0.9));
 
+    const tW = performance.now();
+    const tR = performance.now();
     const rr = coins ? await redresserAvecCoins(source, coins) : await redresser(source);
+    const msRedress = Math.round(performance.now() - tR);
     if(rr.echec){ statut('⚠️ ' + rr.echec); identifEnCours = false; return; }
 
     const r = await identifier(rr.carte);
+    r.T = { redress: msRedress, ...r.T };
+    r.ms = Math.round(performance.now() - tW);
     dernierResultat = { ...r, carteRedressee: rr.carte };
     afficherResultat(r);
-    statut(`Identifié en ${r.ms} ms.`);
+    statut(`Identifié en ${(r.ms/1000).toFixed(1)} s` + (r.ocrLance ? '' : ' (OCR sauté)') + '.');
   }catch(err){ statut('⚠️ ' + err.message); console.error(err); }
   identifEnCours = false;
 }
@@ -644,8 +713,18 @@ function afficherResultat(r){
   $('res-img').src = c.image + '/high.webp';
   $('res-nom').textContent = c.name || '(sans nom)';
   $('res-set').textContent = `${c.setId} · #${c.localId}${c.rarity ? ' · ' + c.rarity : ''}`;
-  $('res-detail').innerHTML = `ORB ${r.inl} inliers (marge +${r.marge}) · embedding ${r.embTop.toFixed(2)}`
-    + (r.ocrTxt ? ` · OCR « ${r.ocrTxt.replace(/[<>]/g,'').slice(0,40)} »${r.ocrOk ? ' ✓' : ''}` : '');
+  const tb = r.T ? Object.entries(r.T).map(([k,v]) => `${k} ${v}`).join(' · ') : '';
+  $('res-detail').innerHTML =
+    `${r.mode} · ORB ${Math.round(r.inl)} inliers (marge +${Math.round(r.marge)})`
+    + (r.embTop != null ? ` · embedding ${r.embTop.toFixed(2)}` : '')
+    + (r.ocrLance ? ` · OCR « ${(r.ocrTxt||'').replace(/[<>]/g,'').slice(0,32)} »${r.ocrOk ? ' ✓' : ''}` : ' · OCR sauté')
+    + `<br><span style="color:var(--muted)">${(r.ms/1000).toFixed(1)} s — ${tb}</span>`;
+  // rareté chargée à la demande (une seule fois par carte)
+  if(!c.rarity){
+    fetch('https://api.tcgdex.net/v2/fr/cards/' + c.cle).then(x=>x.json()).then(d=>{
+      c.rarity = d.rarity || ''; if(c.rarity) $('res-set').textContent = `${c.setId} · #${c.localId} · ${c.rarity}`;
+    }).catch(()=>{});
+  }
   const badge = $('res-badge');
   badge.textContent = r.conf === 'ok' ? 'confiance élevée' : r.conf === 'mid' ? 'à vérifier' : 'peu sûr';
   badge.className = 'badge ' + (r.conf === 'ok' ? 'b-ok' : r.conf === 'mid' ? 'b-mid' : 'b-lo');
