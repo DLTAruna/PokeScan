@@ -869,8 +869,8 @@ function rendreScores(R, nom, traitees, echecs, fini){
       `Meilleur rang 1 : <b>${nom[best]}</b> (${pct(best)}). ` +
       `<b>ORB</b> (complet) est le plus juste mais coûte O(N) homographies. La <b>Fusion</b> ` +
       `(${pct('fusion')}) plafonne au rappel de la shortlist embedding — si la bonne carte n'est ` +
-      `pas dans le top-15 DINOv2, ORB ne la voit jamais ; élargir la shortlist rapproche la fusion ` +
-      `d'ORB complet à coût quasi constant. La <b>marge</b> (bonne carte vs meilleure fausse) dit si ` +
+      `pas dans la shortlist DINOv2, ORB ne la voit jamais ; l'élargir (réglage dédié) rapproche la ` +
+      `fusion d'ORB complet à coût quasi constant. La <b>marge</b> (bonne carte vs meilleure fausse) dit si ` +
       `un seuil de décision automatique tient : large pour ORB (inliers), étroite pour l'embedding (cosinus).`;
   }
 }

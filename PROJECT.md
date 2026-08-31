@@ -1613,9 +1613,23 @@ catalogue. La fusion **plafonne au rappel de la shortlist** : si la bonne carte 
 dans le top-K de l'embedding, ORB ne la voit jamais — la largeur de shortlist (15 → 100) est
 le seul réglage, et l'élargir rapproche la fusion d'ORB complet sans changer le coût.
 
-À valider avant intégration : robustesse du classement avec des milliers de cartes
-distractrices (le banc accepte des sets parasites pour ça), et sur des photos d'autres sets
-que le 151.
+**Validé à l'échelle.** Même banc, pool porté à **918 cartes** (151 + sv03 + sv04 + swsh12,
+les 711 dernières étant de purs distracteurs), shortlist 30 :
+
+| méthode | rang 1 (207 réfs → 918 réfs) | coût / photo (207 → 918) |
+|---|---|---|
+| ORB complet | 96,8 % → **96,6 %** | 4 s → **20,5 s** (O(N), inexploitable) |
+| DINOv2 | 83,9 % → **80,6 %** | 650 ms → 650 ms |
+| **Fusion** | 90,3 % → **90,3 %** | ~1 s → **1,35 s** |
+
+Le pool a quadruplé : ORB complet et DINOv2 perdent 0,2 et 3 points, la fusion ne bouge pas,
+et son coût reste plat pendant que celui d'ORB complet est multiplié par cinq. La robustesse
+aux distracteurs est donc réelle des deux côtés ; le point faible de l'embedding reste sa
+marge étroite (+0,10 cosinus). L'écart fusion↔ORB complet (90 vs 97) est du rappel de
+shortlist perdu : passer à 50 ou 100 le réduit à coût quasi constant.
+
+Reste à mesurer sur des photos d'autres sets que le 151 (il n'y en a pas encore dans
+`photos-test/`), puis à intégrer au pipeline.
 
 ## 5. Résultats mesurés
 
