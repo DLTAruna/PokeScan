@@ -70,6 +70,10 @@
   </div>
   <div class="prog" id="prog" style="display:none;"><div id="prog-bar"></div></div>
   <p class="sub" id="idx-etat" style="margin:8px 0 0;">Index non chargé.</p>
+  <p class="sub" style="margin:6px 0 0;">
+    <button class="ghost" id="btn-pack" style="font-size:11.5px; padding:5px 9px;">⬇️ Générer le pack (.pack)</button>
+    <span style="font-size:11px;">— sérialise l'index chargé (embeddings + descripteurs ORB) pour le déposer dans <code>packs/</code>. Ensuite les autres appareils ne calculent plus rien.</span>
+  </p>
 </div>
 
 <div class="panel" id="p-scan" style="display:none;">
@@ -531,6 +535,76 @@ let cleToCard = new Map();
 let pretIdentif = false;
 let moteurEmb = '?';
 
+// ─────────────────────────────── pack précalculé (embeddings + descripteurs ORB)
+// Le calcul de l'index (DINOv2 + ORB sur chaque illustration) est IDENTIQUE pour tous les
+// utilisateurs — c'est une fonction de l'illustration officielle, qui ne change jamais. On
+// le fait UNE FOIS, on le sérialise, et on le sert en fichier statique. Le téléphone ne
+// fait plus aucune inférence de référence : il télécharge ~4 Mo et il est prêt.
+//
+// Format : [uint32 LE : longueur de l'en-tête JSON][en-tête JSON][corps binaire]
+// En-tête : { v, set, model, embDim, cards:[{cle,num,name,img,hash,or}] }
+// Corps, par carte, dans l'ordre : int8[embDim] · uint8[or*32] · int16[or*2]
+const PACK_MAGIC_V = 1;
+function nomPack(setId){ return setId.replace(/[^\w.-]/g, '_'); }
+
+async function genererPack(){
+  const rows = await idbAll('refs');
+  if(!rows.length){ statut('index vide — charge-le d\'abord'); return; }
+  const embDim = rows[0].vec.length;
+  const header = { v: PACK_MAGIC_V, set: rows[0].setId, model: MODELE, embDim, cards: [] };
+  const corps = [];
+  for(const r of rows){
+    header.cards.push({ cle:r.cle, num:r.numero, name:r.name||'', img:r.image, hash:String(r.hash), or:r.orbRows });
+    const emb = new Int8Array(embDim);
+    for(let i=0;i<embDim;i++) emb[i] = Math.max(-127, Math.min(127, Math.round(r.vec[i]*127)));
+    const kp = new Int16Array(r.orbRows*2);
+    for(let i=0;i<r.orbRows;i++){ kp[i*2] = Math.round(r.orbKp[i].x); kp[i*2+1] = Math.round(r.orbKp[i].y); }
+    corps.push(emb.buffer, new Uint8Array(r.orbBytes).buffer, kp.buffer);
+  }
+  const hj = new TextEncoder().encode(JSON.stringify(header));
+  const head = new Uint8Array(4 + hj.length);
+  new DataView(head.buffer).setUint32(0, hj.length, true);
+  head.set(hj, 4);
+  const blob = new Blob([head, ...corps], { type:'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = nomPack(rows[0].setId) + '.pack'; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  statut(`Pack généré : ${rows.length} cartes, ${(blob.size/1e6).toFixed(1)} Mo — à déposer dans packs/`);
+}
+
+// Charge BASE + le worker ORB à partir d'un pack. Renvoie les cartes ou lève.
+async function chargerDepuisPack(buf, setBar){
+  const dv = new DataView(buf);
+  const hLen = dv.getUint32(0, true);
+  const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hLen)));
+  if(header.model !== MODELE) throw new Error('pack pour un autre modèle (' + header.model + ')');
+  let off = 4 + hLen;
+  const cartes = [];
+  for(let ci = 0; ci < header.cards.length; ci++){
+    const c = header.cards[ci];
+    const embI8 = new Int8Array(buf.slice(off, off + header.embDim)); off += header.embDim;
+    const des = new Uint8Array(buf.slice(off, off + c.or*32)); off += c.or*32;
+    const kpI16 = new Int16Array(buf.slice(off, off + c.or*4)); off += c.or*4;
+    // dé-quantification + re-normalisation L2 (le produit scalaire redevient ~cosinus)
+    const vec = new Float32Array(header.embDim);
+    let n = 0; for(let i=0;i<header.embDim;i++){ vec[i] = embI8[i] / 127; n += vec[i]*vec[i]; }
+    n = Math.sqrt(n) || 1; for(let i=0;i<header.embDim;i++) vec[i] /= n;
+    const kp = []; for(let i=0;i<c.or;i++) kp.push({ x:kpI16[i*2], y:kpI16[i*2+1] });
+    const localId = c.cle.slice(header.set.length + 1);
+    cartes.push({ cle:c.cle, numero:c.num, setId:header.set, localId, image:c.img, name:c.name,
+                  rarity:'', vec, hash:BigInt(c.hash), _des:des, _rows:c.or, _kp:kp });
+    if(ci % 8 === 0 && setBar) setBar(ci / header.cards.length);
+  }
+  // import dans le worker ORB (les champs _des/_rows/_kp restent sur l'objet : le caller
+  // décide de les mettre en cache IDB puis de les nettoyer)
+  for(let i = 0; i < cartes.length; i++){
+    const c = cartes[i];
+    await orb.call({ type:'refImport', cle:c.cle, bytes:c._des, rows:c._rows, kp:c._kp });
+    if(i % 8 === 0 && setBar) setBar(0.5 + 0.5 * i / cartes.length);
+  }
+  return cartes;
+}
+
 // ─────────────────────────────── chargement / indexation de l'index de référence
 async function chargerIndex(){
   const sets = $('cfg-sets').value.split(',').map(s=>s.trim()).filter(Boolean);
@@ -543,9 +617,35 @@ async function chargerIndex(){
   try{
     demarrerEmb(); demarrerOrb();
     const metaSig = await idbGet('meta', 'sig');
+    let source = null;
 
-    if(metaSig && metaSig.v === sig){
-      // ── depuis le cache
+    // ── 1. pack précalculé (un seul set pour l'instant)
+    if(!(metaSig && metaSig.v === sig) && sets.length === 1){
+      try{
+        $('idx-etat').textContent = 'Téléchargement du pack précalculé…';
+        const res = await fetch('packs/' + nomPack(sets[0]) + '.pack', { cache:'force-cache' });
+        if(res.ok){
+          const buf = await res.arrayBuffer();
+          const cartes = await chargerDepuisPack(buf, setBar);
+          BASE = cartes;
+          // cache IDB pour les rechargements suivants ET le recyclage du worker ORB
+          await idbClear('refs');
+          for(const c of cartes){
+            await idbPut('refs', { cle:c.cle, numero:c.numero, setId:c.setId, localId:c.localId,
+              image:c.image, name:c.name, rarity:'', vec:Array.from(c.vec), hash:c.hash.toString(),
+              orbBytes: Array.from(c._des), orbRows: c._rows, orbKp: c._kp });
+            delete c._des; delete c._rows; delete c._kp;
+          }
+          await idbPut('meta', { k:'sig', v:sig, viaPack:true });
+          source = 'pack';
+          $('idx-etat').textContent = `Index chargé (pack) — ${BASE.length} carte(s), ${(buf.byteLength/1e6).toFixed(1)} Mo.`;
+        }
+      }catch(e){ /* pas de pack ou pack invalide : on continue */ }
+    }
+
+    if(!source && metaSig && metaSig.v === sig){
+      // ── 2. depuis le cache IDB (construit sur cet appareil OU issu d'un pack déjà chargé)
+      source = metaSig.viaPack ? 'pack' : 'cache';
       $('idx-etat').textContent = 'Rechargement de l\'index depuis le cache…';
       const rows = await idbAll('refs');
       BASE = [];
@@ -557,8 +657,10 @@ async function chargerIndex(){
         await orb.call({type:'refImport', cle:r.cle, bytes:new Uint8Array(r.orbBytes), rows:r.orbRows, kp:r.orbKp});
         setBar(++i / rows.length);
       }
-      $('idx-etat').textContent = `Index chargé (cache) — ${BASE.length} carte(s), ${sets.length} set(s).`;
-    } else {
+      $('idx-etat').textContent = `Index chargé (${source}) — ${BASE.length} carte(s), ${sets.length} set(s).`;
+    }
+
+    if(!source){
       // ── (re)construction
       await idbClear('refs');
       const cartes = [];
@@ -1031,6 +1133,7 @@ async function exporter(){
 
 // ─────────────────────────────── câblage
 $('btn-charger').onclick = chargerIndex;
+$('btn-pack').onclick = genererPack;
 $('btn-cam').onclick = ouvrirCamera;
 $('btn-stopcam').onclick = fermerCamera;
 $('btn-capture').onclick = () => capturer(null, true);
