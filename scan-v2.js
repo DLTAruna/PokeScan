@@ -102,9 +102,10 @@ function demarrerEmb() {
       let gpu=false;
       try{ gpu = !!(navigator.gpu && await navigator.gpu.requestAdapter()); }catch(e){}
       diag.push('navigator.gpu='+!!(navigator.gpu)+' adapter='+gpu);
-      // fp32 sur GPU d'abord (pas de surcoût de déquantification, temps prévisible), puis q4.
+      // fp16 d'abord (le plus rapide quand le GPU le supporte — c'est le cas de beaucoup de
+      // mobiles récents), puis fp32 (GPU sans shader-f16), puis q4, puis WASM.
       const essais = gpu
-        ? [ {device:'webgpu',dtype:'fp32'}, {device:'webgpu',dtype:'q4'}, {device:'wasm',dtype:'q8'}, {dtype:'fp32'} ]
+        ? [ {device:'webgpu',dtype:'fp16'}, {device:'webgpu',dtype:'fp32'}, {device:'webgpu',dtype:'q4'}, {device:'wasm',dtype:'q8'}, {dtype:'fp32'} ]
         : [ {device:'wasm',dtype:'q8'}, {dtype:'fp32'} ];
       for(const opt of essais){
         try{ ex = await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, opt);
@@ -136,7 +137,8 @@ function demarrerOrb() {
       else if(typeof cv==='function') cv=await cv();
       else if(!cv.Mat) await new Promise(r=>{cv.onRuntimeInitialized=r;});
     })(); return p; }
-    const NFQ=480;   // points d'intérêt de la REQUÊTE (les réfs restent à 700)
+    const NFQ=360;   // points d'intérêt de la REQUÊTE (les réfs restent à 700). Baissé de
+                     // 480 : l'ORB était à 2-3 s sur téléphone modeste, il domine tout.
     const refs=new Map();
     function grisDepuis(b){
       const c=new OffscreenCanvas(b.width,b.height); const x=c.getContext('2d',{willReadFrequently:true});
@@ -183,11 +185,11 @@ function demarrerOrb() {
           const bf=new cv.BFMatcher(cv.NORM_HAMMING,false);
           const cibles = cles.filter(c=>refs.has(c));
           const pre = cibles.map(rc => ({cle:rc, ...correspondances(bf, qd, qk, refs.get(rc))})).sort((a,b)=> b.good - a.good);
-          // Homographie RANSAC sur les 16 meilleurs candidats par nombre de correspondances
-          // (au lieu de 6) : à 6, la bonne carte classée 7e-12e sur le nombre brut ne
-          // recevait jamais de vraie vérification géométrique et perdait contre un faux.
+          // Homographie RANSAC sur les 8 meilleurs candidats par nombre de correspondances.
+          // (16 auparavant : chaque RANSAC coûte ~150 ms, sur téléphone modeste c'était 2 s
+          // rien que là. La bonne carte est quasi toujours dans les 8 premiers en brut.)
           const out = pre.map((p,i) => ({ cle: p.cle, good: p.good,
-            score: (i < 16 && p.good >= 8) ? inliers(p.s, p.d, p.good) : p.good*0.1 }));
+            score: (i < 8 && p.good >= 8) ? inliers(p.s, p.d, p.good) : p.good*0.1 }));
           bf.delete(); qd.delete(); out.sort((a,b)=>b.score-a.score);
           postMessage({id, ok:true, out}); return;
         }
@@ -396,6 +398,17 @@ let EMB_Q8 = null, EMB_DIM = 384;
 let manifest = null;
 let onEtat = () => {};
 const orbCharges = new Map();   // cle -> { ts, absent? }  (descripteurs ORB en mémoire du worker)
+let scansV2 = 0, dernierOrbMs = 0;
+
+// Le tas WASM d'OpenCV se fragmente : au bout de ~12 scans l'ORB dérive (300 ms → 2 s+).
+// On recycle le worker et on laisse le prochain scan réinjecter depuis le cache IndexedDB.
+async function recyclerOrbSiBesoin() {
+  if (scansV2 === 0 || scansV2 % 12 !== 0) return;
+  try { orb.terminate(); } catch (e) {}
+  demarrerOrb();
+  await orb.call({ type: 'warm' }).catch(() => {});
+  orbCharges.clear(); setsComplets.clear();
+}
 
 const setsCharges = () => [...new Set([...orbCharges.keys()].map(c => String(c).slice(0, String(c).lastIndexOf('-'))))];
 
@@ -495,6 +508,7 @@ export async function identifierV2(carte) {
   const court = parEmb.slice(0, SHORT).map(x => x.cle);
 
   // 2. descripteurs ORB des cartes de la shortlist (un petit blob par carte, à la demande)
+  await recyclerOrbSiBesoin();
   let packTelecharge = false;
   try { packTelecharge = await chrono('refs', assurerOrbCartes(court)); } catch (err) {}
   onEtat('');
@@ -507,6 +521,7 @@ export async function identifierV2(carte) {
     ranked = rr.out.map(o => o.cle);
     rr.out.forEach(o => (orbScores[o.cle] = o.score));
   } catch (err) {}
+  dernierOrbMs = T.orb || dernierOrbMs;
 
   let pick = ranked[0];
   let inl = orbScores[pick] || 0;
@@ -515,11 +530,12 @@ export async function identifierV2(carte) {
   const dominance0 = inl > 0 ? marge / inl : 0;
   const orbFranc = inl >= 18 && dominance0 >= 0.6;
 
-  // 4. OCR — en cas de doute réel (ORB pas franc). C'est le garde-fou contre le faux
-  //    positif : quand ORB hésite, un numéro lu qui pointe vers un candidat de la shortlist
-  //    tranche ; sinon la carte reste « douteuse » et l'utilisateur confirme.
+  // 4. OCR — en cas de doute réel (ORB pas franc). Garde-fou contre le faux positif : un
+  //    numéro lu qui pointe vers un candidat de la shortlist tranche. MAIS quand la session
+  //    chauffe (dernier ORB > 1,8 s → l'OCR prendra > 3 s), on ne le lance pas : la carte
+  //    reste « douteuse », l'utilisateur la confirme à la revue — ça vaut mieux que +4 s.
   let ocrCands = [], ocrTxt = '', ocrLance = false;
-  if (ocr && !orbFranc) {
+  if (ocr && !orbFranc && dernierOrbMs < 1800) {
     ocrLance = true;
     try { const r = await chrono('ocr', ocrLire(bandeBasse(carte))); ocrCands = r.cands || []; ocrTxt = r.text || ''; } catch (e) {}
     if (ocrCands.length) {
@@ -548,6 +564,7 @@ export async function identifierV2(carte) {
   else categorie = 'douteuse';
 
   if (categorie !== 'rebut' && cible) noterPickV2(cible.setId);   // détection « classeur »
+  scansV2++;
 
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
