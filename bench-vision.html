@@ -63,13 +63,27 @@
   calcule un descripteur, classe les cartes de référence du set. Trois backends au choix.<br>
   <b>Antériorité</b> (git, <code>embtest.html</code>, aoû. 2025) : dHash ≈ 16 %, MobileViT-small
   3,2 %, OCR ≈ 71 %. L'embedding échouait par <i>écart de domaine</i> (photo vs scan officiel).
-  DINOv2 (auto-supervisé) et ORB+RANSAC n'avaient jamais été mesurés — c'est l'objet d'ici.
+  DINOv2 (auto-supervisé) et ORB+RANSAC n'avaient jamais été mesurés — c'est l'objet d'ici.<br>
+  <b>Mode « photos simulées »</b> : en l'absence de vraies photos hors du set 151, on
+  fabrique une « photo » à partir de l'illustration officielle (posée sur un fond, vue de
+  travers, reflet, flou, JPEG) puis on fait tourner tout le pipeline. Les pixels de la
+  requête viennent <i>in fine</i> de la même image que la référence : ce mode <b>ne mesure
+  pas la robustesse au vrai fossé photo/scan</b> (ses taux sont optimistes). Ce qu'il mesure :
+  la <b>couverture</b> — le pipeline tient-il de Base Set 1999 aux cartes texturées modernes ? —
+  et la <b>structure des confusions</b> par rareté. Le vrai chiffre viendra des vraies photos.
 </div>
 
 <div class="panel">
   <div class="row">
     <div>
-      <label>Set de référence (id TCGdex)</label>
+      <label>Source des requêtes</label>
+      <select id="cfg-source">
+        <option value="reelles">Photos réelles — photos-test/ (set 151)</option>
+        <option value="simulees">Photos simulées — catalogue, multi-collections &amp; raretés</option>
+      </select>
+    </div>
+    <div>
+      <label>Set de référence / des photos (id TCGdex)</label>
       <input type="text" id="cfg-set" value="sv03.5">
     </div>
     <div>
@@ -101,6 +115,24 @@
       </select>
     </div>
   </div>
+  <div class="row" id="bloc-sim" style="display:none; margin-top:12px;">
+    <div style="grid-column:1/-1;">
+      <label>Collections échantillonnées (ids TCGdex, séparés par virgule) — servent aussi de pool de référence</label>
+      <input type="text" id="cfg-sim-sets" value="base1, ecard1, dp1, bw1, xy1, sm1, swsh1, sv03.5">
+    </div>
+    <div>
+      <label>Cartes échantillonnées au total</label>
+      <input type="text" id="cfg-sim-n" value="48">
+    </div>
+    <div>
+      <label>Dégradation</label>
+      <select id="cfg-sim-degrade">
+        <option value="reel" selected>Réaliste (perspective, reflet, flou, JPEG)</option>
+        <option value="leger">Légère</option>
+        <option value="aucune">Aucune (illustration brute — contrôle circulaire)</option>
+      </select>
+    </div>
+  </div>
   <div class="checks">
     <label><input type="checkbox" id="m-ocr" checked> Solution A — OCR du numéro</label>
     <label><input type="checkbox" id="m-dhash" checked> B · dHash (référence plancher)</label>
@@ -120,6 +152,15 @@
   <h2>Résultats</h2>
   <div class="score" id="scores"></div>
   <p class="sub" id="verdict" style="margin:8px 0 0;"></p>
+</div>
+
+<div class="panel" id="panneau-ventil" style="display:none;">
+  <h2>Ventilation — mode photos simulées</h2>
+  <p class="sub" style="margin:0 0 10px;">Rang 1 par méthode, découpé par rareté puis par collection. Un trou dans une ligne = une catégorie où une méthode s'effondre.</p>
+  <div class="table-wrap"><table>
+    <thead><tr><th>Catégorie</th><th>n</th><th>A·OCR</th><th>dHash</th><th>CNN</th><th>ORB</th><th>Fusion</th></tr></thead>
+    <tbody id="ventil"></tbody>
+  </table></div>
 </div>
 
 <div class="panel">
@@ -219,6 +260,77 @@ function chargerImage(src){
     i.onerror = ()=> reject(new Error('image non chargée : ' + src.slice(0, 70)));
     i.src = src;
   });
+}
+
+// ════════════════════════════════════════════ photo simulée (repris de l'ancien bench.html)
+// Fabrique une « photo » à partir de l'illustration officielle : fond, perspective, éclairage
+// inégal, reflet, flou, JPEG. Puis TOUT le pipeline (redresser()) tourne dessus. À NE PAS
+// prendre pour une mesure d'accuracy : les pixels viennent de la même image que la référence.
+// Ce que ça teste : la géométrie et la robustesse du pipeline à travers les époques de cartes.
+const rand = (a, b) => a + Math.random()*(b-a);
+function dessinerEnQuad(ctx, img, quad, bandes = 90){
+  const {tl, tr, br, bl} = quad;
+  const lerp = (a, b, t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+  for(let i=0;i<bandes;i++){
+    const t0 = i/bandes, t1 = (i+1)/bandes;
+    const g0 = lerp(tl, bl, t0), d0 = lerp(tr, br, t0);
+    const g1 = lerp(tl, bl, t1);
+    const sy = img.height * t0, sh = Math.ceil(img.height / bandes) + 1;
+    const dx = d0[0]-g0[0], dy = d0[1]-g0[1];
+    ctx.save();
+    ctx.setTransform(dx/img.width, dy/img.width,
+                     (g1[0]-g0[0])/(sh||1), (g1[1]-g0[1])/(sh||1),
+                     g0[0], g0[1]);
+    ctx.drawImage(img, 0, sy, img.width, sh, 0, 0, img.width, sh);
+    ctx.restore();
+  }
+}
+async function fabriquerPhoto(imageBase, intensite){
+  if(intensite === 'aucune') return chargerImage(imageBase + '/high.webp');
+  const src = await createImageBitmap(await (await fetch(imageBase + '/high.webp')).blob());
+  const W = 1000, H = 1333;
+  const c = document.createElement('canvas'); c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, W, H);
+  const teinte = Math.round(rand(35, 90));
+  g.addColorStop(0, `rgb(${teinte},${teinte+6},${teinte+10})`);
+  g.addColorStop(1, `rgb(${teinte+25},${teinte+22},${teinte+18})`);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for(let i=0;i<2200;i++){ ctx.fillStyle = `rgba(255,255,255,${rand(0.01,0.05)})`; ctx.fillRect(rand(0,W), rand(0,H), rand(1,3), rand(1,3)); }
+  const amp = intensite === 'leger' ? 0.35 : 1;
+  const marge = 0.10;
+  const cx = W/2 + rand(-40,40)*amp, cy = H/2 + rand(-50,50)*amp;
+  const demiL = W*(0.5-marge)/2 * rand(1.25, 1.55);
+  const demiH = demiL * (88/63);
+  const inclX = rand(-0.16, 0.16)*amp, inclY = rand(-0.13, 0.13)*amp, rot = rand(-0.10, 0.10)*amp;
+  const pt = (sx, sy)=>{
+    const fx = 1 + inclX*sx, fy = 1 + inclY*sy;
+    let x = sx*demiL*fy, y = sy*demiH*fx;
+    return [cx + x*Math.cos(rot) - y*Math.sin(rot), cy + x*Math.sin(rot) + y*Math.cos(rot)];
+  };
+  const quad = {tl:pt(-1,-1), tr:pt(1,-1), br:pt(1,1), bl:pt(-1,1)};
+  ctx.save(); ctx.filter = 'blur(9px)'; ctx.fillStyle = 'rgba(0,0,0,.45)';
+  ctx.beginPath(); ctx.moveTo(quad.tl[0]+8, quad.tl[1]+12); ctx.lineTo(quad.tr[0]+8, quad.tr[1]+12);
+  ctx.lineTo(quad.br[0]+8, quad.br[1]+12); ctx.lineTo(quad.bl[0]+8, quad.bl[1]+12); ctx.closePath(); ctx.fill(); ctx.restore();
+  dessinerEnQuad(ctx, src, quad);
+  const lum = ctx.createLinearGradient(rand(0,W), 0, rand(0,W), H);
+  lum.addColorStop(0, `rgba(255,255,240,${rand(0.05,0.16)*amp})`);
+  lum.addColorStop(1, `rgba(0,0,30,${rand(0.05,0.20)*amp})`);
+  ctx.fillStyle = lum; ctx.fillRect(0,0,W,H);
+  if(intensite !== 'leger'){
+    const refl = ctx.createLinearGradient(cx-demiL, cy-demiH, cx+demiL, cy+demiH);
+    const p = rand(0.2, 0.8);
+    refl.addColorStop(Math.max(0,p-0.13), 'rgba(255,255,255,0)');
+    refl.addColorStop(p, `rgba(255,255,255,${rand(0.10,0.30)})`);
+    refl.addColorStop(Math.min(1,p+0.13), 'rgba(255,255,255,0)');
+    ctx.fillStyle = refl; ctx.fillRect(0,0,W,H);
+  }
+  const flou = intensite === 'leger' ? rand(0.2,0.7) : rand(0.5,1.8);
+  const q = intensite === 'leger' ? 0.88 : rand(0.62,0.82);
+  const f = document.createElement('canvas'); f.width = W; f.height = H;
+  const fc = f.getContext('2d');
+  fc.filter = `blur(${flou.toFixed(2)}px)`; fc.drawImage(c, 0, 0); fc.filter = 'none';
+  return chargerImage(f.toDataURL('image/jpeg', q));
 }
 
 // ════════════════════════════════════════════ pipeline de l'app : détection + redressement
@@ -593,11 +705,17 @@ async function lancer(){
   $('btn-run').disabled = true; $('btn-sep').disabled = true; $('btn-stop').disabled = false;
   $('log').textContent = ''; $('detail').innerHTML = ''; $('scores').innerHTML = ''; $('verdict').textContent = '';
 
+  const source = $('cfg-source').value;   // 'reelles' | 'simulees'
   const setId = $('cfg-set').value.trim();
   const distracteurs = $('cfg-distracteurs').value.split(',').map(s => s.trim()).filter(Boolean).filter(s => s !== setId);
   const modele = $('cfg-modele').value;
   const resSuffixe = $('cfg-res').value;
   const SHORT = parseInt($('cfg-shortlist').value, 10) || 30;
+  const simSets = $('cfg-sim-sets').value.split(',').map(s => s.trim()).filter(Boolean);
+  const simN = parseInt($('cfg-sim-n').value, 10) || 48;
+  const simDegrade = $('cfg-sim-degrade').value;
+  $('ventil').innerHTML = '';
+  $('panneau-ventil').style.display = source === 'simulees' ? '' : 'none';
   const use = {
     ocr:    $('m-ocr').checked,
     dhash:  $('m-dhash').checked,
@@ -616,31 +734,35 @@ async function lancer(){
 
   try{
     // ---- références ----
-    // Pool = set principal (celui des photos, seul à contenir la bonne réponse) + sets
-    // distracteurs éventuels, purs parasites qui durcissent le classement sans jamais être
-    // la cible. La vérité terrain est donc un cardId (set + numéro), pas un simple numéro :
-    // sans ça, la carte n°25 d'un autre set compterait comme une bonne réponse.
-    statut('Chargement des cartes du set ' + setId + '…');
+    // Pool = cartes contre lesquelles on classe. La vérité terrain est un cardId (set +
+    // numéro), pas un simple numéro : sinon la carte n°25 d'un autre set compterait juste.
+    const officialParSet = {};   // setId -> dénominateur imprimé
     const chargerSet = async (id) => {
       const d = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + id)).json();
+      officialParSet[id] = d.cardCount && d.cardCount.official;
       const cartes = (d.cards || []).filter(c => c.image && /^\d+$/.test(String(c.localId || '')));
-      return cartes.map(c => ({
+      return { nom: d.name, cartes: cartes.map(c => ({
         cle: id + '-' + c.localId, numero: String(parseInt(c.localId, 10)),
         localId: c.localId, image: c.image, setId: id,
-      }));
+      })) };
     };
-    const setData = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId)).json();
-    const official = setData.cardCount && setData.cardCount.official;
-    const refs = (setData.cards || []).filter(c => c.image && /^\d+$/.test(String(c.localId || '')))
-      .map(c => ({ cle: setId + '-' + c.localId, numero: String(parseInt(c.localId, 10)),
-                   localId: c.localId, image: c.image, setId }));
-    log(`Set « ${setData.name} » — ${refs.length} carte(s) numérotées, dénominateur officiel ${official}.`);
-    if(!refs.length) throw new Error('aucune carte illustrée numérotée dans ce set');
-    for(const id of distracteurs){
-      try{ const d = await chargerSet(id); refs.push(...d); log(`+ distracteur ${id} : ${d.length} carte(s).`); }
-      catch(e){ log(`  ⚠️ distracteur ${id} ignoré : ${e.message}`); }
+
+    const refs = [];
+    // Ensembles à charger dans le pool de référence, selon la source.
+    const setsPool = source === 'simulees'
+      ? [...new Set(simSets)]
+      : [setId, ...distracteurs];
+    for(const id of setsPool){
+      statut('Chargement du set ' + id + '…');
+      try{
+        const { nom: nomSet, cartes } = await chargerSet(id);
+        refs.push(...cartes);
+        log(`Set « ${nomSet} » (${id}) — ${cartes.length} carte(s), dénominateur ${officialParSet[id]}.`);
+      }catch(e){ log(`  ⚠️ set ${id} ignoré : ${e.message}`); }
     }
-    if(distracteurs.length) log(`Pool total : ${refs.length} référence(s).`);
+    if(!refs.length) throw new Error('pool de référence vide');
+    if(setsPool.length > 1) log(`Pool total : ${refs.length} référence(s).`);
+    const official = officialParSet[setId];
 
     if(use.ocr){
       statut('Extraction de la logique de parsing depuis index.html…');
@@ -705,34 +827,89 @@ async function lancer(){
       }
     }
 
-    // ---- photos ----
-    statut('Lecture des photos de test…');
-    const noms = await listerPhotos();
-    log(`${noms.length} photo(s) réelle(s).`);
-    if(!noms.length) throw new Error('aucune photo dans photos-test/');
+    // ---- construction des tâches (requêtes) ----
+    // Une tâche : un libellé, le cardId attendu, le dénominateur du set, et de quoi obtenir
+    // la carte redressée. Deux sources produisent la même forme.
+    const taches = [];
+    const clesPool = new Set(base.map(b => b.cle));
+    if(source === 'reelles'){
+      statut('Lecture des photos de test…');
+      const noms = await listerPhotos();
+      log(`${noms.length} photo(s) réelle(s).`);
+      for(const photoNom of noms){
+        const vt = veriteTerrain(photoNom);
+        if(!vt){ log(`  ⚠️ ${photoNom} : nom non exploitable`); continue; }
+        const bonCle = setId + '-' + (base.find(b => b.setId === setId && b.numero === vt.numero) || {}).localId;
+        taches.push({
+          label: photoNom.replace(/^PKMN-/, '').replace(/\.(jpg|jpeg|png)$/i, ''),
+          bonCle: clesPool.has(bonCle) ? bonCle : null, official, rarity: null, era: null,
+          obtenir: () => chargerImage('photos-test/' + encodeURIComponent(photoNom)).then(redresser),
+        });
+      }
+    } else {
+      statut('Échantillonnage stratifié par rareté…');
+      // On tire ~3× le quota, on récupère la rareté par la fiche détaillée, on remplit les
+      // catégories de rareté à tour de rôle : un secret rare est aussi représenté qu'un
+      // commun, alors qu'il y en a 50× moins dans un set.
+      const parRarete = {};
+      const candidats = refs.slice().sort(() => Math.random() - 0.5).slice(0, Math.min(refs.length, simN * 3));
+      let vus = 0;
+      for(const c of candidats){
+        if(stop) throw new Error('arrêté');
+        try{
+          const d = await (await fetch('https://api.tcgdex.net/v2/fr/cards/' + c.cle)).json();
+          const r = (d.rarity || 'Sans rareté').trim();
+          (parRarete[r] = parRarete[r] || []).push(c);
+        }catch(e){ /* carte ignorée */ }
+        if(++vus % 12 === 0) statut(`Raretés : ${vus}/${candidats.length}…`);
+      }
+      const buckets = Object.keys(parRarete);
+      log(`Raretés trouvées : ${buckets.map(r => r + ' (' + parRarete[r].length + ')').join(', ')}.`);
+      let i = 0;
+      while(taches.length < simN && buckets.some(r => parRarete[r].length)){
+        const r = buckets[i++ % buckets.length];
+        const c = parRarete[r].shift();
+        if(!c) continue;
+        taches.push({
+          label: `${c.setId} #${c.localId} · ${r}`,
+          bonCle: c.cle, official: officialParSet[c.setId], rarity: r, era: c.setId,
+          obtenir: () => fabriquerPhoto(c.image, simDegrade).then(redresser),
+        });
+      }
+      log(`${taches.length} tâche(s) simulée(s) sur ${buckets.length} rareté(s), dégradation « ${simDegrade} ».`);
+    }
+    if(!taches.length) throw new Error('aucune tâche à exécuter');
 
+    // ---- boucle de notation ----
+    const ventil = {};   // clé cat -> { total, <methode>: ok }
+    const noteVentil = (cat, meth, ok) => {
+      const v = ventil[cat] = ventil[cat] || { total: 0 };
+      if(meth === '_') { v.total++; return; }
+      v[meth] = (v[meth] || 0) + (ok ? 1 : 0);
+    };
     let echecsPipeline = 0, traitees = 0;
 
-    for(const photoNom of noms){
+    for(const tache of taches){
       if(stop) break;
-      const vt = veriteTerrain(photoNom);
-      if(!vt){ log(`  ⚠️ ${photoNom} : nom non exploitable`); continue; }
-      statut(`Photo ${traitees + echecsPipeline + 1}/${noms.length} — ${photoNom}`);
+      statut(`${traitees + echecsPipeline + 1}/${taches.length} — ${tache.label}`);
+      const vtOfficial = tache.official;
 
       let carte = null, raisonEchec = '';
       try{
-        const photo = await chargerImage('photos-test/' + encodeURIComponent(photoNom));
-        const rr = await redresser(photo);
-        if(rr.carte) carte = rr.carte; else raisonEchec = rr.echec || 'redressement';
+        const rr = await tache.obtenir();
+        if(rr && rr.carte) carte = rr.carte; else raisonEchec = (rr && rr.echec) || 'redressement';
       }catch(err){ raisonEchec = err.message; }
-      if(!carte){ echecsPipeline++; log(`  ⚠️ ${photoNom} : ${raisonEchec}`); continue; }
+      if(!carte){ echecsPipeline++; log(`  ⚠️ ${tache.label} : ${raisonEchec}`); continue; }
       traitees++;
+
+      const cats = tache.rarity ? [tache.rarity, tache.era] : [];
+      for(const cat of cats) noteVentil(cat, '_');
 
       const cell = { ocr:'—', dhash:'—', emb:'—', orb:'—', fusion:'—' };
       let ocrCands = null, dhashArr = null, embArr = null, orbArr = null;
-      // cardId de la bonne réponse : la carte du set principal qui porte ce numéro.
-      const bonCle = (base.find(b => b.setId === setId && b.numero === vt.numero) || {}).cle || null;
-      const lbl = cle => cleToNumero.get(cle) + (cleToSet.get(cle) !== setId ? '·' + cleToSet.get(cle) : '');
+      const bonCle = tache.bonCle;
+      const attendu = bonCle ? cleToNumero.get(bonCle) : null;
+      const lbl = cle => cleToNumero.get(cle) + '·' + cleToSet.get(cle);
 
       // ---- Solution A : OCR ----
       if(use.ocr){
@@ -740,12 +917,13 @@ async function lancer(){
           const r = await ocrLire(bandeBasse(carte));
           R.ocr.ms.push(r.ms);
           ocrCands = r.cands || [];
-          const choisi = ocrCands.find(c => String(c.denominator) === String(official)) || ocrCands[0] || null;
+          const choisi = ocrCands.find(c => String(c.denominator) === String(vtOfficial)) || ocrCands[0] || null;
           R.ocr.n++;
-          const bon = choisi && choisi.number === vt.numero;
+          const bon = !!(choisi && attendu && choisi.number === attendu);
           if(bon){ R.ocr.r1++; R.ocr.r5++; }
+          for(const cat of cats) noteVentil(cat, 'ocr', bon);
           cell.ocr = `<span class="${bon?'ok':'ko'}">${bon?'✓':'✗'} ${choisi ? choisi.number+'/'+choisi.denominator : '∅'}</span>`;
-        }catch(e){ cell.ocr = `<span class="mut">err</span>`; log(`  OCR ${photoNom} : ${e.message}`); }
+        }catch(e){ cell.ocr = `<span class="mut">err</span>`; log(`  OCR ${tache.label} : ${e.message}`); }
       }
 
       // ---- Solution B : classements visuels (par cardId) ----
@@ -757,6 +935,7 @@ async function lancer(){
         const M = R[keyName];
         M.n++; if(i1) M.r1++; if(i5) M.r5++;
         if(vrai && autre) M.marges.push(vrai.s - autre.s);
+        for(const cat of cats) noteVentil(cat, keyName, i1);
         return { i1, i5 };
       };
 
@@ -786,7 +965,7 @@ async function lancer(){
           orbArr = r.out.map(o => ({ cle: o.cle, s: o.score }));
           const v = classe(orbArr, 'orb');
           cell.orb = `<span class="${v.i1?'ok':(v.i5?'':'ko')}">${v.i1?'✓':(v.i5?'⑤':'✗')} ${lbl(orbArr[0].cle)} <span class="mut">(${orbArr[0].s|0}in)</span></span>`;
-        }catch(e){ cell.orb = `<span class="mut">err</span>`; log(`  ORB ${photoNom} : ${e.message}`); }
+        }catch(e){ cell.orb = `<span class="mut">err</span>`; log(`  ORB ${tache.label} : ${e.message}`); }
       }
 
       // ---- Fusion : embedding cadre une shortlist large, ORB la reclasse finement sur ses
@@ -803,7 +982,7 @@ async function lancer(){
             const rr = await orbCall('querySubset', { dataUrl: versDataUrl(carte, null), cles: court });
             orbMs = rr.ms;
             ranked = rr.out.map(o => o.cle);
-          }catch(e){ log(`  Fusion/ORB ${photoNom} : ${e.message}`); }
+          }catch(e){ log(`  Fusion/ORB ${tache.label} : ${e.message}`); }
         }
         let pick = ranked[0];
         if(ocrCands && ocrCands.length){
@@ -816,6 +995,7 @@ async function lancer(){
         R.fusion.ms.push(embMs + orbMs);
         const bon = pick === bonCle;
         if(bon){ R.fusion.r1++; R.fusion.r5++; }
+        for(const cat of cats) noteVentil(cat, 'fusion', bon);
         cell.fusion = pick
           ? `<span class="${bon?'ok':'ko'}">${bon?'✓':'✗'} ${lbl(pick)}</span>`
           : `<span class="mut">∅</span>`;
@@ -823,8 +1003,8 @@ async function lancer(){
 
       const tr = document.createElement('tr');
       tr.innerHTML = `
-        <td class="mut">${photoNom.replace(/^PKMN-/, '').replace(/\.(jpg|jpeg|png)$/i, '')}</td>
-        <td><code>#${vt.numero}</code></td>
+        <td class="mut">${tache.label}</td>
+        <td><code>${attendu ? '#' + attendu : '?'}</code></td>
         <td>${use.ocr ? cell.ocr : ''}</td>
         <td>${use.dhash ? cell.dhash : ''}</td>
         <td>${use.emb ? cell.emb : ''}</td>
@@ -832,10 +1012,12 @@ async function lancer(){
         <td>${use.fusion ? cell.fusion : ''}</td>`;
       $('detail').appendChild(tr);
       rendreScores(R, nom, traitees, echecsPipeline, false);
+      if(source === 'simulees') rendreVentil(ventil, use);
     }
 
     rendreScores(R, nom, traitees, echecsPipeline, true);
-    statut(`Terminé — ${traitees} photo(s) exploitée(s)` + (echecsPipeline ? `, ${echecsPipeline} non redressée(s).` : '.'));
+    if(source === 'simulees') rendreVentil(ventil, use);
+    statut(`Terminé — ${traitees} carte(s) exploitée(s)` + (echecsPipeline ? `, ${echecsPipeline} non redressée(s).` : '.'));
     log('Terminé.');
   }catch(err){
     statut('⚠️ ' + err.message);
@@ -843,6 +1025,20 @@ async function lancer(){
   }finally{
     $('btn-run').disabled = false; $('btn-sep').disabled = false; $('btn-stop').disabled = true;
   }
+}
+
+function rendreVentil(ventil, use){
+  const meths = ['ocr','dhash','emb','orb','fusion'];
+  const cellPct = (v, k) => {
+    if(!use[k]) return '<td class="mut"></td>';
+    if(v[k] == null) return '<td class="mut">—</td>';
+    const p = v.total ? 100*v[k]/v.total : 0;
+    return `<td class="${p>=85?'ok':(p<50?'ko':'')}">${p.toFixed(0)} %</td>`;
+  };
+  const lignes = Object.entries(ventil).sort((a,b) => b[1].total - a[1].total);
+  $('ventil').innerHTML = lignes.map(([cat, v]) =>
+    `<tr><td>${cat}</td><td class="mut">${v.total}</td>${meths.map(k => cellPct(v, k)).join('')}</tr>`
+  ).join('');
 }
 
 function rendreScores(R, nom, traitees, echecs, fini){
@@ -930,6 +1126,14 @@ async function testSeparation(){
 $('btn-run').addEventListener('click', lancer);
 $('btn-sep').addEventListener('click', testSeparation);
 $('btn-stop').addEventListener('click', () => { stop = true; statut('Arrêt demandé…'); });
+
+const majSource = () => {
+  const sim = $('cfg-source').value === 'simulees';
+  $('bloc-sim').style.display = sim ? '' : 'none';
+  $('panneau-ventil').style.display = sim ? '' : 'none';
+};
+$('cfg-source').addEventListener('change', majSource);
+majSource();
 </script>
 </body>
 </html>

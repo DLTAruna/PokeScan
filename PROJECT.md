@@ -1631,6 +1631,19 @@ shortlist perdu : passer à 50 ou 100 le réduit à coût quasi constant.
 Reste à mesurer sur des photos d'autres sets que le 151 (il n'y en a pas encore dans
 `photos-test/`), puis à intégrer au pipeline.
 
+**Mode « photos simulées » du banc** — en attendant de vraies photos hors 151. Il
+échantillonne le catalogue **par rareté** (tirage stratifié : un secret rare pèse autant
+qu'un commun, alors qu'il y en a 50× moins) **à travers les époques** (Base Set 1999 →
+Écarlate et Violet), fabrique une « photo » de chaque carte (fond, perspective, reflet,
+flou, JPEG) et fait tourner tout le pipeline. **Ce n'est pas une mesure d'accuracy** : les
+pixels de la requête viennent de la même image que la référence, donc les taux sont
+optimistes (ORB ≈ 100 % même sur du 1999). Ce qu'il révèle : (a) la **couverture** — le
+pipeline tourne sur toutes les époques, ORB trouve des points d'intérêt aussi bien sur le
+dessin plat de 1999 que sur les textures modernes ; (b) le **point faible du redressement**
+— les cartes **sans bordure** (full art V / VMAX) échouent à la détection scanic sur le
+composite synthétique ; (c) la **structure des confusions par rareté** — dHash s'effondre à
+0 % sur Holo Rare / VMAX là où ORB tient. Ventilation par rareté et par set dans le banc.
+
 ## 5. Résultats mesurés
 
 Sur 8 photos réelles, via le parcours applicatif complet : **7/8 identifiées
