@@ -219,9 +219,11 @@ async function chargerDepuisPack(buf, onProgress) {
 }
 
 // ─────────────────────────────── état + API publique
-let BASE = [], cleToCard = new Map(), pret = false, moteurEmb = '?', setCourant = null;
+let BASE = [], cleToCard = new Map(), pret = false, actif = false, moteurEmb = '?', setCourant = null;
 
-export function pretV2() { return pret; }
+export function pretV2() { return pret; }            // l'index est chargé
+export function actifV2() { return pret && actif; }  // ...ET l'utilisateur a activé le scan V2
+export function basculerV2(on) { actif = !!on; }
 export function moteurV2() { return moteurEmb; }
 export function setV2() { return setCourant; }
 
