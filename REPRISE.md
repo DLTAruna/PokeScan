@@ -35,7 +35,7 @@ Workers), branché dans `index.html` via `<script type="module">` en bas + le ho
 - **Descripteurs ORB par carte** : blob `orb/<clé>.orb` (~25 Ko) récupéré à la demande pour
   les ~18 cartes de la shortlist de chaque scan, puis gardé (LRU 900 cartes).
 - Sélecteur **V1 / V2** conservé. V1 = lecture du numéro (l'existant), V2 = illustration.
-- Import du module : `./scan-v2.js?v=10` dans `index.html` (bumper à chaque modif de
+- Import du module : `./scan-v2.js?v=11` dans `index.html` (bumper à chaque modif de
   `scan-v2.js`).
 - **Tests navigateur** (31 photos réelles set 151, index 7 591, vrai redressement) :
   25/31 exactes, 25/26 des « sûres » exactes (la 26e erreur « sûre » = photo mal
@@ -43,13 +43,14 @@ Workers), branché dans `index.html` via `<script type="module">` en bas + le ho
 
 ### Ce qui reste
 
-1. **Nikos teste la V2 sur son téléphone** (version `?v=10`). Retour attendu via
-   `/api/scan-log`. Le point ouvert de la dernière session : c'était lent (emb sur CPU
-   parce que le GPU du téléphone rejette fp16) — corrigé en tentant `webgpu/fp32` avant
-   WASM ; `diagV2()` remonte pourquoi le GPU échoue. **À confirmer sur l'appareil.**
-2. **1 commit local non poussé** : `2b91aec` (optimisations vitesse). `git push origin main`
-   quand Nikos valide (le push est parfois bloqué pour Claude par le classificateur — c'est
-   Nikos qui pousse).
+1. **Nikos teste la V2 sur son téléphone** (version `?v=11`). Retour via `/api/scan-log`.
+   Historique des sessions de test : (a) emb lent car WebGPU met ~8 scans à s'initialiser
+   (les premiers passent en WASM) ; (b) une fois WebGPU actif, l'**ORB** devenait le goulot
+   (1,6-3,4 s) + l'**OCR** explosait (4,3 s) sur salve longue = throttle thermique.
+   Corrigé en `817c6ed` : homographie top-8, NFQ 360, worker ORB recyclé toutes les 12
+   cartes, OCR coupé quand `dernierOrbMs > 1800`. **À reconfirmer sur l'appareil.**
+2. **3 commits locaux non poussés** : `2b91aec` `03ae0fa` `817c6ed`. `git push origin main`
+   (le push est parfois bloqué pour Claude par le classificateur — c'est Nikos qui pousse).
 3. **Révoquer le jeton R2 fuité** — il était en clair dans `run.sh` au commit `872c039`
    (poussé sur GitHub). Cloudflare → R2 → Manage API Tokens → supprimer. En refaire un pour
    les builds suivants (le mettre dans `tools/build-packs/.env`, non commité).
@@ -140,9 +141,13 @@ cross-origin depuis localhost échoue) :
 
 ## Réglages clés de `scan-v2.js`
 
-- `SHORT = 18` — largeur de shortlist embedding.
+- `SHORT = 18` · `NFQ = 360` (points requête) · homographie sur les 8 premiers.
 - `INLIERS_MIN = 10` — sous ce seuil sans OCR concordant → `rebut` (on ne devine pas).
 - `geoFranche = inl >= 20 && dom >= 0.6` → `sure` même si la sigmoïde est basse.
 - `MAX_CARTES_ORB = 900` — descripteurs gardés en mémoire du worker (LRU).
+- `recyclerOrbSiBesoin()` — worker ORB recyclé tous les 12 scans (fragmentation WASM).
+- OCR sauté si `dernierOrbMs >= 1800` (session chaude).
 - `noterPickV2()` — 3 scans du même set → charge le pack entier en fond (« mode classeur »).
 - `WORKER_ORB = null` — mettre l'URL du Worker si déployé.
+- Moteur emb : essais `webgpu/fp16 → fp32 → q4 → wasm/q8 → wasm/fp32`. `diagV2()` = raisons
+  d'échec + `warm1/warm2` (temps 1re et 2e inférence).
