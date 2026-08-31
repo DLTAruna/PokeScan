@@ -10753,9 +10753,22 @@ function demarrerQualite(){
   msCadre = 0; msJauges = 0; imagesDessinees = 0; imagesSautees = 0;
   cartesEnCreux = 0; msFond = 0; creuxInterrompus = 0;
   relancesFaites = 0; noirDepuis = 0;   // nouvelle session caméra : le compteur repart
+  // En V2 les trois jauges (netteté/lumière/cadrage) ne conditionnent RIEN — l'ORB
+  // tolère flou et pénombre. Les afficher tromperait, et l'échantillonnage (relecture de
+  // pixels toutes les 180 ms) prendrait du fil principal pendant l'identif. On les coupe.
+  if(window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2()){
+    const jauges = $('jauges'); if(jauges) jauges.style.display = 'none';
+    return;
+  }
   const jauges = $('jauges');
   if(jauges) jauges.style.display = '';
   qualiteTimer = setInterval(echantillonnerQualite, QUALITE_PERIODE_MS);
+}
+
+// Bascule les jauges quand on (dés)active la V2 en cours de session caméra.
+function majJaugesSelonMode(){
+  if(!cameraStream) return;
+  demarrerQualite();
 }
 
 function arreterQualite(){
@@ -20268,7 +20281,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
      pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=12';
+import * as V2 from './scan-v2.js?v=13';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
@@ -20308,7 +20321,11 @@ if(chk){
     majChip();
   }
 
-  chk.addEventListener('change', () => { sauver(); activer(); });
+  chk.addEventListener('change', () => {
+    sauver();
+    try{ window.majJaugesSelonMode && window.majJaugesSelonMode(); }catch(e){}   // masque/réaffiche les jauges
+    activer();
+  });
   if(chip) chip.addEventListener('click', () => {
     chk.checked = !chk.checked;
     chk.dispatchEvent(new Event('change'));
