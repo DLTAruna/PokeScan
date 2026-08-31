@@ -26,8 +26,8 @@
   button.big{width:100%; padding:14px; font-size:15px; margin-top:8px;}
   button:disabled{opacity:.45; cursor:default;}
   .rangee{display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;}
-  #camwrap{position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; margin-bottom:10px; display:none;}
-  #video{width:100%; height:100%; object-fit:cover; display:block;}
+  #camwrap{position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; margin-bottom:10px;}
+  #video{width:100%; height:100%; object-fit:cover; display:block; background:#000;}
   #overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
   #hud{position:absolute; left:0; right:0; bottom:0; padding:8px 12px; background:linear-gradient(transparent,rgba(0,0,0,.6));
        font-size:12px; display:flex; justify-content:space-between;}
@@ -76,8 +76,8 @@ Chaque carte scannée + sa vérité terrain confirmée est <b>conservée</b> pou
     <input type="file" id="file" accept="image/*" capture="environment" style="display:none;">
     <button class="ghost" id="btn-stopcam" style="display:none;">■ Stop</button>
   </div>
-  <div id="camwrap">
-    <video id="video" playsinline muted></video>
+  <div id="camwrap" style="display:none;">
+    <video id="video" playsinline muted autoplay></video>
     <canvas id="overlay"></canvas>
     <div id="hud"><span id="hud-score">—</span><span id="hud-hint">approche la carte</span></div>
   </div>
@@ -87,7 +87,11 @@ Chaque carte scannée + sa vérité terrain confirmée est <b>conservée</b> pou
 
 <div class="panel" id="p-res" style="display:none;">
   <div class="res">
-    <img id="res-img" alt="">
+    <div style="flex-shrink:0; text-align:center;">
+      <canvas id="res-capture" style="width:104px; border-radius:8px; background:#000; display:block;"></canvas>
+      <div style="font-size:10px; color:var(--muted); margin-top:2px;">ta photo</div>
+    </div>
+    <img id="res-img" alt="" style="width:104px;">
     <div class="meta">
       <div class="nom" id="res-nom">—</div>
       <div class="lig" id="res-set"></div>
@@ -555,7 +559,7 @@ async function ouvrirCamera(){
     });
   }catch(e){ $('avert-https').style.display = ''; statut('Caméra refusée : ' + e.message); return; }
   const v = $('video'); v.srcObject = stream; await v.play();
-  $('camwrap').style.display = ''; $('btn-capture').style.display = '';
+  $('camwrap').style.display = 'block'; $('btn-capture').style.display = 'block';
   $('btn-cam').style.display = 'none'; $('btn-stopcam').style.display = '';
   boucleDetection();
 }
@@ -631,6 +635,12 @@ async function capturer(sourceExplicite){
 function afficherResultat(r){
   const c = cleToCard.get(r.pick);
   $('p-res').style.display = '';
+  // ta photo redressée, pour juger le cadrage / la netteté
+  if(dernierResultat && dernierResultat.carteRedressee){
+    const cap = $('res-capture'), src = dernierResultat.carteRedressee;
+    cap.width = src.width; cap.height = src.height;
+    cap.getContext('2d').drawImage(src, 0, 0);
+  }
   $('res-img').src = c.image + '/high.webp';
   $('res-nom').textContent = c.name || '(sans nom)';
   $('res-set').textContent = `${c.setId} · #${c.localId}${c.rarity ? ' · ' + c.rarity : ''}`;
