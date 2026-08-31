@@ -1685,9 +1685,12 @@ numéro lisible.
 12. ~~Préchauffage table des sets TCGdex~~ — fait, voir §4.19.
 13. **Identification par l'illustration (chantier majeur)** — mesuré viable, voir §4.54.
     DINOv2 (embedding) + ORB (points d'intérêt) battent l'OCR du numéro sur photos réelles
-    (84 % et ~97 % contre 64 %), sans jamais dépendre d'un chiffre lisible. Chaîne proposée :
-    embedding → shortlist → ORB reclasse → OCR départage. Reste à valider à l'échelle du
-    catalogue et à intégrer au pipeline (`bench-vision.html` sert de prototype).
+    (84 % et ~97 % contre 64 %), sans jamais dépendre d'un chiffre lisible. Chaîne retenue :
+    embedding → shortlist → ORB reclasse → OCR départage (90 % de rang 1, ~1,3 s, coût
+    constant à l'échelle du catalogue). Prototypée en scanner de bout en bout dans
+    `scanner-test.html` — premier essai sur 6 photos réelles : 4/6 justes, les 2 ratés
+    correctement signalés « peu sûr ». Reste à collecter des vraies photos (le scanner les
+    conserve) puis à intégrer au pipeline de `index.html`.
 
 ## 7. Risques
 
@@ -1703,6 +1706,16 @@ numéro lisible.
 - `index.html` — l'application complète.
 - `README.md` — documentation d'usage.
 - `PROJECT.md` — ce document.
+- `bench-vision.html` — banc d'identification OCR vs recherche visuelle (voir §4.54). Deux
+  sources : photos réelles de `photos-test/`, ou photos simulées échantillonnées par rareté
+  à travers les époques. Outil de dev, servi en local uniquement (`npx serve`).
+- `scanner-test.html` — scanner de bout en bout avec la chaîne fusionnée retenue (DINOv2 →
+  shortlist → ORB → OCR). Sert à éprouver la solution sur de vraies cartes ET à **constituer
+  une base de vraies photos** : chaque scan confirmé est conservé (IndexedDB), export `.zip`
+  de fichiers `PKMN-{set}-{n°}-{ts}.jpg` + `verite.json`, directement rejouables par le banc.
+  L'index de référence (embeddings + descripteurs ORB) est mis en cache IndexedDB : long à
+  bâtir une fois (~1,5 s/carte), instantané ensuite. Poignée `window.__scanner` en localhost
+  pour rejouer des photos du disque.
 
 ## 9. Références
 

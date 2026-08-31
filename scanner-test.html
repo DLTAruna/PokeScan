@@ -1,0 +1,743 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>PokéScan — scanner de test (chaîne fusionnée)</title>
+<style>
+  :root{
+    --bg:#0b0d13; --panel:#141821; --border:#242b3a; --text:#e6e9f0;
+    --muted:#8e97a9; --accent:#d4af37; --ok:#4ec27e; --ko:#e5484d; --info:#7fb2ef; --warn:#e0a12a;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;}
+  body{background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+       font-size:14px; line-height:1.5; padding:14px; max-width:640px; margin:0 auto;
+       padding-bottom:calc(14px + env(safe-area-inset-bottom));}
+  h1{font-size:17px; margin:0 0 2px;}
+  .sub{color:var(--muted); font-size:12.5px; margin:0 0 12px;}
+  .panel{background:var(--panel); border:1px solid var(--border); border-radius:12px; padding:12px 14px; margin-bottom:12px;}
+  label{display:block; font-size:11.5px; color:var(--muted); margin-bottom:4px;}
+  input[type=text]{width:100%; background:#0e1119; color:var(--text); border:1px solid var(--border);
+                   border-radius:8px; padding:8px 9px; font:inherit;}
+  button{background:var(--accent); color:#1a1206; border:0; border-radius:9px; padding:10px 15px;
+         font:inherit; font-weight:700; cursor:pointer;}
+  button.ghost{background:transparent; color:var(--text); border:1px solid var(--border); font-weight:500;}
+  button.big{width:100%; padding:14px; font-size:15px; margin-top:8px;}
+  button:disabled{opacity:.45; cursor:default;}
+  .rangee{display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;}
+  #camwrap{position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; margin-bottom:10px; display:none;}
+  #video{width:100%; height:100%; object-fit:cover; display:block;}
+  #overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
+  #hud{position:absolute; left:0; right:0; bottom:0; padding:8px 12px; background:linear-gradient(transparent,rgba(0,0,0,.6));
+       font-size:12px; display:flex; justify-content:space-between;}
+  #statut{margin:8px 0; font-size:12.5px; color:var(--info); min-height:18px;}
+  .prog{height:6px; background:#0e1119; border-radius:4px; overflow:hidden; margin:6px 0;}
+  .prog > div{height:100%; background:linear-gradient(90deg,var(--info),var(--accent)); width:0;}
+  .res{display:flex; gap:12px;}
+  .res img{width:130px; border-radius:8px; background:#000; flex-shrink:0;}
+  .res .meta{flex:1; min-width:0;}
+  .res .nom{font-size:17px; font-weight:800;}
+  .res .lig{color:var(--muted); font-size:12.5px;}
+  .badge{display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700;}
+  .b-ok{background:rgba(78,194,126,.16); color:var(--ok);}
+  .b-mid{background:rgba(224,161,42,.16); color:var(--warn);}
+  .b-lo{background:rgba(229,72,77,.16); color:var(--ko);}
+  .alts{margin-top:10px; display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:6px;}
+  .alt{background:#0e1119; border:1px solid var(--border); border-radius:8px; padding:5px; text-align:center; cursor:pointer; font-size:10.5px;}
+  .alt img{width:100%; border-radius:4px; display:block; margin-bottom:3px;}
+  .compte{font-size:12px; color:var(--muted);}
+  code{background:#0b0e14; padding:1px 5px; border-radius:4px; font-size:11.5px;}
+  .warn{background:rgba(224,161,42,.1); border:1px solid rgba(224,161,42,.3); border-radius:8px; padding:9px 11px; font-size:12px; color:#f0dcb0;}
+</style>
+</head>
+<body>
+
+<h1>Scanner de test — chaîne fusionnée</h1>
+<p class="sub">Identification <b>DINOv2 → shortlist → ORB reclasse → OCR départage</b>, la solution retenue au banc.
+Chaque carte scannée + sa vérité terrain confirmée est <b>conservée</b> pour bâtir une base de vraies photos.</p>
+
+<div class="panel" id="p-config">
+  <div class="rangee">
+    <div style="flex:1; min-width:200px;">
+      <label>Collections à charger (ids TCGdex, séparés par virgule) — ce que tu vas scanner</label>
+      <input type="text" id="cfg-sets" value="sv03.5">
+    </div>
+    <button id="btn-charger">Charger l'index</button>
+  </div>
+  <div class="prog" id="prog" style="display:none;"><div id="prog-bar"></div></div>
+  <p class="sub" id="idx-etat" style="margin:8px 0 0;">Index non chargé.</p>
+</div>
+
+<div class="panel" id="p-scan" style="display:none;">
+  <div class="rangee" style="margin-bottom:8px;">
+    <button id="btn-cam">📷 Caméra</button>
+    <button class="ghost" id="btn-fichier">🖼️ Importer une photo</button>
+    <input type="file" id="file" accept="image/*" capture="environment" style="display:none;">
+    <button class="ghost" id="btn-stopcam" style="display:none;">■ Stop</button>
+  </div>
+  <div id="camwrap">
+    <video id="video" playsinline muted></video>
+    <canvas id="overlay"></canvas>
+    <div id="hud"><span id="hud-score">—</span><span id="hud-hint">approche la carte</span></div>
+  </div>
+  <button class="big" id="btn-capture" style="display:none;">Capturer &amp; identifier</button>
+  <div id="statut"></div>
+</div>
+
+<div class="panel" id="p-res" style="display:none;">
+  <div class="res">
+    <img id="res-img" alt="">
+    <div class="meta">
+      <div class="nom" id="res-nom">—</div>
+      <div class="lig" id="res-set"></div>
+      <div class="lig" id="res-detail" style="margin-top:4px;"></div>
+      <div style="margin-top:8px;"><span class="badge" id="res-badge"></span></div>
+    </div>
+  </div>
+  <div class="rangee" style="margin-top:12px;">
+    <button id="btn-ok" style="flex:1;">✓ Correct</button>
+    <button class="ghost" id="btn-corr" style="flex:1;">✗ Corriger</button>
+  </div>
+  <div id="corr" style="display:none; margin-top:12px;">
+    <p class="sub" style="margin:0 0 6px;">Choisis la bonne carte, ou saisis <code>set n°</code> :</p>
+    <div class="alts" id="alts"></div>
+    <div class="rangee" style="margin-top:8px;">
+      <input type="text" id="manuel" placeholder="ex : sv03.5 25" style="flex:1;">
+      <button id="btn-manuel">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="rangee" style="justify-content:space-between;">
+    <span class="compte" id="compte">0 photo conservée</span>
+    <span>
+      <button class="ghost" id="btn-export">⬇️ Télécharger le lot (.zip)</button>
+      <button class="ghost" id="btn-vider">Vider</button>
+    </span>
+  </div>
+  <p class="sub" style="margin:8px 0 0;">Les photos sont stockées dans le navigateur (IndexedDB) et survivent à un rechargement.
+  Le .zip contient <code>PKMN-{set}-{n°}-{horodatage}.jpg</code> (l'image caméra brute) + <code>verite.json</code> —
+  prêt pour <code>photos-test/</code> et le banc.</p>
+</div>
+
+<div class="warn" id="avert-https" style="display:none;">
+  ⚠️ La caméra en direct exige HTTPS ou <code>localhost</code>. En <code>file://</code> ou sur IP locale, utilise « Importer une photo »
+  (appareil photo natif du téléphone).
+</div>
+
+<script type="module">
+const $ = id => document.getElementById(id);
+const statut = m => { $('statut').textContent = m; };
+
+// ─────────────────────────────── constantes (identiques au banc / à l'app)
+const ZONE_ILLUSTRATION = {x:0.07, y:0.11, w:0.86, h:0.43};
+const CARD_RATIO = 88/63;
+const DETECT_LONG_EDGE = 512;
+const EXTRACT_LONG_EDGE = 1200;
+const MIN_SCORE = 0.35;
+const BANDE = {y:0.83, h:0.17, zoom:2};
+const SHORT = 30;                 // largeur de shortlist embedding → ORB
+const TIEBREAK = 6;               // profondeur où l'OCR peut départager
+const MODELE = 'onnx-community/dinov2-small';
+const SCANIC_MODULE = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+const TRANSFORMERS  = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.0';
+const OCR_MODULE    = 'https://cdn.jsdelivr.net/npm/ppu-paddle-ocr@6.4.1/web/+esm';
+const OPENCV        = 'https://cdn.jsdelivr.net/npm/@techstark/opencv-js@4.11.0-release.1/dist/opencv.js';
+const OCR_DICT      = 'https://cdn.jsdelivr.net/gh/PT-Perkasa-Pilar-Utama/ppu-paddle-ocr-models@main/recognition/ppocrv6_tiny_dict.txt';
+const IDB = 'scanner_test_v1';
+
+// ─────────────────────────────── utilitaires image
+const dimW = s => s.naturalWidth || s.videoWidth || s.width;
+const dimH = s => s.naturalHeight || s.videoHeight || s.height;
+function versCanvas(source, zone){
+  const c = document.createElement('canvas');
+  const W = dimW(source), H = dimH(source);
+  if(zone){
+    c.width = Math.round(W*zone.w); c.height = Math.round(H*zone.h);
+    c.getContext('2d').drawImage(source, W*zone.x, H*zone.y, W*zone.w, H*zone.h, 0, 0, c.width, c.height);
+  } else { c.width = W; c.height = H; c.getContext('2d').drawImage(source, 0, 0); }
+  return c;
+}
+const versDataUrl = (s, z) => versCanvas(s, z).toDataURL('image/jpeg', 0.92);
+function bandeBasse(carte){
+  const W = carte.width, H = carte.height, sh = Math.round(H*BANDE.h), sy = Math.round(H*BANDE.y);
+  const c = document.createElement('canvas');
+  c.width = Math.round(W*BANDE.zoom); c.height = Math.round(sh*BANDE.zoom);
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high';
+  x.drawImage(carte, 0, sy, W, sh, 0, 0, c.width, c.height);
+  return c;
+}
+function dHash(source){
+  const c = document.createElement('canvas'); c.width = 9; c.height = 8;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  const W = dimW(source), H = dimH(source);
+  ctx.drawImage(source, W*ZONE_ILLUSTRATION.x, H*ZONE_ILLUSTRATION.y, W*ZONE_ILLUSTRATION.w, H*ZONE_ILLUSTRATION.h, 0, 0, 9, 8);
+  const d = ctx.getImageData(0,0,9,8).data; const g = [];
+  for(let i=0;i<72;i++) g.push(0.299*d[i*4]+0.587*d[i*4+1]+0.114*d[i*4+2]);
+  let bits = 0n;
+  for(let y=0;y<8;y++) for(let x=0;x<8;x++) bits = (bits<<1n) | (g[y*9+x] > g[y*9+x+1] ? 1n : 0n);
+  return bits;
+}
+const hamming = (a,b) => { let x=a^b,n=0; while(x){ n+=Number(x&1n); x>>=1n; } return n; };
+const cosinus = (a,b) => { let s=0; for(let i=0;i<a.length;i++) s+=a[i]*b[i]; return s; };
+function chargerImage(src){
+  return new Promise((res,rej)=>{ const i = new Image(); i.crossOrigin='anonymous';
+    i.onload = ()=> i.naturalWidth ? res(i) : rej(new Error('image vide'));
+    i.onerror = ()=> rej(new Error('image non chargée')); i.src = src; });
+}
+
+// ─────────────────────────────── scanic : détection + redressement
+let scanicMod = null, scanner = null;
+async function getScanner(){
+  if(scanner) return scanner;
+  if(!scanicMod) scanicMod = await import(SCANIC_MODULE);
+  const sc = new scanicMod.Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.15} });
+  await sc.initialize();
+  scanner = sc; return sc;
+}
+// Détection seule (pour l'overlay live). Renvoie {corners:{tl,tr,br,bl} en 0..1, score} ou null.
+async function detecter(source){
+  const sc = await getScanner();
+  const W = dimW(source), H = dimH(source);
+  if(!W || !H) return null;
+  const d = Math.min(1, DETECT_LONG_EDGE / Math.max(W, H));
+  const dw = Math.round(W*d), dh = Math.round(H*d);
+  const c = document.createElement('canvas'); c.width = dw; c.height = dh;
+  const ctx = c.getContext('2d', {willReadFrequently:true});
+  ctx.drawImage(source, 0, 0, dw, dh);
+  let res;
+  try{ res = await sc.scan(ctx.getImageData(0,0,dw,dh), {mode:'detect', detector:'ml'}); }catch(e){ return null; }
+  if(!res || !res.corners) return null;
+  const k = res.corners;
+  return {
+    score: res.score == null ? 1 : res.score,
+    corners: {
+      tl:[k.topLeft.x/dw, k.topLeft.y/dh], tr:[k.topRight.x/dw, k.topRight.y/dh],
+      br:[k.bottomRight.x/dw, k.bottomRight.y/dh], bl:[k.bottomLeft.x/dw, k.bottomLeft.y/dh]
+    }
+  };
+}
+// Redressement à partir de coins connus (0..1). Renvoie un canvas portrait 700px, ou {echec}.
+async function redresserAvecCoins(source, coins){
+  const W = dimW(source), H = dimH(source);
+  const MARGE = 0.04;
+  const mx = (coins.tl[0]+coins.tr[0]+coins.br[0]+coins.bl[0])/4;
+  const my = (coins.tl[1]+coins.tr[1]+coins.br[1]+coins.bl[1])/4;
+  const e = Math.min(1, EXTRACT_LONG_EDGE / Math.max(W, H));
+  const vw = Math.round(W*e), vh = Math.round(H*e);
+  const grow = p => ({x:(mx+(p[0]-mx)*(1+MARGE))*vw, y:(my+(p[1]-my)*(1+MARGE))*vh});
+  const frame = document.createElement('canvas'); frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(source, 0, 0, vw, vh);
+  let ex;
+  try{
+    ex = await scanicMod.extractDocument(frame, {
+      topLeft:grow(coins.tl), topRight:grow(coins.tr), bottomRight:grow(coins.br), bottomLeft:grow(coins.bl)
+    }, {output:'canvas'});
+  }catch(err){ return {echec:'redressement : ' + err.message}; }
+  if(!ex || !ex.success || !ex.output) return {echec:'redressement échoué'};
+  const ratio = ex.output.height / ex.output.width;
+  const portrait = Math.abs(ratio - CARD_RATIO)/CARD_RATIO <= 0.28;
+  const paysage  = Math.abs(ratio - 1/CARD_RATIO)*CARD_RATIO <= 0.28;
+  if(!portrait && !paysage) return {echec:'forme incompatible'};
+  let out = ex.output;
+  if(paysage && !portrait){
+    const r = document.createElement('canvas'); r.width = out.height; r.height = out.width;
+    const rc = r.getContext('2d'); rc.translate(r.width/2, r.height/2); rc.rotate(-Math.PI/2);
+    rc.drawImage(out, -out.width/2, -out.height/2); out = r;
+  }
+  const w = 700, h = Math.round(w*CARD_RATIO);
+  const norm = document.createElement('canvas'); norm.width = w; norm.height = h;
+  norm.getContext('2d').drawImage(out, 0, 0, w, h);
+  return {carte: norm};
+}
+// Chemin complet pour une image fixe : détecte puis redresse.
+async function redresser(source){
+  const det = await detecter(source);
+  if(!det) return {echec:'aucune carte détectée'};
+  if(det.score < MIN_SCORE) return {echec:'carte mal cadrée (score ' + det.score.toFixed(2) + ')'};
+  return redresserAvecCoins(source, det.corners);
+}
+
+// ─────────────────────────────── workers (repris du banc)
+function faireWorker(src, type){
+  const w = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), type ? {type} : undefined);
+  const pending = new Map(); let seq = 0;
+  w.onmessage = e => { const p = pending.get(e.data.id); if(!p) return; pending.delete(e.data.id);
+    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error)); };
+  w.onerror = e => { for(const p of pending.values()) p.reject(new Error(e.message || 'worker KO')); pending.clear(); };
+  return { call: (payload, transfer) => new Promise((resolve,reject)=>{ const id = ++seq;
+    pending.set(id, {resolve,reject}); w.postMessage(Object.assign({id}, payload), transfer||[]); }) };
+}
+
+let ocr = null, emb = null, orb = null;
+
+function demarrerOcr(parsing){
+  ocr = faireWorker(`
+    import { PaddleOcrService } from ${JSON.stringify(OCR_MODULE)};
+    ${parsing}
+    let svc=null,p=null;
+    async function ensure(){ if(svc) return svc; if(!p) p=(async()=>{ const s=new PaddleOcrService({model:{charactersDictionary:${JSON.stringify(OCR_DICT)}}}); await s.initialize(); svc=s; })(); return p; }
+    self.onmessage = async e => { const {id, bitmap} = e.data;
+      try{ const s=await ensure(); const cv=new OffscreenCanvas(bitmap.width,bitmap.height);
+        cv.getContext('2d').drawImage(bitmap,0,0); bitmap.close();
+        const r=await s.recognize(cv,{noCache:true});
+        postMessage({id, ok:true, text:(r&&r.text)||'', cands:extractNumbers((r&&r.text)||'')});
+      }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); } };
+  `, 'module');
+}
+async function ocrLire(canvas){
+  const bmp = await createImageBitmap(canvas);
+  return ocr.call({bitmap:bmp}, [bmp]);
+}
+
+function demarrerEmb(){
+  emb = faireWorker(`
+    import { pipeline, env } from ${JSON.stringify(TRANSFORMERS)};
+    env.allowLocalModels = false;
+    let ex=null,p=null;
+    async function ensure(){ if(p) return p; p=(async()=>{
+      try{ ex=await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, {dtype:'q8'}); }
+      catch(e){ ex=await pipeline('image-feature-extraction', ${JSON.stringify(MODELE)}, {dtype:'fp32'}); }
+    })(); return p; }
+    self.onmessage = async e => { const {id, dataUrl} = e.data;
+      try{ await ensure(); const o=await ex(dataUrl); let v=Float32Array.from(o.data);
+        const d=o.dims||[]; if(d.length===3 && d[1]>1) v=v.slice(0,d[2]);
+        let n=0; for(let i=0;i<v.length;i++) n+=v[i]*v[i]; n=Math.sqrt(n)||1;
+        for(let i=0;i<v.length;i++) v[i]/=n;
+        postMessage({id, ok:true, v}, [v.buffer]);
+      }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); } };
+  `, 'module');
+}
+const embed = dataUrl => emb.call({dataUrl});
+
+function demarrerOrb(){
+  orb = faireWorker(`
+    self.cv = undefined;
+    importScripts(${JSON.stringify(OPENCV)});
+    let p=null;
+    async function ensure(){ if(p) return p; p=(async()=>{
+      if(cv instanceof Promise) cv=await cv;
+      else if(typeof cv==='function') cv=await cv();
+      else if(!cv.Mat) await new Promise(r=>{cv.onRuntimeInitialized=r;});
+    })(); return p; }
+    const NF=700;
+    const refs=new Map();
+    function matDe(dataUrl){ return fetch(dataUrl).then(r=>r.blob()).then(createImageBitmap).then(b=>{
+      const c=new OffscreenCanvas(b.width,b.height); const x=c.getContext('2d',{willReadFrequently:true});
+      x.drawImage(b,0,0); b.close();
+      const m=cv.matFromImageData(x.getImageData(0,0,c.width,c.height)); const g=new cv.Mat();
+      cv.cvtColor(m,g,cv.COLOR_RGBA2GRAY); m.delete(); return g; }); }
+    function detecte(g){ const o=new cv.ORB(NF); const kp=new cv.KeyPointVector(); const des=new cv.Mat();
+      const nm=new cv.Mat(); o.detectAndCompute(g,nm,kp,des);
+      const pts=[]; for(let i=0;i<kp.size();i++){ const pp=kp.get(i).pt; pts.push({x:pp.x,y:pp.y}); }
+      kp.delete(); o.delete(); nm.delete(); return {des, kp:pts}; }
+    function matDepuisBytes(bytes, rows){ const m=new cv.Mat(rows,32,cv.CV_8U); m.data.set(bytes); return m; }
+    function apparie(bf, qdes, qkp, r){
+      let score=0, good=0;
+      if(qdes.rows>=8 && r.des.rows>=8){
+        const knn=new cv.DMatchVectorVector();
+        try{ bf.knnMatch(qdes, r.des, knn, 2);
+          const s=[],d=[];
+          for(let i=0;i<knn.size();i++){ const pr=knn.get(i); if(pr.size()<2) continue;
+            const m0=pr.get(0), m1=pr.get(1);
+            if(m0.distance < 0.75*m1.distance){ good++;
+              s.push(qkp[m0.queryIdx].x, qkp[m0.queryIdx].y);
+              d.push(r.kp[m0.trainIdx].x, r.kp[m0.trainIdx].y); } }
+          if(good>=8){ const ms=cv.matFromArray(good,1,cv.CV_32FC2,s), md=cv.matFromArray(good,1,cv.CV_32FC2,d);
+            const mk=new cv.Mat(); const H=cv.findHomography(ms,md,cv.RANSAC,5,mk);
+            let inl=0; for(let i=0;i<mk.rows;i++) inl+=mk.data[i]; score=inl;
+            ms.delete(); md.delete(); mk.delete(); H.delete(); }
+          else score=good*0.1;
+        }catch(e){ score=good*0.1; }
+        knn.delete();
+      }
+      return {score, good};
+    }
+    self.onmessage = async e => {
+      const {id, type, cle, cles, dataUrl, bytes, rows, kp} = e.data;
+      try{ await ensure();
+        if(type==='ref'){ const g=await matDe(dataUrl); const {des,kp}=detecte(g); g.delete();
+          if(refs.has(cle)) refs.get(cle).des.delete();
+          refs.set(cle,{des,kp});
+          postMessage({id, ok:true, bytes:new Uint8Array(des.data), rows:des.rows, kp}, []); return; }
+        if(type==='refImport'){ if(refs.has(cle)) refs.get(cle).des.delete();
+          refs.set(cle,{des:matDepuisBytes(bytes, rows), kp}); postMessage({id, ok:true}); return; }
+        if(type==='query'||type==='querySubset'){
+          const g=await matDe(dataUrl); const {des:qd, kp:qk}=detecte(g); g.delete();
+          const bf=new cv.BFMatcher(cv.NORM_HAMMING,false);
+          const cibles = type==='querySubset' ? cles.filter(c=>refs.has(c)) : [...refs.keys()];
+          const out=[];
+          for(const rc of cibles){ const {score,good}=apparie(bf,qd,qk,refs.get(rc)); out.push({cle:rc,score,good}); }
+          bf.delete(); qd.delete(); out.sort((a,b)=>b.score-a.score);
+          postMessage({id, ok:true, out}); return;
+        }
+      }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); }
+    };
+  `);
+}
+
+// ─────────────────────────────── extraction du parsing OCR depuis index.html
+async function chargerParsing(){
+  const res = await fetch('index.html?nocache=' + Date.now(), {cache:'no-store'});
+  if(!res.ok) throw new Error('index.html introuvable');
+  const html = await res.text();
+  const a = html.indexOf('const LOOKALIKES =');
+  const b = html.indexOf('// Netteté : variance du laplacien');
+  if(a < 0 || b < 0) throw new Error('bloc de parsing introuvable');
+  const resolved = new Function('return `' + html.slice(a, b) + '`')();
+  if(!/function extractNumbers/.test(resolved)) throw new Error('extractNumbers absent');
+  return resolved;
+}
+
+// ─────────────────────────────── IndexedDB : index de référence + photos conservées
+function idb(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open(IDB, 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      if(!db.objectStoreNames.contains('refs')) db.createObjectStore('refs', {keyPath:'cle'});
+      if(!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', {keyPath:'k'});
+      if(!db.objectStoreNames.contains('photos')) db.createObjectStore('photos', {keyPath:'id', autoIncrement:true});
+    };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+async function idbAll(store){ const db = await idb();
+  return new Promise((res,rej)=>{ const q = db.transaction(store,'readonly').objectStore(store).getAll();
+    q.onsuccess = ()=> res(q.result||[]); q.onerror = ()=> rej(q.error); }); }
+async function idbGet(store,key){ const db = await idb();
+  return new Promise((res,rej)=>{ const q = db.transaction(store,'readonly').objectStore(store).get(key);
+    q.onsuccess = ()=> res(q.result||null); q.onerror = ()=> rej(q.error); }); }
+async function idbPut(store,val){ const db = await idb();
+  return new Promise((res,rej)=>{ const t = db.transaction(store,'readwrite'); t.objectStore(store).put(val);
+    t.oncomplete = ()=> res(); t.onerror = ()=> rej(t.error); }); }
+async function idbClear(store){ const db = await idb();
+  return new Promise((res,rej)=>{ const t = db.transaction(store,'readwrite'); t.objectStore(store).clear();
+    t.oncomplete = ()=> res(); t.onerror = ()=> rej(t.error); }); }
+
+// ─────────────────────────────── état
+let BASE = [];           // [{cle, numero, setId, localId, image, name, rarity, vec, hash}]
+let cleToCard = new Map();
+let pretIdentif = false;
+
+// ─────────────────────────────── chargement / indexation de l'index de référence
+async function chargerIndex(){
+  const sets = $('cfg-sets').value.split(',').map(s=>s.trim()).filter(Boolean);
+  if(!sets.length) return;
+  const sig = MODELE + '|' + [...sets].sort().join(',');
+  $('btn-charger').disabled = true;
+  $('prog').style.display = ''; $('prog-bar').style.width = '0';
+  const setBar = p => $('prog-bar').style.width = (p*100).toFixed(1) + '%';
+
+  try{
+    demarrerEmb(); demarrerOrb();
+    const metaSig = await idbGet('meta', 'sig');
+
+    if(metaSig && metaSig.v === sig){
+      // ── depuis le cache
+      $('idx-etat').textContent = 'Rechargement de l\'index depuis le cache…';
+      const rows = await idbAll('refs');
+      BASE = [];
+      let i = 0;
+      for(const r of rows){
+        BASE.push({ cle:r.cle, numero:r.numero, setId:r.setId, localId:r.localId,
+                    image:r.image, name:r.name, rarity:r.rarity,
+                    vec:new Float32Array(r.vec), hash:BigInt(r.hash) });
+        await orb.call({type:'refImport', cle:r.cle, bytes:new Uint8Array(r.orbBytes), rows:r.orbRows, kp:r.orbKp});
+        setBar(++i / rows.length);
+      }
+      $('idx-etat').textContent = `Index chargé (cache) — ${BASE.length} carte(s), ${sets.length} set(s).`;
+    } else {
+      // ── (re)construction
+      await idbClear('refs');
+      const cartes = [];
+      for(const id of sets){
+        $('idx-etat').textContent = 'Téléchargement du set ' + id + '…';
+        const d = await (await fetch('https://api.tcgdex.net/v2/fr/sets/' + id)).json();
+        for(const c of (d.cards || [])){
+          if(!c.image || !/^\d+$/.test(String(c.localId||''))) continue;
+          cartes.push({ cle:id+'-'+c.localId, numero:String(parseInt(c.localId,10)),
+                        setId:id, localId:c.localId, image:c.image, name:c.name || '' });
+        }
+      }
+      BASE = [];
+      for(let i = 0; i < cartes.length; i++){
+        if(!pretIdentif && i === 0) $('idx-etat').textContent = 'Indexation (1re inférence = téléchargement du modèle DINOv2, ~30 Mo)…';
+        else $('idx-etat').textContent = `Indexation ${i+1}/${cartes.length}…`;
+        const c = cartes[i];
+        let img;
+        try{ img = await chargerImage(c.image + '/high.webp'); }
+        catch(e){ setBar((i+1)/cartes.length); continue; }
+        const vec = (await embed(versDataUrl(img, ZONE_ILLUSTRATION))).v;
+        const hash = dHash(img);
+        const o = await orb.call({type:'ref', cle:c.cle, dataUrl:versDataUrl(img, null)});
+        // rareté : fiche détaillée (une par carte, mais on ne bloque pas dessus)
+        let rarity = '';
+        try{ rarity = (await (await fetch('https://api.tcgdex.net/v2/fr/cards/' + c.cle)).json()).rarity || ''; }catch(e){}
+        const entry = {...c, rarity, vec, hash};
+        BASE.push(entry);
+        await idbPut('refs', { cle:c.cle, numero:c.numero, setId:c.setId, localId:c.localId,
+          image:c.image, name:c.name, rarity, vec:Array.from(vec), hash:hash.toString(),
+          orbBytes:Array.from(o.bytes), orbRows:o.rows, orbKp:o.kp });
+        setBar((i+1)/cartes.length);
+        if(i % 5 === 0) await new Promise(r=>setTimeout(r)); // laisse respirer l'UI
+      }
+      await idbPut('meta', { k:'sig', v:sig });
+      $('idx-etat').textContent = `Index construit — ${BASE.length} carte(s), ${sets.length} set(s). Prochain chargement : instantané.`;
+    }
+
+    cleToCard = new Map(BASE.map(c => [c.cle, c]));
+    // OCR : optionnel, ne bloque pas le reste
+    try{ demarrerOcr(await chargerParsing()); }catch(e){ $('idx-etat').textContent += ' (OCR indisponible : ' + e.message + ')'; }
+    await getScanner();
+    pretIdentif = true;
+    $('prog').style.display = 'none';
+    $('p-scan').style.display = '';
+  }catch(err){
+    $('idx-etat').textContent = '⚠️ ' + err.message;
+    console.error(err);
+  }finally{
+    $('btn-charger').disabled = false;
+  }
+}
+
+// ─────────────────────────────── identification (chaîne fusionnée)
+async function identifier(carte){
+  const t0 = performance.now();
+  // 1. embedding → shortlist
+  const e = await embed(versDataUrl(carte, ZONE_ILLUSTRATION));
+  const parEmb = BASE.map(c => ({cle:c.cle, s:cosinus(e.v, c.vec)})).sort((a,b)=> b.s - a.s);
+  const court = parEmb.slice(0, SHORT).map(x => x.cle);
+  // 2. ORB reclasse la shortlist
+  let ranked = court, orbScores = {};
+  try{
+    const rr = await orb.call({type:'querySubset', dataUrl:versDataUrl(carte, null), cles:court});
+    ranked = rr.out.map(o => o.cle);
+    rr.out.forEach(o => orbScores[o.cle] = o.score);
+  }catch(err){ console.warn('ORB', err); }
+  // 3. OCR départage
+  let ocrCands = [], ocrTxt = '';
+  if(ocr){
+    try{ const r = await ocrLire(bandeBasse(carte)); ocrCands = r.cands || []; ocrTxt = r.text || ''; }catch(e){}
+  }
+  let pick = ranked[0];
+  if(ocrCands.length){
+    const nums = new Set(ocrCands.map(c => c.number));
+    const hit = ranked.slice(0, TIEBREAK).find(cle => nums.has(cleToCard.get(cle).numero));
+    if(hit) pick = hit;
+  }
+  const inl = orbScores[pick] || 0;
+  const second = ranked.find(c => c !== pick);
+  const marge = inl - (orbScores[second] || 0);
+  // confiance : ORB franc = sûr ; sinon on se rabat sur l'accord OCR ou l'embedding
+  const ocrOk = ocrCands.some(c => c.number === cleToCard.get(pick).numero);
+  let conf = 'lo';
+  if(inl >= 25 && marge >= 12) conf = 'ok';
+  else if((inl >= 12 && marge >= 5) || ocrOk) conf = 'mid';
+  return {
+    pick, inl, marge, ocrOk, ocrTxt, ms: Math.round(performance.now() - t0),
+    alts: ranked.slice(0, 8).map(cle => ({card: cleToCard.get(cle), inl: orbScores[cle] || 0})),
+    conf, embTop: parEmb[0].s
+  };
+}
+
+// ─────────────────────────────── flux caméra + détection live
+let stream = null, rafId = 0, detectBusy = false, dernierScore = 0, bonsFrames = 0, dernierCoins = null;
+
+async function ouvrirCamera(){
+  if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ $('avert-https').style.display = ''; return; }
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440} }, audio:false
+    });
+  }catch(e){ $('avert-https').style.display = ''; statut('Caméra refusée : ' + e.message); return; }
+  const v = $('video'); v.srcObject = stream; await v.play();
+  $('camwrap').style.display = ''; $('btn-capture').style.display = '';
+  $('btn-cam').style.display = 'none'; $('btn-stopcam').style.display = '';
+  boucleDetection();
+}
+function fermerCamera(){
+  cancelAnimationFrame(rafId);
+  if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
+  $('camwrap').style.display = 'none'; $('btn-capture').style.display = 'none';
+  $('btn-cam').style.display = ''; $('btn-stopcam').style.display = 'none';
+}
+async function boucleDetection(){
+  const v = $('video'), ov = $('overlay');
+  const loop = async () => {
+    if(!stream) return;
+    if(!detectBusy && v.videoWidth){
+      detectBusy = true;
+      const det = await detecter(v).catch(()=>null);
+      detectBusy = false;
+      ov.width = v.clientWidth; ov.height = v.clientHeight;
+      const ctx = ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
+      if(det){
+        dernierScore = det.score; dernierCoins = det.corners;
+        const k = det.corners, X = p => p[0]*ov.width, Y = p => p[1]*ov.height;
+        ctx.beginPath(); ctx.moveTo(X(k.tl),Y(k.tl)); ctx.lineTo(X(k.tr),Y(k.tr));
+        ctx.lineTo(X(k.br),Y(k.br)); ctx.lineTo(X(k.bl),Y(k.bl)); ctx.closePath();
+        const bon = det.score >= 0.55;
+        ctx.strokeStyle = bon ? '#4ec27e' : '#e0a12a'; ctx.lineWidth = 3; ctx.stroke();
+        $('hud-score').textContent = 'score ' + det.score.toFixed(2);
+        $('hud-hint').textContent = bon ? 'stabilise…' : 'ajuste le cadrage';
+        bonsFrames = bon ? bonsFrames + 1 : 0;
+        // Pas de recapture tant qu'un résultat est à l'écran (sinon la carte laissée en
+        // place déclenche en boucle).
+        if(bonsFrames >= 3 && !identifEnCours && $('p-res').style.display === 'none'){ bonsFrames = 0; capturer(); }
+      } else {
+        dernierScore = 0; dernierCoins = null; bonsFrames = 0;
+        $('hud-score').textContent = '—'; $('hud-hint').textContent = 'cherche une carte';
+      }
+    }
+    rafId = requestAnimationFrame(loop);
+  };
+  loop();
+}
+
+// ─────────────────────────────── capture + affichage résultat
+let identifEnCours = false, dernierResultat = null, dernierePhotoBlob = null;
+
+async function capturer(sourceExplicite){
+  if(identifEnCours || !pretIdentif) return;
+  identifEnCours = true;
+  statut('Analyse…');
+  try{
+    let source = sourceExplicite;
+    let coins = null;
+    if(!source){
+      const v = $('video');
+      const snap = document.createElement('canvas'); snap.width = v.videoWidth; snap.height = v.videoHeight;
+      snap.getContext('2d').drawImage(v, 0, 0);
+      source = snap; coins = dernierCoins;
+    }
+    // photo brute conservée (image telle que capturée, avant redressement)
+    dernierePhotoBlob = await new Promise(r => (source.toBlob ? source : versCanvas(source, null)).toBlob(r, 'image/jpeg', 0.9));
+
+    const rr = coins ? await redresserAvecCoins(source, coins) : await redresser(source);
+    if(rr.echec){ statut('⚠️ ' + rr.echec); identifEnCours = false; return; }
+
+    const r = await identifier(rr.carte);
+    dernierResultat = { ...r, carteRedressee: rr.carte };
+    afficherResultat(r);
+    statut(`Identifié en ${r.ms} ms.`);
+  }catch(err){ statut('⚠️ ' + err.message); console.error(err); }
+  identifEnCours = false;
+}
+
+function afficherResultat(r){
+  const c = cleToCard.get(r.pick);
+  $('p-res').style.display = '';
+  $('res-img').src = c.image + '/high.webp';
+  $('res-nom').textContent = c.name || '(sans nom)';
+  $('res-set').textContent = `${c.setId} · #${c.localId}${c.rarity ? ' · ' + c.rarity : ''}`;
+  $('res-detail').innerHTML = `ORB ${r.inl} inliers (marge +${r.marge}) · embedding ${r.embTop.toFixed(2)}`
+    + (r.ocrTxt ? ` · OCR « ${r.ocrTxt.replace(/[<>]/g,'').slice(0,40)} »${r.ocrOk ? ' ✓' : ''}` : '');
+  const badge = $('res-badge');
+  badge.textContent = r.conf === 'ok' ? 'confiance élevée' : r.conf === 'mid' ? 'à vérifier' : 'peu sûr';
+  badge.className = 'badge ' + (r.conf === 'ok' ? 'b-ok' : r.conf === 'mid' ? 'b-mid' : 'b-lo');
+  $('corr').style.display = 'none';
+  $('alts').innerHTML = r.alts.map(a =>
+    `<div class="alt" data-cle="${a.card.cle}"><img src="${a.card.image}/low.webp" loading="lazy">
+      #${a.card.localId} · ${a.inl}in</div>`).join('');
+  $('alts').querySelectorAll('.alt').forEach(el =>
+    el.onclick = () => confirmer(el.dataset.cle, true));
+  $('p-res').scrollIntoView({behavior:'smooth', block:'nearest'});
+}
+
+// ─────────────────────────────── confirmation + conservation
+async function confirmer(cle, corrige){
+  const c = cleToCard.get(cle);
+  if(!c){ statut('carte inconnue : ' + cle); return; }
+  const ts = Date.now().toString().slice(-8);
+  const nom = `PKMN-${c.setId}-${c.numero}-${ts}.jpg`;   // numéro sans zéros de tête, comme l'export de l'app
+  await idbPut('photos', {
+    nom, blob: dernierePhotoBlob, cle, setId:c.setId, localId:c.localId, name:c.name,
+    predit: dernierResultat ? dernierResultat.pick : null,
+    juste: dernierResultat ? (dernierResultat.pick === cle) : null,
+    inliers: dernierResultat ? dernierResultat.inl : null,
+    conf: dernierResultat ? dernierResultat.conf : null,
+    ocr: dernierResultat ? dernierResultat.ocrTxt : '',
+    at: new Date().toISOString()
+  });
+  await majCompte();
+  $('p-res').style.display = 'none';
+  statut(corrige && dernierResultat && dernierResultat.pick !== cle
+    ? `Corrigé → ${nom} conservée (prédiction ratée, notée).`
+    : `${nom} conservée.`);
+}
+
+async function majCompte(){
+  const rows = await idbAll('photos');
+  const justes = rows.filter(r => r.juste === true).length;
+  $('compte').textContent = `${rows.length} photo${rows.length>1?'s':''} conservée${rows.length>1?'s':''}`
+    + (rows.length ? ` · ${justes}/${rows.length} bien prédites` : '');
+}
+
+async function exporter(){
+  const rows = await idbAll('photos');
+  if(!rows.length){ statut('rien à exporter'); return; }
+  const mod = await import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm');
+  const JSZip = mod.default || mod;
+  const zip = new JSZip();
+  const manifeste = [];
+  for(const r of rows){
+    zip.file(r.nom, r.blob);
+    manifeste.push({ fichier:r.nom, cardId:r.cle, set:r.setId, numero:r.localId, nom:r.name,
+      predit:r.predit, juste:r.juste, inliers:r.inliers, confiance:r.conf, ocr:r.ocr, date:r.at });
+  }
+  zip.file('verite.json', JSON.stringify(manifeste, null, 2));
+  const blob = await zip.generateAsync({type:'blob'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `photos-reelles-${Date.now().toString().slice(-8)}.zip`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  statut(`${rows.length} photo(s) + verite.json exportées.`);
+}
+
+// ─────────────────────────────── câblage
+$('btn-charger').onclick = chargerIndex;
+$('btn-cam').onclick = ouvrirCamera;
+$('btn-stopcam').onclick = fermerCamera;
+$('btn-capture').onclick = () => capturer();
+$('btn-fichier').onclick = () => $('file').click();
+$('file').onchange = async e => {
+  const f = e.target.files[0]; if(!f) return;
+  const img = await chargerImage(URL.createObjectURL(f));
+  capturer(img);
+};
+$('btn-ok').onclick = () => { if(dernierResultat) confirmer(dernierResultat.pick, false); };
+$('btn-corr').onclick = () => { $('corr').style.display = $('corr').style.display === 'none' ? '' : 'none'; };
+$('btn-manuel').onclick = () => {
+  const m = $('manuel').value.trim().match(/^(\S+)[\s#]+(\d+)$/);
+  if(!m){ statut('format : "set n°", ex : sv03.5 25'); return; }
+  const cle = m[1] + '-' + m[2].replace(/^0+(?=\d)/, '');
+  const cle2 = m[1] + '-' + String(parseInt(m[2],10)).padStart(3,'0');
+  confirmer(cleToCard.has(cle) ? cle : cle2, true);
+};
+$('btn-export').onclick = exporter;
+$('btn-vider').onclick = async () => {
+  if(!confirm('Vider toutes les photos conservées ?')) return;
+  await idbClear('photos'); await majCompte(); statut('photos vidées.');
+};
+
+if(location.protocol === 'file:') $('avert-https').style.display = '';
+majCompte();
+
+// Poignée de test, localhost uniquement : permet de rejouer des photos du disque sans
+// passer par le sélecteur de fichier (utilisé pour valider la chaîne).
+if(location.hostname === 'localhost' || location.hostname === '127.0.0.1'){
+  window.__scanner = {
+    get BASE(){ return BASE; },
+    identifier, redresser, capturer, confirmer, exporter,
+    async rejouer(url){ const img = await chargerImage(url); const rr = await redresser(img);
+      if(rr.echec) return {echec:rr.echec}; return identifier(rr.carte); }
+  };
+}
+</script>
+</body>
+</html>
