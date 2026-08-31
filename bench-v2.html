@@ -104,6 +104,23 @@
 </div>
 
 <div class="panneau">
+  <h2>Banc de DÉTECTION — quand l'application voit-elle une carte ?</h2>
+  <p class="sub" style="margin:0 0 10px;">
+    Mesure l'étape d'AVANT l'identification : le détecteur trouve-t-il la carte, et avec
+    quel score ? C'est lui qui décide s'il se passe quelque chose. Des scènes sont
+    fabriquées à partir des illustrations de l'API — fond, échelle, inclinaison, décentrage,
+    bord coupé, lumière — avec la position réelle connue, donc l'erreur mesurable.
+  </p>
+  <div class="rang">
+    <button id="d-run" disabled>Passer le banc de détection</button>
+    <label>Cartes<input type="number" id="d-n" value="6" min="1" max="30"></label>
+    <button class="fantome" id="d-stop" disabled>■ Arrêter</button>
+    <span class="sub" id="d-etat"></span>
+  </div>
+  <div id="d-res" style="margin-top:12px;"></div>
+</div>
+
+<div class="panneau">
   <h2>Téléphone — scanner de vraies cartes</h2>
   <p class="sub" style="margin:0 0 10px;">
     La même chaîne que le corpus, mais alimentée par la caméra. Chaque carte lue attend ton
@@ -456,7 +473,7 @@ async function init(){
        + (corpus.length ? corpus.length + ' photos au corpus.'
                         : 'Corpus de photos absent (normal hors poste de développement) — caméra et catalogue disponibles.'));
 
-  for(const b of ['b-froid','b-froid-disque','b-reset','c-start','b-cat']) $(b).disabled = false;
+  for(const b of ['b-froid','b-froid-disque','b-reset','c-start','b-cat','d-run']) $(b).disabled = false;
   $('b-run').disabled = !corpus.length;
   if(!corpus.length) $('b-run').title = 'photos-test/ n\'est pas déployé (exclu du dépôt)';
   return info;
@@ -627,6 +644,181 @@ async function froid(opts){
   journal('caches vidés — mémoire' + (r.disque ? ' + IndexedDB (vrai démarrage à froid)' : ' seule'));
   etat('Caches ORB vidés.');
   return r;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// BANC DE DÉTECTION — l'étape d'avant, celle qui décide s'il se passe quelque chose.
+//
+// Le reste du banc mesure l'identification, en lui donnant une carte déjà trouvée et
+// redressée. Mais l'utilisateur ne se plaint pas de mauvaises identifications : il se
+// plaint de voir clairement sa carte à l'écran sans que rien ne parte. Le fautif est donc
+// en amont — soit le détecteur ne rend pas de quadrilatère, soit son score reste sous le
+// seuil de déclenchement. Ici on fabrique des scènes dont on connaît la position exacte de
+// la carte, et on regarde ce que le détecteur en dit.
+// ═════════════════════════════════════════════════════════════════════════════
+const SCENE_W = 1280, SCENE_H = 960;   // cadre 4:3, proche d'une image caméra
+
+// Fonds procéduraux. Faute de vraies photos de table, on varie ce qui compte pour un
+// détecteur de contours : le contraste avec la carte et la présence de structures qui
+// peuvent passer pour des bords.
+function fond(ctx, type){
+  const g = ctx;
+  if(type === 'sombre'){ g.fillStyle = '#1a1a1e'; g.fillRect(0,0,SCENE_W,SCENE_H); return; }
+  if(type === 'clair'){ g.fillStyle = '#e8e6e1'; g.fillRect(0,0,SCENE_W,SCENE_H); return; }
+  if(type === 'bois'){
+    const d = g.createLinearGradient(0,0,SCENE_W,SCENE_H);
+    d.addColorStop(0,'#6b4a2f'); d.addColorStop(1,'#8a6340');
+    g.fillStyle = d; g.fillRect(0,0,SCENE_W,SCENE_H);
+    g.strokeStyle = 'rgba(0,0,0,.13)'; g.lineWidth = 2;
+    for(let y=0; y<SCENE_H; y+=17){ g.beginPath(); g.moveTo(0,y); g.lineTo(SCENE_W,y+6); g.stroke(); }
+    return;
+  }
+  // « encombré » : d'autres cartes autour, le cas du tas qu'on dépouille
+  g.fillStyle = '#3a3a40'; g.fillRect(0,0,SCENE_W,SCENE_H);
+  g.fillStyle = '#55555e';
+  for(const [x,y] of [[-60,-40],[SCENE_W-180,-70],[-90,SCENE_H-200],[SCENE_W-140,SCENE_H-190]]){
+    g.fillRect(x, y, 300, 420);
+  }
+}
+
+// Compose une scène et renvoie {canvas, coins} — les coins VRAIS, en fractions 0-1.
+function composerScene(img, o){
+  const cv = document.createElement('canvas');
+  cv.width = SCENE_W; cv.height = SCENE_H;
+  const g = cv.getContext('2d');
+  fond(g, o.fond || 'bois');
+
+  const hCarte = SCENE_H * o.taille;                 // hauteur de la carte dans le cadre
+  const wCarte = hCarte / CARD_RATIO;
+  const cx = SCENE_W/2 + (o.dx || 0) * SCENE_W;
+  const cy = SCENE_H/2 + (o.dy || 0) * SCENE_H;
+  const rad = (o.rot || 0) * Math.PI/180;
+
+  g.save();
+  if(o.lumiere && o.lumiere !== 1) g.filter = 'brightness(' + o.lumiere + ')';
+  if(o.flou) g.filter = (g.filter === 'none' ? '' : g.filter + ' ') + 'blur(' + o.flou + 'px)';
+  g.translate(cx, cy); g.rotate(rad);
+  g.drawImage(img, -wCarte/2, -hCarte/2, wCarte, hCarte);
+  g.restore();
+
+  const coin = (sx, sy)=>{
+    const x = sx*wCarte/2, y = sy*hCarte/2;
+    return [ (cx + x*Math.cos(rad) - y*Math.sin(rad)) / SCENE_W,
+             (cy + x*Math.sin(rad) + y*Math.cos(rad)) / SCENE_H ];
+  };
+  return { canvas: cv, coins: { tl:coin(-1,-1), tr:coin(1,-1), br:coin(1,1), bl:coin(-1,1) } };
+}
+
+// Les conditions passées en revue. Chaque ligne isole UN facteur autour d'une scène de
+// référence, pour que l'effet mesuré soit attribuable.
+function conditionsDetection(){
+  const base = { taille:0.72, rot:0, dx:0, dy:0, fond:'bois', lumiere:1, flou:0 };
+  const L = [];
+  const add = (nom, patch)=> L.push({ nom, o:{...base, ...patch} });
+  add('référence', {});
+  for(const t of [0.95, 0.85, 0.55, 0.40, 0.30]) add('taille ' + t, {taille:t});
+  for(const r of [5, 12, 25, 45, 90])            add('inclinaison ' + r + '°', {rot:r});
+  for(const d of [0.12, 0.22, 0.32])             add('décentré ' + d, {dx:d, dy:d*0.5});
+  add('bord coupé (haut)', {taille:1.15, dy:-0.12});
+  add('bord coupé (côté)', {dx:0.30, taille:0.85});
+  for(const f of ['sombre','clair','encombré'])  add('fond ' + f, {fond:f});
+  for(const l of [0.55, 0.35, 1.5])              add('lumière ×' + l, {lumiere:l});
+  for(const b of [2, 5])                          add('flou ' + b + 'px', {flou:b});
+  add('petite + inclinée', {taille:0.45, rot:18});
+  add('sombre + inclinée', {fond:'sombre', rot:15, lumiere:0.6});
+  return L;
+}
+
+// Écart entre deux quadrilatères, INDÉPENDANT du nommage des coins. scanic étiquette les
+// siens par position dans l'IMAGE (le plus proche du coin haut-gauche de la photo) ; notre
+// vérité terrain les nomme par position sur la CARTE. Dès que la carte tourne, les deux
+// conventions divergent et une comparaison coin à coin mesurerait cette divergence plutôt
+// que l'erreur du détecteur — c'est ce qui donnait 0,55 d'« erreur » sur une carte à 90°
+// pourtant parfaitement localisée. On essaie donc les quatre rotations du quadrilatère et
+// son miroir, et on garde la meilleure correspondance.
+function ecartQuad(a, b){
+  const A = [a.tl, a.tr, a.br, a.bl], B = [b.tl, b.tr, b.br, b.bl];
+  let best = Infinity;
+  for(const miroir of [false, true]){
+    const Bm = miroir ? [B[0], B[3], B[2], B[1]] : B;
+    for(let k = 0; k < 4; k++){
+      let m = 0;
+      for(let i = 0; i < 4; i++){
+        const p = A[i], q = Bm[(i + k) % 4];
+        m = Math.max(m, Math.hypot(p[0]-q[0], p[1]-q[1]));
+      }
+      best = Math.min(best, m);
+    }
+  }
+  return best;
+}
+
+let arretDet = false;
+async function lancerDetection(nCartes){
+  if(!catalogue.length) catalogue = V2.catalogueV2();
+  arretDet = false;
+  $('d-run').disabled = true; $('d-stop').disabled = false;
+  const rnd = tirage(20260831);
+  const pool = catalogue.filter(c=>c.image);
+  const cartes = [];
+  for(let i=0; i<nCartes; i++) cartes.push(pool[Math.floor(rnd()*pool.length)]);
+
+  const conds = conditionsDetection();
+  const acc = new Map(conds.map(c=>[c.nom, []]));
+  let fait = 0, total = cartes.length * conds.length;
+
+  for(const c of cartes){
+    if(arretDet) break;
+    let img; try{ img = await chargerIllustration(c.image); }catch(e){ continue; }
+    for(const cond of conds){
+      if(arretDet) break;
+      const { canvas, coins } = composerScene(img, cond.o);
+      const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(canvas.width, canvas.height));
+      const bmp = await createImageBitmap(canvas, {
+        resizeWidth: Math.round(canvas.width*e0), resizeHeight: Math.round(canvas.height*e0), resizeQuality:'medium'
+      });
+      const d = await workerDetection().detecter(bmp);
+      const score = (d && d.ok && d.score != null) ? d.score : 0;
+      let err = null;
+      if(d && d.corners) err = ecartQuad(coins, d.corners);
+      acc.get(cond.nom).push({ score, err, trouve: !!(d && d.corners) });
+      fait++;
+      $('d-etat').textContent = fait + '/' + total + ' — ' + cond.nom;
+      await new Promise(r=>setTimeout(r, 0));
+    }
+  }
+  $('d-run').disabled = false; $('d-stop').disabled = true;
+  return rendreDetection(acc);
+}
+
+function rendreDetection(acc){
+  const med = (a)=>{ const b=a.slice().sort((x,y)=>x-y); return b.length ? b[Math.floor(b.length/2)] : null; };
+  const lignes = [...acc.entries()].map(([nom, v])=>{
+    if(!v.length) return null;
+    const scores = v.map(x=>x.score);
+    const errs = v.filter(x=>x.err != null).map(x=>x.err);
+    return {
+      nom, n: v.length,
+      scoreMed: +med(scores).toFixed(2),
+      scoreMin: +Math.min(...scores).toFixed(2),
+      // Les deux seuils qui décident vraiment : MIN_SCORE pour « il y a une carte »,
+      // 0,5 pour « on déclenche ».
+      pctVu: Math.round(100 * v.filter(x=>x.score >= MIN_SCORE).length / v.length),
+      pctDeclenche: Math.round(100 * v.filter(x=>x.score >= 0.5).length / v.length),
+      errMed: errs.length ? +med(errs).toFixed(3) : null,
+    };
+  }).filter(Boolean);
+
+  const cl = (p)=> p >= 90 ? 'ok' : (p >= 50 ? 'tiede' : 'ko');
+  $('d-res').innerHTML =
+    '<div class="defilant"><table><thead><tr><th>Condition</th><th>n</th><th>score méd.</th>'
+    + '<th>score min</th><th>vue (≥0,35)</th><th>déclenche (≥0,5)</th><th>err. coins</th></tr></thead><tbody>'
+    + lignes.map(l=> '<tr><td>' + l.nom + '</td><td>' + l.n + '</td><td>' + l.scoreMed + '</td><td>' + l.scoreMin
+      + '</td><td class="' + cl(l.pctVu) + '">' + l.pctVu + ' %</td><td class="' + cl(l.pctDeclenche) + '">'
+      + l.pctDeclenche + ' %</td><td>' + (l.errMed ?? '—') + '</td></tr>').join('')
+    + '</tbody></table></div>';
+  journal('détection : ' + lignes.length + ' conditions passées');
+  return lignes;
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -813,7 +1005,7 @@ function dessinerCadre(coins, couleur){
 //    bouge PAS — le desserrer ferait relire en boucle la carte qu'on tient encore.
 const PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const BOUGE_BASE = 0.049;          // = MAX_CORNER_SHIFT × 1,4 dans index.html
-let presentDepuis = 0, coinsCapture = null;
+let presentDepuis = 0, coinsCapture = null, rienDepuis = 0;
 
 async function tourner(){
   while(boucle){
@@ -831,13 +1023,20 @@ async function tourner(){
         dessinerCadre(null);
         streak = 0; presentDepuis = 0; dernierCoins = null;
         if(++absence >= 2) retiree = true;
-        $('c-indice').textContent = 'Vise la carte';
+        if(!rienDepuis) rienDepuis = Date.now();
+        // Rien vu depuis plusieurs secondes : d'après le banc de détection, la cause de
+        // loin la plus fréquente est une carte trop PETITE dans le cadre — pas mal visée.
+        // « Vise la carte » laissait chercher un problème de cadrage inexistant.
+        $('c-indice').textContent = (Date.now() - rienDepuis > 2500)
+          ? 'Rapproche la carte — elle doit remplir le cadre'
+          : 'Vise la carte';
         $('c-jauges').textContent = 'score ' + (d && d.score != null ? d.score.toFixed(2) : '—')
           + ' · aucune carte' + (retiree ? '' : ' · verrou actif');
       }else{
-        absence = 0;
+        absence = 0; rienDepuis = 0;
         if(!presentDepuis) presentDepuis = Date.now();
         const attente = Date.now() - presentDepuis;
+        const aire = airePart(d.corners);
 
         // Déplacement franc depuis la dernière capture = c'est une AUTRE carte, même si la
         // caméra n'a jamais vu de vide entre les deux (on fait glisser l'une, on pose
@@ -860,6 +1059,7 @@ async function tourner(){
 
         $('c-jauges').textContent =
           'score ' + d.score.toFixed(2) + '/' + seuilScore
+          + ' · cadre ' + Math.round(aire*100) + ' %' + (aire < AIRE_LIMITE ? ' ⚠ trop petite' : aire < AIRE_CONFORT ? ' (juste)' : '')
           + ' · bougé ' + bouge.toFixed(3) + '/' + (seuilBouge === Infinity ? '∞' : seuilBouge.toFixed(3))
           + ' · stable ' + streak + '/' + streakRequis
           + ' · ' + (retiree ? 'armé' : 'VERROU (carte déjà lue)')
@@ -870,6 +1070,7 @@ async function tourner(){
           await capturer('auto');
         }else{
           $('c-indice').textContent = !retiree ? '✓ lue — retire la carte ou déplace-la'
+            : aire < AIRE_LIMITE ? 'Rapproche la carte — elle est trop petite dans le cadre'
             : stable ? 'Prêt' : (attente >= PATIENCE.douce ? 'Tiens encore un instant…' : 'Stabilise…');
         }
       }
@@ -881,6 +1082,19 @@ function ecartCoins(a, b){
   let m = 0;
   for(const k of ['tl','tr','br','bl']) m = Math.max(m, Math.hypot(a[k][0]-b[k][0], a[k][1]-b[k][1]));
   return m;
+}
+
+// Part du cadre occupée par la carte (aire du quadrilatère, en fraction de l'image).
+// C'est LE facteur qui décide si le détecteur voit quelque chose — mesuré au banc de
+// détection : au-dessus de 0,15 il ne rate jamais rien, entre 0,08 et 0,15 il commence à
+// manquer une fois sur trois, en dessous de 0,05 il est aveugle. L'utilisateur, lui, voit
+// parfaitement sa carte : d'où « je la vois mais ça ne déclenche pas ».
+const AIRE_CONFORT = 0.15, AIRE_LIMITE = 0.08;
+function airePart(c){
+  const p = [c.tl, c.tr, c.br, c.bl];
+  let a = 0;
+  for(let i = 0; i < 4; i++){ const q = p[(i+1)%4]; a += p[i][0]*q[1] - q[0]*p[i][1]; }
+  return Math.abs(a) / 2;
 }
 
 async function capturer(mode){
@@ -1080,6 +1294,7 @@ window.BANC = {
   appareil: async ()=>({ batterie: await relireBatterie(), etalon: etalonCourant }),
   init, lancer, froid, cloturer, resume, passes: ()=>passes,
   preparer, catalogue: lancerCatalogue, echantillon: ()=>echantillon,
+  detection: lancerDetection,
   reinit, resultats: ()=>({ resume: resume(), detail: resultats }),
   config: (patch)=>{
     const r = V2.reglagesV2(patch);
@@ -1115,6 +1330,8 @@ $('b-reset').onclick = reinit;
 $('b-froid').onclick = ()=> froid({});
 $('b-froid-disque').onclick = ()=> froid({disque:true});
 
+$('d-run').onclick = ()=> lancerDetection(+$('d-n').value || 6);
+$('d-stop').onclick = ()=>{ arretDet = true; };
 $('c-start').onclick = ()=> ouvrirCamera();
 $('c-stop').onclick = fermerCamera;
 $('c-zoom-moins').onclick = ()=> appliquerZoom((zoomCourant ?? 1) - (capsZoom && capsZoom.step ? Math.max(capsZoom.step, (capsZoom.max-capsZoom.min)/20) : 0.1), true);

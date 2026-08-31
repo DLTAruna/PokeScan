@@ -314,6 +314,37 @@ Faire relire 19 cartes pour en sauver 6, en réintroduisant la devinette que `IN
 avait justement supprimée, n'en vaut pas la peine. `res.embPremier` reste exposé pour
 pouvoir refaire la mesure.
 
+### Banc de DÉTECTION — « je vois la carte mais ça ne déclenche pas » (V.9)
+
+`BANC.detection(10)` fabrique 260 scènes à partir des illustrations de l'API (fond,
+échelle, inclinaison, décentrage, bord coupé, lumière, flou) avec la position vraie connue,
+et mesure ce que le détecteur scanic en dit. **Verdict : un seul facteur compte, la TAILLE
+de la carte dans le cadre.**
+
+| taille (hauteur/cadre) | aire | vue (≥0,35) | déclenche (≥0,5) |
+|---|---|---|---|
+| 0,85–0,95 | 0,33-0,40 | 100 % | 100 % |
+| 0,72 (référence) | 0,278 | 100 % | 100 % |
+| 0,55 | 0,16 | 100 % | 90 % |
+| **0,40** | **0,086** | **60 %** | **60 %** |
+| **0,30** | **0,048** | **10 %** | **10 %** |
+
+**Tout le reste est indifférent** : lumière ×0,35 à ×1,5 → 100 % ; flou jusqu'à 5 px →
+100 % ; inclinaison jusqu'à 90° → 100 % ; décentrage jusqu'à 0,22 → 100 %. Fonds sombre ou
+encombré : 90 %.
+
+**C'est l'explication de la frustration** — l'utilisateur voit parfaitement sa carte à
+l'écran, mais si elle n'occupe que 8 % de l'image le détecteur est aveugle une fois sur
+deux. **Et cela relie le problème d'objectif** : un ultra grand-angle à 0,6× fait passer une
+carte de 28 % à ~10 % du cadre, c'est-à-dire du confort à la zone de panne. **Régler le zoom
+sur l'objectif principal est donc la première chose à faire**, avant tout réglage de seuil.
+
+Conséquences posées dans le code (`AIRE_LIMITE_V2 = 0.08`, `AIRE_CONFORT_V2 = 0.15`, calées
+sur ces mesures) : l'indice dit « Rapproche la carte — elle doit remplir le cadre » quand
+rien n'est vu depuis 2,5 s, et « elle est trop petite dans le cadre » quand elle est vue
+mais sous le seuil. Avant, « Vise la carte » envoyait corriger un cadrage qui n'était pas en
+cause. Le banc affiche la part du cadre en direct (`cadre 27 %`).
+
 ### Optimisation des paramètres : rien à changer, et c'est un résultat
 
 - **`SHORT = 18` confirmé.** À 30 : justesse identique (21/25 dans les deux cas) pour

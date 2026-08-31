@@ -5730,7 +5730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 8;
+const VERSION_APP = 9;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9928,6 +9928,23 @@ const V2_PATIENCE_DOUCE = 1200;    // au-delà : tolérance au mouvement ×3, sc
 const V2_PATIENCE_FRANCHE = 2500;  // au-delà : une seule image suffit, quel que soit le bougé
 let v2PresentDepuis = 0;
 
+// TAILLE DE LA CARTE DANS LE CADRE — le facteur dominant, et de très loin.
+// Banc de détection (260 scènes construites à partir des illustrations de l'API, position
+// vraie connue) : au-dessus de 15 % de l'image le détecteur ne rate jamais rien ; vers 8 %
+// il en manque quatre sur dix ; à 5 % il est aveugle neuf fois sur dix. Ni la lumière
+// (×0,35 à ×1,5), ni le flou (jusqu'à 5 px), ni l'inclinaison (jusqu'à 90°) ne le gênent —
+// seule la taille compte. Et l'utilisateur, lui, voit parfaitement sa carte : d'où « je la
+// vois clairement mais ça ne déclenche pas ». Un ultra grand-angle à 0,6× suffit à faire
+// passer une carte de 28 % à 10 % du cadre, soit du confort à la zone de panne.
+const AIRE_CONFORT_V2 = 0.15, AIRE_LIMITE_V2 = 0.08;
+function airePartCarte(c){
+  const p = [c.tl, c.tr, c.br, c.bl];
+  let a = 0;
+  for(let i = 0; i < 4; i++){ const q = p[(i+1)%4]; a += p[i][0]*q[1] - q[0]*p[i][1]; }
+  return Math.abs(a) / 2;
+}
+let v2RienDepuis = 0;
+
 // Tolère un score de détection isolé, ponctuellement sous MIN_SCORE (occlusion
 // passagère, reflet, main qui repositionne la carte un instant), sans repartir de zéro
 // sur la comparaison de stabilité. Avant ce compteur, UN SEUL raté suffisait à effacer
@@ -11142,7 +11159,15 @@ async function detectLoop(){
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
-      setAimHint(indiceVisee('Vise la carte'), conseilActif);
+      // Rien vu depuis plusieurs secondes. Le banc de détection est formel : la cause de
+      // très loin la plus fréquente est une carte TROP PETITE dans le cadre (voir
+      // AIRE_LIMITE_V2). « Vise la carte » envoyait corriger un cadrage qui n'était pas en
+      // cause, pendant que l'utilisateur voyait parfaitement sa carte à l'écran.
+      if(!v2RienDepuis) v2RienDepuis = Date.now();
+      const trop = (window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2())
+                   && Date.now() - v2RienDepuis > 2500;
+      setAimHint(trop ? 'Rapproche la carte — elle doit remplir le cadre'
+                      : indiceVisee('Vise la carte'), trop ? true : conseilActif);
       // Un raté isolé (reflet, main qui repositionne la carte un instant) ne doit pas
       // effacer la progression déjà accumulée — seul un décrochage SOUTENU signifie
       // vraiment que la carte est sortie du champ. Avant ce compteur, un seul coup dur
@@ -11178,6 +11203,7 @@ async function detectLoop(){
       absenceStreak = 0;
       absenceDepuis = 0;
       v2AbsenceStreak = 0;
+      v2RienDepuis = 0;
       // Une carte EST là : si elle reste floue, c'est le moment de soupçonner l'objectif.
       surveillerNettete();
       setOverlayTarget('lecture', d.corners);
@@ -11248,7 +11274,9 @@ async function detectLoop(){
             lastReadAttemptAt = now;
             attemptRead(d.corners, d.score);
           }else{
-            setAimHint(d.score < seuilScore ? 'Approche la carte'
+            const aireV2 = airePartCarte(d.corners);
+            setAimHint(aireV2 < AIRE_LIMITE_V2 ? 'Rapproche la carte — elle est trop petite dans le cadre'
+                       : d.score < seuilScore ? 'Approche la carte'
                        : stable ? 'Prêt'
                        : tenue >= V2_PATIENCE_DOUCE ? 'Tiens encore un instant…' : 'Stabilise', conseilActif);
           }
