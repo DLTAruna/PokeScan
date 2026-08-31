@@ -74,6 +74,8 @@
     Le premier appareil qui ouvre une collection construit l'index une fois (~5 min) puis
     le <b>partage automatiquement</b>. Tous les suivants le récupèrent en quelques secondes.
     Rien à installer.
+    <button class="ghost" id="btn-lot" style="font-size:11px; padding:4px 8px; margin-left:6px;">⚙️ Construire tous les packs</button>
+    <span style="font-size:10.5px;">— lance la génération pour tout le catalogue (long ; laisse l'onglet ouvert, ça reprend où ça s'arrête).</span>
   </p>
 </div>
 
@@ -582,6 +584,47 @@ async function partagerPack(){
     if(r.ok){ const j = await r.json();
       statut(`Index partagé (${(p.bytes.length/1e6).toFixed(1)} Mo)` + (j.existait ? ' — déjà présent' : ' — les prochains scans seront instantanés') + '.'); }
   }catch(e){ /* pas grave */ }
+}
+
+// Construction en lot de TOUS les packs manquants. À lancer une fois (onglet laissé
+// ouvert) : pour chaque set du catalogue sans pack, construit l'index et l'envoie. Reprend
+// où il s'était arrêté (progression en localStorage) si l'onglet est fermé.
+let lotEnCours = false;
+async function construireTousLesPacks(){
+  if(lotEnCours){ lotEnCours = false; statut('Arrêt du lot demandé…'); return; }
+  lotEnCours = true;
+  $('btn-lot').textContent = '■ Arrêter le lot';
+  try{
+    const series = await (await fetch('https://api.tcgdex.net/v2/fr/series')).json();
+    const setIds = [];
+    for(const s of series){
+      try{ const d = await (await fetch('https://api.tcgdex.net/v2/fr/series/' + s.id)).json();
+        for(const st of (d.sets||[])) setIds.push(st.id); }catch(e){}
+    }
+    let faits; try{ faits = new Set(JSON.parse(localStorage.getItem('packs_faits')||'[]')); }catch(e){ faits = new Set(); }
+    let n = 0, total = setIds.length;
+    for(const id of setIds){
+      if(!lotEnCours) break;
+      n++;
+      if(faits.has(id)){ continue; }
+      // déjà un pack en ligne ?
+      try{ if((await fetch('/api/pack?set=' + encodeURIComponent(nomPack(id)), {method:'HEAD'})).ok){
+        faits.add(id); localStorage.setItem('packs_faits', JSON.stringify([...faits])); continue; } }catch(e){}
+      statut(`Lot ${n}/${total} — construction de ${id}…`);
+      $('cfg-sets').value = id;
+      await idbPut('meta', { k:'sig', v:'__force__' });   // force la reconstruction
+      try{
+        await chargerIndex();
+        // chargerIndex a construit + appelé partagerPack() ; on attend un peu que l'envoi passe
+        await new Promise(r=>setTimeout(r, 1500));
+        faits.add(id); localStorage.setItem('packs_faits', JSON.stringify([...faits]));
+      }catch(e){ statut(`Lot : ${id} a échoué (${e.message}), on continue.`); }
+      await new Promise(r=>setTimeout(r, 500));
+    }
+    statut(lotEnCours ? `Lot terminé — ${faits.size} pack(s) au total.` : 'Lot arrêté.');
+  }catch(e){ statut('Lot : ' + e.message); }
+  lotEnCours = false;
+  $('btn-lot').textContent = '⚙️ Construire tous les packs';
 }
 
 // Téléchargement manuel du .pack — pour committer un pack statique (chemin CDN le plus
@@ -1228,6 +1271,7 @@ async function exporter(){
 
 // ─────────────────────────────── câblage
 $('btn-charger').onclick = chargerIndex;
+$('btn-lot').onclick = construireTousLesPacks;
 $('btn-cam').onclick = ouvrirCamera;
 $('btn-stopcam').onclick = fermerCamera;
 $('btn-capture').onclick = () => capturer(null, true);
