@@ -14,8 +14,10 @@ n°1 des scanners.
 
 Commits en français, style sobre/littéraire. Terminer par
 `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>`. Git user « Nikos ».
-**Le `git push` est souvent bloqué pour Claude par le classificateur — c'est Nikos qui
-pousse.** Claude commite en local, liste les commits à pousser, Nikos fait `git push`.
+**Claude commite ET pousse lui-même** (autorisation donnée par Nikos le 2026-08-31 ; la
+consigne antérieure « c'est Nikos qui pousse » ne vaut plus). Chaque push part en
+déploiement Vercel automatique — donc pousser du travail vérifié, et dire ce qui ne l'est
+pas encore.
 
 ## Où on en est (2026-08-31, nuit — commit `d336e61`)
 
