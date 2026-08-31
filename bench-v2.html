@@ -127,6 +127,19 @@
       <video id="c-video" playsinline muted style="width:100%; border-radius:8px; background:#000; display:block;"></video>
       <canvas id="c-overlay" style="position:absolute; inset:0; width:100%; height:100%; pointer-events:none;"></canvas>
     </div>
+    <!-- Objectif. Sur les téléphones multi-objectifs le navigateur n'expose qu'UNE caméra
+         arrière logique, et son « zoom 1 » n'a aucune sémantique garantie : relevé sur
+         Samsung, il correspond à l'ULTRA GRAND-ANGLE 0,6× (voir le même constat dans
+         index.html). On ne devine donc pas — on donne la commande et on retient le choix,
+         dans la même clé que l'application pour qu'un réglage trouvé une fois serve aux
+         deux. -->
+    <div class="rang" id="c-objectif" style="margin-top:10px; display:none; align-items:center;">
+      <button class="fantome" id="c-zoom-moins">−</button>
+      <button class="fantome" id="c-zoom-val" title="Remettre au minimum de l'appareil">1,0×</button>
+      <button class="fantome" id="c-zoom-plus">+</button>
+      <button class="fantome" id="c-lentille" style="display:none;">Changer d'objectif</button>
+      <span class="sub" id="c-zoom-info"></span>
+    </div>
     <div id="c-indice" class="sub" style="margin-top:8px;">—</div>
   </div>
   <div id="c-verdict" style="display:none; margin-top:12px; border-top:1px solid var(--bord); padding-top:12px;"></div>
@@ -679,20 +692,88 @@ async function etalon(){
 //    mesurer CE déclenchement-là, pas un plus commode.
 let flux = null, boucle = false, dernierCoins = null, streak = 0, absence = 0, retiree = true, occupeCam = false;
 
-async function ouvrirCamera(){
+// Objectif : mêmes constats que l'application (index.html, « CORRIGER SUR CONSTAT, PAS SUR
+// SUPPOSITION »). On ne force JAMAIS une valeur de zoom au démarrage tant que l'utilisateur
+// n'en a pas choisi une : sur Samsung, imposer zoom:1 ouvre l'ultra grand-angle, qui est à
+// focus fixe et ne peut pas être net sur une carte tenue de près.
+const CLE_ZOOM = 'pokescanZoomPref';   // volontairement la MÊME clé que l'application
+let pisteVideo = null, capsZoom = null, zoomCourant = null, camerasArriere = [], camIndex = 0;
+
+function majZoomUI(){
+  const bloc = $('c-objectif');
+  if(!capsZoom){ bloc.style.display = camerasArriere.length > 1 ? 'flex' : 'none';
+                 $('c-lentille').style.display = camerasArriere.length > 1 ? '' : 'none'; return; }
+  bloc.style.display = 'flex';
+  $('c-zoom-val').textContent = (zoomCourant ?? capsZoom.min).toFixed(1).replace('.', ',') + '×';
+  $('c-zoom-info').textContent = 'plage ' + capsZoom.min + '–' + capsZoom.max
+    + (localStorage.getItem(CLE_ZOOM) ? ' · réglage mémorisé' : ' · non réglé');
+  $('c-lentille').style.display = camerasArriere.length > 1 ? '' : 'none';
+}
+async function appliquerZoom(z, memoriser){
+  if(!pisteVideo || !capsZoom) return;
+  const pas = capsZoom.step || 0.1;
+  z = Math.min(capsZoom.max, Math.max(capsZoom.min, Math.round(z / pas) * pas));
+  try{ await pisteVideo.applyConstraints({advanced:[{zoom:z}]}); zoomCourant = z;
+       if(memoriser) localStorage.setItem(CLE_ZOOM, String(z));
+       journal('zoom → ' + z); }
+  catch(e){ journal('zoom refusé (' + e.message + ')'); }
+  majZoomUI();
+}
+
+async function ouvrirCamera(deviceId){
   if(flux) return;
-  try{
-    flux = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: {ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false
-    });
-  }catch(e){ etat('Caméra refusée : ' + e.message); return; }
+  const contraintes = {
+    video: {
+      ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:{ideal:'environment'}}),
+      width:{ideal:1920}, height:{ideal:1440},
+      advanced: [{focusMode:'continuous'}],
+    }, audio:false
+  };
+  try{ flux = await navigator.mediaDevices.getUserMedia(contraintes); }
+  catch(e){ etat('Caméra refusée : ' + e.message); return; }
+
   const v = $('c-video');
   v.srcObject = flux; await v.play().catch(()=>{});
+  pisteVideo = flux.getVideoTracks()[0];
+  const caps = pisteVideo.getCapabilities ? pisteVideo.getCapabilities() : {};
+  capsZoom = caps.zoom || null;
+  zoomCourant = (pisteVideo.getSettings && pisteVideo.getSettings().zoom) ?? (capsZoom && capsZoom.min);
+
+  // Les objectifs ne sont énumérables qu'une fois l'autorisation accordée (avant, les
+  // libellés sont vides). Sur beaucoup d'appareils l'OS n'en expose qu'un seul, fusionné.
+  try{
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    camerasArriere = devs.filter(d => d.kind === 'videoinput' && !/front|avant|user/i.test(d.label || ''));
+  }catch(e){ camerasArriere = []; }
+
+  // Réglage mémorisé : celui que l'utilisateur a lui-même trouvé net sur SON appareil.
+  const pref = parseFloat(localStorage.getItem(CLE_ZOOM));
+  if(Number.isFinite(pref) && capsZoom) await appliquerZoom(pref, false);
+  majZoomUI();
+
+  journal('caméra ouverte — ' + v.videoWidth + '×' + v.videoHeight
+    + ' · zoom ' + (capsZoom ? JSON.stringify(capsZoom) + ' actuel=' + zoomCourant : 'non réglable')
+    + ' · objectifs arrière ' + camerasArriere.length
+    + ' · focus ' + JSON.stringify(caps.focusMode || 'inconnu'));
+
   $('c-zone').style.display = '';
   $('c-stop').disabled = false; $('c-shoot').disabled = false; $('c-start').disabled = true;
   await relireBatterie(); if(!etalonCourant) await etalon(); else decrireAppareil();
   boucle = true; tourner();
-  journal('caméra ouverte — ' + v.videoWidth + '×' + v.videoHeight);
+}
+
+// Bascule vers l'objectif arrière suivant — un vrai changement d'appareil, pas un zoom
+// numérique. N'a d'effet que si l'appareil en expose plusieurs.
+async function objectifSuivant(){
+  if(camerasArriere.length < 2) return;
+  camIndex = (camIndex + 1) % camerasArriere.length;
+  const cible = camerasArriere[camIndex];
+  boucle = false;
+  if(flux){ flux.getTracks().forEach(t=>t.stop()); flux = null; }
+  await new Promise(r=>setTimeout(r, 250));   // Android relâche le capteur en différé
+  $('c-start').disabled = false;
+  await ouvrirCamera(cible.deviceId);
+  journal('objectif → ' + (cible.label || cible.deviceId.slice(0,8)));
 }
 function fermerCamera(){
   boucle = false;
@@ -780,8 +861,9 @@ async function capturer(mode){
     scansCam.push(scan);
     await banqueEcrire(scan);
     retiree = false;
-    montrerVerdict(scan);
+    rendreEnAttente();
     rendreCamera();
+    $('c-indice').textContent = '✓ ' + (scan.nom || scan.trouve || '?') + ' — carte suivante';
   }catch(e){ journal('capture : ' + e.message); }
   finally{ occupeCam = false; }
 }
@@ -815,42 +897,63 @@ async function redresserVideo(v){
   return rot;
 }
 
-// ── Verdict. Il reste à l'écran tant qu'on n'a pas tranché, mais ne bloque PAS la caméra :
-//    on peut enchaîner et revenir corriger — sinon on ne mesure plus la cadence réelle.
-function montrerVerdict(scan){
+// ── Verdicts EN ATTENTE, sous forme de file.
+//
+//    Première version : une carte à la fois, remplacée par la suivante. Elle obligeait à
+//    trancher entre deux scans — donc à ne pas enchaîner, ou à perdre les verdicts des
+//    cartes déjà passées. Or c'est l'enchaînement qu'on veut mesurer : dépouiller un tas,
+//    c'est justement ne pas s'arrêter. Chaque scan attend donc son tour dans une file, et
+//    se juge quand on veut : entre deux cartes, ou tout à la fin.
+function rendreEnAttente(){
   const z = $('c-verdict');
+  const attente = scansCam.filter(s=>!s.verifie && s.juste === null && !s.passe);
+  if(!attente.length){ z.style.display = 'none'; z.innerHTML = ''; return; }
   z.style.display = '';
-  const alts = (scan.alts || []).map((a, i)=>
-    '<button class="fantome" data-alt="' + i + '" style="padding:4px 8px; font-size:12px;">'
-    + a.localId + ' · ' + (a.name || '') + ' (' + a.inliers + ')</button>').join(' ');
   z.innerHTML =
-    '<div style="display:flex; gap:12px; align-items:flex-start; flex-wrap:wrap;">'
-    + '<img src="' + scan.photo + '" style="width:88px; border-radius:6px;">'
-    + '<div style="flex:1; min-width:220px;">'
-    + '<div style="font-weight:600;">' + (scan.nom || '—') + ' <span class="sub">' + (scan.trouve || '') + '</span></div>'
-    + '<div class="sub">' + scan.categorie + ' · ' + scan.fiabilite + ' % · ' + scan.inliers + ' inliers · ' + scan.ms + ' ms</div>'
-    + '<div style="margin-top:8px; display:flex; gap:8px; flex-wrap:wrap;">'
-    + '<button data-v="oui">✓ C\'est la bonne</button>'
-    + '<button class="fantome" data-v="non">✕ Fausse</button>'
-    + '<button class="fantome" data-v="passer">Passer</button>'
-    + '</div>'
-    + (alts ? '<div class="sub" style="margin-top:8px;">Ou la vraie carte : ' + alts + '</div>' : '')
-    + '</div></div>';
+    '<div class="sub" style="margin-bottom:8px;">' + attente.length + ' carte'
+    + (attente.length > 1 ? 's' : '') + ' à juger — tu peux continuer à scanner et y revenir.'
+    + ' <button class="fantome" id="c-tout-bon" style="padding:3px 9px; font-size:12px;">✓ Toutes bonnes</button></div>'
+    + attente.map(s=>{
+      // La carte trouvée est en tête des alternatives (c'est le classement ORB) : l'offrir
+      // ici ferait dire « fausse, et la bonne est la même ». On ne propose que les AUTRES.
+      const alts = (s.alts || []).map((a, i)=>({a, i})).filter(o=>o.a.cle !== s.trouve).slice(0,5)
+        .map(({a, i})=>
+          '<button class="fantome" data-id="' + s.id + '" data-alt="' + i + '" style="padding:3px 7px; font-size:11.5px;">'
+          + a.localId + ' (' + a.inliers + ')</button>').join(' ');
+      return '<div style="display:flex; gap:10px; align-items:flex-start; padding:8px 0; border-top:1px solid var(--bord);">'
+        + '<img src="' + s.photo + '" style="width:62px; border-radius:5px; flex:0 0 auto;">'
+        + '<div style="flex:1; min-width:200px;">'
+        + '<div style="font-weight:600; font-size:13px;">' + (s.nom || '—')
+        + ' <span class="sub">' + (s.trouve || '') + ' · ' + s.categorie + ' · ' + s.inliers + ' inl</span></div>'
+        + '<div style="margin-top:6px; display:flex; gap:6px; flex-wrap:wrap;">'
+        + '<button data-id="' + s.id + '" data-v="oui" style="padding:4px 10px; font-size:12px;">✓ Bonne</button>'
+        + '<button class="fantome" data-id="' + s.id + '" data-v="non" style="padding:4px 10px; font-size:12px;">✕ Fausse</button>'
+        + '<button class="fantome" data-id="' + s.id + '" data-v="passer" style="padding:4px 10px; font-size:12px;">Passer</button>'
+        + (alts ? ' <span class="sub" style="align-self:center;">vraie :</span> ' + alts : '')
+        + '</div></div></div>';
+    }).join('');
 
-  const clore = async (juste, corrige)=>{
-    scan.juste = juste; scan.verifie = juste !== null; scan.corrige = corrige || null;
-    await banqueEcrire(scan);
-    z.style.display = 'none';
-    rendreCamera();
+  const clore = async (id, juste, corrige)=>{
+    const s = scansCam.find(x=>x.id === id);
+    if(!s) return;
+    if(juste === null) s.passe = true;             // écarté sans jugement : ne fausse aucun taux
+    else { s.juste = juste; s.verifie = true; s.corrige = corrige || null; }
+    await banqueEcrire(s);
+    rendreEnAttente(); rendreCamera();
   };
   z.querySelectorAll('[data-v]').forEach(b=> b.onclick = ()=>{
     const v = b.dataset.v;
-    clore(v === 'oui' ? true : (v === 'non' ? false : null));
+    clore(b.dataset.id, v === 'oui' ? true : (v === 'non' ? false : null));
   });
   z.querySelectorAll('[data-alt]').forEach(b=> b.onclick = ()=>{
-    const a = scan.alts[+b.dataset.alt];
-    clore(false, a && a.cle);
+    const s = scansCam.find(x=>x.id === b.dataset.id);
+    clore(b.dataset.id, false, s && s.alts[+b.dataset.alt] && s.alts[+b.dataset.alt].cle);
   });
+  const tout = $('c-tout-bon');
+  if(tout) tout.onclick = async ()=>{
+    for(const s of attente){ s.juste = true; s.verifie = true; await banqueEcrire(s); }
+    rendreEnAttente(); rendreCamera();
+  };
 }
 
 function rendreCamera(){
@@ -918,6 +1021,8 @@ function exporter(){
 //    qu'aucun appel ne dépasse le délai d'attente d'un outil, et sans dépendre des clics.
 window.BANC = {
   camera: ouvrirCamera, fermer: fermerCamera, capturer: ()=>capturer('manuel'),
+  zoom: (z)=> z == null ? {caps:capsZoom, courant:zoomCourant, memorise:localStorage.getItem(CLE_ZOOM)} : appliquerZoom(z, true),
+  objectifSuivant, objectifs: ()=>camerasArriere.map(d=>({id:d.deviceId.slice(0,8), label:d.label})),
   etalon, envoyer, exporter,
   scans: ()=>scansCam,
   viderScans: async ()=>{ await banqueVider(); scansCam = []; rendreCamera(); return 'vidé'; },
@@ -959,8 +1064,12 @@ $('b-reset').onclick = reinit;
 $('b-froid').onclick = ()=> froid({});
 $('b-froid-disque').onclick = ()=> froid({disque:true});
 
-$('c-start').onclick = ouvrirCamera;
+$('c-start').onclick = ()=> ouvrirCamera();
 $('c-stop').onclick = fermerCamera;
+$('c-zoom-moins').onclick = ()=> appliquerZoom((zoomCourant ?? 1) - (capsZoom && capsZoom.step ? Math.max(capsZoom.step, (capsZoom.max-capsZoom.min)/20) : 0.1), true);
+$('c-zoom-plus').onclick  = ()=> appliquerZoom((zoomCourant ?? 1) + (capsZoom && capsZoom.step ? Math.max(capsZoom.step, (capsZoom.max-capsZoom.min)/20) : 0.1), true);
+$('c-zoom-val').onclick = ()=>{ localStorage.removeItem(CLE_ZOOM); if(capsZoom) appliquerZoom(capsZoom.min, false); };
+$('c-lentille').onclick = objectifSuivant;
 $('c-shoot').onclick = ()=> capturer('manuel');
 $('c-etalon').onclick = ()=> etalon();
 $('c-envoyer').onclick = ()=> envoyer();
@@ -974,7 +1083,7 @@ $('c-vider').onclick = async ()=>{
 // en main, et un rechargement accidentel ne doit pas effacer une demi-heure de verdicts.
 (async ()=>{
   scansCam = (await banqueTout()).sort((a,b)=> a.at < b.at ? -1 : 1);
-  rendreCamera();
+  rendreCamera(); rendreEnAttente();
   await relireBatterie(); decrireAppareil();
   if(scansCam.length) journal('historique repris : ' + scansCam.length + ' scans caméra');
 })();
