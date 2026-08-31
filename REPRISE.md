@@ -183,6 +183,13 @@ redressées comme le fait l'application. `photos-test/liste.json` porte la véri
 — ajouter une photo demande d'ajouter sa ligne, le banc ne devine pas le contenu du
 dossier.
 
+**⚠️ `photos-test/` est exclu du dépôt** (`.gitignore` : photos personnelles et
+volumineuses) — le corpus n'existe donc QUE sur le poste de Nikos, jamais sur le site
+déployé. Son bouton s'y désactive tout seul ; **caméra et catalogue n'en dépendent pas** et
+restent disponibles partout. `photos-test/liste.json` (la vérité terrain) est dans le même
+cas : local uniquement, à recréer si le dépôt est recloné — le mappage est trivial,
+`PKMN-151-<n°>` → `sv03.5-<n°>`.
+
 **Passe de référence (réglages d'usine) : 25/31 justes, 23/24 des « sûres ».** Ces
 chiffres viennent de l'application elle-même : si le banc en donne d'autres à réglages
 égaux, c'est SON redressement qui a dérivé (le seul bloc qu'il duplique), pas la chaîne.
