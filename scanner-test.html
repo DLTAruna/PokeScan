@@ -26,11 +26,13 @@
   button.big{width:100%; padding:14px; font-size:15px; margin-top:8px;}
   button:disabled{opacity:.45; cursor:default;}
   .rangee{display:flex; gap:8px; flex-wrap:wrap; align-items:flex-end;}
-  #camwrap{position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:3/4; margin-bottom:10px;}
-  #video{width:100%; height:100%; object-fit:cover; display:block; background:#000;}
-  #overlay{position:absolute; inset:0; width:100%; height:100%; pointer-events:none;}
+  /* Le flux et l'overlay sont TOUS DEUX en object-fit:contain, tampon du canvas = dimensions
+     vidéo natives : le cadre dessiné se superpose alors pile sur la carte, sans décalage. */
+  #camwrap{position:relative; background:#000; border-radius:12px; overflow:hidden; margin-bottom:10px; display:flex; justify-content:center;}
+  #video{width:100%; max-height:72vh; object-fit:contain; display:block; background:#000;}
+  #overlay{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none;}
   #hud{position:absolute; left:0; right:0; bottom:0; padding:8px 12px; background:linear-gradient(transparent,rgba(0,0,0,.6));
-       font-size:12px; display:flex; justify-content:space-between;}
+       font-size:12px; display:flex; justify-content:space-between; z-index:2;}
   #statut{margin:8px 0; font-size:12.5px; color:var(--info); min-height:18px;}
   .prog{height:6px; background:#0e1119; border-radius:4px; overflow:hidden; margin:6px 0;}
   .prog > div{height:100%; background:linear-gradient(90deg,var(--info),var(--accent)); width:0;}
@@ -260,12 +262,57 @@ async function redresserAvecCoins(source, coins){
   norm.getContext('2d').drawImage(out, 0, 0, w, h);
   return {carte: norm};
 }
-// Chemin complet pour une image fixe : détecte puis redresse.
-async function redresser(source){
+// Chemin complet pour une image fixe : détecte puis redresse. `seuil` abaissable pour la
+// capture manuelle — l'utilisateur a explicitement demandé cette image, autant essayer.
+async function redresser(source, seuil = MIN_SCORE){
   const det = await detecter(source);
   if(!det) return {echec:'aucune carte détectée'};
-  if(det.score < MIN_SCORE) return {echec:'carte mal cadrée (score ' + det.score.toFixed(2) + ')'};
+  if(det.score < seuil) return {echec:'carte mal cadrée (score ' + det.score.toFixed(2) + ')'};
   return redresserAvecCoins(source, det.corners);
+}
+
+// ─────────────────────────────── détection live dans un worker (comme l'app)
+// scanic sur le fil principal gelait l'aperçu ~150-300 ms par image sur téléphone, et se
+// mettait en pause dès qu'une identification tournait — d'où des cartes « non détectées »
+// alors qu'elles étaient là. Déportée, la détection tourne en continu quoi qu'il arrive.
+let dWorker = null, dSeq = 0, dBroken = false;
+const dPending = new Map();
+function demarrerDetectWorker(){
+  const src = `
+    import { Scanner } from ${JSON.stringify(SCANIC_MODULE)};
+    let sc = null, pr = null, cv = null, ctx = null;
+    async function ensure(){ if(sc) return sc; if(!pr) pr = (async()=>{
+      const s = new Scanner({ detector:'ml', mode:'detect', ml:{minScore:0.12} });
+      await s.initialize(); sc = s;
+    })(); return pr; }
+    self.onmessage = async (e) => {
+      const { id, type, bitmap } = e.data;
+      try{
+        if(type === 'init'){ await ensure(); postMessage({id, ok:true}); return; }
+        await ensure();
+        const w = bitmap.width, h = bitmap.height;
+        if(!cv || cv.width !== w || cv.height !== h){ cv = new OffscreenCanvas(w,h); ctx = cv.getContext('2d',{willReadFrequently:true}); }
+        ctx.drawImage(bitmap, 0, 0); bitmap.close();
+        let res = null;
+        try{ res = await sc.scan(ctx.getImageData(0,0,w,h), {mode:'detect', detector:'ml'}); }catch(err){}
+        let corners = null;
+        if(res && res.corners){ const c = res.corners;
+          corners = { tl:[c.topLeft.x/w,c.topLeft.y/h], tr:[c.topRight.x/w,c.topRight.y/h],
+                      br:[c.bottomRight.x/w,c.bottomRight.y/h], bl:[c.bottomLeft.x/w,c.bottomLeft.y/h] }; }
+        postMessage({id, ok:true, score:(res && res.score!=null)?res.score:null, corners});
+      }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); }
+    };
+  `;
+  dWorker = new Worker(URL.createObjectURL(new Blob([src], {type:'text/javascript'})), {type:'module'});
+  dWorker.onmessage = e => { const p = dPending.get(e.data.id); if(!p) return; dPending.delete(e.data.id);
+    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error)); };
+  dWorker.onerror = () => { dBroken = true; for(const p of dPending.values()) p.reject(new Error('worker détection KO')); dPending.clear(); };
+}
+function detectWorkerCall(payload, transfer){
+  return new Promise((resolve, reject)=>{
+    const id = ++dSeq; dPending.set(id, {resolve, reject});
+    dWorker.postMessage(Object.assign({id}, payload), transfer || []);
+  });
 }
 
 // ─────────────────────────────── workers (repris du banc)
@@ -531,9 +578,10 @@ async function chargerIndex(){
     // OCR : optionnel, ne bloque pas le reste
     try{ demarrerOcr(await chargerParsing()); }catch(e){ $('idx-etat').textContent += ' (OCR indisponible : ' + e.message + ')'; }
     await getScanner();
+    demarrerDetectWorker();
 
     // Préchauffage : la 1re inférence de chaque worker porte le chargement du modèle
-    // (DINOv2 ~2 s, session ORB, PaddleOCR). Fait maintenant, pas au 1er scan.
+    // (DINOv2 ~2 s, session ORB, PaddleOCR, détecteur scanic). Fait maintenant, pas au 1er scan.
     $('idx-etat').textContent = 'Préchauffage des moteurs…';
     const warm = document.createElement('canvas'); warm.width = 140; warm.height = 196;
     warm.getContext('2d').fillRect(0,0,140,196);
@@ -541,6 +589,7 @@ async function chargerIndex(){
       embed(versDataUrl(warm, null)).then(r => r.moteur).catch(()=>'?'),
       orb.call({type:'warm'}).catch(()=>{}),
       ocr ? ocrLire(warm).catch(()=>{}) : null,
+      detectWorkerCall({type:'init'}).catch(()=>{}),
     ]);
     moteurEmb = wEmb;
     $('idx-etat').textContent = `Prêt — ${BASE.length} carte(s). Embedding : ${wEmb}.`;
@@ -622,65 +671,84 @@ async function identifier(carte){
 }
 
 // ─────────────────────────────── flux caméra + détection live
-let stream = null, rafId = 0, detectBusy = false, dernierScore = 0, bonsFrames = 0, dernierCoins = null;
+const MIN_SCORE_VISE = 0.40;   // score à partir duquel le cadre passe au vert et la capture auto s'arme
+let stream = null, boucleActive = false, detectBusy = false, bonsFrames = 0, dernierCoins = null, dernierScore = 0;
 
 async function ouvrirCamera(){
   if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){ $('avert-https').style.display = ''; return; }
   try{
+    // 'environment' seul d'abord (le plus compatible), sans forcer de résolution : certains
+    // téléphones refusent tout le contrat si une contrainte exacte n'est pas satisfaite.
     stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440} }, audio:false
-    });
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }, audio: false
+    }).catch(() => navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false }))
+      .catch(() => navigator.mediaDevices.getUserMedia({ video: true, audio: false }));
   }catch(e){ $('avert-https').style.display = ''; statut('Caméra refusée : ' + e.message); return; }
-  const v = $('video'); v.srcObject = stream; await v.play();
-  $('camwrap').style.display = 'block'; $('btn-capture').style.display = 'block';
+  if(!dWorker) demarrerDetectWorker();
+  try{ await detectWorkerCall({type:'init'}); }catch(e){ statut('Détecteur : ' + e.message); }
+  const v = $('video'); v.srcObject = stream;
+  try{ await v.play(); }catch(e){}
+  $('camwrap').style.display = 'flex'; $('btn-capture').style.display = 'block';
   $('btn-cam').style.display = 'none'; $('btn-stopcam').style.display = '';
-  boucleDetection();
+  boucleActive = true; boucleDetection();
 }
 function fermerCamera(){
-  cancelAnimationFrame(rafId);
+  boucleActive = false;
   if(stream){ stream.getTracks().forEach(t => t.stop()); stream = null; }
   $('camwrap').style.display = 'none'; $('btn-capture').style.display = 'none';
   $('btn-cam').style.display = ''; $('btn-stopcam').style.display = 'none';
+  const ov = $('overlay'); if(ov.getContext) ov.getContext('2d').clearRect(0,0,ov.width,ov.height);
 }
 async function boucleDetection(){
   const v = $('video'), ov = $('overlay');
-  const loop = async () => {
-    if(!stream) return;
-    // Pendant une identification (redressement sur le fil principal) ou quand un résultat
-    // est affiché, on met la détection en pause : inutile, et elle vole du temps CPU.
-    if(!detectBusy && v.videoWidth && !identifEnCours && $('p-res').style.display === 'none'){
-      detectBusy = true;
-      const det = await detecter(v).catch(()=>null);
-      detectBusy = false;
-      ov.width = v.clientWidth; ov.height = v.clientHeight;
-      const ctx = ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
-      if(det){
-        dernierScore = det.score; dernierCoins = det.corners;
-        const k = det.corners, X = p => p[0]*ov.width, Y = p => p[1]*ov.height;
-        ctx.beginPath(); ctx.moveTo(X(k.tl),Y(k.tl)); ctx.lineTo(X(k.tr),Y(k.tr));
-        ctx.lineTo(X(k.br),Y(k.br)); ctx.lineTo(X(k.bl),Y(k.bl)); ctx.closePath();
-        const bon = det.score >= 0.55;
-        ctx.strokeStyle = bon ? '#4ec27e' : '#e0a12a'; ctx.lineWidth = 3; ctx.stroke();
-        $('hud-score').textContent = 'score ' + det.score.toFixed(2);
-        $('hud-hint').textContent = bon ? 'stabilise…' : 'ajuste le cadrage';
-        bonsFrames = bon ? bonsFrames + 1 : 0;
-        // Pas de recapture tant qu'un résultat est à l'écran (sinon la carte laissée en
-        // place déclenche en boucle).
-        if(bonsFrames >= 3 && !identifEnCours && $('p-res').style.display === 'none'){ bonsFrames = 0; capturer(); }
-      } else {
-        dernierScore = 0; dernierCoins = null; bonsFrames = 0;
-        $('hud-score').textContent = '—'; $('hud-hint').textContent = 'cherche une carte';
+  let ratesConsecutifs = 0;
+  while(boucleActive && stream){
+    if(!v.videoWidth || dBroken){ await new Promise(r=>setTimeout(r,120)); continue; }
+    // La détection tourne EN CONTINU, même pendant une identification (elle est dans un
+    // worker, ça ne coûte rien au fil principal). Seule la capture auto est suspendue.
+    let det = null;
+    try{
+      const dScale = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
+      const bmp = await createImageBitmap(v, {
+        resizeWidth: Math.max(1, Math.round(v.videoWidth * dScale)),
+        resizeHeight: Math.max(1, Math.round(v.videoHeight * dScale)), resizeQuality: 'medium'
+      });
+      det = await detectWorkerCall({ bitmap: bmp }, [bmp]);
+      ratesConsecutifs = 0;
+    }catch(e){ ratesConsecutifs++; if(ratesConsecutifs === 5) statut('Détection en difficulté : ' + e.message); }
+
+    // Overlay : tampon canvas = dimensions vidéo natives (CSS object-fit:contain fait le reste)
+    if(ov.width !== v.videoWidth || ov.height !== v.videoHeight){ ov.width = v.videoWidth; ov.height = v.videoHeight; }
+    const ctx = ov.getContext('2d'); ctx.clearRect(0,0,ov.width,ov.height);
+
+    if(det && det.corners){
+      dernierScore = det.score == null ? 0 : det.score;
+      dernierCoins = det.corners;
+      const k = det.corners, X = p => p[0]*ov.width, Y = p => p[1]*ov.height;
+      ctx.beginPath(); ctx.moveTo(X(k.tl),Y(k.tl)); ctx.lineTo(X(k.tr),Y(k.tr));
+      ctx.lineTo(X(k.br),Y(k.br)); ctx.lineTo(X(k.bl),Y(k.bl)); ctx.closePath();
+      const bon = dernierScore >= MIN_SCORE_VISE;
+      ctx.strokeStyle = bon ? '#4ec27e' : '#e0a12a'; ctx.lineWidth = Math.max(3, ov.width/220); ctx.stroke();
+      $('hud-score').textContent = 'score ' + dernierScore.toFixed(2);
+      const libre = !identifEnCours && $('p-res').style.display === 'none';
+      $('hud-hint').textContent = !libre ? 'analyse en cours…' : bon ? 'stabilise…' : 'rapproche / éclaire';
+      if(libre){
+        bonsFrames = bon ? bonsFrames + 1 : Math.max(0, bonsFrames - 1);
+        if(bonsFrames >= 2){ bonsFrames = 0; capturer(); }
       }
+    }else{
+      dernierScore = 0; dernierCoins = null; bonsFrames = 0;
+      $('hud-score').textContent = '—';
+      $('hud-hint').textContent = ($('p-res').style.display === 'none') ? 'cherche une carte…' : 'ferme le résultat pour continuer';
     }
-    rafId = requestAnimationFrame(loop);
-  };
-  loop();
+    await new Promise(r=>requestAnimationFrame(r));
+  }
 }
 
 // ─────────────────────────────── capture + affichage résultat
 let identifEnCours = false, dernierResultat = null, dernierePhotoBlob = null;
 
-async function capturer(sourceExplicite){
+async function capturer(sourceExplicite, manuel){
   if(identifEnCours || !pretIdentif) return;
   identifEnCours = true;
   statut('Analyse…');
@@ -698,9 +766,11 @@ async function capturer(sourceExplicite){
 
     const tW = performance.now();
     const tR = performance.now();
-    const rr = coins ? await redresserAvecCoins(source, coins) : await redresser(source);
+    // Capture manuelle ou import : on tente même sur un score médiocre (l'utilisateur a
+    // choisi cette image). Auto : coins déjà validés à MIN_SCORE_VISE par la boucle.
+    const rr = coins ? await redresserAvecCoins(source, coins) : await redresser(source, manuel ? 0.18 : MIN_SCORE);
     const msRedress = Math.round(performance.now() - tR);
-    if(rr.echec){ statut('⚠️ ' + rr.echec); identifEnCours = false; return; }
+    if(rr.echec){ statut('⚠️ ' + rr.echec + ' — recadre et réessaie'); identifEnCours = false; return; }
 
     const r = await identifier(rr.carte);
     r.T = { redress: msRedress, ...r.T };
@@ -830,12 +900,12 @@ async function exporter(){
 $('btn-charger').onclick = chargerIndex;
 $('btn-cam').onclick = ouvrirCamera;
 $('btn-stopcam').onclick = fermerCamera;
-$('btn-capture').onclick = () => capturer();
+$('btn-capture').onclick = () => capturer(null, true);
 $('btn-fichier').onclick = () => $('file').click();
 $('file').onchange = async e => {
   const f = e.target.files[0]; if(!f) return;
   const img = await chargerImage(URL.createObjectURL(f));
-  capturer(img);
+  capturer(img, true);
 };
 $('btn-ok').onclick = () => { if(dernierResultat) confirmer(dernierResultat.pick, false); };
 $('btn-corr').onclick = () => { $('corr').style.display = $('corr').style.display === 'none' ? '' : 'none'; };
