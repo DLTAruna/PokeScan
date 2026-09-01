@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 38;
+const VERSION_APP = 39;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -10334,11 +10334,48 @@ let v2DerniereCat = null;   // catégorie du dernier résultat V2 ('sure' verrou
 let meilleureFrame = null;      // canvas : la plus nette vue depuis que cette carte est là
 let meilleureNettete = -1;
 let v2NetteteRetenue = -1;      // ce qu'on a retenu, pour le journal
+let v2SymCourante = 0;          // symétrie du quadrilatère courant (voir SYM_MAX)
 let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli)
 let meilleursCoins = null;      // les coins DE CETTE image-là, pas ceux de l'instant
 let scratchNettete = null;      // canvas de mesure, réutilisé pour ne pas allouer à 10 Hz
 
 function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; }
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// FORME DU QUADRILATÈRE — le score du détecteur ne dit rien de la justesse des coins.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Mesuré sur 416 scènes de synthèse (banc de détection, bench-v2.html) : sur les cas « bord
+// coupé », le détecteur rend 0,97 de confiance MÉDIANE pour une erreur de position de 0,26.
+// Il est sûr de lui et il a tort. La capture part alors sur un découpage faux, l'ORB rend six
+// inliers, et l'écran affiche « pas reconnue » — c'est le motif des trois échecs d'affilée
+// relevés sur le téléphone, où le quatrième essai réussit soudain à 99 %.
+//
+// Le score ne sépare rien : 0,99996 de médiane sur les bonnes détections contre 0,9885 sur
+// les fausses. La SYMÉTRIE DES CÔTÉS OPPOSÉS, elle, sépare proprement :
+//
+//     bonnes détections (err ≤ 0,05)   sym médian 0,013   maximum 0,067
+//     fausses  (err > 0,10)            sym médian 0,189   p90 0,579
+//
+//     seuil 0,07 → 92 % des fausses écartées, 0 % des bonnes perdues
+//     seuil 0,20 → 46 % des fausses écartées, 0 % des bonnes perdues
+//
+// ⚠️ POURQUOI 0,20 ET NON 0,07, QUI EST POURTANT BIEN MEILLEUR AU BANC. Les scènes de
+// synthèse font tourner la carte DANS SON PLAN : les côtés opposés y restent égaux tant que
+// la détection est juste. Une carte tenue à la main est vue EN PERSPECTIVE, ce qui raccourcit
+// légitimement un côté — un quadrilatère parfaitement détecté peut alors dépasser 0,07. Le
+// banc ne mesure pas ce cas, donc il ne peut pas arbitrer ce seuil, et se fier à son 0,07
+// reviendrait à refuser des cartes correctes chaque fois qu'elles ne sont pas vues de face.
+// 0,20 ne prend que ce que le banc garantit sans risque, et laisse la place à la perspective.
+// À resserrer quand le journal du terrain aura de quoi trancher : `sym` y est enregistré.
+const SYM_MAX = 0.20;
+
+function symetrieQuad(c){
+  const P = [c.tl, c.tr, c.br, c.bl];
+  const L = (a,b)=>Math.hypot(P[b][0]-P[a][0], P[b][1]-P[a][1]);
+  const h1 = L(0,1), h2 = L(3,2), v1 = L(0,3), v2 = L(1,2);
+  if(Math.max(h1,h2) < 1e-6 || Math.max(v1,v2) < 1e-6) return 1;
+  return Math.max(Math.abs(h1-h2)/Math.max(h1,h2), Math.abs(v1-v2)/Math.max(v1,v2));
+}
 
 // Netteté de la zone visée, sur une vignette : le coût doit rester négligeable devant la
 // détection, qui tourne déjà à chaque tour de boucle.
@@ -11910,7 +11947,10 @@ async function detectLoop(){
         // le déclenchement viendra, il aura le choix entre l'image de l'instant et la
         // meilleure de la présence — et il prendra la meilleure. Voir la mémoire de la plus
         // nette, plus haut, pour les chiffres qui justifient ce détour.
-        retenirSiPlusNette(video, d.corners);
+        // On ne retient QUE des quadrilatères plausibles : mémoriser une image dont les coins
+        // sont faux reviendrait à garantir un mauvais découpage au déclenchement.
+        v2SymCourante = symetrieQuad(d.corners);
+        if(v2SymCourante <= SYM_MAX) retenirSiPlusNette(video, d.corners);
 
         // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
         // que la carte a été retirée (v2AbsenceStreak) OU qu'elle a franchement bougé —
@@ -11923,7 +11963,12 @@ async function detectLoop(){
         // comme au banc — ambre tant qu'on cherche la stabilité, vert quand elle est
         // acquise. Une phrase qui change toutes les 200 ms se lisait moins bien qu'un trait
         // qui change de couleur, et elle occupait le bas de l'image, là où on vise.
-        if(!dejaLue && d.score >= seuilScore && stable){
+        // Un quadrilatère non plausible ne déclenche pas : mieux vaut laisser l'utilisateur
+        // bouger d'un centimètre que dépenser une seconde d'identification sur un découpage
+        // faux, puis lui annoncer que sa carte n'est pas reconnue. Le cadre reste ambre : de
+        // son point de vue, on cherche encore — ce qui est exactement le cas.
+        if(v2SymCourante > SYM_MAX) etatCadre = 'lecture';
+        if(!dejaLue && d.score >= seuilScore && stable && v2SymCourante <= SYM_MAX){
           etatCadre = 'ok';
           v2PresentDepuis = 0;
           v2StableStreak = 0;
@@ -12172,7 +12217,11 @@ document.addEventListener('visibilitychange', ()=>{
 // et l'identification tranche : un cadre juste donne des inliers, un mauvais n'en donne pas.
 const STRATEGIES_ESSAI = [
   {nom:'coins',       fixe:false, echelle:1},     // carte seule : le meilleur cas
-  {nom:'cadre-fixe',  fixe:true,  echelle:1},     // lot en main : ignore la pile
+  // ⚠️ 'cadre-fixe' RETIRÉ (V.39). Au banc sur art officiel il gagnait 36/36 contre 26/36 —
+  // mais l'art officiel REMPLIT le cadre par construction, si bien que le cadre fixe y est
+  // juste d'office : le banc mesurait sa propre mise en scène. Sur le téléphone, où la carte
+  // ne remplit jamais exactement le guide, il n'a JAMAIS réussi — 0 sur 6, cinq inliers de
+  // médiane — tout en coûtant une seconde et un échec visible à chaque fois qu'il passait.
   {nom:'coins-0.80',  fixe:false, echelle:0.80},  // pile très étalée, carte bien centrée
 ];
 let v2EssaiCadre = 0;
@@ -12726,7 +12775,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
         embPremier:(res&&res.embPremier)||null,
         embEtaitBon:(res&&res.pick&&res.embPremier)?(res.pick.cle===res.embPremier):null,
         cadrage:(STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length-1)]||{}).nom||'?',
-        nettete:v2NetteteRetenue, image:v2ImageRetenue,
+        nettete:v2NetteteRetenue, image:v2ImageRetenue, sym:+v2SymCourante.toFixed(3),
         essai:v2EssaiCadre+1, rebutsDeSuite:v2RebutsConsecutifs });
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
@@ -12842,7 +12891,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     embPremier: res.embPremier || null,
     embEtaitBon: res.pick && res.embPremier ? (res.pick.cle === res.embPremier) : null,
     cadrage: (STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)] || {}).nom || '?',
-    nettete: v2NetteteRetenue, image: v2ImageRetenue,
+    nettete: v2NetteteRetenue, image: v2ImageRetenue, sym: +v2SymCourante.toFixed(3),
     essai: v2EssaiCadre + 1,
     // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
     // à supposer que le téléphone avait bien pris le déploiement entre les deux.

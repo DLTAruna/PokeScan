@@ -802,7 +802,34 @@ async function lancerDetection(nCartes){
       const score = (d && d.ok && d.score != null) ? d.score : 0;
       let err = null;
       if(d && d.corners) err = ecartQuad(coins, d.corners);
-      acc.get(cond.nom).push({ score, err, trouve: !!(d && d.corners) });
+      // ── FORME DU QUADRILATÈRE ──────────────────────────────────────────────────────
+      // Le score du détecteur ne dit RIEN de la justesse des coins : sur « bord coupé »
+      // il rend 0,97 de confiance médiane pour une erreur de position de 0,26. Une capture
+      // part alors sur un découpage faux, l'ORB rend six inliers, et l'utilisateur voit
+      // « pas reconnue » sans comprendre — c'est le motif des trois échecs d'affilée
+      // relevés sur le téléphone. On enregistre donc trois indices de forme, tous
+      // calculables sans coût, pour savoir s'ils attrapent ce que le score laisse passer :
+      //   dRatio — écart du rapport hauteur/largeur à celui d'une carte (debout ou couchée)
+      //   sym    — désaccord entre côtés opposés : un vrai rectangle vu de face les a égaux
+      // Une carte VUE DE BIAIS a légitimement des côtés inégaux, donc `sym` seul ne peut pas
+      // servir de rejet — c'est ce que ces mesures doivent départager.
+      let forme = null;
+      if(d && d.corners){
+        const q = d.corners, P = [q.tl, q.tr, q.br, q.bl];
+        const L = (a,b)=>Math.hypot(P[b][0]-P[a][0], P[b][1]-P[a][1]);
+        const h1=L(0,1), h2=L(3,2), v1=L(0,3), v2=L(1,2);
+        const ratio = ((v1+v2)/2) / Math.max(1e-6, (h1+h2)/2);
+        forme = {
+          ratio: +ratio.toFixed(3),
+          sym: +Math.max(Math.abs(h1-h2)/Math.max(h1,h2), Math.abs(v1-v2)/Math.max(v1,v2)).toFixed(3),
+          dRatio: +Math.min(Math.abs(ratio-CARD_RATIO)/CARD_RATIO, Math.abs(ratio-1/CARD_RATIO)*CARD_RATIO).toFixed(3),
+        };
+      }
+      const ligne = { score, err, trouve: !!(d && d.corners), forme, cond: cond.nom };
+      acc.get(cond.nom).push(ligne);
+      // Brut exposé à la console : les médianes par condition cachent justement les cas
+      // qu'on cherche — un score haut avec des coins faux.
+      (window.__detBrut = window.__detBrut || []).push(ligne);
       fait++;
       $('d-etat').textContent = fait + '/' + total + ' — ' + cond.nom;
       await new Promise(r=>setTimeout(r, 0));
