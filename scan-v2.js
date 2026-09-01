@@ -35,7 +35,9 @@ const R = {
   GEO_INLIERS: 20,     // géométrie franche → « sûre » même si la sigmoïde reste basse
   GEO_DOM: 0.6,
   MAX_CARTES_ORB: 900, // descripteurs gardés en mémoire du worker (LRU, ~23 Mo)
-  RECYCLE_ORB: 12,     // scans entre deux recyclages du worker ORB
+  RECYCLE_ORB: 12,     // scans entre deux recyclages du worker ORB (filet de sécurité)
+  ORB_MAX_REFS: 60,    // descripteurs gardés dans le worker. Trois shortlists de 18 : de quoi
+                       // enchaîner sans retélécharger, sans laisser le tas WASM gonfler.
   WORKER_ORB: 'https://pokescan-orb.inox62.workers.dev', // null → une requête R2 par carte
 };
 // Lecture seule sans argument ; avec un objet, applique le patch et renvoie l'état obtenu.
@@ -500,6 +502,34 @@ let detailRefs = { idb: 0, net: 0, imp: 0, nManque: 0, nReseau: 0, viaWorker: fa
 
 // Le tas WASM d'OpenCV se fragmente : au bout de ~12 scans l'ORB dérive (300 ms → 2 s+).
 // On recycle le worker et on laisse le prochain scan réinjecter depuis le cache IndexedDB.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// TAILLE DU CACHE ORB — libérer au fil de l'eau plutôt que tout jeter tous les douze scans.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Chaque scan injecte dix-huit jeux de descripteurs dans le worker, et rien n'en sortait
+// avant le recyclage. Relevé sur le téléphone de Nikos, colonne `sets` d'une session :
+// 14, 28, 41, 45, 68, 72, 77, 79, 83, 85 — puis 16, le worker venait d'être redémarré.
+// Jusqu'à deux cents jeux détenus dans le tas WASM d'OpenCV, et le prix se voit : `imp`,
+// qui est du processeur pur (injection des descripteurs, taille constante), passe de 10 ms
+// à plus de 200. Un facteur vingt sur une opération qui ne change pas de taille.
+// L'appariement, lui, ne souffre pas — `querySubset` ne compare qu'aux clés demandées. Ce
+// n'est donc pas le calcul qui se dégrade, c'est l'allocation.
+// On garde les plus récemment servies et on rend les autres. Le worker sait déjà le faire :
+// le message `dropSet` était écrit, testé, et n'avait jamais été appelé par personne.
+async function taillerOrb() {
+  if (!R.ORB_MAX_REFS || orbCharges.size <= R.ORB_MAX_REFS) return;
+  const parAge = [...orbCharges.entries()].sort((a, b) => b[1].ts - a[1].ts);
+  const aRendre = parAge.slice(R.ORB_MAX_REFS).map(([cle]) => cle);
+  if (!aRendre.length) return;
+  // Les entrées « absent » ne pèsent rien dans le worker (rien n'y a été importé) mais
+  // évitent de retélécharger un descripteur inexistant : on les garde côté JS.
+  const dansLeWorker = aRendre.filter(c => !orbCharges.get(c).absent);
+  for (const c of aRendre) orbCharges.delete(c);
+  if (dansLeWorker.length) {
+    try { await orb.call({ type: 'dropSet', cles: dansLeWorker }); }
+    catch (e) { /* le recyclage périodique reste le filet */ }
+  }
+}
+
 async function recyclerOrbSiBesoin() {
   if (!R.RECYCLE_ORB || scansV2 === 0 || scansV2 % R.RECYCLE_ORB !== 0) return;
   await recyclerOrb();
@@ -716,6 +746,9 @@ export async function identifierV2(carte, opts = {}) {
     rr.out.forEach(o => (orbScores[o.cle] = o.score));
   } catch (err) {}
   dernierOrbMs = T.orb || dernierOrbMs;
+  // Après l'appariement, pas avant : les descripteurs de CE scan viennent d'être marqués
+  // récents par assurerOrbCartes, ils ne seront donc jamais les premiers rendus.
+  await taillerOrb();
 
   let pick = ranked[0];
   let inl = orbScores[pick] || 0;

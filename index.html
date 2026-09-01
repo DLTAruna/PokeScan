@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 40;
+const VERSION_APP = 41;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9000,27 +9000,48 @@ function renderQueueOverview(){
         waiting ? '⏳ ' + waiting + ' en analyse' : null].filter(Boolean).join(' · ')
     : '';
 
-  strip.innerHTML = '';
-  pendingQueue.slice(0, QUEUE_OVERVIEW_LIMIT).forEach((item, idx)=>{
-    const badge = item._analysis?.status === 'ok' ? '✅'
-      : item._analysis?.status === 'uncertain' ? '🤔'
-      : item._analysis?.status === 'fail' ? '❌'
-      : '⏳';
-    const wrap = document.createElement('div');
-    wrap.className = 'qo-thumb' + (idx===0 ? ' current' : '');
-    wrap.title = item._analysis?.card
+  const vus = pendingQueue.slice(0, QUEUE_OVERVIEW_LIMIT);
+  const legende = item => item._analysis?.card
       ? `${item._analysis.status==='ok' ? '✅' : '🤔 à vérifier'} : ${item._analysis.card.name} (${item._analysis.note})`
       : (item._analysis?.status==='fail' ? '❌ Rien de lisible (ni code ni numéro)'
         : item._analysis?.status==='uncertain' ? `🤔 Lu: ${item._analysis.code||'?'} #${item._analysis.number||'?'}, aucune carte trouvée même en tolérant les erreurs de lecture`
         : 'Analyse en attente');
-    wrap.innerHTML = `<img src="${item.photo}" loading="lazy"><span class="qo-badge">${badge}</span>`;
+  const pastille = item => item._analysis?.status === 'ok' ? '✅'
+      : item._analysis?.status === 'uncertain' ? '🤔'
+      : item._analysis?.status === 'fail' ? '❌'
+      : '⏳';
+  reconcilierBande(strip, vus, item => {
+    const wrap = document.createElement('div');
+    wrap.className = 'qo-thumb';
+    wrap.dataset.qid = item.id;
+    const img = document.createElement('img');
+    img.dataset.qid = item.id;
+    img.loading = 'lazy';
+    img.src = item.vignette || item.photo;
+    const b = document.createElement('span');
+    b.className = 'qo-badge';
+    wrap.append(img, b);
+    // L'index de la carte change dès qu'on en retire une : le figer dans la fermeture
+    // renverrait sur la mauvaise photo. On le retrouve au clic, par identifiant.
     wrap.addEventListener('click', ()=>{
-      if(idx===0) return;
-      const [moved] = pendingQueue.splice(idx,1);
-      pendingQueue.unshift(moved);
+      const i = pendingQueue.findIndex(q => q.id === item.id);
+      if(i <= 0) return;
+      const [deplace] = pendingQueue.splice(i,1);
+      pendingQueue.unshift(deplace);
       renderIdentify();
     });
-    strip.appendChild(wrap);
+    return wrap;
+  });
+  // Le statut et la position, eux, changent sans que la vignette bouge : on les rafraîchit
+  // sur les nœuds en place, ce qui ne coûte aucun décodage d'image.
+  vus.forEach((item, idx)=>{
+    const n = strip.querySelector(`.qo-thumb[data-qid="${item.id}"]`);
+    if(!n) return;
+    n.classList.toggle('current', idx === 0);
+    n.title = legende(item);
+    const b = n.querySelector('.qo-badge');
+    const p = pastille(item);
+    if(b && b.textContent !== p) b.textContent = p;
   });
   if(pendingQueue.length > QUEUE_OVERVIEW_LIMIT){
     const more = document.createElement('div');
@@ -9034,10 +9055,49 @@ function renderQueueOverview(){
 // `sourceBlob` = image d'origine, non recompressée, conservée uniquement le temps de
 // l'analyse OCR puis libérée (voir analyzeQueueItem). Un Blob ne pèse pas sur le tas JS
 // comme le ferait une dataURL base64, et il n'est pas sérialisé dans la sauvegarde .json.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// VIGNETTE — ce que les barres affichent, et RIEN d'autre.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// `item.photo` est la carte redressée en JPEG 0,85 : environ 150 Ko une fois en base64. Les
+// deux barres de la file l'affichaient telle quelle, et comme elles se reconstruisaient par
+// `innerHTML` à chaque capture, le navigateur RE-DÉCODAIT toutes les photos déjà scannées à
+// chaque nouvelle carte. Nikos : « comme s'il y avait un calcul continu pour les cartes déjà
+// scannées ». C'était exactement ça, au sens propre.
+// 160 px de large suffisent largement à une vignette de 56 px à l'écran, et pèsent ~6 Ko.
+const VIGNETTE_W = 160;
+function faireVignette(dataUrl){
+  return new Promise(resolve => {
+    const im = new Image();
+    im.onload = ()=>{
+      try{
+        // Jamais agrandir : une source déjà petite (import basse définition, cliché
+        // réduit) donnerait une « vignette » PLUS LOURDE que l'original, ce qui est
+        // exactement le contraire du but. Constaté au test, sur une source de 63 px.
+        const largeur = Math.min(VIGNETTE_W, im.width);
+        const c = document.createElement('canvas');
+        c.width = largeur;
+        c.height = Math.max(1, Math.round(im.height * (largeur / im.width)));
+        c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+        resolve(c.toDataURL('image/jpeg', 0.7));
+      }catch(e){ resolve(null); }
+    };
+    im.onerror = ()=> resolve(null);
+    im.src = dataUrl;
+  });
+}
+
 function pushToQueue(dataUrl, sourceBlob, origine){
   const item = {id:'q'+Date.now()+Math.random().toString(36).slice(2,6), photo:dataUrl,
-                sourceBlob:sourceBlob||null, origine: origine || 'caméra'};
+                sourceBlob:sourceBlob||null, origine: origine || 'caméra', vignette:null};
   pendingQueue.push(item);
+  // Sans await : la vignette n'est qu'un confort d'affichage, elle ne doit pas retarder la
+  // carte suivante. Les barres montrent la photo pleine le temps qu'elle arrive.
+  faireVignette(dataUrl).then(v => {
+    if(!v) return;
+    item.vignette = v;
+    const img = document.querySelector(`[data-qid="${item.id}"] img, img[data-qid="${item.id}"]`);
+    if(img) img.src = v;
+  });
   // Archivage sans await : une rafale ne doit pas attendre IndexedDB entre deux cartes.
   if(origine !== 'import') archiverCliche(item.id, dataUrl, origine);
   // La liste de session montre la file : ouverte pendant un import, elle doit s'y voir
@@ -9097,14 +9157,27 @@ function planifierSauvegardeSession(){
   sauvegardeTimer = setTimeout(sauvegarderSession, 1200);
 }
 
+// La photo pleine n'est PAS réécrite ici : `archiverCliche` l'a déjà rangée dans le magasin
+// `cliches`, sous le même identifiant. On la dupliquait à chaque sauvegarde — et comme la
+// sauvegarde est déclenchée par chaque capture (regroupement de 1,2 s, alors que les captures
+// sont espacées de plusieurs secondes), c'était TOUTE la file réécrite à chaque carte : un
+// mégaoctet et demi à dix cartes, le double à vingt. Le seul coût de la session qui croissait
+// sans plafond, et l'un des trois que Nikos sentait au bout d'une dizaine de cartes.
+// Les imports ne passent pas par l'archive : pour eux seulement, on garde la photo.
+function pourSession(q){
+  const o = {id:q.id, _analysis:q._analysis, vignette:q.vignette || null};
+  if(q.origine === 'import') o.photo = q.photo; else o.archivee = true;
+  return o;
+}
+
 async function sauvegarderSession(){
   try{
     await idbSet('meta', {
       key: 'session',
       at: Date.now(),
-      pendingQueue: pendingQueue.map(q => ({id:q.id, photo:q.photo, _analysis:q._analysis})),
+      pendingQueue: pendingQueue.map(pourSession),
       batch,
-      skippedQueue: skippedQueue.map(q => ({id:q.id, photo:q.photo, _analysis:q._analysis}))
+      skippedQueue: skippedQueue.map(pourSession)
     });
   }catch(e){ /* sauvegarde best-effort : ne doit jamais interrompre un scan */ }
 }
@@ -9144,6 +9217,15 @@ async function restaurerSession(){
     pendingQueue = s.pendingQueue || [];
     skippedQueue = s.skippedQueue || [];
     batch = s.batch || [];
+    // La session ne porte plus les photos pleines (voir `pourSession`) : on les remet depuis
+    // l'archive, une seule fois au démarrage. Une entrée dont le cliché a été purgé garde sa
+    // vignette et reste manipulable — mieux vaut une file complète en basse définition qu'une
+    // carte qui disparaît sans que l'utilisateur sache pourquoi.
+    for(const q of [...pendingQueue, ...skippedQueue]){
+      if(q.photo || !q.archivee) continue;
+      try{ const c = await idbGet('cliches', q.id); if(c && c.photo) q.photo = c.photo; }catch(e){}
+      if(!q.photo) q.photo = q.vignette || '';
+    }
     updateQueueBadges(); renderQueueStrip(); renderQueueOverview(); renderBatch();
     const quand = new Date(s.at).toLocaleString();
     // Plus de `toast()` ici. Il s'affichait en bas au centre, par-dessus la page, donc PILE
@@ -9157,10 +9239,35 @@ async function restaurerSession(){
   }catch(e){ /* pas de session à restaurer */ }
 }
 
+// Réconcilie une bande d'images SANS la reconstruire : on ne touche qu'aux entrées qui ont
+// changé. `innerHTML = …` détruisait tous les nœuds et forçait le navigateur à re-décoder
+// chaque photo à chaque capture — le coût grandissait avec la file, d'où le ralentissement
+// au bout d'une dizaine de cartes. Ici, une carte ajoutée coûte une image, pas douze.
+function reconcilierBande(strip, items, faireNoeud){
+  if(!strip) return;
+  const vus = new Set();
+  let noeud = strip.firstElementChild;
+  for(const it of items){
+    vus.add(it.id);
+    if(noeud && noeud.dataset && noeud.dataset.qid === it.id){ noeud = noeud.nextElementSibling; continue; }
+    const existant = strip.querySelector(`[data-qid="${it.id}"]`);
+    const n = existant || faireNoeud(it);
+    strip.insertBefore(n, noeud);
+  }
+  // Ce qui reste après la dernière entrée attendue n'a plus lieu d'être.
+  while(noeud){ const suivant = noeud.nextElementSibling; if(!vus.has(noeud.dataset?.qid)) noeud.remove(); noeud = suivant; }
+  for(const n of [...strip.children]) if(n.dataset?.qid && !vus.has(n.dataset.qid)) n.remove();
+}
+
 function renderQueueStrip(){
   const strip = $('queue-strip');
   const last = pendingQueue.slice(-12);
-  strip.innerHTML = last.map(q=>`<img src="${q.photo}">`).join('');
+  reconcilierBande(strip, last, it => {
+    const img = document.createElement('img');
+    img.dataset.qid = it.id;
+    img.src = it.vignette || it.photo;
+    return img;
+  });
   // `?.` partout depuis V.13 : ces repères ont été retirés du cadre caméra, le code qui
   // les nourrissait reste en place pour quand on les rebâtira (voir le commentaire dans
   // #video-wrap). Sans l'appel optionnel, l'absence d'un élément casserait la boucle.
@@ -10368,7 +10475,14 @@ function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; 
 // reviendrait à refuser des cartes correctes chaque fois qu'elles ne sont pas vues de face.
 // 0,20 ne prend que ce que le banc garantit sans risque, et laisse la place à la perspective.
 // À resserrer quand le journal du terrain aura de quoi trancher : `sym` y est enregistré.
-const SYM_MAX = 0.20;
+// V.41 — resserré de 0,20 à 0,12 SUR DONNÉES DE TERRAIN, ce que le banc ne pouvait pas
+// faire (ses scènes tournent la carte dans son plan, jamais en perspective). Sur les dix-sept
+// scans de la V.40 : symétrie médiane 0,046 sur les réussites, 0,095 sur les rebuts, et les
+// deux pires rebuts à 0,167 et 0,173. Le p90 des réussites est à 0,077, donc 0,12 laisse
+// passer les cartes vues de biais tout en écartant les quadrilatères franchement faux.
+// Une capture refusée ici n'est pas une carte perdue : la boucle continue et reprend l'image
+// suivante, ce qui coûte un dixième de seconde au lieu d'une identification ratée.
+const SYM_MAX = 0.12;
 
 function symetrieQuad(c){
   const P = [c.tl, c.tr, c.br, c.bl];
@@ -10526,6 +10640,31 @@ function maxCornerShift(a, b){
     m = Math.max(m, Math.hypot(a[k][0]-b[k][0], a[k][1]-b[k][1]));
   }
   return m;
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// « LA CARTE A-T-ELLE BOUGÉ ? » — le centre et la taille, pas le pire des quatre coins.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// `maxCornerShift` prend le MAXIMUM sur les quatre coins : un seul coin qui bat suffit à
+// faire échouer la stabilité, carte parfaitement immobile. Or c'est le cas courant — le
+// détecteur place mal un coin d'une image à l'autre, surtout de biais ou un peu loin.
+// Relevé en V.40, les sept non-déclenchements de la salve sont TOUS « pas stable », et les
+// quatre premiers avec une aire de 0,37 à 0,47 : la carte remplissait largement le cadre.
+// Leur symétrie (0,19 à 0,57) montre des quadrilatères déformés — donc des coins qui
+// gigotent, pas une main qui tremble. Nikos : « je dois vraiment zoomer et la mettre pile
+// dans le cadre ». Il compensait la gigue du détecteur en la rapprochant.
+// Le centre et la racine de l'aire sont bien plus stables qu'un coin isolé, et restent dans
+// les mêmes unités (fractions d'image) : les seuils existants gardent leur sens.
+// On garde `maxCornerShift` pour le VERROU, où un déplacement franc signale une autre carte
+// et où être trop sensible ne coûte rien.
+function bougeCarte(a, b){
+  const centre = q => [(q.tl[0]+q.tr[0]+q.br[0]+q.bl[0])/4, (q.tl[1]+q.tr[1]+q.br[1]+q.bl[1])/4];
+  const ca = centre(a), cb = centre(b);
+  const deplacement = Math.hypot(ca[0]-cb[0], ca[1]-cb[1]);
+  // Racine de l'aire : une longueur, comparable au déplacement. Une carte qu'on approche ou
+  // qu'on éloigne doit compter comme du mouvement, sinon on capturerait en plein zoom.
+  const taille = Math.abs(Math.sqrt(airePartCarte(a)) - Math.sqrt(airePartCarte(b)));
+  return Math.max(deplacement, taille);
 }
 
 // Chargé à la demande sur le FIL PRINCIPAL (pas dans le worker) : extractDocument a
@@ -11935,7 +12074,7 @@ async function detectLoop(){
       // réintroduit en V.11 par une autre porte, l'aire au lieu de la netteté.
       // Le banc, lui, ne touche à la piste vidéo qu'à l'ouverture (focusMode:'continuous')
       // et plus jamais ensuite — c'est une des raisons pour lesquelles il marche mieux.
-      const moved = prevCorners ? maxCornerShift(prevCorners, d.corners) : Infinity;
+      const moved = prevCorners ? bougeCarte(prevCorners, d.corners) : Infinity;
       prevCorners = d.corners;
 
       // Ambre par défaut : « je vois la carte ». Le vert n'arrive que si la stabilité est
@@ -21245,7 +21384,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=25';
+import * as V2 from './scan-v2.js?v=26';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
