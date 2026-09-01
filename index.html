@@ -5639,7 +5639,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 14;
+const VERSION_APP = 15;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11189,10 +11189,34 @@ async function attemptReadV2(corners, score){
       diagPush('try', {ok:false, hint:'redressement échoué', score, ms:Math.round(performance.now()-t0)});
       return;
     }
+
+    // ─── ACCUSÉ DE RÉCEPTION IMMÉDIAT (V.15) ───
+    // L'identification prend 3 à 4 secondes sur téléphone (relevé réel : emb ~550 ms,
+    // refs ~1 050 ms, orb 1 400-2 600 ms). Or TOUT le retour à l'utilisateur — vignette,
+    // éclair, vibration, cadre vert — était déclenché APRÈS elle, dans gererScanV2, sous un
+    // commentaire « TOUT DE SUITE » qui ne l'était que par rapport à l'identification.
+    // Vu du téléphone : on présente la carte, le cadre passe au vert… et plus rien pendant
+    // trois secondes, puis tout apparaît d'un coup. C'est le défaut de fluidité signalé.
+    // On acquitte donc la PRISE ici, dès que l'image redressée existe, et l'identification
+    // ne fait plus que remplir le texte. C'est exactement ce pour quoi
+    // showLiveResultPending (« 🔎 recherche… ») avait été écrite.
+    const cvPrise = document.createElement('canvas');
+    cvPrise.width = sourceForRead.width; cvPrise.height = sourceForRead.height;
+    cvPrise.getContext('2d').drawImage(sourceForRead, 0, 0);
+    const dataUrlPrise = cvPrise.toDataURL('image/jpeg', 0.8);
+    showLiveResultPending(dataUrlPrise, '', '');
+    setOverlayTarget('ok', corners);
+    flashScreen(dataUrlPrise);
+    if(navigator.vibrate) navigator.vibrate(40);
+
     // gererScanV2 gère tout son propre aval : panneau, file, retour à « rebut » après
     // plusieurs échecs (elle a son propre compteur, v2RebutsConsecutifs — inutile de lui
-    // superposer un second seuil ici).
-    await gererScanV2(sourceForRead, corners, score, t0).catch(e => { console.warn('V2', e); });
+    // superposer un second seuil ici). `dejaAcquitte` : l'éclair et la vibration viennent
+    // d'être rendus ci-dessus, les rejouer ferait un second flash trois secondes plus tard.
+    // La toile et son dataURL sont passés pour ne pas refaire un toDataURL plein format sur
+    // le fil principal — il coûte cher sur téléphone, et il est déjà fait.
+    await gererScanV2(sourceForRead, corners, score, t0, true, {cv: cvPrise, dataUrl: dataUrlPrise})
+      .catch(e => { console.warn('V2', e); });
   }catch(e){
     diagPush('err', {msg:'lecture V2 : ' + e.message});
   }finally{
@@ -11267,7 +11291,9 @@ function showLiveResultPending(dataUrl, number, denominator){
   $('live-result-img').src = dataUrl;
   $('live-result-name').textContent = '🔎 recherche…';
   $('live-result-set').textContent = '—';
-  $('live-result-num').textContent = number + '/' + denominator;
+  // À la prise, le numéro n'est pas encore connu (l'accusé de réception arrive avant
+  // l'identification depuis V.15) : « / » tout seul se lisait comme une donnée manquante.
+  $('live-result-num').textContent = number ? (number + (denominator ? '/' + denominator : '')) : '—';
   $('live-result-price').textContent = '—';
   $('live-result-badge').textContent = '';
   $('live-result-badge').title = '';
@@ -11479,10 +11505,14 @@ function carteDepuisPack(p){
            image: p.image, set: { id: p.setId, name: nomDeSet(p.setId) || '' }, rarity: '', variants: {}, _pack: true };
 }
 let v2RebutsConsecutifs = 0;
+// Dernière carte réellement affichée dans le cadre du bas. Sert à restaurer le panneau
+// quand une identification est rejetée comme doublon après que l'accusé de réception l'a
+// déjà basculé sur « 🔎 recherche… » (voir gererScanV2).
+let derniereCarteAffichee = null;
 // `dejaAcquitte` : la prise manuelle a déjà rendu l'éclair et la vibration au moment de
 // l'appui (voir captureFrameInterne). Les rejouer ici ferait un second flash une seconde
 // et demie plus tard, sur une carte déjà acquittée.
-async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte){
+async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, prise){
   const res = await SCAN_V2.identifierV2(sourceForRead).catch(()=> null);
 
   // Pas d'identification fiable. On NE retombe PAS sur l'OCR (l'utilisateur a choisi la
@@ -11498,9 +11528,12 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte){
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
       v2RebutsConsecutifs = 0;
-      const cvR = document.createElement('canvas');
-      cvR.width = sourceForRead.width; cvR.height = sourceForRead.height;
-      cvR.getContext('2d').drawImage(sourceForRead, 0, 0);
+      let cvR = prise && prise.cv;
+      if(!cvR){
+        cvR = document.createElement('canvas');
+        cvR.width = sourceForRead.width; cvR.height = sourceForRead.height;
+        cvR.getContext('2d').drawImage(sourceForRead, 0, 0);
+      }
       capturerSansLecture(cvR, 'V2 non reconnue', true);
       setAimHint('🤔 V2 : non reconnue — envoyée dans « À vérifier »');
       lastCaptureCorners = corners; cardConfirmedAbsentSinceCapture = false; v2DerniereCle = null;
@@ -11520,17 +11553,31 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte){
   }
   v2RebutsConsecutifs = 0;
 
-  if(res.pick.cle === v2DerniereCle && !cardConfirmedAbsentSinceCapture) return 'rejet-doublon';
+  if(res.pick.cle === v2DerniereCle && !cardConfirmedAbsentSinceCapture){
+    // Même carte que la précédente, toujours en place : on ne la réenregistre pas. Mais
+    // l'accusé de réception a déjà mis le panneau sur « 🔎 recherche… » (V.15) — sans ce
+    // rattrapage il y resterait pour toujours, alors que la carte EST identifiée et était
+    // affichée juste avant. On remet donc ce qui y était.
+    if(derniereCarteAffichee) showLiveResultDone(derniereCarteAffichee.carte, derniereCarteAffichee.confiance);
+    return 'rejet-doublon';
+  }
 
   const confiance = res.categorie === 'sure' ? 'high' : 'uncertain';
   const carteMin = carteDepuisPack(res.pick);
   let liveHash = null;
   try{ liveHash = hashIllustration(sourceForRead); }catch(e){}
 
-  const cv = document.createElement('canvas');
-  cv.width = sourceForRead.width; cv.height = sourceForRead.height;
-  cv.getContext('2d').drawImage(sourceForRead, 0, 0);
-  const dataUrl = cv.toDataURL('image/jpeg', 0.8);
+  // Réutilise la toile déjà produite par l'accusé de réception (attemptReadV2) quand elle
+  // existe : un toDataURL plein format de plus sur le fil principal fige l'aperçu pour rien.
+  let cv, dataUrl;
+  if(prise && prise.cv && prise.dataUrl){
+    cv = prise.cv; dataUrl = prise.dataUrl;
+  }else{
+    cv = document.createElement('canvas');
+    cv.width = sourceForRead.width; cv.height = sourceForRead.height;
+    cv.getContext('2d').drawImage(sourceForRead, 0, 0);
+    dataUrl = cv.toDataURL('image/jpeg', 0.8);
+  }
   const mySeq = ++liveResultSeq;
 
   v2DerniereCle = res.pick.cle;
@@ -11546,6 +11593,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte){
   // showLiveResultDone ne touche pas à l'image, seulement au texte).
   showLiveResultPending(dataUrl, stripLeadingZero(String(carteMin.number)), '');
   showLiveResultDone(carteMin, confiance);
+  derniereCarteAffichee = {carte: carteMin, confiance};   // pour le rattrapage « rejet-doublon »
   ajouterAuTotalSession(carteMin);
   setAimHint(`${confiance === 'high' ? '✅' : '🤔'} ${carteMin.name} — V2 ${res.fiabilite}%`);
   if(!dejaAcquitte){ flashScreen(dataUrl); if(navigator.vibrate) navigator.vibrate(40); }

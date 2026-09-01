@@ -28,6 +28,52 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Fluidité : l'accusé de réception arrivait après l'identification (V.15, 2026-09-01)
+
+Nikos, 4 cartes en V.14 : « il y a un problème de fluidité entre la capture et l'affichage
+dans le cadre du bas ». Le journal donne 3 scans (le 4e est un `rejet-doublon`, qui ne
+journalise pas — voir plus bas).
+
+**Ce que le journal dit de bon** : identification **parfaite**. 3/3 `sure`, fiabilité 97-98 %,
+inliers 63-78, marges 50-64, **aucun OCR déclenché**, moteur `webgpu/fp16`. La chaîne de
+reconnaissance n'est pas en cause.
+
+**Ce qu'il dit de mauvais** — le temps, par carte :
+
+| carte | total | emb | refs (dont réseau) | orb |
+|---|---|---|---|---|
+| sv03.5-027 | 3 078 ms | 586 | 1 085 (905) | 1 407 |
+| sv03.5-019 | 4 063 ms | 496 | 955 (549) | **2 612** |
+| sv03.5-048 | 3 676 ms | 601 | 1 089 (719) | 1 986 |
+
+**Mais le défaut signalé n'était pas la durée : c'était le silence pendant cette durée.**
+Tout le retour à l'utilisateur — vignette, éclair, vibration, cadre vert — était déclenché
+dans `gererScanV2` **après** `identifierV2()`, sous un commentaire « 1) TOUT DE SUITE » qui
+ne l'était que relativement à l'identification. Vu du téléphone : la carte est présentée,
+le cadre passe au vert, **puis plus rien pendant trois à quatre secondes**, puis tout
+apparaît d'un coup.
+
+**Corrigé** : `attemptReadV2` acquitte la PRISE dès que l'image redressée existe — vignette
+dans le cadre du bas (`showLiveResultPending`, « 🔎 recherche… »), éclair, vibration, cadre
+vert. L'identification ne fait plus que remplir le texte. Mesuré en local : vignette à
++0 ms, nom à +956 ms (ce sera +3 à 4 s sur téléphone, mais l'attente est désormais habitée).
+La toile et son `dataURL` sont calculés une seule fois et passés à `gererScanV2` — un
+`toDataURL` plein format de plus sur le fil principal figeait l'aperçu pour rien.
+
+**Effet de bord traité** : si l'identification revient en `rejet-doublon`, le panneau
+resterait bloqué sur « 🔎 recherche… » alors que la carte est connue. `derniereCarteAffichee`
+le restaure.
+
+**Pistes de temps, non tranchées** (à décider avec Nikos) :
+- **`orb` domine (1,4 à 2,6 s) et dérive** au fil de la salve — déjà identifié comme du
+  throttle thermique, pas de la fragmentation (§ « Ce qui reste »).
+- **Chaque carte télécharge 17-18 descripteurs ORB** (`nManque` 17-18, `nReseau` 17-18),
+  soit 550 à 900 ms de réseau par carte, malgré `packTelecharge:true`. Et la liste `sets`
+  du journal **grossit à chaque scan** (14 → 21 → 27 sets) : la shortlist est bel et bien
+  cross-set. C'est la confirmation chiffrée du soupçon déjà noté sur `chargerSetComplet()` —
+  il télécharge ~5 Mo du set dominant en fond **sans réduire les 17-18 descripteurs
+  manquants**, puisque ceux-ci viennent des AUTRES sets. Candidat sérieux à la suppression.
+
 ## ⭐ LA CAUSE RÉELLE, TROUVÉE PAR LE JOURNAL (V.14, 2026-09-01)
 
 **À lire avant tout le reste.** Deux corrections à l'aveugle (V.12, V.13) n'ont rien réglé
