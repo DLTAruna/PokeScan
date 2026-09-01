@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 45;
+const VERSION_APP = 46;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -11977,6 +11977,37 @@ const RECADRE_APRES = 5;
 // clignotement, assez court pour que l'utilisateur ne renonce pas. Repos entre deux essais :
 // une identification ratée coûte une seconde, on ne l'enchaîne pas indéfiniment.
 const RECOURS_APRES = 15, RECOURS_REPOS_MS = 3000;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// DERNIER RECOURS : COUPÉ (retour au comportement de la V.44).
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Il déclenchait sur du vide, et c'était prévisible sans banc : sa condition — « rien détecté
+// depuis 1,5 s » — est littéralement indiscernable de « il n'y a pas de carte devant
+// l'objectif ». Relevé sur le téléphone en V.45, sur neuf scans :
+//
+//     chemin normal      4 scans   4 « sûre »   ZÉRO rebut
+//     dernier recours    5 scans   2 « sûre »   TROIS rebuts
+//
+// Il produisait 56 % des scans et la TOTALITÉ des rebuts de la session.
+//
+// ⚠️ POURQUOI MON BANC NE POUVAIT PAS LE VOIR — à retenir avant d'écrire le prochain.
+// Les quarante-deux présentations contenaient TOUTES une carte. Aucun cas négatif, pas une
+// scène vide. Le recours ne pouvait donc être mesuré que comme un sauvetage : je ne lui ai
+// jamais donné l'occasion d'avoir tort, et j'ai rapporté « 60 % → 89 % » sur cette base.
+// C'est la même faute que les scènes dessinées à plat, qui ne pouvaient pas produire
+// l'asymétrie qu'elles servaient à régler. Un banc doit contenir les cas où la chose
+// mesurée ÉCHOUE, sinon il ne mesure rien.
+//
+// CE QU'IL FAUDRA POUR LE RALLUMER — l'idée reste bonne, treize échecs sur quinze au banc
+// venaient d'un détecteur muet, et deux tirs sur cinq ont réussi ici à 92 % et 89 %.
+// Il manque un moyen de distinguer « carte que le détecteur ne voit pas » de « pas de carte ».
+// `embTop` sépare parfaitement les deux sur ce petit échantillon :
+//     tirs réussis  → 0,745 et 0,739
+//     tirs à vide   → 0,300 · 0,415 · 0,278
+// La marche à suivre : un banc avec des SCÈNES VIDES (table nue, main sans carte, dos de
+// carte), mesurer le taux de faux positifs autant que celui de sauvetage, puis n'afficher un
+// recours qu'au-dessus d'un seuil d'`embTop` calé là-dessus.
+const RECOURS_ACTIF = false;
 async function detecterRecadre(video){
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return null;
@@ -12131,6 +12162,13 @@ async function detectLoop(){
       setOverlayTarget('attente', d.corners);
       prevCorners = null;
       v2StableStreak = 0;
+      // Ces deux mesures décrivent un quadrilatère ; sans détection il n'y en a pas. Elles
+      // gardaient la valeur du scan PRÉCÉDENT, et le journal de la V.45 en porte la trace :
+      // trois lignes de recours affichent 0,026 / 0,007 à l'identique, simplement recopiées.
+      // Une colonne qui ment est pire qu'une colonne vide — j'ai bâti assez d'hypothèses sur
+      // ce journal pour ne pas le laisser raconter des choses fausses.
+      v2SymCourante = -1;
+      v2PropCourante = -1;
       // Absence SOUTENUE exigée (deux images sans détection, ~300 ms) : un seul
       // décrochage isolé (reflet, main qui repositionne la carte) ne prouve rien.
       // ═══════════════════════════════════════════════════════════════════════════════════
@@ -12149,7 +12187,7 @@ async function detectLoop(){
       // Et il ne coûte aucune vitesse : il ne part que lorsque la boucle n'a rien trouvé,
       // c'est-à-dire quand elle n'avait rien d'autre à faire de son tour.
       const maintenant = Date.now();
-      if(v2AbsenceStreak >= RECOURS_APRES && !readInFlight
+      if(RECOURS_ACTIF && v2AbsenceStreak >= RECOURS_APRES && !readInFlight
          && maintenant - v2DernierRecoursA > RECOURS_REPOS_MS){
         v2DernierRecoursA = maintenant;
         diagPush('try', {ok:false, hint:'dernier recours — détecteur muet depuis ' + v2AbsenceStreak + ' images'});
