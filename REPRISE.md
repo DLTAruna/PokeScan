@@ -28,6 +28,32 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## 🗂️ CATALOGUE COMPLET EN LIGNE — 18 646 cartes (build terminé le 2026-09-01, 12h33)
+
+Le build de fond lancé dans la journée s'est terminé : **185/185 sets, 18 646 cartes, 4 h 17**.
+Poussé sur R2 et **déjà en production** (le manifeste est lu à chaque `initV2`).
+
+- **Tranche : les 18 séries**, `base+misc+neo+ecard+ex+pop+tk+dp+pl+hgss+col+bw+mc+xy+sm+swsh+sv+me`
+  — soit **1999 → aujourd'hui**. XY et SM sont désormais dedans (ils n'y étaient pas).
+- `index-global.bin` passe de ~3 Mo à **6,8 Mo** ; `manifest.sets` compte **142 sets** (les
+  185 incluent ceux à 0 carte exploitable, qui ne produisent pas de pack).
+- **Invalidation du cache vérifiée** : la clé est `idx:<manifest.updatedAt>` et `updatedAt`
+  a changé (`2026-09-01T12:33:31.013Z`), donc `idbDelPrefixe` efface l'ancien index et le
+  nouveau se télécharge. Rien à faire à la main.
+- Restent **irrécupérables** (0 carte, ni FR ni EN) : `sm3.5`, `sm7.5`, `cel25cc`, `sve`,
+  `mee`, plus les `tk`/`mc` déjà connus.
+
+**⚠️ Trois conséquences à surveiller au prochain test téléphone :**
+1. **Premier scan de session : 6,8 Mo à télécharger** (une seule fois, puis IndexedDB).
+2. **La shortlist cherche dans 2,5× plus de cartes** (18 646 contre 7 591) : le temps de
+   recherche d'empreintes (compris dans `T.emb`) va monter.
+3. **Plus de quasi-jumelles visuelles ⇒ plus d'OCR de départage**, donc le pic à 3,2 s
+   décrit juste en dessous risque de devenir plus fréquent, pas moins. C'est l'argument le
+   plus fort pour trancher la question laissée ouverte (sauter l'OCR à inliers très élevés).
+
+Les chiffres « 7 591 cartes » qui subsistent plus bas dans ce fichier décrivent l'ANCIENNE
+tranche : ils restent justes pour les campagnes de banc déjà menées, pas pour l'index actuel.
+
 ## ⭐ LE BUG D'INTERFACE : UN ANCÊTRE TRANSFORMÉ (V.17, 2026-09-01)
 
 **À connaître avant de toucher au plein écran.** Nikos : « on dirait que l'interface bug,
@@ -537,12 +563,15 @@ après session de test, via `/api/scan-log`.
 2. **Révoquer le jeton R2 fuité** — était en clair dans `run.sh` au commit `872c039`
    (poussé sur GitHub). Cloudflare → R2 → Manage R2 API Tokens → supprimer. En refaire un
    pour les builds suivants, le mettre dans `tools/build-packs/.env` (non commité).
-3. **Étendre la tranche** aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
+3. ~~**Étendre la tranche** aux séries antérieures~~ — **FAIT le 2026-09-01** : 185/185 sets,
+   18 646 cartes, les 18 séries sont en ligne (voir « Catalogue complet en ligne » en tête de
+   fichier). Le texte ci-dessous décrit l'état d'avant, gardé pour le contexte.
+   ~~Étendre la tranche aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
    xy,sm`) quand la V2 sera validée — **`build.html` sait maintenant composer la commande**
    (voir § « Sélecteur de séries » plus bas) : Nikos coche, copie, colle dans son terminal.
    Compter ~2 h de plus pour XY+SM (35 sets, 4 840 cartes), plus si tout l'historique.
    Les 3 `rebut` de la session de 20h44 (`swsh10-082`, `swsh5-79`, `sv03-175` — clés
-   prédites, donc fausses) étaient sans doute des cartes hors tranche.
+   prédites, donc fausses) étaient sans doute des cartes hors tranche.~~
 4. **Le log ne mesure pas la justesse** : `predit == attendu == cardId` (tous mis à la
    prédiction). Il faut que Nikos corrige les cartes fausses (→ `verifie:true`) ou dise ce
    qui a raté. Les tests navigateur sur `photos-test/`, eux, connaissent la vérité.
