@@ -126,8 +126,9 @@ après session de test, via `/api/scan-log`.
    (poussé sur GitHub). Cloudflare → R2 → Manage R2 API Tokens → supprimer. En refaire un
    pour les builds suivants, le mettre dans `tools/build-packs/.env` (non commité).
 3. **Étendre la tranche** aux séries antérieures (`base,neo,ecard,ex,pop,dp,pl,hgss,col,bw,
-   xy,sm`) quand la V2 sera validée. `SERIES=base,neo,... bash tools/build-packs/run.sh` —
-   le script reprend et reconstruit l'index global avec tout. Compter ~2 h de plus.
+   xy,sm`) quand la V2 sera validée — **`build.html` sait maintenant composer la commande**
+   (voir § « Sélecteur de séries » plus bas) : Nikos coche, copie, colle dans son terminal.
+   Compter ~2 h de plus pour XY+SM (35 sets, 4 840 cartes), plus si tout l'historique.
    Les 3 `rebut` de la session de 20h44 (`swsh10-082`, `swsh5-79`, `sv03-175` — clés
    prédites, donc fausses) étaient sans doute des cartes hors tranche.
 4. **Le log ne mesure pas la justesse** : `predit == attendu == cardId` (tous mis à la
@@ -163,8 +164,38 @@ SERIES=swsh,sv,me bash run.sh                          # build une tranche, repr
   désormais ; utile pour rattraper d'anciens packs).
 - `verify-orb.mjs` / `verify-global.mjs` — fidélité Node↔navigateur (embeddings 207/207,
   ORB self=700) et recall de shortlist (100 % top-30 sur 7 591 cartes).
-- **`build.html`** (racine, déployé) — tableau de bord live lisant `status.json`.
+- **`build.html`** (racine, déployé) — tableau de bord live lisant `status.json`,
+  **et sélecteur de séries** (voir juste en dessous).
 - Build complet ~2 h pour 7 591 cartes (~585 ms/carte : dl 166 + emb 218 + orb 170 + hash 30).
+
+### Sélecteur de séries dans `build.html` (2026-09-01)
+
+`build.html` composait déjà la progression d'un build ; il **compose maintenant la
+commande** à lancer pour ajouter les séries manquantes — Nikos n'a plus à se souvenir des
+identifiants TCGdex (`base`, `neo`, `ecard`, `ex`, `pop`, `dp`, `pl`, `hgss`, `col`, `bw`,
+`xy`, `sm`) ni de leur ordre.
+
+- Lit `manifest.json` sur R2 pour savoir ce qui est **déjà construit** (`manifest.slice`,
+  ex. `swsh+sv+me`) — ces séries s'affichent cochées et **verrouillées** (case désactivée).
+- Interroge `api.tcgdex.net/v2/fr/series/<id>` pour chaque série de la liste chronologique
+  (14 séries standards, **volontairement sans** `misc`/`tk`/`mc`/`tcgp` — pas des extensions
+  chronologiques, ou hors format TCG papier) : nombre de sets, nombre de cartes.
+- Cocher des séries manquantes compose en direct `SERIES=<déjà+cochées> bash run.sh`,
+  **toujours dans l'ordre chronologique**, avec estimation du temps de build
+  (`cartes × 0,585 ms`, la mesure réelle du build précédent). Bouton copier.
+- **La page ne télécharge et n'écrit rien elle-même** — aucune clé R2 n'y transite. Elle
+  compose seulement la commande ; c'est toujours `run.sh`, sur le poste de Nikos avec son
+  `.env`, qui fait le travail. C'est un choix délibéré, pas une limitation oubliée : les
+  clés d'écriture R2 ne doivent jamais atteindre une page web (voir le jeton déjà fuité dans
+  `run.sh` au commit `872c039`).
+- **Piège vérifié dans `index.mjs`, à connaître avant de lancer quoi que ce soit** : les
+  séries déjà construites mais **absentes** du `SERIES` d'un run ne sont pas retouchées sur
+  R2, mais leurs cartes disparaissent de `index-global.bin` à la fin de CE run — le script
+  ne réinjecte dans l'index global que les sets listés dans le `SERIES` courant (`main()`,
+  boucle `for (const [id, info] of Object.entries(manifest.sets))` filtrée par
+  `setIds.includes(id)`). Lancer `SERIES=xy,sm` seul **amputerait silencieusement** l'index
+  en production de swsh+sv+me. C'est pour ça que le sélecteur verrouille les séries déjà en
+  ligne plutôt que de les laisser décocher : la commande composée les inclut toujours.
 
 ### Pièges d'install (machine de Nikos, Windows)
 

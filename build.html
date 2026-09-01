@@ -47,12 +47,64 @@
   .muted{color:var(--dim);font-size:12px}
   .errline{color:var(--err)}
   a{color:var(--accent)}
+
+  /* ---- sélecteur de séries ---- */
+  .serieRow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
+  .serieRow:last-child{border-bottom:0}
+  .serieRow label{display:flex;align-items:center;gap:9px;flex:1;cursor:pointer;min-width:0}
+  .serieRow input[type=checkbox]{width:17px;height:17px;flex:none;accent-color:var(--accent)}
+  .serieRow input[type=checkbox]:disabled{accent-color:var(--ok)}
+  .serieName{font-weight:600;min-width:0}
+  .serieName small{display:block;font-weight:400;color:var(--dim);font-size:11.5px}
+  .serieNums{color:var(--dim);font-size:12.5px;white-space:nowrap}
+  .serieDone{font-size:11px;font-weight:700;color:var(--ok);white-space:nowrap}
+  code.cmd{display:block;background:var(--track);border-radius:8px;padding:12px 14px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;white-space:pre-wrap}
+  .warnbox{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));border-radius:9px;padding:10px 13px;font-size:12.5px;line-height:1.55;margin-top:10px}
+  .warnbox b{color:var(--warn)}
+  button.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+  button.small{padding:5px 10px;font-size:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Construction des packs de reconnaissance visuelle</h1>
   <div class="sub" id="head">Chargement…</div>
+
+  <div class="card">
+    <div class="row" style="margin-bottom:2px">
+      <div class="lbl">Séries — construites et manquantes</div>
+      <div class="muted"><span id="serieProgress">—</span></div>
+    </div>
+    <div class="sub" style="margin:2px 0 10px">
+      Coche les séries manquantes à ajouter à la tranche en ligne. Les séries déjà
+      construites (✓) restent toujours incluses — les retirer effacerait leurs cartes de
+      l'index en ligne à la fin du prochain build, sans toucher à leurs packs déjà stockés
+      sur R2 (ils resteraient juste orphelins).
+    </div>
+    <div id="serieList"><span class="muted">Chargement du catalogue TCGdex…</span></div>
+    <div class="row" style="margin-top:10px">
+      <div class="ctl">
+        <button class="small" id="bSelAll">Tout cocher les manquantes</button>
+        <button class="small" id="bSelNone">Tout décocher</button>
+      </div>
+      <div class="muted" id="serieTotaux"></div>
+    </div>
+    <div class="lbl" style="margin-top:14px;margin-bottom:6px">Commande à lancer (terminal de Nikos, dossier <code>tools/build-packs/</code>)</div>
+    <code class="cmd" id="cmdBox">SERIES=swsh,sv,me bash run.sh</code>
+    <div class="ctl" style="margin-top:8px">
+      <button class="primary" id="bCopyCmd">📋 Copier la commande</button>
+      <span class="muted" id="copyMsg"></span>
+    </div>
+    <div class="warnbox">
+      <b>Ce que cette page ne fait PAS :</b> elle ne télécharge rien elle-même. Le build lit
+      les cartes depuis TCGdex, calcule les empreintes et envoie sur R2 avec des clés
+      d'écriture qui ne doivent JAMAIS quitter le poste de Nikos (<code>tools/build-packs/.env</code>,
+      non commité — un jeton a déjà fuité une fois en clair dans <code>run.sh</code>, voir
+      REPRISE.md). Cette page compose seulement la commande exacte à coller dans le terminal ;
+      <code>run.sh</code> reprend tout seul après un crash et le tableau ci-dessous en suit
+      la progression en direct.
+    </div>
+  </div>
 
   <div class="card">
     <div class="row">
@@ -119,6 +171,96 @@ const R2 = 'https://pub-3308c2813bb34a7cb0bed0b500e8d8c4.r2.dev';
 const CONTROL = '/api/build-control';
 const $ = id => document.getElementById(id);
 $('src').href = R2 + '/status.json';
+
+// ═══════════════ Séries : ce qui est construit, ce qu'il reste à ajouter ═══════════════
+// Ordre chronologique des séries TCG (identifiants TCGdex — voir tools/build-packs/lib.mjs,
+// setsDeLaSerie). 'misc', 'tk' (kits du dresseur), 'mc' (McDonald's) et 'tcgp' (Pokémon TCG
+// Pocket, jeu mobile à part, autre format de dos de carte) sont volontairement absentes :
+// ni des extensions chronologiques standards, ni couvertes par le pipeline aujourd'hui.
+const SERIES_CHRONO = [
+  ['base','Base'], ['neo','Neo'], ['ecard','e-cards'], ['ex','EX'], ['pop','POP'],
+  ['dp','Diamant & Perle'], ['pl','Platine'], ['hgss','HeartGold SoulSilver'],
+  ['col','L’appel des Légendes'], ['bw','Noir & Blanc'], ['xy','XY'],
+  ['sm','Soleil et Lune'], ['swsh','Épée et Bouclier'], ['sv','Écarlate et Violet'],
+  ['me','Méga-Évolution'],
+];
+const MS_PAR_CARTE = 0.585;   // mesuré : dl 166 + emb 218 + orb 170 + hash 30 (voir REPRISE.md)
+
+let dejaConstruites = [];   // ids de série déjà dans le manifest en ligne (manifest.slice)
+let infosSeries = {};       // id -> {sets, cartes}
+let selection = new Set();  // séries manquantes cochées par l'utilisateur
+
+async function chargerSeriesDispo(){
+  try{
+    const m = await (await fetch(R2 + '/manifest.json?t=' + Date.now(), {cache:'no-store'})).json();
+    dejaConstruites = (m.slice || '').split('+').filter(Boolean);
+  }catch(e){ dejaConstruites = []; }   // pas encore de manifest : rien construit
+
+  const resultats = await Promise.all(SERIES_CHRONO.map(async ([id])=>{
+    try{
+      const d = await (await fetch('https://api.tcgdex.net/v2/fr/series/' + id)).json();
+      const sets = d.sets || [];
+      const cartes = sets.reduce((a,s)=> a + (s.cardCount?.total || 0), 0);
+      return [id, { sets: sets.length, cartes }];
+    }catch(e){ return [id, { sets: 0, cartes: 0, erreur: true }]; }
+  }));
+  infosSeries = Object.fromEntries(resultats);
+  rendreSeries();
+}
+
+function rendreSeries(){
+  $('serieProgress').textContent = dejaConstruites.length
+    ? dejaConstruites.length + '/' + SERIES_CHRONO.length + ' séries en ligne' : '—';
+
+  $('serieList').innerHTML = SERIES_CHRONO.map(([id, nom])=>{
+    const info = infosSeries[id] || {};
+    const fait = dejaConstruites.includes(id);
+    const coche = fait || selection.has(id);
+    const nums = info.erreur ? 'indisponible'
+      : (info.sets + ' set' + (info.sets>1?'s':'') + ' · ' + info.cartes.toLocaleString('fr') + ' cartes');
+    return `<div class="serieRow">
+      <label>
+        <input type="checkbox" data-id="${id}" ${coche?'checked':''} ${fait?'disabled':''}>
+        <span class="serieName">${nom}<small>${id}</small></span>
+      </label>
+      <span class="serieNums">${nums}</span>
+      ${fait ? '<span class="serieDone">✓ en ligne</span>' : ''}
+    </div>`;
+  }).join('');
+
+  $('serieList').querySelectorAll('input[type=checkbox]:not(:disabled)').forEach(cb=>{
+    cb.onchange = ()=>{ cb.checked ? selection.add(cb.dataset.id) : selection.delete(cb.dataset.id); rendreCommande(); };
+  });
+  rendreCommande();
+}
+
+function rendreCommande(){
+  // Ordre chronologique, pas l'ordre des clics : la commande doit rester lisible et stable
+  // quel que soit l'ordre dans lequel les cases ont été cochées.
+  const toutes = SERIES_CHRONO.map(([id])=>id).filter(id=> dejaConstruites.includes(id) || selection.has(id));
+  $('cmdBox').textContent = 'SERIES=' + (toutes.join(',') || 'swsh,sv,me') + ' bash run.sh';
+
+  let sets = 0, cartes = 0;
+  for(const id of selection){ const i = infosSeries[id]; if(i){ sets += i.sets; cartes += i.cartes; } }
+  if(!selection.size){ $('serieTotaux').textContent = ''; return; }
+  const heures = (cartes * MS_PAR_CARTE / 3600).toFixed(1);
+  $('serieTotaux').textContent = selection.size + ' série' + (selection.size>1?'s':'') + ' choisie'
+    + (selection.size>1?'s':'') + ' · ' + sets + ' sets · ' + cartes.toLocaleString('fr')
+    + ' cartes · environ ' + heures + ' h de build';
+}
+
+$('bSelAll').onclick = ()=>{
+  SERIES_CHRONO.forEach(([id])=>{ if(!dejaConstruites.includes(id)) selection.add(id); });
+  rendreSeries();
+};
+$('bSelNone').onclick = ()=>{ selection.clear(); rendreSeries(); };
+$('bCopyCmd').onclick = async ()=>{
+  try{ await navigator.clipboard.writeText($('cmdBox').textContent); $('copyMsg').textContent = 'Copié ✓'; }
+  catch(e){ $('copyMsg').textContent = 'Sélectionne le texte et copie-le à la main (' + e.message + ')'; }
+  setTimeout(()=> $('copyMsg').textContent = '', 2500);
+};
+
+chargerSeriesDispo();
 
 function fmt(sec){
   if(sec == null) return '—';
