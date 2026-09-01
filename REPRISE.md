@@ -28,6 +28,33 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ LE VRAI COUPABLE : un toast posé sur le bouton Scanner (V.23)
+
+**Trouvé par Nikos**, après deux fausses pistes de ma part. Le bandeau flottant
+« ↩️ Session restaurée : 0 carte(s) au lot, 1 en attente », affiché au démarrage par
+`restaurerSession()`, est un `toast()` — donc `position:fixed; bottom:20px; left:50%`, en
+surimpression, **pile sur le bouton Scanner de la barre du bas**. Pendant ses deux secondes,
+il captait l'appui destiné au scanner ; sur Android, l'appui perdu finissait en geste système
+(Circle to Search), d'où la « recherche Google » puis la « recherche restauration ».
+
+⚠️ **Règle qui en découle** : `toast()` est `z-index:280` et occupe le bas de l'écran, là où
+vit la barre de navigation. **Ne jamais y mettre une information de DÉMARRAGE** — elle
+apparaît au moment précis où l'utilisateur va appuyer, et elle intercepte. Le toast reste
+bon pour acquitter une action que l'utilisateur vient de faire.
+
+**Remplacé par un bandeau dans la page** (`#acc-reprise`), rouge transparent, pleine largeur,
+**juste au-dessus des six entrées de l'accueil** — dont « À vérifier », qui est justement la
+destination. Il ne masque rien, ne disparaît pas au bout de deux secondes, et se clique pour
+aller au but (`identify`, ou `batch` s'il n'y a que des cartes au lot).
+
+- **Il se tait quand il n'y a rien à faire.** L'ancien annonçait fièrement « 0 carte au
+  lot » : une session restaurée sans carte en suspens n'est pas une information, c'est du
+  bruit.
+- **Il suit la file** (appelé depuis `updateQueueBadges`) : il s'efface dès validation, au
+  lieu d'annoncer un travail déjà fait jusqu'au prochain rechargement. Vérifié.
+- Vérifié aussi : **plus aucun toast au démarrage** (guet sur `.toast.show` pendant tout le
+  chargement → liste vide), bandeau bien au-dessus de la mosaïque et à la même largeur.
+
 ## ⚠️ Écran noir sans issue au démarrage — régression V.21, corrigée en V.22
 
 Nikos : « quand je clique sur scanner, ça m'ouvre la recherche Google, comme si quelque chose

@@ -2292,6 +2292,26 @@
      flottaison, et une porte qu'on ne voit pas ne sert a rien. Ce qui saute donc, c'est la
      phrase d'explication : sur un carre il reste une icone, un nom, un compteur. C'est
      assez pour un accueil, dont le role est d'aiguiller et non de raconter. */
+  /* Bandeau de reprise de session. Rouge transparent, pleine largeur, juste au-dessus de la
+     mosaïque : il annonce un travail EN SUSPENS, pas une erreur — d'où le fond teinté plutôt
+     qu'un bloc plein, qui aurait la solennité d'une panne. Cliquable, parce qu'une alerte qui
+     ne mène pas à ce dont elle parle oblige à chercher soi-même. */
+  .acc-reprise{
+    display:flex; align-items:center; gap:10px; width:100%; margin-top:14px;
+    padding:10px 12px; border-radius:12px; text-align:left;
+    background:rgba(224,85,63,.13); border:1px solid rgba(224,85,63,.42);
+    color:#ffb3a3; font-size:12.5px; line-height:1.4; cursor:pointer;
+  }
+  .acc-reprise[hidden]{display:none;}
+  .acc-reprise:active{background:rgba(224,85,63,.22);}
+  .acc-reprise .ar-point{
+    width:8px; height:8px; border-radius:50%; background:#e0553f; flex:none;
+    box-shadow:0 0 0 3px rgba(224,85,63,.22);
+  }
+  .acc-reprise .ar-txt{flex:1; min-width:0;}
+  .acc-reprise .ar-txt b{color:#ffd9d1; font-weight:700;}
+  .acc-reprise .ar-fleche{flex:none; font-size:18px; opacity:.7;}
+
   .acc-mosaique{display:grid; grid-template-columns:repeat(3, 1fr); gap:10px; margin-top:12px;}
   /* Le contenu est cale en bas a GAUCHE et le compteur file dans le coin oppose. Centre et
      empile, le texte etait a la fois trop gros pour tenir et trop petit pour se lire :
@@ -4667,6 +4687,19 @@
          Un accueil se lit d'un coup d'oeil ; la bascule ne gouverne plus que la barre du bas.
          Rangee du haut : ce qu'on garde. Rangee du bas : ce qu'on vend. Chaque famille a sa
          teinte, ce qui suffit a les separer sans y ecrire de titre. -->
+    <!-- Reprise de session. Remplace le bandeau flottant (toast) qui s'affichait au
+         démarrage : posé par-dessus la page, en bas au centre, il tombait pile sur le bouton
+         Scanner de la barre du bas et interceptait l'appui — ce que Nikos a fini par
+         identifier après avoir vu Android ouvrir une recherche à sa place.
+         Ici, l'information est DANS la page, à l'endroit où elle porte : juste au-dessus des
+         six entrées, dont « À vérifier » qui est justement la destination. Elle ne masque
+         rien, ne disparaît pas au bout de deux secondes, et se clique pour aller au but. -->
+    <button class="acc-reprise" id="acc-reprise" hidden>
+      <span class="ar-point" aria-hidden="true"></span>
+      <span class="ar-txt" id="acc-reprise-txt"></span>
+      <span class="ar-fleche" aria-hidden="true">›</span>
+    </button>
+
     <div class="acc-mosaique">
       <button class="acc-case col" data-tab="sets">
         <span class="acc-case-fond" aria-hidden="true"><svg viewBox="0 0 100 100" aria-hidden="true"><rect x="20" y="10" width="70" height="80" rx="6" fill="none" stroke="currentColor" stroke-width="5"/><rect x="30" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><rect x="60" y="21" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="30" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".26"/><rect x="60" y="53" width="24" height="27" rx="3" fill="currentColor" opacity=".45"/><circle cx="13" cy="26" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="50" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/><circle cx="13" cy="74" r="6" fill="none" stroke="currentColor" stroke-width="4.5"/></svg></span>
@@ -5806,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 22;
+const VERSION_APP = 23;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -6712,6 +6745,9 @@ function toast(msg){
 function updateQueueBadges(){
   document.querySelectorAll('.queue-badge').forEach(el=> el.textContent = pendingQueue.length);
   majBadgesNav();
+  // Le bandeau de reprise suit la file : il doit s'effacer dès que les cartes ont été
+  // validées, sinon il annonce un travail déjà fait jusqu'au prochain rechargement.
+  try{ majBandeauReprise(); }catch(e){}
 }
 
 // ---------------- IMAGE COMPRESSION HELPER ----------------
@@ -9053,6 +9089,34 @@ async function sauvegarderSession(){
   }catch(e){ /* sauvegarde best-effort : ne doit jamais interrompre un scan */ }
 }
 
+// Bandeau de reprise de session, dans l'accueil. Il ne dit RIEN quand il n'y a rien à faire :
+// une session restaurée sans carte en suspens n'est pas une information, c'est du bruit —
+// c'est d'ailleurs ce que faisait l'ancien bandeau flottant, qui annonçait fièrement
+// « 0 carte au lot ». On ne parle que de ce qui attend une action.
+function majBandeauReprise(){
+  const el = $('acc-reprise'), txt = $('acc-reprise-txt');
+  if(!el || !txt) return;
+  const enAttente = pendingQueue.length;
+  const auLot = batch.length;
+  if(!enAttente && !auLot){ el.hidden = true; return; }
+
+  const morceaux = [];
+  if(enAttente) morceaux.push(`<b>${enAttente} carte${enAttente > 1 ? 's' : ''}</b> à vérifier`);
+  if(auLot) morceaux.push(`<b>${auLot}</b> au lot`);
+  txt.innerHTML = 'Session restaurée — ' + morceaux.join(' et ')
+    + '. À valider pour rejoindre ton stock.';
+  // Mène là où c'est le plus utile : « À vérifier » s'il y a des cartes à confirmer, le lot
+  // sinon. Un bandeau d'alerte qui ne mène pas à ce dont il parle oblige à chercher soi-même.
+  // `identify` est l'onglet « À vérifier » (voir la case du même nom dans la mosaïque) ;
+  // `batch` est le lot. Noms vérifiés sur les data-tab réellement présents.
+  el.dataset.cible = enAttente ? 'identify' : 'batch';
+  el.hidden = false;
+}
+$('acc-reprise')?.addEventListener('click', ()=>{
+  const cible = $('acc-reprise')?.dataset.cible === 'batch' ? 'batch' : 'identify';
+  document.querySelector('[data-tab="' + cible + '"]')?.click();
+});
+
 async function restaurerSession(){
   try{
     const s = await idbGet('meta', 'session');
@@ -9062,7 +9126,13 @@ async function restaurerSession(){
     batch = s.batch || [];
     updateQueueBadges(); renderQueueStrip(); renderQueueOverview(); renderBatch();
     const quand = new Date(s.at).toLocaleString();
-    toast(`↩️ Session restaurée : ${batch.length} carte(s) au lot, ${pendingQueue.length} en attente`);
+    // Plus de `toast()` ici. Il s'affichait en bas au centre, par-dessus la page, donc PILE
+    // sur le bouton Scanner de la barre du bas — et pendant ses deux secondes, il captait
+    // l'appui destiné au scanner. Sur Android, l'appui perdu finissait en geste système
+    // (recherche Google surgie de nulle part). Une information de démarrage n'a rien à faire
+    // en surimpression d'une zone de commande : elle est désormais dans la page, au-dessus
+    // des six entrées de l'accueil (voir majBandeauReprise).
+    majBandeauReprise();
     diagPush('err', {msg:`session restaurée (${batch.length} lot, ${pendingQueue.length} file) sauvegardée le ${quand}`});
   }catch(e){ /* pas de session à restaurer */ }
 }
