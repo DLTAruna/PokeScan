@@ -450,9 +450,27 @@ async function assurerOrbCartes(cles) {
         try { buf = await telechargerR2('orb/' + cle + '.orb'); telecharge = true; idbSet('orbc:' + cle, buf); }
         catch (e) { orbCharges.set(cle, { ts: Date.now(), absent: true }); return; }
       }
-      const o = parseBlobOrb(buf);
-      await orb.call({ type: 'refImport', cle, bytes: o.des, rows: o.rows, kp: o.kp });
-      orbCharges.set(cle, { ts: Date.now() });
+      // ⚠️ UN ÉCHEC NE DOIT PAS EMPORTER LES DIX-SEPT AUTRES (V.36).
+      // Cet appel n'était pas protégé : la moindre erreur faisait rejeter le `Promise.all`,
+      // donc `assurerOrbCartes`, dont l'appelant AVALE l'erreur en silence. Le scan
+      // continuait alors avec un cache de références vide ou à moitié rempli — l'ORB n'avait
+      // plus rien à quoi comparer, rendait 0 ou 1 inlier, et la carte partait en « rebut »
+      // comme si elle était méconnaissable. Relevé sur le téléphone de Nikos : les rebuts
+      // sont passés de 17 % à 63 %, TOUS avec `sets: 0` (aucune référence chargée) et
+      // `refs` à 12 ms — trop court pour avoir importé quoi que ce soit.
+      // Les deux durcissements de la V.25 et de la V.33 (délais de garde sur les workers et
+      // sur le réseau) ont créé de nouveaux chemins d'échec ici : on a troqué un blocage
+      // contre une identification silencieusement fausse, ce qui est pire.
+      try {
+        const o = parseBlobOrb(buf);
+        await orb.call({ type: 'refImport', cle, bytes: o.des, rows: o.rows, kp: o.kp });
+        orbCharges.set(cle, { ts: Date.now() });
+      } catch (e) {
+        detailRefs.nEchecs = (detailRefs.nEchecs || 0) + 1;
+        detailRefs.derniereErreur = String(e && e.message || e).slice(0, 80);
+        // Pas marquée `absent` : c'est un échec TECHNIQUE, pas une carte sans descripteur.
+        // La marquer absente la condamnerait pour toute la session.
+      }
     }));
     detailRefs.imp = Math.round(performance.now() - tImp);
   }
@@ -679,7 +697,13 @@ export async function identifierV2(carte, opts = {}) {
   // 2. descripteurs ORB des cartes de la shortlist (un petit blob par carte, à la demande)
   await recyclerOrbSiBesoin();
   let packTelecharge = false;
-  try { packTelecharge = await chrono('refs', assurerOrbCartes(court)); } catch (err) {}
+  // Le `catch` vide d'origine masquait une panne totale des références : sans descripteurs,
+  // l'ORB compare la carte à rien, rend zéro inlier, et le scan repart en « rebut » avec
+  // l'assurance d'un vrai refus. On garde le scan en vie — l'embedding seul vaut mieux que
+  // rien — mais on note la panne pour qu'elle apparaisse au journal au lieu de se déguiser
+  // en carte méconnaissable.
+  try { packTelecharge = await chrono('refs', assurerOrbCartes(court)); }
+  catch (err) { detailRefs.panne = String(err && err.message || err).slice(0, 80); }
   T.refsDetail = { ...detailRefs };
   onEtat('');
 

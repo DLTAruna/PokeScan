@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 35;
+const VERSION_APP = 36;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -12696,6 +12696,25 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     packTelecharge: !!res.packTelecharge,
     ms: res.ms, T: res.T, moteur: res.moteur, diag: (SCAN_V2.diagV2 && SCAN_V2.diagV2()) || null,
     sets: res.setsCharges || SCAN_V2.setV2(), score: +Number(score).toFixed(2),
+    // ── Ce qui manquait pour comprendre les rebuts (V.36) ──────────────────────────────
+    // Les échecs sont bimodaux : l'ORB verrouille à 20-190 inliers, ou ne voit rien (0-8).
+    // Rien entre les deux. Avec les seuls inliers on ne peut pas savoir POURQUOI il ne voit
+    // rien, et j'ai perdu deux tours à accuser des innocents (le cache ORB, puis le moteur
+    // d'inférence) faute de ces trois nombres.
+    //   embTop     — la similarité du meilleur candidat de l'embedding. Basse = l'IMAGE est
+    //                mauvaise (floue, mal recadrée, du décor) : aucune carte du catalogue ne
+    //                lui ressemble. Haute avec 0 inlier = l'image est bonne mais l'ORB a
+    //                échoué, ce qui est un tout autre bug.
+    //   embPremier — la carte que l'embedding proposait AVANT que l'ORB ne reclasse. Si la
+    //                bonne réponse n'est déjà pas dans la shortlist, l'ORB compare 18 mauvais
+    //                candidats et son verdict ne veut rien dire.
+    //   cadrage    — quelle stratégie a produit l'image (coins détectés, cadre fixe, 0.80).
+    //                Le rebut déclenche un réessai qui CHANGE de stratégie : sans ce champ on
+    //                confond « la détection cadre mal » et « la carte est inconnue ».
+    embTop: typeof res.embTop === 'number' ? +res.embTop.toFixed(4) : null,
+    embPremier: res.embPremier || null,
+    embEtaitBon: res.pick && res.embPremier ? (res.pick.cle === res.embPremier) : null,
+    cadrage: (STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)] || {}).nom || '?',
     // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
     // à supposer que le téléphone avait bien pris le déploiement entre les deux.
     v: VERSION_APP
@@ -20983,7 +21002,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=24';
+import * as V2 from './scan-v2.js?v=25';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
