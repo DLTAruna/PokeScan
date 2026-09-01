@@ -48,16 +48,33 @@
   .errline{color:var(--err)}
   a{color:var(--accent)}
 
-  /* ---- sélecteur de séries ---- */
-  .serieRow{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)}
-  .serieRow:last-child{border-bottom:0}
-  .serieRow label{display:flex;align-items:center;gap:9px;flex:1;cursor:pointer;min-width:0}
-  .serieRow input[type=checkbox]{width:17px;height:17px;flex:none;accent-color:var(--accent)}
-  .serieRow input[type=checkbox]:disabled{accent-color:var(--ok)}
-  .serieName{font-weight:600;min-width:0}
+  /* ---- sélecteur de séries, granularité set ---- */
+  details.serie{border:1px solid var(--line);border-radius:9px;margin-bottom:8px;overflow:hidden}
+  details.serie[open]{border-color:color-mix(in srgb,var(--accent) 35%,var(--line))}
+  details.serie summary{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;cursor:pointer;list-style:none;
+    background:var(--track);
+  }
+  details.serie summary::-webkit-details-marker{display:none}
+  details.serie summary::before{content:'▸';color:var(--dim);font-size:11px;transition:transform .15s;flex:none}
+  details.serie[open] summary::before{transform:rotate(90deg)}
+  .serieCase{width:18px;height:18px;flex:none;accent-color:var(--accent)}
+  .serieCase:disabled{accent-color:var(--ok)}
+  .serieName{font-weight:650;min-width:0}
   .serieName small{display:block;font-weight:400;color:var(--dim);font-size:11.5px}
-  .serieNums{color:var(--dim);font-size:12.5px;white-space:nowrap}
-  .serieDone{font-size:11px;font-weight:700;color:var(--ok);white-space:nowrap}
+  .serieRight{margin-left:auto;display:flex;align-items:center;gap:8px;white-space:nowrap}
+  .serieNums{color:var(--dim);font-size:12.5px}
+  .serieChip{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .serieChip.done{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok)}
+  .serieChip.part{background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent)}
+  .serieChip.none{background:var(--track);color:var(--dim);border:1px solid var(--line)}
+  .setTable{width:100%;border-collapse:collapse}
+  .setTable td{padding:6px 12px;font-size:12.5px;border-top:1px solid var(--line)}
+  .setTable td:nth-child(2){color:var(--dim);text-align:right;white-space:nowrap}
+  .setTable td:nth-child(3){text-align:right;white-space:nowrap;width:1%}
+  .setOk{color:var(--ok);font-weight:700}
+  .setTodo{color:var(--dim)}
+  .noteRow{padding:8px 12px;font-size:11.5px;color:var(--dim);background:var(--card);border-top:1px solid var(--line)}
   code.cmd{display:block;background:var(--track);border-radius:8px;padding:12px 14px;font:12.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;white-space:pre-wrap}
   .warnbox{background:color-mix(in srgb,var(--warn) 12%,transparent);border:1px solid color-mix(in srgb,var(--warn) 40%,var(--line));border-radius:9px;padding:10px 13px;font-size:12.5px;line-height:1.55;margin-top:10px}
   .warnbox b{color:var(--warn)}
@@ -72,20 +89,23 @@
 
   <div class="card">
     <div class="row" style="margin-bottom:2px">
-      <div class="lbl">Séries — construites et manquantes</div>
+      <div class="lbl">Toutes les séries, tous les sets</div>
       <div class="muted"><span id="serieProgress">—</span></div>
     </div>
     <div class="sub" style="margin:2px 0 10px">
-      Coche les séries manquantes à ajouter à la tranche en ligne. Les séries déjà
-      construites (✓) restent toujours incluses — les retirer effacerait leurs cartes de
-      l'index en ligne à la fin du prochain build, sans toucher à leurs packs déjà stockés
-      sur R2 (ils resteraient juste orphelins).
+      Chaque série TCGdex, dans l'ordre réel de sortie, avec le détail set par set en
+      dessous — déplie une série pour voir. Un set déjà sur R2 (✓, en vert) est relu en
+      quelques secondes au prochain build, jamais reconstruit : cocher une série entière ne
+      coûte rien pour ce qu'elle contient déjà, seuls les sets manquants sont téléchargés.
+      Tout ce qui n'est pas encore complet est coché par défaut.
     </div>
-    <div id="serieList"><span class="muted">Chargement du catalogue TCGdex…</span></div>
+    <div id="serieList"><span class="muted">Chargement du catalogue TCGdex (19 séries, chaque set)…</span></div>
     <div class="row" style="margin-top:10px">
       <div class="ctl">
-        <button class="small" id="bSelAll">Tout cocher les manquantes</button>
-        <button class="small" id="bSelNone">Tout décocher</button>
+        <button class="small" id="bSelAll">Tout cocher</button>
+        <button class="small" id="bSelNone">Tout décocher les manquantes</button>
+        <button class="small" id="bDeplier">Tout déplier</button>
+        <button class="small" id="bReplier">Tout replier</button>
       </div>
       <div class="muted" id="serieTotaux"></div>
     </div>
@@ -172,63 +192,91 @@ const CONTROL = '/api/build-control';
 const $ = id => document.getElementById(id);
 $('src').href = R2 + '/status.json';
 
-// ═══════════════ Séries : ce qui est construit, ce qu'il reste à ajouter ═══════════════
-// Ordre chronologique des séries TCG (identifiants TCGdex — voir tools/build-packs/lib.mjs,
-// setsDeLaSerie). 'misc', 'tk' (kits du dresseur), 'mc' (McDonald's) et 'tcgp' (Pokémon TCG
-// Pocket, jeu mobile à part, autre format de dos de carte) sont volontairement absentes :
-// ni des extensions chronologiques standards, ni couvertes par le pipeline aujourd'hui.
-const SERIES_CHRONO = [
-  ['base','Base'], ['neo','Neo'], ['ecard','e-cards'], ['ex','EX'], ['pop','POP'],
-  ['dp','Diamant & Perle'], ['pl','Platine'], ['hgss','HeartGold SoulSilver'],
-  ['col','L’appel des Légendes'], ['bw','Noir & Blanc'], ['xy','XY'],
-  ['sm','Soleil et Lune'], ['swsh','Épée et Bouclier'], ['sv','Écarlate et Violet'],
-  ['me','Méga-Évolution'],
-];
-const MS_PAR_CARTE = 0.585;   // mesuré : dl 166 + emb 218 + orb 170 + hash 30 (voir REPRISE.md)
+// ═══════════════ Séries et sets : ce qui est construit, ce qu'il reste à ajouter ═══════════════
+// Rien de codé en dur : la liste des séries, leur ordre (par date de sortie réelle) et le
+// détail de chaque set viennent tous de l'API TCGdex — la même source que le build lui-même
+// (tools/build-packs/lib.mjs, setsDeLaSerie). Une nouvelle série TCGdex apparaît ici sans
+// qu'il faille toucher au code. Seule 'tcgp' (Pokémon TCG Pocket) est traitée à part : c'est
+// un jeu mobile avec un autre format de carte, pas une extension du jeu physique.
+const SERIE_A_PART = 'tcgp';
+const S_PAR_CARTE = 0.585;   // mesuré : dl 166 + emb 218 + orb 170 + hash 30 (voir REPRISE.md)
 
-let dejaConstruites = [];   // ids de série déjà dans le manifest en ligne (manifest.slice)
-let infosSeries = {};       // id -> {sets, cartes}
-let selection = new Set();  // séries manquantes cochées par l'utilisateur
+let seriesInfo = [];         // [{id, nom, releaseDate, sets:[{id,nom,cartes,fait}], doneSets, totalSets, doneCartes, totalCartes}]
+let builtSetIds = new Set(); // sets déjà sur R2 (manifest.sets), la source de vérité — pas manifest.slice
+let selection = new Set();   // séries cochées manuellement par l'utilisateur
 
 async function chargerSeriesDispo(){
   try{
     const m = await (await fetch(R2 + '/manifest.json?t=' + Date.now(), {cache:'no-store'})).json();
-    dejaConstruites = (m.slice || '').split('+').filter(Boolean);
-  }catch(e){ dejaConstruites = []; }   // pas encore de manifest : rien construit
+    builtSetIds = new Set(Object.keys(m.sets || {}));
+  }catch(e){ builtSetIds = new Set(); }   // pas encore de manifest : rien construit
 
-  const resultats = await Promise.all(SERIES_CHRONO.map(async ([id])=>{
+  let liste;
+  try{ liste = await (await fetch('https://api.tcgdex.net/v2/fr/series')).json(); }
+  catch(e){ $('serieList').innerHTML = '<span class="muted errline">Catalogue TCGdex injoignable : ' + e.message + '</span>'; return; }
+
+  seriesInfo = await Promise.all(liste.map(async s=>{
     try{
-      const d = await (await fetch('https://api.tcgdex.net/v2/fr/series/' + id)).json();
-      const sets = d.sets || [];
-      const cartes = sets.reduce((a,s)=> a + (s.cardCount?.total || 0), 0);
-      return [id, { sets: sets.length, cartes }];
-    }catch(e){ return [id, { sets: 0, cartes: 0, erreur: true }]; }
+      const d = await (await fetch('https://api.tcgdex.net/v2/fr/series/' + s.id)).json();
+      const sets = (d.sets || []).map(st=>({
+        id: st.id, nom: st.name, cartes: st.cardCount?.total || 0, fait: builtSetIds.has(st.id),
+      }));
+      const doneSets = sets.filter(x=>x.fait).length;
+      const doneCartes = sets.filter(x=>x.fait).reduce((a,x)=>a+x.cartes,0);
+      const totalCartes = sets.reduce((a,x)=>a+x.cartes,0);
+      return { id:s.id, nom:s.name, releaseDate:d.releaseDate || '9999', sets,
+               doneSets, totalSets:sets.length, doneCartes, totalCartes };
+    }catch(e){ return { id:s.id, nom:s.name, releaseDate:'9999', sets:[], doneSets:0, totalSets:0, doneCartes:0, totalCartes:0, erreur:true }; }
   }));
-  infosSeries = Object.fromEntries(resultats);
+  seriesInfo.sort((a,b)=> a.releaseDate < b.releaseDate ? -1 : (a.releaseDate > b.releaseDate ? 1 : 0));
+
+  // Défaut : tout ce qui n'est pas déjà complet est coché — l'utilisateur a dit vouloir
+  // tout, et un set déjà fait ne coûte qu'une relecture de son pack, pas un nouveau calcul.
+  // 'tcgp' reste décoché par défaut (produit différent, voir la note affichée sur sa ligne).
+  for(const s of seriesInfo){
+    if(s.id !== SERIE_A_PART && s.doneSets < s.totalSets) selection.add(s.id);
+  }
   rendreSeries();
 }
 
-function rendreSeries(){
-  $('serieProgress').textContent = dejaConstruites.length
-    ? dejaConstruites.length + '/' + SERIES_CHRONO.length + ' séries en ligne' : '—';
+// Verrouillée (case cochée et désactivée) dès qu'elle contient NE SERAIT-CE QU'UN set déjà
+// construit — pas seulement quand elle est complète. Le script ne réinjecte dans l'index
+// global que les sets des séries listées dans SERIES ; une série avec des sets déjà sur R2
+// mais absente de la commande verrait ces cartes disparaître de l'index en production à la
+// fin du prochain build, sans que rien ne les efface pourtant sur R2. Voir REPRISE.md.
+const verrouillee = s => s.doneSets > 0;
 
-  $('serieList').innerHTML = SERIES_CHRONO.map(([id, nom])=>{
-    const info = infosSeries[id] || {};
-    const fait = dejaConstruites.includes(id);
-    const coche = fait || selection.has(id);
-    const nums = info.erreur ? 'indisponible'
-      : (info.sets + ' set' + (info.sets>1?'s':'') + ' · ' + info.cartes.toLocaleString('fr') + ' cartes');
-    return `<div class="serieRow">
-      <label>
-        <input type="checkbox" data-id="${id}" ${coche?'checked':''} ${fait?'disabled':''}>
-        <span class="serieName">${nom}<small>${id}</small></span>
-      </label>
-      <span class="serieNums">${nums}</span>
-      ${fait ? '<span class="serieDone">✓ en ligne</span>' : ''}
-    </div>`;
+function rendreSeries(){
+  const totalSets = seriesInfo.reduce((a,s)=>a+s.totalSets,0);
+  const doneSets = seriesInfo.reduce((a,s)=>a+s.doneSets,0);
+  $('serieProgress').textContent = totalSets ? doneSets + '/' + totalSets + ' sets en ligne, toutes séries confondues' : '—';
+
+  $('serieList').innerHTML = seriesInfo.map(s=>{
+    const verr = verrouillee(s);
+    const coche = verr || selection.has(s.id);
+    const complet = s.totalSets>0 && s.doneSets===s.totalSets;
+    const chip = complet ? '<span class="serieChip done">✓ complète</span>'
+               : s.doneSets>0 ? '<span class="serieChip part">' + s.doneSets + '/' + s.totalSets + ' déjà en ligne</span>'
+               : '<span class="serieChip none">rien encore</span>';
+    const ouvert = !complet ? ' open' : '';
+    const note = s.id===SERIE_A_PART
+      ? '<div class="noteRow">⚠ Pokémon TCG Pocket est un jeu mobile, pas le TCG physique — format de carte différent (voir CARD_RATIO). À vérifier avant d\'inclure ; décoché par défaut.</div>' : '';
+    const lignesSets = s.sets.map(st=>
+      `<tr><td>${st.nom}<span class="muted"> · ${st.id}</span></td><td>${st.cartes.toLocaleString('fr')} cartes</td>`
+      + `<td>${st.fait ? '<span class="setOk">✓</span>' : '<span class="setTodo">à construire</span>'}</td></tr>`
+    ).join('');
+    return `<details class="serie"${ouvert}>
+      <summary>
+        <input type="checkbox" class="serieCase" data-id="${s.id}" ${coche?'checked':''} ${verr?'disabled':''} onclick="event.stopPropagation()">
+        <span class="serieName">${s.nom}<small>${s.id} · ${(s.releaseDate||'').slice(0,4)}</small></span>
+        <span class="serieRight"><span class="serieNums">${s.totalSets} set${s.totalSets>1?'s':''} · ${s.totalCartes.toLocaleString('fr')} cartes</span>${chip}</span>
+      </summary>
+      ${note}
+      <table class="setTable">${lignesSets}</table>
+    </details>`;
   }).join('');
 
-  $('serieList').querySelectorAll('input[type=checkbox]:not(:disabled)').forEach(cb=>{
+  $('serieList').querySelectorAll('.serieCase:not(:disabled)').forEach(cb=>{
     cb.onchange = ()=>{ cb.checked ? selection.add(cb.dataset.id) : selection.delete(cb.dataset.id); rendreCommande(); };
   });
   rendreCommande();
@@ -237,23 +285,33 @@ function rendreSeries(){
 function rendreCommande(){
   // Ordre chronologique, pas l'ordre des clics : la commande doit rester lisible et stable
   // quel que soit l'ordre dans lequel les cases ont été cochées.
-  const toutes = SERIES_CHRONO.map(([id])=>id).filter(id=> dejaConstruites.includes(id) || selection.has(id));
+  const toutes = seriesInfo.filter(s=> verrouillee(s) || selection.has(s.id)).map(s=>s.id);
   $('cmdBox').textContent = 'SERIES=' + (toutes.join(',') || 'swsh,sv,me') + ' bash run.sh';
 
-  let sets = 0, cartes = 0;
-  for(const id of selection){ const i = infosSeries[id]; if(i){ sets += i.sets; cartes += i.cartes; } }
-  if(!selection.size){ $('serieTotaux').textContent = ''; return; }
-  const heures = (cartes * MS_PAR_CARTE / 3600).toFixed(1);
-  $('serieTotaux').textContent = selection.size + ' série' + (selection.size>1?'s':'') + ' choisie'
-    + (selection.size>1?'s':'') + ' · ' + sets + ' sets · ' + cartes.toLocaleString('fr')
-    + ' cartes · environ ' + heures + ' h de build';
+  // Le temps s'estime sur les CARTES MANQUANTES seulement : celles déjà sur R2 sont relues
+  // en quelques secondes (lecture du pack), pas recalculées.
+  let sets = 0, cartes = 0, cartesRestantes = 0, n = 0;
+  for(const id of selection){
+    const s = seriesInfo.find(x=>x.id===id); if(!s) continue;
+    n++; sets += s.totalSets; cartes += s.totalCartes; cartesRestantes += (s.totalCartes - s.doneCartes);
+  }
+  if(!n){ $('serieTotaux').textContent = ''; return; }
+  const heures = cartesRestantes * S_PAR_CARTE / 3600;
+  const duree = heures >= 24 ? (heures/24).toFixed(1) + ' j' : heures.toFixed(1) + ' h';
+  $('serieTotaux').textContent = n + ' série' + (n>1?'s':'') + ' choisie' + (n>1?'s':'') + ' · ' + sets + ' sets · '
+    + cartes.toLocaleString('fr') + ' cartes (' + cartesRestantes.toLocaleString('fr') + ' à calculer) · environ ' + duree + ' de build';
 }
 
 $('bSelAll').onclick = ()=>{
-  SERIES_CHRONO.forEach(([id])=>{ if(!dejaConstruites.includes(id)) selection.add(id); });
+  seriesInfo.forEach(s=>{ if(s.id !== SERIE_A_PART) selection.add(s.id); });
   rendreSeries();
 };
-$('bSelNone').onclick = ()=>{ selection.clear(); rendreSeries(); };
+$('bSelNone').onclick = ()=>{
+  seriesInfo.forEach(s=>{ if(!verrouillee(s)) selection.delete(s.id); });
+  rendreSeries();
+};
+$('bDeplier').onclick = ()=> $('serieList').querySelectorAll('details.serie').forEach(d=> d.open = true);
+$('bReplier').onclick = ()=> $('serieList').querySelectorAll('details.serie').forEach(d=> d.open = false);
 $('bCopyCmd').onclick = async ()=>{
   try{ await navigator.clipboard.writeText($('cmdBox').textContent); $('copyMsg').textContent = 'Copié ✓'; }
   catch(e){ $('copyMsg').textContent = 'Sélectionne le texte et copie-le à la main (' + e.message + ')'; }

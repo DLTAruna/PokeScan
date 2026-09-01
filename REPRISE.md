@@ -168,34 +168,41 @@ SERIES=swsh,sv,me bash run.sh                          # build une tranche, repr
   **et sélecteur de séries** (voir juste en dessous).
 - Build complet ~2 h pour 7 591 cartes (~585 ms/carte : dl 166 + emb 218 + orb 170 + hash 30).
 
-### Sélecteur de séries dans `build.html` (2026-09-01)
+### Sélecteur de séries dans `build.html` — granularité SET (v2, 2026-09-01)
 
-`build.html` composait déjà la progression d'un build ; il **compose maintenant la
-commande** à lancer pour ajouter les séries manquantes — Nikos n'a plus à se souvenir des
-identifiants TCGdex (`base`, `neo`, `ecard`, `ex`, `pop`, `dp`, `pl`, `hgss`, `col`, `bw`,
-`xy`, `sm`) ni de leur ordre.
+`build.html` compose la commande à lancer pour ajouter les séries manquantes, avec le
+détail set par set — Nikos n'a plus à se souvenir des identifiants TCGdex ni de leur ordre.
 
-- Lit `manifest.json` sur R2 pour savoir ce qui est **déjà construit** (`manifest.slice`,
-  ex. `swsh+sv+me`) — ces séries s'affichent cochées et **verrouillées** (case désactivée).
-- Interroge `api.tcgdex.net/v2/fr/series/<id>` pour chaque série de la liste chronologique
-  (14 séries standards, **volontairement sans** `misc`/`tk`/`mc`/`tcgp` — pas des extensions
-  chronologiques, ou hors format TCG papier) : nombre de sets, nombre de cartes.
-- Cocher des séries manquantes compose en direct `SERIES=<déjà+cochées> bash run.sh`,
-  **toujours dans l'ordre chronologique**, avec estimation du temps de build
-  (`cartes × 0,585 ms`, la mesure réelle du build précédent). Bouton copier.
-- **La page ne télécharge et n'écrit rien elle-même** — aucune clé R2 n'y transite. Elle
-  compose seulement la commande ; c'est toujours `run.sh`, sur le poste de Nikos avec son
-  `.env`, qui fait le travail. C'est un choix délibéré, pas une limitation oubliée : les
-  clés d'écriture R2 ne doivent jamais atteindre une page web (voir le jeton déjà fuité dans
-  `run.sh` au commit `872c039`).
-- **Piège vérifié dans `index.mjs`, à connaître avant de lancer quoi que ce soit** : les
-  séries déjà construites mais **absentes** du `SERIES` d'un run ne sont pas retouchées sur
-  R2, mais leurs cartes disparaissent de `index-global.bin` à la fin de CE run — le script
-  ne réinjecte dans l'index global que les sets listés dans le `SERIES` courant (`main()`,
-  boucle `for (const [id, info] of Object.entries(manifest.sets))` filtrée par
-  `setIds.includes(id)`). Lancer `SERIES=xy,sm` seul **amputerait silencieusement** l'index
-  en production de swsh+sv+me. C'est pour ça que le sélecteur verrouille les séries déjà en
-  ligne plutôt que de les laisser décocher : la commande composée les inclut toujours.
+**⚠️ Rappel factuel** (Nikos a cru un temps que la tranche allait « de XY à aujourd'hui ») :
+la tranche en ligne est **swsh+sv+me = 2020→aujourd'hui**. XY (2013) n'y est PAS. Toute la
+préhistoire — base, misc, neo, ecard, ex, pop, tk, dp, pl, hgss, col, bw, mc, xy, sm — manque.
+
+- **Rien de codé en dur** : la liste des 19 séries, leur ordre (par `releaseDate` réelle, pas
+  une liste écrite à la main) et le détail de chaque set viennent tous, en direct, de l'API
+  TCGdex — la même source que le build lui-même (`lib.mjs`, `setsDeLaSerie`). Une série que
+  TCGdex ajoute apparaît sans toucher au code.
+- **Chaque série est un `<details>` dépliable** listant tous ses sets individuellement (nom,
+  cartes, ✓ déjà sur R2 / à construire). ~200 sets au total,~19 séries. Boutons « Tout
+  déplier / Tout replier ».
+- **Source de vérité = `manifest.sets`** (les clés réellement présentes sur R2), pas
+  `manifest.slice` — plus fiable, direct.
+- **Verrouillée dès qu'elle contient NE SERAIT-CE QU'UN set déjà construit**, pas seulement
+  quand elle est complète (généralisation nécessaire : constaté que `swsh` n'a que 17/25 sets
+  sur R2 — sets promo à 0 carte exploitable comme `mep`/`mee`, jamais des manquants réels,
+  mais qui rendraient `swsh` « incomplète » au sens strict).
+- **`tcgp` (Pokémon TCG Pocket) à part** : jeu mobile, format de carte différent — listée,
+  avec une note, mais décochée par défaut.
+- Coché par défaut : tout ce qui n'est pas complet. Temps estimé sur les **cartes
+  manquantes seulement** (un set déjà fait est relu en secondes, pas recalculé).
+- **La page ne télécharge et n'écrit rien elle-même** — aucune clé R2 n'y transite ; c'est
+  toujours `run.sh` sur le poste de Nikos, avec son `.env`, qui travaille (un jeton a déjà
+  fuité en clair dans `run.sh` au commit `872c039`, ne pas reproduire).
+- **Piège vérifié dans `index.mjs`, raison du verrouillage** : le script ne réinjecte dans
+  `index-global.bin` que les sets des séries listées dans le `SERIES` du run courant
+  (`main()`, boucle filtrée par `setIds.includes(id)`). Une série avec des sets déjà sur R2
+  mais absente de la commande verrait ces cartes disparaître de l'index en production à la
+  fin du prochain build — sans que rien ne les efface sur R2 (orphelins). Le sélecteur rend
+  cette erreur impossible.
 
 ### Pièges d'install (machine de Nikos, Windows)
 
