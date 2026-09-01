@@ -28,6 +28,67 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Caméra réduite à l'outil brut du banc (V.13, 2026-09-01) — ET la vraie cause de la panne
+
+Retour de Nikos sur la V.12 : « ça ne fonctionne pas. Retire tous les éléments superflus,
+car j'ai encore les conseils de cadrage etc. Je veux l'outil brut du bench V2 dans notre
+page principale, sans rien excepté le rectangle en bas qui indique la carte capturée. »
+
+**⚠️ Le décor n'était pas la seule cause. Deux appels dans `detectLoop()` touchaient à la
+CAMÉRA pendant la détection** — ce que le banc ne fait jamais :
+
+| appelé à chaque image | ce qu'il faisait | conséquence |
+|---|---|---|
+| `surveillerCadrageV2(d.corners)` | montait le zoom d'un palier quand l'aire < 8 % pendant 2,5 s | cycle d'autofocus → flou + coins déplacés |
+| `viserMiseAuPoint(d.corners)` | redemandait la mise au point sur l'illustration dès 5 % de déplacement, au plus toutes les 1,5 s | idem, jusqu'à 40 fois par minute |
+
+Les deux **remettent `v2StableStreak` à zéro juste avant que la série ne se referme**. Sur
+une carte tenue à la main, ça se relance en boucle et **le scan ne part jamais**. C'est mot
+pour mot le piège déjà documenté pour la V1 (§ « le piège `qualite` » plus bas : *le
+correctif contre le flou fabriquait le flou*) — réintroduit en V.11 par une autre porte,
+l'aire au lieu de la netteté. `surveillerCadrageV2()` est **supprimée** ; un commentaire
+long à sa place explique pourquoi ne pas la remettre. `viserMiseAuPoint()` reste définie
+mais **n'est plus appelée**.
+
+**Règle qui en découle, à ne pas réapprendre une troisième fois : on ne modifie pas les
+contraintes de la piste vidéo pendant que la boucle de détection tourne.** Objectif, zoom,
+point de mise au point : à l'ouverture de la caméra, et plus jamais ensuite. Le banc ne pose
+que `focusMode:'continuous'` au démarrage — c'est une des raisons pour lesquelles il marche
+mieux.
+
+**Bug de la coupe, trouvé au test** : `flashScreen()` lisait `$('flash').classList` sans
+garde. L'élément retiré, **toute identification réussie plantait `gererScanV2`** — la
+première carte s'affichait, la suivante jamais. Garde ajoutée. Leçon : après avoir retiré un
+élément du DOM, passer en revue TOUTES ses références, pas seulement celles qui sautent aux
+yeux (`grep "\$('id')"` puis vérifier le garde ligne par ligne).
+
+**Retiré du cadre caméra** : pastille V2, total de session, bascule auto/manuel, engrenage
+réglages, compteur de captures, repère de score, segments d'impression (Normale/Reverse/
+Holo), conseil de prise en main, jauges + bouton « i », pastille des récents, **bulle de
+conseil de cadrage** (`aim-hint`), bouton d'import, **déclencheur manuel 📸**, repère de
+zoom, bande des récents, suggestion de set, bilan de session.
+
+**Gardé** : `<video>`, le cadre (`aim-overlay`), **le rectangle de résultat en bas**
+(`live-result`), et **la croix de sortie** — sans elle la caméra ne se coupe plus (seul
+ajout non demandé, à dire si Nikos la veut ailleurs).
+
+- **Le CSS et les gestionnaires JS sont laissés en place**, inertes : ils testent tous la
+  présence de l'élément. La mise en page et les modules seront rebâtis ensuite un par un,
+  sur une base qui marche — c'est ce que Nikos a demandé (« on peaufinera après »).
+- **Le cadre porte enfin l'information** : `detectLoop` ne posait que `attente`/`lecture` et
+  **ne passait jamais au vert**. Il passe maintenant à `ok` (vert) quand la stabilité est
+  acquise, comme au banc. C'est ce qui remplace les phrases d'aide.
+- **Plus de mode manuel** : il n'y a plus de déclencheur à presser, donc l'arrêt anticipé
+  sur `!autoCaptureEnabled` est retiré de la boucle.
+- **`majCadrageVisible()`** réservait 40 px à gauche pour un bandeau de jauges disparu, et
+  recentrait le cadre entre une barre du haut et un déclencheur disparus eux aussi : replis
+  remis à 0, le cadre se centre sur l'image.
+
+**Vérifié en local** (caméra simulée, `canvas.captureStream`, deux photos réelles de
+`photos-test/`) : Dracaufeu-ex #006 → `151 · #006 · Holo · 8,80 €`, puis retrait, puis
+Pikachu #025 → `151 · #025 · Normal · 0,10 €`. Enchaînement correct, aucune erreur console.
+**Toujours pas testé sur téléphone réel.**
+
 ## Unification du scanner sur la logique du banc (V.12, 2026-09-01)
 
 Constat de Nikos : « ce qu'on a dans la page de bench test V2 marche extrêmement mieux

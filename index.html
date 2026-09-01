@@ -726,6 +726,12 @@
   }
   .cam-stop svg{width:22px; height:22px;}
   .cam-stop:active{background:rgba(224,85,63,.42); color:#fff;}
+  /* La croix ne vit plus dans .cam-topbar (retirée en V.13, § « caméra réduite au strict
+     nécessaire ») : elle se place donc elle-meme, en haut a droite, sous l'encoche. */
+  .cam-stop-seule{
+    position:absolute; z-index:20;
+    top:calc(9px + env(safe-area-inset-top)); right:10px;
+  }
   .cam-gear{
     width:42px; height:42px; border-radius:50%; padding:0; flex:none;
     display:flex; align-items:center; justify-content:center;
@@ -4661,130 +4667,22 @@
       <div class="video-wrap" id="video-wrap">
         <video id="video" autoplay playsinline muted></video>
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
-        <button id="cam-v2-chip" type="button" aria-label="Basculer le scanner V2"><span class="pt"></span>V2</button>
-        <div class="flash" id="flash"></div>
-        <!-- Barre du haut, en une seule rangée. Grille 1fr/auto/1fr : le bouton du milieu
-             reste centré quelle que soit la largeur des deux côtés, ce qu'un simple flex
-             ne garantit pas. Le retrait suit env(safe-area-inset-top) — sans lui, le ✕ et
-             le total passaient sous l'encoche en plein écran.
-             Le changement d'objectif a rejoint les réglages : on y touche une fois par
-             téléphone, pas une fois par carte. -->
-        <div class="cam-topbar">
-          <!-- Valeur cumulée, à gauche : c'est de l'information, et l'œil commence par là.
-               La pile de pièces dit ce que le chiffre représente — un total qui grossit —
-               là où un montant nu pouvait passer pour le prix de la dernière carte lue. -->
-          <div class="ct-gauche">
-            <button class="cam-total" id="cam-total" style="display:none" title="Voir les cartes de cette session" aria-label="Voir les cartes de cette session">
-              <svg class="ct-ico" viewBox="0 0 24 24" fill="#d4af37" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" aria-hidden="true">
-                <rect x="2.4" y="6.6" width="9.4" height="13.4" rx="1.8" transform="rotate(-16 7.1 13.3)"/>
-                <rect x="12.2" y="6.6" width="9.4" height="13.4" rx="1.8" transform="rotate(16 16.9 13.3)"/>
-                <rect x="7.3" y="4.4" width="9.4" height="13.4" rx="1.8"/>
-              </svg>
-              <span id="cam-total-val"></span>
-            </button>
-          </div>
-          <button class="auto-toggle on" id="btn-auto-capture" aria-label="Déclenchement automatique"></button>
-          <div class="ct-droite">
-            <button class="cam-gear" id="btn-cam-reglages" aria-label="Réglages de scan" title="Réglages de scan">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true">
-                <circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2.4"/>
-                <path d="M12 6V3.6M12 20.4V18M18 12h2.4M3.6 12H6M16.24 7.76l1.7-1.7M6.06 17.94l1.7-1.7M16.24 16.24l1.7 1.7M6.06 6.06l1.7 1.7"/>
-              </svg>
-            </button>
-            <button class="cam-stop" id="btn-stop-cam" aria-label="Terminer le scan" title="Terminer le scan">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true">
-                <path d="M7.4 7.4l9.2 9.2M16.6 7.4l-9.2 9.2"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div class="cam-counter" id="cam-counter">0 capturée(s)</div>
-        <!-- Repère de mise au point : outil de diagnostic, affiché uniquement sur demande
-             (Réglages). En permanence, il occupait un coin d'écran qui sert à viser. -->
-        <div class="score-readout" id="score-readout" style="display:none;">score —</div>
-        <!-- Impression, dans le cadre : on la change en cours de session, une rangée de
-             normales puis une rangée de reverse. La reléguer dans les réglages obligeait à
-             fermer la caméra pour un geste qui appartient au scan lui-même. -->
-        <div class="seg imp-cam" id="impression-scan">
-          <button class="on" data-imp="normal">Normale</button>
-          <button data-imp="reverse">Reverse</button>
-          <button data-imp="holo">Holo</button>
-        </div>
-        <div class="grip-hint">✋ Tiens la carte par le haut, laisse les bords libres</div>
-        <div class="jauges" id="jauges" style="display:none;">
-          <div class="jauge"><span class="jl">NETTETÉ</span><span class="jt"><i id="jauge-net"></i></span></div>
-          <div class="jauge"><span class="jl">LUMIÈRE</span><span class="jt"><i id="jauge-lum"></i></span></div>
-          <div class="jauge"><span class="jl">CADRAGE</span><span class="jt"><i id="jauge-cad"></i></span></div>
-          <button class="btn-conseils" id="btn-conseils" aria-label="Conseils de prise de vue" title="Conseils de prise de vue">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2"/>
-              <circle cx="12" cy="7.7" r="1.05" fill="currentColor" stroke="none"/>
-            </svg>
-          </button>
-        </div>
-        <button class="pastille-recents" id="pastille-recents" title="Voir les dernières cartes ajoutées"></button>
-        <div class="aim-hint" id="aim-hint">
-          <span id="aim-hint-txt">Démarrage…</span>
-          <svg class="ah-i" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="9"/><path d="M12 11.2v5.2"/>
-            <circle cx="12" cy="7.7" r="1.05" fill="currentColor" stroke="none"/>
-          </svg>
-        </div>
-        <!-- Raccourci vers l'import de photos, posé sur l'image : quand on a un dossier
-             à injecter, on ne devrait pas avoir à couper la caméra, remonter la page et
-             changer de mode à la main. -->
-        <button class="btn-import-cam" id="btn-import-cam" aria-label="Importer des photos" title="Importer un dossier de photos">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <rect x="3" y="5" width="18" height="14" rx="2.4"/>
-            <path d="M3 16.2l4.6-4.3a1.6 1.6 0 0 1 2.2 0L14 16.2M14.6 13.6l1.6-1.5a1.6 1.6 0 0 1 2.2 0L21 14.6"/>
-            <circle cx="9" cy="9.6" r="1.3"/>
+        <!-- ─── V.13 : la caméra est réduite au strict nécessaire ───
+             Demande de Nikos : « je veux l'outil brut du bench V2, sans rien excepté le
+             rectangle en bas qui indique la carte capturée ». Tout ce qui vivait ici —
+             pastille V2, total de session, bascule auto/manuel, engrenage, compteur,
+             segments d'impression, conseil de prise en main, jauges, pastille des récents,
+             bulle de conseil de cadrage, import, déclencheur manuel, repère de zoom — a
+             été retiré. Le CSS et les gestionnaires JS correspondants sont laissés en
+             place (inertes, ils testent tous la présence de l'élément) : la mise en page
+             et les modules seront rebâtis ensuite, un par un, sur une base qui marche.
+             La croix de sortie reste : sans elle la caméra ne se coupe plus. -->
+        <button class="cam-stop cam-stop-seule" id="btn-stop-cam" aria-label="Terminer le scan" title="Terminer le scan">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" aria-hidden="true">
+            <path d="M7.4 7.4l9.2 9.2M16.6 7.4l-9.2 9.2"/>
           </svg>
         </button>
-        <button class="capture-fab" id="btn-capture-frame" aria-label="Prendre la photo" title="Prendre la photo">
-          <svg viewBox="0 0 64 64" aria-hidden="true">
-            <defs>
-              <linearGradient id="fabOr" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#ffeaa7"/><stop offset=".42" stop-color="#e6c25c"/><stop offset="1" stop-color="#9a7620"/>
-              </linearGradient>
-              <clipPath id="fabRond"><circle cx="32" cy="32" r="29.6"/></clipPath>
-              <radialGradient id="fabRouge" cx=".36" cy=".2" r=".95">
-                <stop offset="0" stop-color="#ff7a63"/><stop offset=".45" stop-color="#e0301f"/><stop offset="1" stop-color="#8d150c"/>
-              </radialGradient>
-              <radialGradient id="fabArgent" cx=".36" cy=".9" r=".95">
-                <stop offset="0" stop-color="#f3f6fa"/><stop offset=".55" stop-color="#c3ccd9"/><stop offset="1" stop-color="#8b95a5"/>
-              </radialGradient>
-              <linearGradient id="fabDome" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0" stop-color="#fff" stop-opacity=".30"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
-              </linearGradient>
-              <radialGradient id="fabVerre" cx=".36" cy=".3" r=".78">
-                <stop offset="0" stop-color="#8fc4e8"/><stop offset=".48" stop-color="#2f6d96"/><stop offset="1" stop-color="#0d1c2c"/>
-              </radialGradient>
-            </defs>
-            <g clip-path="url(#fabRond)">
-              <path d="M2.4 32a29.6 29.6 0 0 1 59.2 0Z" fill="url(#fabRouge)"/>
-              <path d="M2.4 32a29.6 29.6 0 0 0 59.2 0Z" fill="url(#fabArgent)"/>
-              <rect x="2" y="28.4" width="60" height="7.2" fill="#12161f"/>
-              <rect x="2" y="28.4" width="60" height="1.1" fill="url(#fabOr)" opacity=".85"/>
-              <rect x="2" y="34.5" width="60" height="1.1" fill="url(#fabOr)" opacity=".85"/>
-              <!-- Reflet de verre sur la calotte : c'est lui qui donne le volume, une
-                   moitié rouge plate aurait l'air d'un autocollant. -->
-              <path d="M32 4.4A27.6 27.6 0 0 1 58.4 24 27.6 27.6 0 0 0 32 14.4 27.6 27.6 0 0 0 5.6 24 27.6 27.6 0 0 1 32 4.4Z" fill="url(#fabDome)"/>
-            </g>
-            <circle cx="32" cy="32" r="15" fill="#0d1119" stroke="url(#fabOr)" stroke-width="2.4"/>
-            <circle cx="32" cy="32" r="9.4" fill="url(#fabVerre)"/>
-            <circle cx="32" cy="32" r="9.4" fill="none" stroke="rgba(255,255,255,.26)"/>
-            <path d="M26.4 27.4a7.6 7.6 0 0 1 5.4-2.8" stroke="rgba(255,255,255,.85)" stroke-width="2" stroke-linecap="round" fill="none"/>
-            <circle cx="32" cy="32" r="29.6" fill="none" stroke="url(#fabOr)" stroke-width="2.6"/>
-          </svg>
-        </button>
-        <div class="fab-legende">Capture manuelle</div>
-        <!-- Zoom : un seul repère, qui affiche la valeur pendant le pincement et bascule
-             1x/2x au toucher. Masqué tant que l'appareil ne déclare pas savoir zoomer. -->
-        <button class="zoom-indic" id="zoom-indic" style="display:none;">1×</button>
       </div>
-      <div class="bande-recents" id="bande-recents" style="display:none;"></div>
-      <div class="suggestion-set" id="suggestion-set" style="display:none;"></div>
-      <div class="bilan-session" id="bilan-session" style="display:none;"></div>
       <div class="live-result" id="live-result" style="display:none;">
         <div class="live-qty" id="live-qty" style="display:none;">
           <button class="qty-moins" id="live-qty-moins" title="Retirer un exemplaire">−</button>
@@ -5737,7 +5635,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 12;
+const VERSION_APP = 13;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9002,13 +8900,17 @@ function renderQueueStrip(){
   const strip = $('queue-strip');
   const last = pendingQueue.slice(-12);
   strip.innerHTML = last.map(q=>`<img src="${q.photo}">`).join('');
-  $('cam-counter').textContent = `${capturedThisSession} capturée(s) · ${pendingQueue.length} en attente`;
+  // `?.` partout depuis V.13 : ces repères ont été retirés du cadre caméra, le code qui
+  // les nourrissait reste en place pour quand on les rebâtira (voir le commentaire dans
+  // #video-wrap). Sans l'appel optionnel, l'absence d'un élément casserait la boucle.
+  const cc = $('cam-counter');
+  if(cc) cc.textContent = `${capturedThisSession} capturée(s) · ${pendingQueue.length} en attente`;
 }
 
 // ---------------- LIVE CAMERA ----------------
 $('btn-start-cam').addEventListener('click', startCamera);
 $('btn-stop-cam').addEventListener('click', stopCamera);
-$('btn-capture-frame').addEventListener('click', ()=> captureFrame());
+$('btn-capture-frame')?.addEventListener('click', ()=> captureFrame());
 // Export de l'archive. Les clichés sortent nommés par leur horodatage et leur origine :
 // « camera » pour une lecture aboutie, « secours » pour une carte que la lecture n'a pas
 // su traiter — c'est justement cette seconde catégorie qu'on vient examiner.
@@ -9150,7 +9052,7 @@ function majBoutonAuto(){
   b.innerHTML = (autoCaptureEnabled ? ICO_ECLAIR : ICO_MAIN) +
                 '<span>' + (autoCaptureEnabled ? 'Auto' : 'Manuel') + '</span>';
 }
-$('btn-auto-capture').addEventListener('click', ()=>{
+$('btn-auto-capture')?.addEventListener('click', ()=>{
   autoCaptureEnabled = !autoCaptureEnabled;
   majBoutonAuto();
 });
@@ -9932,31 +9834,24 @@ let aireBasseDepuis = 0;
 // de la caméra, voir preparerCorrectionObjectif) : une capture réussie, quel que soit le
 // mode, valide et mémorise le réglage trouvé (validerObjectifCourant, déjà appelée par
 // gererScanV2).
-function surveillerCadrageV2(corners){
-  if(!(window.SCAN_V2 && SCAN_V2.actifV2())){ aireBasseDepuis = 0; return; }
-  if(!correctionObjectifActive || !pisteObjectif){ aireBasseDepuis = 0; return; }
-  const aire = airePartCarte(corners);
-  if(aire >= AIRE_LIMITE_V2){ aireBasseDepuis = 0; return; }
-  if(!aireBasseDepuis){ aireBasseDepuis = Date.now(); return; }
-  if(Date.now() - aireBasseDepuis < FLOU_AVANT_OBJECTIF_MS) return;
-
-  aireBasseDepuis = 0;
-  palierCourant++;
-  if(palierCourant >= paliersObjectif.length){
-    correctionObjectifActive = false;
-    diagPush('err', {msg:'caméra: paliers d\'objectif épuisés (V2, cadrage trop serré), correction abandonnée'});
-    return;
-  }
-
-  const z = paliersObjectif[palierCourant];
-  pisteObjectif.applyConstraints({advanced:[{zoom:z}]}).then(()=>{
-    toast('🔍 Objectif ajusté (zoom ' + z.toFixed(1) + '×) — le grand-angle ne remplit pas assez le cadre.');
-    diagPush('err', {msg:'caméra: correction automatique d\'objectif (V2, cadrage) -> zoom ' + z.toFixed(2)});
-  }).catch(e=>{
-    diagPush('err', {msg:'caméra: correction d\'objectif refusée (' + e.message + ')'});
-    correctionObjectifActive = false;
-  });
-}
+// RETIRÉE EN V.13, ET IL FAUT SAVOIR POURQUOI AVANT DE LA REMETTRE.
+//
+// `surveillerCadrageV2(corners)` montait le zoom d'un palier quand la carte occupait moins
+// de AIRE_LIMITE_V2 (8 %) du cadre pendant 2,5 s. L'intention était juste — un ultra
+// grand-angle rend la carte trop petite pour être détectée — mais le remède déclenche un
+// cycle d'autofocus, donc un flou transitoire ET un déplacement apparent des coins. Sur une
+// carte tenue à la main sous le seuil d'aire, il se relançait toutes les 2,5 s et remettait
+// v2StableStreak à zéro juste avant que la série ne se referme : le scan ne partait jamais.
+//
+// C'est EXACTEMENT le piège déjà documenté pour `surveillerNettete()` en V1 (REPRISE.md,
+// « le correctif contre le flou fabriquait le flou »). On l'avait réintroduit en V.11 par
+// une autre porte : l'aire au lieu de la netteté, même mécanisme, même conséquence.
+//
+// Le vrai remède au grand-angle est le choix d'objectif À L'OUVERTURE de la caméra
+// (preparerCorrectionObjectif / le réglage mémorisé dans `pokescanZoomPref`), pas une
+// correction en cours de détection. Le banc, qui marche, ne touche jamais à la piste vidéo
+// après l'ouverture. Si le problème d'objectif revient, il se règle là — pas ici.
+// `aireBasseDepuis` et `FLOU_AVANT_OBJECTIF_MS` restent déclarés pour cette éventualité.
 
 function maxCornerShift(a, b){
   let m = 0;
@@ -10316,13 +10211,15 @@ function majCadrageVisible(){
   const rEl = b.width / b.height, rIm = video.videoWidth / video.videoHeight;
   cadrageVisible = rEl > rIm ? {w: 1, h: rIm / rEl} : {w: rEl / rIm, h: 1};
 
-  // Place a reserver a gauche : le bandeau de jauges et son bouton « i ». Mesure quand il
-  // est affiche, valeur de repli sinon (il est masque tant que la premiere mesure de
-  // qualite n'est pas tombee).
+  // Place a reserver a gauche : le bandeau de jauges et son bouton « i ». Retires en V.13,
+  // d'ou le repli a 0 — l'ancienne valeur (40 px) amputait le cadre de visee au profit d'un
+  // bandeau qui n'existe plus. La mesure reste au cas ou il revienne.
   const jRect = $('jauges')?.getBoundingClientRect();
-  const margeLatPx = (jRect && jRect.width) ? (jRect.right + 10) : 40;
+  const margeLatPx = (jRect && jRect.width) ? (jRect.right + 10) : 0;
   margeLaterale = margeLatPx / (b.width / cadrageVisible.w);
 
+  // Recentrage vertical entre la barre du haut et le declencheur : les deux ont disparu en
+  // V.13, donc plus rien a compenser — le cadre se centre sur l'image, ce que fait le banc.
   const barre = document.querySelector('.cam-topbar')?.getBoundingClientRect();
   const fab = $('btn-capture-frame')?.getBoundingClientRect();
   if(!barre || !fab || !fab.height){ decalageGuideY = 0; return; }
@@ -11107,12 +11004,9 @@ async function detectLoop(){
     setTimeout(detectLoop, 150);
     return;
   }
-  if(!autoCaptureEnabled){
-    setOverlayTarget('attente', null);
-    setAimHint('Mode manuel — appuie sur 📸');
-    setTimeout(detectLoop, 200);
-    return;
-  }
+  // La bascule auto/manuel a disparu avec le reste du décor (V.13) : il n'y a plus de mode
+  // manuel puisqu'il n'y a plus de déclencheur à presser. `autoCaptureEnabled` reste lu ici
+  // au cas où un futur module le remette, mais rien ne le met plus à faux.
   // L'index d'empreintes (quelques Mo, téléchargé une fois puis mis en cache) peut prendre
   // plusieurs secondes à charger sur une installation neuve. Sans cette attente, la boucle
   // tenterait des identifications vouées à l'échec (SCAN_V2.identifierV2 rejette tant que
@@ -11120,7 +11014,6 @@ async function detectLoop(){
   // délai ; il n'y a plus d'OCR à qui retomber, donc on attend au lieu d'échouer en boucle.
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     setOverlayTarget('attente', null);
-    setAimHint('Chargement de la reconnaissance visuelle…');
     setTimeout(detectLoop, 300);
     return;
   }
@@ -11138,17 +11031,9 @@ async function detectLoop(){
       resizeQuality: 'medium'
     });
     const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
-    setScoreReadout(d.score);
 
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
       setOverlayTarget('attente', d.corners);
-      // Rien vu depuis plusieurs secondes. Le banc de détection est formel : la cause de
-      // très loin la plus fréquente est une carte TROP PETITE dans le cadre (voir
-      // AIRE_LIMITE_V2), pas un mauvais cadrage — d'où ce message plutôt que « Vise la
-      // carte », qui envoyait corriger un problème absent.
-      if(!v2RienDepuis) v2RienDepuis = Date.now();
-      const trop = Date.now() - v2RienDepuis > 2500;
-      setAimHint(trop ? 'Rapproche la carte — elle doit remplir le cadre' : 'Vise la carte', trop);
       prevCorners = null;
       v2StableStreak = 0;
       v2PresentDepuis = 0;
@@ -11162,14 +11047,27 @@ async function detectLoop(){
     } else {
       v2AbsenceStreak = 0;
       v2RienDepuis = 0;
-      surveillerCadrageV2(d.corners);
-      setOverlayTarget('lecture', d.corners);
-      // Carte localisée : on oriente la mise au point vers l'illustration (voir
-      // viserMiseAuPoint) plutôt que de laisser l'autofocus viser le centre du cadre.
-      viserMiseAuPoint(d.corners);
-
+      // ─── V.13 : ON NE TOUCHE PLUS À LA CAMÉRA PENDANT QU'ON DÉTECTE ───
+      // Deux appels vivaient ici et sont retirés :
+      //   surveillerCadrageV2(d.corners) — montait le zoom d'un palier quand la carte
+      //     occupait moins de 8 % du cadre pendant 2,5 s ;
+      //   viserMiseAuPoint(d.corners)    — redemandait une mise au point sur l'illustration
+      //     dès que la cible s'était déplacée de 5 %, au plus toutes les 1,5 s.
+      // Les deux repartent d'un cycle d'autofocus, donc d'un flou transitoire ET d'un
+      // déplacement apparent des coins — ce qui remet v2StableStreak à zéro juste avant que
+      // la série ne se referme. Sur une carte tenue à la main, ça se déclenche en boucle et
+      // le scan ne part JAMAIS. C'est mot pour mot le piège déjà documenté pour la V1 dans
+      // REPRISE.md (« le correctif contre le flou fabriquait le flou ») : on l'avait
+      // réintroduit en V.11 par une autre porte, l'aire au lieu de la netteté.
+      // Le banc, lui, ne touche à la piste vidéo qu'à l'ouverture (focusMode:'continuous')
+      // et plus jamais ensuite — c'est une des raisons pour lesquelles il marche mieux.
       const moved = prevCorners ? maxCornerShift(prevCorners, d.corners) : Infinity;
       prevCorners = d.corners;
+
+      // Ambre par défaut : « je vois la carte ». Le vert n'arrive que si la stabilité est
+      // acquise, plus bas — le cadre disait « lecture » en permanence et ne passait JAMAIS
+      // au vert, si bien qu'il ne restait plus rien pour dire quand ça allait partir.
+      let etatCadre = 'lecture';
 
       const now = Date.now();
       if(!readInFlight
@@ -11202,21 +11100,19 @@ async function detectLoop(){
         const tol = v2DerniereCat === 'sure' ? 4 : 2.5;
         const dejaLue = !v2CarteRetiree && lastCaptureCorners
           && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * tol;
-        if(dejaLue){
-          setAimHint('✓ lue — retire la carte', true);
-        }else if(d.score >= seuilScore && stable){
+        // Plus aucun message de cadrage (V.13) : c'est la COULEUR DU CADRE qui renseigne,
+        // comme au banc — ambre tant qu'on cherche la stabilité, vert quand elle est
+        // acquise. Une phrase qui change toutes les 200 ms se lisait moins bien qu'un trait
+        // qui change de couleur, et elle occupait le bas de l'image, là où on vise.
+        if(!dejaLue && d.score >= seuilScore && stable){
+          etatCadre = 'ok';
           v2PresentDepuis = 0;
           v2StableStreak = 0;
           lastReadAttemptAt = now;
           attemptReadV2(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
-        }else{
-          const aireV2 = airePartCarte(d.corners);
-          setAimHint(aireV2 < AIRE_LIMITE_V2 ? 'Rapproche la carte — elle est trop petite dans le cadre'
-                     : d.score < seuilScore ? 'Approche la carte'
-                     : stable ? 'Prêt'
-                     : tenue >= V2_PATIENCE_DOUCE ? 'Tiens encore un instant…' : 'Stabilise', true);
         }
       }
+      setOverlayTarget(etatCadre, d.corners);
     }
   }catch(e){
     diagPush('err', {msg:'détection : ' + e.message});
@@ -12162,7 +12058,11 @@ function animerCaptureVersRecents(dataUrl){
 function flashScreen(dataUrl){
   pulseCaptureAt = performance.now();
   animerCaptureVersRecents(dataUrl);
+  // Le voile blanc a été retiré du cadre en V.13 : l'impulsion verte du cadre (pulseCaptureAt,
+  // dessinée dans drawGuideOverlay) suffit à dire « c'est pris ». Garde indispensable — sans
+  // elle, l'absence de l'élément faisait échouer gererScanV2 à CHAQUE identification réussie.
   const flash = $('flash');
+  if(!flash) return;
   flash.classList.add('show');
   setTimeout(()=> flash.classList.remove('show'), 90);
 }
@@ -19774,7 +19674,7 @@ Promise.all([chargerCollection(), chargerScelle(), chargerMastersets()])
   });
 
 
-$('pastille-recents').addEventListener('click', basculerBandeRecents);
+$('pastille-recents')?.addEventListener('click', basculerBandeRecents);
 
 $('live-etat').addEventListener('click', (e)=>{
   const b = e.target.closest('button[data-e]');
