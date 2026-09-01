@@ -28,6 +28,78 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## 🔬 CAMPAGNE DE MESURE 31 CARTES + OPTIMISATIONS (V.19, 2026-09-01)
+
+Demande de Nikos : mesurer par lot de 30 sur cartes réelles en simulant l'appareil photo,
+chiffrer les délais, optimiser capture ET affichage.
+
+### ⚠️ D'ABORD : CE QUI N'EST PAS MESURABLE DANS LE VOLET NAVIGATEUR
+
+**Quand le volet est masqué, `visibilityState` vaut `hidden` et Chrome plafonne `setTimeout`
+à 1 000 ms.** Mesuré : minuteurs de 10 / 50 / 100 / 250 / 500 ms → tous revenus à ~1 000 ms.
+La boucle `detectLoop` étant cadencée par `setTimeout`, elle tombe à **1,3 Hz au lieu de
+~10 Hz** (inférence réelle : 51 ms ; intervalle entre deux tours : 1 000 ms).
+
+**Conséquence : toute mesure de DÉLAI DE DÉCLENCHEMENT y est fausse.** Les valeurs sont
+passées de 292 ms à 3 050 ms sans qu'une ligne de code change — seul le volet s'était masqué.
+**Piège dans le piège** : un contrôle de fidélité fait avec un `setTimeout(1000)` répond
+« fidèle » — 1 000 ms est précisément le plancher du bridage. **Toujours contrôler avec un
+minuteur COURT (50-100 ms).**
+
+Restent valides et mesurables ici : justesse, rebuts, catégories, et la durée de la chaîne
+d'identification (enchaînée en promesses et workers, pas en `setTimeout`).
+**Le délai de déclenchement se mesure sur le téléphone, via `/api/scan-log`.**
+
+### Trois pièges de banc, corrigés (à ne pas refaire)
+
+1. **Décalage d'un cran.** La fiche complète de la carte PRÉCÉDENTE arrive ~1 s après sa
+   capture et rappelle `showLiveResultDone` ; la sonde la prenait pour le résultat courant.
+   Toute la salve semblait fausse (1/15) alors que l'application était juste. → n'accepter un
+   résultat qu'après le début de l'identification en cours (`M.tGerer`).
+2. **Salves concurrentes.** Un appel d'outil qui expire laisse sa boucle tourner DANS la page.
+   La salve suivante démarrait par-dessus : deux boucles pilotant la même caméra. → jeton de
+   génération vérifié à chaque étape.
+3. **Cache ORB qui se réchauffe** d'une salve à l'autre : la dernière configuration testée
+   paraissait la plus rapide. → `viderCachesV2({memoire:true})` avant chaque mesure.
+
+### Résultat : SHORT reste à 18, et c'est un résultat
+
+Protocole identique, cache mémoire vidé avant chaque salve, 31 photos réelles :
+
+| SHORT | justes | sûres justes | rebuts | ms méd | ms p90 |
+|---|---|---|---|---|---|
+| 12 | 23 | 21/22 | 7 | 560 | 607 |
+| **18 (retenu)** | 23 | 21/23 | 6 | 627 | 813 |
+| 30 | 24 | 22/23 | 5 | 753 | 1074 |
+
+Un rebut coûte un re-scan complet (~2,5 s), soit ~81 ms/carte amortis sur 31. Les trois
+réglages se tiennent donc à ±45 ms d'espérance : **aucun ne domine, on ne touche à rien.**
+⚠️ Ceci CORRIGE la note antérieure « SHORT=30 n'achète rien, +58 % de temps » : sur l'index à
+18 646 cartes, 30 rattrape bien une carte et un rebut — mais le gain reste dans le bruit.
+
+### Optimisation retenue : l'OCR de départage ne doit pas se déclencher sur un écart franc
+
+`dominance = marge / inl` est un RATIO, et un ratio confond deux situations opposées :
+
+| cas | inliers | marge | dominance | OCR utile ? |
+|---|---|---|---|---|
+| vraie égalité | 35 contre 15 | 20 | 0,57 | **oui** |
+| écart décisif | 93 contre 39 | 54 | 0,58 | **non** |
+
+Les deux passaient le test. Le second est réel : `me02-123` sur le téléphone, **98 % de
+fiabilité, verdict juste, et 3 226 ms d'OCR pour confirmer l'acquis** — le pire pic de la
+salve. Et il est devenu PLUS fréquent depuis qu'on a accéléré l'ORB, car le garde-fou
+thermique (`OCR_ORB_MS_MAX`) ne se déclenche plus.
+
+**Ajouté : `OCR_MARGE_MAX = 35`** — l'OCR exige désormais un coude-à-coude *en valeur
+absolue* aussi. Seuil calé pour préserver les deux seuls cas où l'OCR a jamais changé un
+verdict (marges 20 et 0).
+
+**Vérifié sur les 31 photos** : justesse, sûres et rebuts **identiques** avant/après (24
+justes, 23 sûres dont 22 justes, 5 rebuts à SHORT=30), et **aucun** des départages légitimes
+du corpus n'est sauté — les deux OCR restants ont des marges de 19 et 6, ce sont de vraies
+égalités. La correction ne mord que sur le cas du téléphone.
+
 ## Écran de chargement du scanner (V.18, 2026-09-01)
 
 Demande de Nikos : « on peut mettre un loading screen le temps de charger le scanner, avec

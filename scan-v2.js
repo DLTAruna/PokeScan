@@ -30,6 +30,7 @@ const R = {
   INLIERS_MIN: 10,    // en dessous, ORB n'a PAS confirmé géométriquement : on ne devine pas
   OCR_INLIERS_MIN: 25, // l'OCR ne sert qu'à départager une égalité : beaucoup d'inliers…
   OCR_DOM_MAX: 0.6,    // …mais un 2e candidat au coude à coude. Voir l'étape 4.
+  OCR_MARGE_MAX: 35,   // …et un coude-à-coude EN ABSOLU, pas seulement en proportion.
   OCR_ORB_MS_MAX: 1800, // session chaude (dernier ORB au-delà) → on ne lance pas l'OCR
   GEO_INLIERS: 20,     // géométrie franche → « sûre » même si la sigmoïde reste basse
   GEO_DOM: 0.6,
@@ -629,7 +630,22 @@ export async function identifierV2(carte) {
   //    c'est que la photo est mauvaise ou la carte hors index, et l'OCR du numéro échoue pour
   //    les mêmes raisons ; il ne faisait qu'ajouter 0,3 à 4,3 s avant un verdict inchangé.
   //    Garde-fou thermique conservé : session chaude → on ne tente même pas.
-  const orbEgalite = inl >= R.OCR_INLIERS_MIN && dominance0 < R.OCR_DOM_MAX;
+  //
+  //    ⚠️ AJOUT V.19 — la dominance seule est un RATIO, et un ratio ne distingue pas deux
+  //    situations qui n'ont rien à voir :
+  //        35 inliers contre 15  → marge 20, dominance 0,57  → vraie égalité, l'OCR sert
+  //        93 inliers contre 39  → marge 54, dominance 0,58  → écart décisif, l'OCR ne sert à rien
+  //    Les deux passaient le test. Le second cas a été relevé sur le téléphone (`me02-123`,
+  //    98 % de fiabilité, verdict JUSTE) : l'OCR y a coûté 3 226 ms pour confirmer ce qui
+  //    était déjà acquis — c'était le pire pic de toute la salve. Et il est devenu plus
+  //    fréquent depuis que l'ORB est rapide, car le garde-fou thermique (OCR_ORB_MS_MAX)
+  //    ne se déclenche plus.
+  //    On exige donc AUSSI un coude-à-coude en valeur absolue. Le seuil (35) est calé pour
+  //    préserver les deux seuls cas où l'OCR a jamais changé un verdict — marges 20 et 0 —
+  //    tout en écartant ceux mesurés au banc et sur le terrain (marges 54 et au-delà).
+  const orbEgalite = inl >= R.OCR_INLIERS_MIN
+                  && dominance0 < R.OCR_DOM_MAX
+                  && marge < R.OCR_MARGE_MAX;
   let ocrCands = [], ocrTxt = '', ocrLance = false;
   if (ocr && orbEgalite && dernierOrbMs < R.OCR_ORB_MS_MAX) {
     ocrLance = true;
