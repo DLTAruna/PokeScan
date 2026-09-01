@@ -28,6 +28,35 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Plus d'ancienne page qui clignote + journal d'attente (V.21, 2026-09-01)
+
+**Le clignotement.** Nikos : « quand je clique sur scanner, je vois notre vieille page
+s'ouvrir quelques secondes avant le loading screen ». Exact, et la cause est simple : sur
+tactile, le bouton central appelait `startCamera()` après 120 ms, mais `getUserMedia` prend
+ensuite **une à deux secondes** sur téléphone — et le plein écran n'était posé qu'APRÈS cette
+attente. Pendant tout ce temps, le panneau d'accueil du scanner (« Caméra en direct
+(rafale) », choix du mode, réglages, bouton Démarrer) restait à l'écran.
+
+- **`entrerPleinEcranScan()`** pose le plein écran et l'écran de chargement **avant toute
+  attente**, appelée depuis le bouton de barre ET depuis `startCamera()`.
+- **`quitterPleinEcranScan()`** fait le chemin inverse si la caméra est refusée — sans elle,
+  un refus laissait une coquille vide, `#cam-error` étant justement masqué en plein écran.
+- Ceinture ET bretelles : `body.cam-plein` **masque franchement** le panneau d'accueil.
+  Recouvert n'est pas masqué — il suffit d'un rendu lent ou d'un défilement pour qu'il
+  reparaisse. **Le panneau reste intact sur ORDINATEUR**, où il est le point d'entrée : on
+  arrive sur l'onglet Scanner sans forcément vouloir filmer, et c'est là qu'on choisit entre
+  la caméra et l'import d'un dossier (demande explicite de Nikos).
+- **Vérifié** avec un `getUserMedia` ralenti à 2 s : le panneau n'apparaît **jamais**, le
+  chargement est visible dès la première image.
+
+**Le journal d'attente.** Trente phrases Pokémon en jaune, façon invite de commande (`>>`),
+sous la barre. Il n'informe de rien et c'est délibéré : la barre et l'étape disent la vérité,
+lui occupe l'attente — sept mégaoctets se traversent mieux en lisant des bêtises.
+⚠️ **Boîte à hauteur FIXE** (`overflow:hidden`, élagage par le haut) : une mise en page qui
+pousse pendant un chargement se lit comme un bug. ⚠️ **Et chaque phrase doit rester courte** —
+au-delà de ~44 caractères elle est coupée à l'ellipse sur un écran de 375 px, et une blague
+tronquée n'en est plus une. Les 30 ont été mesurées une par une dans la vraie boîte.
+
 ## « Vérification approfondie » : la première idée s'affiche pendant le départage (V.20)
 
 Idée de Nikos : « en cas de besoin OCR, indiquer *vérification approfondie*, traiter à part,

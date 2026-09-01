@@ -808,6 +808,22 @@
     transition:transform .35s cubic-bezier(.22,.61,.36,1);
   }
   .sl-note{margin:11px 0 0; font-size:11.5px; color:#6f7789; max-width:270px; line-height:1.45;}
+  /* Journal d'attente, façon invite de commande. Hauteur FIXE et `overflow:hidden` : les
+     lignes s'ajoutent et sont élaguées par le haut, donc le bloc ne pousse jamais le reste
+     de l'écran — une mise en page qui saute pendant un chargement se lit comme un bug. */
+  .sl-console{
+    margin-top:16px; width:min(300px, 86vw); height:58px; overflow:hidden;
+    display:flex; flex-direction:column; justify-content:flex-end; gap:2px;
+    text-align:left; font:11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color:#d9b64a; opacity:.85;
+  }
+  .sl-console div{
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    animation:slLigne .28s ease-out;
+  }
+  .sl-console div:last-child{color:#ffd66b;}
+  @keyframes slLigne{ from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:none;} }
+  @media (prefers-reduced-motion: reduce){ .sl-console div{animation:none;} }
   /* Une seule fois, à la première ouverture : le sens du réglage système est « moins de
      mouvement », pas « aucune information ». La barre reste, le reste s'immobilise. */
   @media (prefers-reduced-motion: reduce){
@@ -1067,6 +1083,18 @@
      sections. Le `!important` est délibéré : c'est une garde de correction, elle doit
      l'emporter sur l'animation comme sur tout style ajouté plus tard. */
   body.cam-plein section.section{animation:none !important; transform:none !important;}
+  /* Le panneau d'accueil du scanner (titre « Caméra en direct (rafale) », choix du mode,
+     réglages, bouton Démarrer) est RECOUVERT par la zone plein écran, mais recouvert n'est
+     pas masqué : il suffit d'un recouvrement imparfait, d'un défilement ou d'un rendu lent
+     pour qu'il réapparaisse — c'est ce que Nikos voyait clignoter. Tant que la caméra est
+     ouverte, on le retire donc pour de bon. Il reste intact sur ORDINATEUR, où il est le
+     point d'entrée : on y arrive sans forcément vouloir filmer, et c'est là qu'on choisit
+     entre la caméra et l'import d'un dossier de photos. */
+  body.cam-plein #scan-modes,
+  body.cam-plein #panneau-live > h2,
+  body.cam-plein #panneau-live > p.sub,
+  body.cam-plein #panneau-live > details.reglages-scan,
+  body.cam-plein #bandeau-install{display:none !important;}
 
   /* Respect du réglage système : ces animations sont du confort, jamais de l'information —
      tout reste lisible et utilisable sans elles. */
@@ -4786,6 +4814,10 @@
           <p class="sl-etape" id="scan-loader-etape">Démarrage…</p>
           <div class="sl-piste"><i id="scan-loader-jauge"></i></div>
           <p class="sl-note" id="scan-loader-note"></p>
+          <!-- Journal facétieux. Il n'informe de rien — c'est assumé : la barre et l'étape
+               au-dessus disent la vérité. Il occupe l'attente, ce qui est un travail à part
+               entière quand elle dure sept mégaoctets. -->
+          <div class="sl-console" id="scan-loader-console" aria-hidden="true"></div>
         </div>
         <!-- ─── V.13 : la caméra est réduite au strict nécessaire ───
              Demande de Nikos : « je veux l'outil brut du bench V2, sans rien excepté le
@@ -5761,7 +5793,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 20;
+const VERSION_APP = 21;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9569,6 +9601,7 @@ function majLoaderV2(p, message){
 
   if(p === 1){                       // prêt : fondu de sortie, puis on retire de l'affichage
     if(zone.hidden) return;
+    arreterConsoleAttente();         // sinon le minuteur tourne toute la session pour rien
     clearTimeout(loaderSortieTimer);
     zone.style.transition = 'opacity .3s ease-out';
     zone.style.opacity = '0';
@@ -9595,20 +9628,119 @@ function majLoaderV2(p, message){
     ? 'Catalogue de 18 646 cartes — téléchargé une seule fois, puis gardé sur l’appareil.'
     : '';
 }
+// Étape en clair, sans toucher à la barre : sert aux phases qui n'ont pas d'avancement
+// chiffrable (ouverture de la caméra, notamment).
+function etapeLoaderV2(txt){
+  const el = $('scan-loader-etape');
+  if(el){ el.textContent = txt; el.style.color = ''; }
+}
+
+// ─── Journal d'attente ───
+// Il n'informe de rien, et c'est délibéré : la barre et l'étape disent la vérité, lui occupe
+// l'attente. Sept mégaoctets à télécharger, ça se traverse mieux en lisant des bêtises qu'en
+// fixant une barre. Les lignes sont tirées sans répétition immédiate.
+// ⚠️ Une ligne est tronquée à l'ellipse au-delà d'environ 44 caractères sur un écran de
+// 375 px (nowrap + text-overflow). Une blague coupée en deux n'en est plus une : garder
+// chaque phrase COURTE, et la vérifier sur téléphone avant de l'ajouter.
+const PHRASES_ATTENTE = [
+  'Réveil du Ronflex couché sur l’index…',
+  'Négociation avec le Miaouss du péage…',
+  'Dépoussiérage du Set de Base…',
+  'Dracaufeu n’est toujours pas type Dragon…',
+  'Alignement des Zarbi, par ordre…',
+  'Psykokwak a encore mal au crâne…',
+  'Reverse et Holo séparés, en silence…',
+  'Un Magicarpe dans l’index. Ignoré…',
+  'Tri des Énergies par couleur…',
+  'Pikachu est bien en 025. Confirmé…',
+  'Le Dracaufeu 4/102 est au grenier…',
+  'Réhydratation des Aquali…',
+  'La Team Rocket redécolle…',
+  'Le Professeur Chen cherche ses lunettes…',
+  'Comptage des écailles de Rayquaza…',
+  'Détection des coins cornés…',
+  'Un Ectoplasma traverse le cache…',
+  'Boosters jamais ouverts, empilés…',
+  'Classeur rangé par ordre de préférence…',
+  'Ouverture du Centre Pokémon…',
+  'Léviator boude. On fait sans lui…',
+  'Étalonnage des étoiles de rareté…',
+  'Les 151 originaux, puis tous les autres…',
+  'Cartes tombées derrière le meuble…',
+  'Un Rattata a grignoté un coin…',
+  'Mise sous pochette, virtuellement…',
+  'Consultation du Pokédex papier…',
+  'État estimé : Near Mint, on y croit…',
+  'Roucool refuse de rester en case…',
+  'Ronflex déplacé. L’index est libre…',
+];
+let consoleTimer = 0, phrasesRestantes = [];
+function demarrerConsoleAttente(){
+  const el = $('scan-loader-console');
+  if(!el || consoleTimer) return;
+  el.innerHTML = '';
+  phrasesRestantes = PHRASES_ATTENTE.slice();
+  const ajouter = ()=>{
+    if(!phrasesRestantes.length) phrasesRestantes = PHRASES_ATTENTE.slice();
+    const i = Math.floor(Math.random() * phrasesRestantes.length);
+    const ligne = document.createElement('div');
+    ligne.textContent = '>> ' + phrasesRestantes.splice(i, 1)[0];
+    el.appendChild(ligne);
+    while(el.children.length > 4) el.removeChild(el.firstChild);
+  };
+  ajouter();
+  consoleTimer = setInterval(ajouter, 1400);
+}
+function arreterConsoleAttente(){
+  clearInterval(consoleTimer);
+  consoleTimer = 0;
+}
+
 function afficherLoaderV2(){
   const zone = $('scan-loader');
   if(!zone) return;
   clearTimeout(loaderSortieTimer);          // annule un fondu de sortie encore en attente
   zone.hidden = false;
   zone.style.opacity = ''; zone.style.transition = '';
+  demarrerConsoleAttente();
   // On n'affiche cet écran QUE si le scanner n'est pas prêt. Rejouer un avancement mémorisé
   // à 1 relancerait donc aussitôt le masquage — d'où le plafond : tant qu'on montre, on
   // n'est pas à 100 %.
   majLoaderV2(Math.min(v2Avancement.p, 0.99), v2Avancement.message);
 }
 
+// Bascule l'écran en mode scan AVANT toute attente. `getUserMedia` prend une à deux secondes
+// sur téléphone, et pendant ce temps le panneau d'accueil du scanner (« Caméra en direct
+// (rafale) », « Importer des photos », les réglages) restait affiché — Nikos le voyait
+// clignoter à chaque ouverture. Ce panneau garde tout son sens sur ORDINATEUR, où arriver
+// sur l'onglet Scanner n'est pas forcément vouloir filmer ; il ne doit simplement jamais
+// apparaître sur téléphone, où le bouton central ouvre la caméra directement.
+function entrerPleinEcranScan(){
+  const zone = $('cam-fullscreen-area');
+  if(!zone || zone.classList.contains('fs')) return;
+  zone.classList.add('fs');
+  document.body.classList.add('cam-plein');
+  const rang = $('cam-start-row'); if(rang) rang.style.display = 'none';
+  document.documentElement.style.overflow = 'hidden';
+}
+// Retour en arrière si la caméra ne s'ouvre pas : sans ça, un refus laisserait l'utilisateur
+// devant une coquille plein écran et un message d'erreur masqué par le mode plein écran.
+function quitterPleinEcranScan(){
+  const zone = $('cam-fullscreen-area');
+  if(zone) zone.classList.remove('fs');
+  document.body.classList.remove('cam-plein');
+  const rang = $('cam-start-row'); if(rang) rang.style.display = '';
+  document.documentElement.style.overflow = '';
+  majLoaderV2(1);
+}
+
 async function startCamera(){
   $('cam-error').textContent = '';
+  entrerPleinEcranScan();
+  // Le scanner met un moment à s'ouvrir même quand l'index est déjà en cache : on le dit,
+  // au lieu de laisser un écran noir ou l'ancien panneau.
+  afficherLoaderV2();
+  etapeLoaderV2('Ouverture de la caméra…');
   // Avant même de demander la caméra : si le scanner n'est pas prêt, on le dit. Et on
   // relance l'initialisation si elle avait échoué au chargement de la page — sinon l'écran
   // resterait figé sur un état dont rien ne peut le sortir.
@@ -9647,7 +9779,12 @@ async function startCamera(){
     renderQueueStrip();
     startAimLoop();
   } catch(err){
+    // On REVIENT à la page d'accueil du scanner : depuis que le plein écran est posé avant
+    // d'attendre la caméra, y rester afficherait une coquille vide, et le message d'erreur
+    // (#cam-error) est justement masqué en plein écran.
+    quitterPleinEcranScan();
     $('cam-error').textContent = '⚠️ Caméra indisponible ('+err.message+'). Bascule sur « Importer des photos » en haut de la page.';
+    toast('⚠️ Caméra indisponible : ' + err.message);
   }
 }
 
@@ -12290,8 +12427,10 @@ function stopCamera(){
   document.body.classList.remove('cam-plein');
   // L'écran de chargement ne doit pas survivre à la fermeture : réaffiché tel quel à la
   // réouverture, il montrerait un avancement périmé.
+  arreterConsoleAttente();
   const loader = $('scan-loader');
   if(loader){ loader.hidden = true; loader.style.opacity = ''; loader.style.transition = ''; }
+  const rang = $('cam-start-row'); if(rang) rang.style.display = '';
   document.documentElement.style.overflow = '';
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
   cadrageVisible = {w: 1, h: 1};
@@ -12587,10 +12726,18 @@ const TACTILE = matchMedia("(hover: none)").matches;
 document.querySelectorAll('.navbar [data-tab="capture"]').forEach(b =>
   b.addEventListener("click", ()=>{
     if(!TACTILE || modeScan !== "live" || cameraStream) return;
-    // Léger différé : l'activation d'onglet remet la page en haut et bascule les sections,
-    // et demander le flux dans le même souffle fait sauter la transition.
+    // TOUT DE SUITE, sans attendre : on passe en plein écran et on montre le chargement.
+    // Sinon le panneau d'accueil du scanner reste affiché pendant l'activation d'onglet PUIS
+    // pendant l'ouverture de la caméra — une à deux secondes de vieille page qui clignote.
+    entrerPleinEcranScan();
+    afficherLoaderV2();
+    etapeLoaderV2('Ouverture de la caméra…');
+    // Léger différé pour la demande de flux seulement : l'activation d'onglet remet la page
+    // en haut et bascule les sections, et demander le flux dans le même souffle fait sauter
+    // la transition.
     setTimeout(()=>{
       if(!cameraStream && $("section-capture")?.classList.contains("active")) startCamera();
+      else if(!cameraStream) quitterPleinEcranScan();   // l'onglet a changé entre-temps
     }, 120);
   }));
 
