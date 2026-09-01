@@ -1611,6 +1611,7 @@ const SEUILS_PROD = {
   BOUGE_BASE: 0.030, PATIENCE_DOUCE: 1200, PATIENCE_FRANCHE: 2500,
   SYM_MAX: 0.45, PROP_MAX: 0.25, ABSENCE: 2, MS_PAR_IMAGE: 100,
   STRATEGIE: 'homographie',   // voir STRATEGIES : la brique remise en cause
+  RECADRE: 0.55,              // second passage central, comme RECADRE_DETECTION en production
   // Grain du capteur. 0,012 place la gigue des coins dans la plage relevée sur le téléphone
   // (voir la mesure d'étalonnage plus bas) ; à 0 le banc redevient menteur.
   BRUIT: 0.012,
@@ -1944,8 +1945,28 @@ async function jouerPresentation(img, geste, nImages, S){
     const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(canvas.width, canvas.height));
     const bmp = await createImageBitmap(canvas, {
       resizeWidth: Math.round(canvas.width*e0), resizeHeight: Math.round(canvas.height*e0), resizeQuality:'medium'});
-    const d = await workerDetection().detecter(bmp);
-    const vu = !!(d && d.ok && d.corners && d.score != null && d.score >= S.MIN_SCORE);
+    let d = await workerDetection().detecter(bmp);
+    // ⚠️ RATTRAPAGE À DISTANCE — index.html le fait depuis la V.26 et mon banc l'oubliait,
+    // ce qui le rendait plus pessimiste que la production sur le seul point qui domine les
+    // échecs. Un banc qui diverge du code réel ne mesure pas le code réel : la première
+    // version accusait « jamais vue » 14 fois sur 16 sans ce second passage.
+    // Sur un recadrage central, une carte lointaine occupe une bien plus grande part de
+    // l'image et redevient visible.
+    if(!(d && d.corners && d.score != null && d.score >= S.MIN_SCORE) && S.RECADRE){
+      const m = (1 - S.RECADRE) / 2, P = S.RECADRE;
+      const sub = document.createElement('canvas');
+      sub.width = Math.round(canvas.width * P); sub.height = Math.round(canvas.height * P);
+      sub.getContext('2d').drawImage(canvas, Math.round(canvas.width*m), Math.round(canvas.height*m),
+        sub.width, sub.height, 0, 0, sub.width, sub.height);
+      const e1 = Math.min(1, DETECT_LONG_EDGE / Math.max(sub.width, sub.height));
+      const b2 = await createImageBitmap(sub, {resizeWidth:Math.round(sub.width*e1), resizeHeight:Math.round(sub.height*e1), resizeQuality:'medium'});
+      const d2 = await workerDetection().detecter(b2);
+      if(d2 && d2.corners && d2.score != null && d2.score >= S.MIN_SCORE){
+        const ram = p => [m + p[0]*P, m + p[1]*P];
+        d = {...d2, corners:{tl:ram(d2.corners.tl), tr:ram(d2.corners.tr), br:ram(d2.corners.br), bl:ram(d2.corners.bl)}};
+      }
+    }
+    const vu = !!(d && d.ok !== false && d.corners && d.score != null && d.score >= S.MIN_SCORE);
 
     if(!vu){
       streak = 0; prev = null;
