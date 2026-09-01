@@ -1585,9 +1585,331 @@ function exporter(){
   setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// BANC DE PRÉSENTATION — l'usage réel, du geste jusqu'au verdict.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Les bancs précédents mesuraient des IMAGES ISOLÉES : le détecteur voit-il la carte, la
+// chaîne l'identifie-t-elle. Aucun ne mesurait ce dont Nikos se plaint depuis dix versions —
+// le DÉCLENCHEMENT, qui est une machine à états nourrie par une suite d'images, avec de la
+// patience, de la stabilité, un verrou et des seuils de forme. On ne peut pas régler ça sur
+// des images fixes, et c'est pourquoi j'ai passé des versions à proposer des seuils au juger
+// puis à lui faire tester le résultat.
+//
+// Ici, une « présentation » est une SÉQUENCE : la main approche la carte, elle tremble, la
+// mise au point cherche, le cadrage n'est jamais parfait. On rejoue image par image la vraie
+// logique de index.html, et on mesure les trois choses qui comptent :
+//     déclenche-t-il ?  ·  au bout de combien de temps ?  ·  ce qu'il a pris était-il bon ?
+//
+// Les seuils sont des PARAMÈTRES : c'est ce qui permet de les challenger sans rien déployer.
+// ⚠️ Cette machine à états DUPLIQUE celle de index.html. Toute divergence rend le banc
+// menteur — c'est arrivé avec le cadre fixe, qui gagnait ici et perdait sur le téléphone.
+// Si le déclenchement change là-bas, il doit changer ici, sinon on règle un scanner
+// imaginaire.
+
+const SEUILS_PROD = {
+  MIN_SCORE: 0.35, SCORE_STRICT: 0.50,
+  BOUGE_BASE: 0.030, PATIENCE_DOUCE: 1200, PATIENCE_FRANCHE: 2500,
+  SYM_MAX: 0.12, PROP_MAX: 0.25, ABSENCE: 2, MS_PAR_IMAGE: 100,
+  // Grain du capteur. 0,012 place la gigue des coins dans la plage relevée sur le téléphone
+  // (voir la mesure d'étalonnage plus bas) ; à 0 le banc redevient menteur.
+  BRUIT: 0.012,
+};
+
+// Les gestes, tels qu'on scanne vraiment. Chacun rend les options image par image.
+// Aucun n'est « parfait » : c'est le but. `taille` est la hauteur de carte dans le cadre.
+const GESTES = {
+  // Même « posée nette » garde un léger biais : une carte parfaitement fronto-parallèle
+  // n'existe pas hors d'un scanner à plat.
+  'posée nette': n => Array.from({length:n}, () => ({taille:0.72, rot:0, dx:0, dy:0, flou:0, incl:4, pitch:3})),
+
+  'main qui tremble': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.70 + 0.02*Math.sin(i/2), rot: 3*Math.sin(i/1.7),
+    dx: 0.012*Math.sin(i/1.3), dy: 0.012*Math.cos(i/1.9), flou: i%5===0 ? 1.2 : 0.4,
+    incl: 8+5*Math.sin(i/1.6), pitch: 6+4*Math.cos(i/2.1) })),
+
+  'approche': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.34 + 0.42*Math.min(1, i/(n*0.7)), rot: 2*Math.sin(i/2),
+    dx: 0.02*Math.sin(i/2), dy: 0.01*Math.cos(i/2),
+    flou: Math.max(0, 2.6 - 0.35*i), incl: 12-0.5*i, pitch: 9-0.4*i })),   // l'objectif rattrape son point
+
+  'de biais': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.66, rot: 14 + 4*Math.sin(i/2), dx: 0.02, dy: 0.01, flou: i%4===0 ? 1 : 0.3,
+    incl: 26+6*Math.sin(i/2), pitch: 14 })),
+
+  'décentrée': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.60, rot: 5, dx: 0.20 + 0.02*Math.sin(i/2), dy: 0.10, flou: 0.5, incl: 18, pitch: 12 })),
+
+  'flou de bougé': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.68, rot: 4*Math.sin(i/1.5), dx: 0.03*Math.sin(i), dy: 0.02*Math.cos(i),
+    flou: (i%3===0) ? 3.2 : 0.8, incl: 10+8*Math.sin(i/1.4), pitch: 8+6*Math.cos(i/1.2) })),   // la main repart avant que ce soit net
+
+  'lot en main': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.62, rot: 8, dx: 0.05, dy: 0.03, flou: 0.6, fond:'encombré', incl: 15+4*Math.sin(i/2), pitch: 10 })),
+
+  'de loin': n => Array.from({length:n}, () => ({taille:0.42, rot:3, dx:0.03, dy:0, flou:0.6, incl:10, pitch:7})),
+};
+
+// ⚠️ SANS BRUIT, CE BANC MENT. Première salve : 90 % de déclenchement et 199 ms de médiane
+// pour les HUIT gestes, y compris « flou de bougé » et « de loin ». Trop uniforme pour être
+// vrai — et démenti par le téléphone, où le journal relève des `bougé` de 0,10 à 0,21 et des
+// `sym` jusqu'à 0,57 sur une carte tenue immobile.
+// La raison : des scènes composées sont géométriquement EXACTES. Deux images consécutives
+// sont identiques au pixel près, donc le détecteur rend deux fois les mêmes coins, donc
+// `bougé` vaut zéro et la stabilité est acquise d'emblée. Ce qui fait gigoter les coins sur
+// un vrai téléphone, c'est le bruit du capteur : chaque image est légèrement différente, et
+// le détecteur place ses coins un peu ailleurs à chaque fois.
+// On rend donc chaque image unique — grain, variation d'exposition, et un passage JPEG comme
+// en sortie de caméra. C'est la seule façon d'obtenir une gigue HONNÊTE : on ne la simule
+// pas, on recrée sa cause et on laisse le détecteur réagir.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// PERSPECTIVE — ce qui manquait vraiment, et qui invalidait le réglage de SYM_MAX.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// `composerScene` dessine la carte À PLAT : translation, échelle, rotation DANS LE PLAN. Les
+// côtés opposés y restent donc rigoureusement égaux, et la symétrie ne dépasse jamais 0,08
+// quoi qu'on fasse — mesuré sur cinq niveaux de bruit, de 0 à 0,035 : symétrie maximale 0,052
+// à 0,078, `bougé` médian 0,010. Le téléphone, lui, relève des symétries jusqu'à 0,57 et des
+// `bougé` de 0,10 à 0,21 sur une carte tenue immobile.
+// Une carte tenue à la main est vue EN PERSPECTIVE : c'est un trapèze, et c'est de là que
+// vient l'essentiel de l'asymétrie. J'ai donc calé SYM_MAX sur des scènes structurellement
+// incapables de produire le phénomène que ce seuil doit tolérer — la même faute que le cadre
+// fixe, qui gagnait au banc parce que le banc lui donnait raison par construction.
+// Canvas 2D ne sait pas faire de transformation projective ; on approche par tranches
+// horizontales, ce qui suffit largement pour des inclinaisons de l'ordre de 30°.
+function dessinerEnPerspective(g, img, quad, tranches){
+  const N = tranches || 64;
+  const [tl, tr, br, bl] = quad;
+  const lerp = (a, b, t) => [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+  const sh = img.height / N;
+  for(let i = 0; i < N; i++){
+    const t0 = i / N, t1 = (i+1) / N;
+    const g0 = lerp(tl, bl, t0), d0 = lerp(tr, br, t0);
+    const g1 = lerp(tl, bl, t1), d1 = lerp(tr, br, t1);
+    const xg = (g0[0]+g1[0])/2, yg = (g0[1]+g1[1])/2;
+    const xd = (d0[0]+d1[0])/2, yd = (d0[1]+d1[1])/2;
+    const larg = Math.hypot(xd-xg, yd-yg);
+    const ang = Math.atan2(yd-yg, xd-xg);
+    const haut = Math.max(Math.hypot(g1[0]-g0[0], g1[1]-g0[1]), 1) + 1;  // +1 : pas de couture
+    g.save();
+    g.translate(xg, yg); g.rotate(ang);
+    g.drawImage(img, 0, i*sh, img.width, sh, 0, 0, larg, haut);
+    g.restore();
+  }
+}
+
+// Une scène où la carte est vue de biais dans l'espace. `incl` bascule autour de l'axe
+// vertical, `pitch` autour de l'horizontal : les deux inclinaisons d'une main qui présente.
+function composerScene3D(img, o){
+  const cv = document.createElement('canvas');
+  cv.width = SCENE_W; cv.height = SCENE_H;
+  const g = cv.getContext('2d');
+  fond(g, o.fond || 'bois');
+
+  const h = SCENE_H * o.taille, w = h / CARD_RATIO;
+  const cx = SCENE_W/2 + (o.dx||0)*SCENE_W, cy = SCENE_H/2 + (o.dy||0)*SCENE_H;
+  const rad = (o.rot||0) * Math.PI/180;
+  // Projection faible : un côté rétrécit d'autant plus qu'il s'éloigne.
+  const ky = Math.tan((o.incl||0) * Math.PI/180) * 0.55;   // gauche/droite
+  const kx = Math.tan((o.pitch||0) * Math.PI/180) * 0.55;  // haut/bas
+  const sommet = (sx, sy) => {
+    const fx = 1 / (1 + ky*sx), fy = 1 / (1 + kx*sy);
+    const x = sx * w/2 * fy, y = sy * h/2 * fx;
+    return [cx + x*Math.cos(rad) - y*Math.sin(rad), cy + x*Math.sin(rad) + y*Math.cos(rad)];
+  };
+  const quad = [sommet(-1,-1), sommet(1,-1), sommet(1,1), sommet(-1,1)];
+
+  g.save();
+  if(o.lumiere && o.lumiere !== 1) g.filter = 'brightness(' + o.lumiere + ')';
+  if(o.flou) g.filter = (g.filter === 'none' ? '' : g.filter + ' ') + 'blur(' + o.flou + 'px)';
+  dessinerEnPerspective(g, img, quad);
+  g.restore();
+
+  return { canvas: cv, coins: {
+    tl:[quad[0][0]/SCENE_W, quad[0][1]/SCENE_H], tr:[quad[1][0]/SCENE_W, quad[1][1]/SCENE_H],
+    br:[quad[2][0]/SCENE_W, quad[2][1]/SCENE_H], bl:[quad[3][0]/SCENE_W, quad[3][1]/SCENE_H] } };
+}
+
+async function bruiter(cv, niveau){
+  const g = cv.getContext('2d');
+  const im = g.getImageData(0, 0, cv.width, cv.height);
+  const d = im.data;
+  const amp = niveau * 255;
+  // Dérive d'exposition : l'auto-exposition d'un téléphone ne tient jamais deux images de
+  // suite exactement au même niveau.
+  const gain = 1 + (Math.random() - 0.5) * 0.04;
+  for(let i = 0; i < d.length; i += 4){
+    const n = (Math.random() + Math.random() + Math.random() - 1.5) * amp;   // ~gaussien
+    d[i]   = Math.max(0, Math.min(255, d[i]   * gain + n));
+    d[i+1] = Math.max(0, Math.min(255, d[i+1] * gain + n));
+    d[i+2] = Math.max(0, Math.min(255, d[i+2] * gain + n));
+  }
+  g.putImageData(im, 0, 0);
+  // Passage JPEG : le flux caméra en vient, et ses artefacts déplacent les contours.
+  const url = cv.toDataURL('image/jpeg', 0.82);
+  const img = await new Promise((res, rej) => { const i = new Image(); i.onload = ()=>res(i); i.onerror = rej; i.src = url; });
+  g.drawImage(img, 0, 0);
+  return cv;
+}
+
+function netteteCanvas(cv){
+  const w = 140, h = 196;
+  const s = document.createElement('canvas'); s.width = w; s.height = h;
+  const c = s.getContext('2d', {willReadFrequently:true});
+  c.drawImage(cv, 0, 0, w, h);
+  const d = c.getImageData(0,0,w,h).data, g = new Float32Array(w*h);
+  for(let i=0,p=0;i<d.length;i+=4,p++) g[p] = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+  let sum=0, sq=0, n=0;
+  for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const p=y*w+x;
+    const L = 4*g[p]-g[p-1]-g[p+1]-g[p-w]-g[p+w]; sum+=L; sq+=L*L; n++; }
+  const m = sum/n; return sq/n - m*m;
+}
+
+function symQuad(q){
+  const P = [q.tl,q.tr,q.br,q.bl];
+  const L = (a,b)=>Math.hypot(P[b][0]-P[a][0], P[b][1]-P[a][1]);
+  const h1=L(0,1), h2=L(3,2), v1=L(0,3), v2=L(1,2);
+  if(Math.max(h1,h2)<1e-6 || Math.max(v1,v2)<1e-6) return 1;
+  return Math.max(Math.abs(h1-h2)/Math.max(h1,h2), Math.abs(v1-v2)/Math.max(v1,v2));
+}
+function propQuad(q, W, H){
+  const P = [q.tl,q.tr,q.br,q.bl].map(p=>[p[0]*W, p[1]*H]);
+  const L = (a,b)=>Math.hypot(P[b][0]-P[a][0], P[b][1]-P[a][1]);
+  const larg=(L(0,1)+L(3,2))/2, haut=(L(0,3)+L(1,2))/2;
+  if(larg<1||haut<1) return 1;
+  return Math.abs(haut/larg - CARD_RATIO)/CARD_RATIO;
+}
+function aireQuad(q){
+  const p=[q.tl,q.tr,q.br,q.bl]; let a=0;
+  for(let i=0;i<4;i++){ const b=p[(i+1)%4]; a += p[i][0]*b[1]-b[0]*p[i][1]; }
+  return Math.abs(a)/2;
+}
+// Même mesure que index.html depuis la V.41 : le centre et la taille, jamais le pire coin.
+function bougeQuad(a, b){
+  const c = q => [(q.tl[0]+q.tr[0]+q.br[0]+q.bl[0])/4, (q.tl[1]+q.tr[1]+q.br[1]+q.bl[1])/4];
+  const ca=c(a), cb=c(b);
+  return Math.max(Math.hypot(ca[0]-cb[0], ca[1]-cb[1]),
+                  Math.abs(Math.sqrt(aireQuad(a))-Math.sqrt(aireQuad(b))));
+}
+
+// Rejoue UNE présentation et rend ce que le déclenchement en a fait.
+async function jouerPresentation(img, geste, nImages, S){
+  const options = GESTES[geste](nImages);
+  let presentDepuis = 0, streak = 0, prev = null, absence = 0;
+  let meilleure = null, meilleureNet = -1, meilleursCoins = null;
+  const trace = [];
+
+  for(let i = 0; i < options.length; i++){
+    const t = i * S.MS_PAR_IMAGE;
+    const base = {taille:0.72, rot:0, dx:0, dy:0, fond:'bois', lumiere:1, flou:0, incl:0, pitch:0};
+    const {canvas, coins:vrais} = composerScene3D(img, {...base, ...options[i]});
+    await bruiter(canvas, S.BRUIT);
+    const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(canvas.width, canvas.height));
+    const bmp = await createImageBitmap(canvas, {
+      resizeWidth: Math.round(canvas.width*e0), resizeHeight: Math.round(canvas.height*e0), resizeQuality:'medium'});
+    const d = await workerDetection().detecter(bmp);
+    const vu = !!(d && d.ok && d.corners && d.score != null && d.score >= S.MIN_SCORE);
+
+    if(!vu){
+      streak = 0; prev = null;
+      if(++absence >= S.ABSENCE) presentDepuis = 0;
+      trace.push({i, vu:false});
+      continue;
+    }
+    absence = 0;
+    if(!presentDepuis) presentDepuis = t || 1;
+    const tenue = t - presentDepuis + S.MS_PAR_IMAGE;
+    const bouge = prev ? bougeQuad(prev, d.corners) : Infinity;
+    prev = d.corners;
+
+    const seuilBouge = tenue >= S.PATIENCE_FRANCHE ? Infinity
+                     : tenue >= S.PATIENCE_DOUCE   ? S.BOUGE_BASE * 3 : S.BOUGE_BASE;
+    const seuilScore = tenue >= S.PATIENCE_DOUCE ? S.MIN_SCORE : S.SCORE_STRICT;
+    if(bouge < seuilBouge) streak++; else streak = 0;
+
+    const sym = symQuad(d.corners);
+    const prop = propQuad(d.corners, canvas.width, canvas.height);
+    const formeOk = sym <= S.SYM_MAX && prop <= S.PROP_MAX;
+    if(formeOk){
+      const net = netteteCanvas(canvas);
+      if(net > meilleureNet){ meilleureNet = net; meilleure = canvas; meilleursCoins = d.corners; }
+    }
+    trace.push({i, vu:true, score:+d.score.toFixed(2), bouge:+(bouge===Infinity?9:bouge).toFixed(3),
+                seuilBouge: seuilBouge===Infinity?9:+seuilBouge.toFixed(3), sym:+sym.toFixed(3),
+                prop:+prop.toFixed(3), tenue, ecart:+ecartQuad(vrais, d.corners).toFixed(3)});
+
+    if(d.score >= seuilScore && streak >= 1 && formeOk){
+      return { declenche:true, image:i, msAvant: tenue, canvas: meilleure || canvas,
+               coins: meilleursCoins || d.corners, trace };
+    }
+  }
+  // Rien n'est parti : on note la condition qui a manqué le plus souvent, comme le journal
+  // du téléphone le fait depuis la V.40.
+  const vus = trace.filter(x=>x.vu);
+  const causes = {'jamais vue': trace.length - vus.length,
+    'pas stable': vus.filter(x=>x.bouge >= x.seuilBouge).length,
+    'symétrie': vus.filter(x=>x.sym > S.SYM_MAX).length,
+    'proportions': vus.filter(x=>x.prop > S.PROP_MAX).length};
+  const cause = Object.entries(causes).sort((a,b)=>b[1]-a[1])[0];
+  return { declenche:false, cause: cause[1] ? cause[0] : 'score', trace };
+}
+
+// n cartes × tous les gestes. `patch` remplace des seuils : c'est là qu'on les challenge.
+async function lancerPresentation(nCartes, patch){
+  if(!catalogue.length) catalogue = V2.catalogueV2();
+  const S = {...SEUILS_PROD, ...(patch||{})};
+  const rnd = tirage(20260902);
+  const pool = catalogue.filter(c=>c.image);
+  const gestes = Object.keys(GESTES);
+  const acc = new Map(gestes.map(g=>[g, []]));
+  let fait = 0, total = nCartes * gestes.length;
+
+  for(let k = 0; k < nCartes; k++){
+    const carte = pool[Math.floor(rnd()*pool.length)];
+    let img; try{ img = await chargerIllustration(carte.image); }catch(e){ continue; }
+    for(const geste of gestes){
+      const r = await jouerPresentation(img, geste, 16, S);
+      let juste = null;
+      if(r.declenche){
+        // On identifie CE QUI A ÉTÉ CAPTURÉ, pas l'illustration d'origine : c'est le seul
+        // moyen de savoir si le déclenchement a pris une image exploitable.
+        try{
+          const red = await redresserCanvas(r.canvas);
+          if(red){ const res = await V2.identifierV2(red, {}); juste = !!(res && res.pick && res.pick.cle === carte.cle); }
+          else juste = false;
+        }catch(e){ juste = false; }
+      }
+      acc.get(geste).push({...r, juste});
+      $('d-etat') && ($('d-etat').textContent = (++fait) + '/' + total + ' — ' + geste);
+      await new Promise(r2=>setTimeout(r2, 0));
+    }
+  }
+
+  const med = a => { if(!a.length) return null; const b=[...a].sort((x,y)=>x-y); return b[b.length>>1]; };
+  const lignes = gestes.map(g=>{
+    const v = acc.get(g), d = v.filter(x=>x.declenche);
+    const causes = {};
+    for(const x of v) if(!x.declenche) causes[x.cause] = (causes[x.cause]||0)+1;
+    return { geste:g, n:v.length,
+      declenche: Math.round(100*d.length/v.length) + ' %',
+      msMed: med(d.map(x=>x.msAvant)),
+      justes: d.length ? Math.round(100*d.filter(x=>x.juste).length/d.length) + ' %' : '—',
+      // Ce qui compte pour l'utilisateur : sur DIX PRÉSENTATIONS, combien finissent par une
+      // carte correctement identifiée. Un déclenchement qui se trompe ne vaut pas mieux
+      // qu'un déclenchement qui n'arrive pas.
+      bout: Math.round(100*v.filter(x=>x.declenche && x.juste).length/v.length) + ' %',
+      echecs: causes };
+  });
+  const tous = gestes.flatMap(g=>acc.get(g));
+  const resume = { n: tous.length,
+    declenche: Math.round(100*tous.filter(x=>x.declenche).length/tous.length) + ' %',
+    bout: Math.round(100*tous.filter(x=>x.declenche && x.juste).length/tous.length) + ' %',
+    msMed: med(tous.filter(x=>x.declenche).map(x=>x.msAvant)), seuils: S };
+  return { resume, lignes, brut: acc };
+}
+
 // ── API console. C'est par elle que le banc se pilote pour de vrai : par paquets, pour
 //    qu'aucun appel ne dépasse le délai d'attente d'un outil, et sans dépendre des clics.
 window.BANC = {
+  presentation: lancerPresentation, gestes: ()=>Object.keys(GESTES), seuils: ()=>({...SEUILS_PROD}),
   camera: ouvrirCamera, fermer: fermerCamera, capturer: ()=>capturer('manuel'),
   zoom: (z)=> z == null ? {caps:capsZoom, courant:zoomCourant, memorise:localStorage.getItem(CLE_ZOOM)} : appliquerZoom(z, true),
   patience: (p)=>{ if(p) Object.assign(PATIENCE, p); return {...PATIENCE, bougeBase:BOUGE_BASE}; },
