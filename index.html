@@ -283,7 +283,16 @@
 
      Les blocs restent en flux normal, donc empiles vers le bas par justify-content, mais
      PAR-DESSUS la video : aucun decalage a calculer, aucun offset magique a maintenir. */
+  /* ⚠️ `display:block` INDISPENSABLE ici (corrigé en V.22).
+     `.video-wrap` est masqué tant que la caméra n'a pas démarré (`.video-wrap.active`).
+     Depuis que le plein écran est posé AVANT d'attendre `getUserMedia` (V.21), il s'écoule
+     une à deux secondes où l'on est en plein écran sans flux — et pendant lesquelles tout ce
+     que contient ce bloc restait invisible : l'écran de chargement ET LA CROIX DE SORTIE.
+     L'utilisateur se retrouvait devant un noir absolu, sans rien à toucher ; sur Android, à
+     force de tapoter, c'est le geste système (Circle to Search) qui s'emparait de l'écran.
+     En plein écran, ce bloc doit donc s'afficher qu'il y ait un flux ou non. */
   #cam-fullscreen-area.fs .video-wrap{
+    display:block;
     position:absolute; inset:0; z-index:0; border-radius:0; min-height:0;
     /* Le pincement sert à zoomer l'OBJECTIF, pas la page. Sans cela le navigateur
        s'empare du geste et l'interface part en morceaux sous les doigts. Cantonné au
@@ -812,7 +821,11 @@
      lignes s'ajoutent et sont élaguées par le haut, donc le bloc ne pousse jamais le reste
      de l'écran — une mise en page qui saute pendant un chargement se lit comme un bug. */
   .sl-console{
-    margin-top:16px; width:min(300px, 86vw); height:58px; overflow:hidden;
+    /* Hauteur = 4 lignes (11 px × 1,35 = 14,8 px) + 3 interlignes de 2 px = 65,2 px. À 58 px
+       la quatrième était rognée en son milieu ; à 66 px, l'arrondi sous-pixel la rognait
+       encore d'un cheveu (mesuré : 66 nécessaires pour 66 disponibles). D'où ces 70 px, qui
+       laissent la marge dont l'arrondi a besoin. */
+    margin-top:16px; width:min(300px, 86vw); height:70px; overflow:hidden;
     display:flex; flex-direction:column; justify-content:flex-end; gap:2px;
     text-align:left; font:11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace;
     color:#d9b64a; opacity:.85;
@@ -5793,7 +5806,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 21;
+const VERSION_APP = 22;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9703,10 +9716,15 @@ function afficherLoaderV2(){
   zone.hidden = false;
   zone.style.opacity = ''; zone.style.transition = '';
   demarrerConsoleAttente();
-  // On n'affiche cet écran QUE si le scanner n'est pas prêt. Rejouer un avancement mémorisé
-  // à 1 relancerait donc aussitôt le masquage — d'où le plafond : tant qu'on montre, on
-  // n'est pas à 100 %.
-  majLoaderV2(Math.min(v2Avancement.p, 0.99), v2Avancement.message);
+  // Où en est-on vraiment ? Deux cas très différents :
+  //  — l'index n'est pas encore là : la barre doit montrer SON avancement, qui est la seule
+  //    chose longue et la seule chiffrable ;
+  //  — l'index est déjà en cache : il ne reste que l'ouverture de la caméra, qui n'a pas
+  //    d'avancement. Rejouer l'ancien « 100 % » affichait alors une barre PLEINE devant un
+  //    écran qui attend encore — le contraire de ce qu'elle doit dire. On repart d'un filet.
+  const pret = !!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2());
+  majLoaderV2(pret ? 0.08 : Math.min(v2Avancement.p, 0.99),
+              pret ? 'Ouverture de la caméra…' : v2Avancement.message);
 }
 
 // Bascule l'écran en mode scan AVANT toute attente. `getUserMedia` prend une à deux secondes

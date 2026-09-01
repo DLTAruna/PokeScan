@@ -28,6 +28,32 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⚠️ Écran noir sans issue au démarrage — régression V.21, corrigée en V.22
+
+Nikos : « quand je clique sur scanner, ça m'ouvre la recherche Google, comme si quelque chose
+traînait devant » — puis « ça m'ouvre une recherche restauration ». C'est **Circle to Search**
+d'Android qui s'emparait de l'écran, et la cause était bien chez nous.
+
+**`.video-wrap` est masqué tant que la caméra n'a pas démarré** (`.video-wrap.active`).
+Or depuis la V.21 le plein écran est posé AVANT d'attendre `getUserMedia` — il s'écoule donc
+une à deux secondes en plein écran sans flux, pendant lesquelles **tout ce que contient ce
+bloc restait invisible : l'écran de chargement ET LA CROIX DE SORTIE**. Écran noir absolu,
+rien à toucher ; à force de tapoter, c'est le geste système qui répondait.
+
+**Correctif** : `#cam-fullscreen-area.fs .video-wrap{display:block}` — en plein écran, ce bloc
+s'affiche qu'il y ait un flux ou non. Vérifié : croix à 42 px en haut à droite et
+`elementFromPoint` renvoie bien `btn-stop-cam` — le doigt atteint le bouton.
+
+**Leçon** : poser un plein écran avant d'avoir de quoi le remplir oblige à vérifier que TOUT
+ce qui doit rester atteignable l'est — au minimum la sortie. Un écran sans issue n'est pas
+une gêne, c'est une impasse.
+
+Deux défauts d'affichage corrigés au passage : la barre restait **pleine** pendant la seule
+ouverture de la caméra (elle repart d'un filet à 0,08 quand l'index est déjà en cache, et ne
+montre l'avancement réel que s'il y a quelque chose à télécharger), et la boîte du journal
+était trop courte d'un cheveu — 65,2 px nécessaires, 66 disponibles, la 4ᵉ ligne rognée par
+l'arrondi ; portée à 70 px.
+
 ## Plus d'ancienne page qui clignote + journal d'attente (V.21, 2026-09-01)
 
 **Le clignotement.** Nikos : « quand je clique sur scanner, je vois notre vieille page
