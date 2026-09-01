@@ -28,6 +28,68 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ PISTE C — le cadre de visée FIXE bat les coins détectés (V.30)
+
+### D'abord, une régression réparée (V.29)
+
+En reprenant l'ouverture caméra du banc (V.14), j'avais retiré
+`applyTrackTweaksAndDiagnostics()` **en même temps que** `choisirObjectifNet()`. Or seule la
+seconde était nocive (elle arrête et rouvre le capteur) ; la première ne fait qu'appliquer
+des contraintes sur une piste déjà ouverte. Conséquence, pendant quinze versions :
+- **aucune contrainte `frameRate`** → plus rien n'empêchait le mode nuit, alors que c'était
+  tout l'objet de la V.11 ;
+- `focusMode:'continuous'` posé uniquement dans `advanced` au `getUserMedia`, que tous les
+  navigateurs n'honorent pas — le second essai qui rattrapait ça avait disparu ;
+- `viserMiseAuPoint()` débranchée en V.16 (à raison) et jamais remplacée → **aucune mise au
+  point ciblée du tout**. D'où les « focus étranges » : autofocus sans cible, qui chasse entre
+  la main, la carte de devant et celles du dessous.
+
+Rétabli **à l'ouverture uniquement** (la règle V.16 tient : on ne touche pas à la piste
+pendant la détection) : `focusMode` + `frameRate` + un `pointsOfInterest` **au centre, posé
+une seule fois** — à ne pas confondre avec l'ancienne version qui refocalisait à chaque
+déplacement de la carte. Vérifié : 3 contraintes à l'ouverture, **0 pendant la détection**.
+
+### La piste C, mesurée
+
+⚠️ **Premier test FAUSSÉ, et Nikos l'a vu** : mes scènes de synthèse collaient des photos de
+`photos-test/` (prises à la caméra, donc **avec un fond et une pochette déjà dans l'image**)
+comme si c'étaient des cartes. Résultats plats et trompeurs (2/4 partout, ~20 inliers).
+**Refait avec les illustrations officielles de notre propre index** (`image + '/high.webp'`,
+`crossOrigin='anonymous'`) — la source même qui a servi à construire les références :
+
+| cas | détecteur | cadre fixe |
+|---|---|---|
+| carte seule, alignée | 3/6 · inl 80 | **6/6 · inl 176** |
+| carte seule, décalée | 3/6 · inl 90 | **6/6 · inl 120** |
+| carte seule, plus petite | 4/6 · inl 61 | **6/6** · inl 60 |
+| LOT 2 derrière @70 | 4/6 · inl 84 | **6/6 · inl 154** |
+| LOT 4 derrière @70 | 6/6 · inl 80 | **6/6 · inl 154** |
+| LOT 4 @70 + décalage | 6/6 · inl 86 | **6/6 · inl 133** |
+
+**36/36 contre 26/36, et environ le double d'inliers partout.** Le cadre fixe ne perd nulle
+part. La raison est nette : `redresserAvecCoins` corrige une perspective à partir de coins
+estimés, et la moindre erreur sur ces coins déforme la carte — là où un recadrage fixe est
+géométriquement exact dès que la carte est à peu près alignée.
+
+⚠️ **Limite honnête de ce test** : ces scènes sont PLANES (rotation dans le plan seulement,
+pas de perspective). Une carte tenue à la main en a toujours un peu, et c'est précisément ce
+que le détecteur sait corriger et pas le cadre fixe. Le test sur vraies photos (donc avec
+perspective) donnait d'ailleurs un match plus serré : cadre fixe nettement devant sur les
+lots, à égalité ou légèrement derrière sur carte seule. **Les deux voies gardent donc chacune
+leur domaine** — d'où le choix de les enchaîner plutôt que d'en élire une.
+
+### Ce qui est en place
+
+`STRATEGIES_ESSAI` remplace l'échelle aveugle de la V.28 :
+1. **coins détectés** — meilleur cas, corrige la perspective, de loin le plus fréquent ;
+2. **cadre de visée fixe** — ignore une géométrie trompeuse (le lot en main) ;
+3. **coins × 0,80** — pile très étalée, carte bien centrée.
+
+L'identification tranche d'elle-même : un cadre juste donne des inliers, un mauvais n'en donne
+pas. Vérifié en boucle réelle sur le lot de 4 cartes à 70 px : identifié **dès l'essai 2 par
+le cadre fixe**, un essai plus tôt qu'avec l'échelle précédente. Et le corpus réel de 31
+photos reste à **23/31 justes, 23 sûres** — identique à la référence, aucune régression.
+
 ## Le gel a eu lieu et n'a RIEN remonté — durcissement (V.27)
 
 Nikos a subi un gel en V.26 : après une carte, panneau bloqué sur « 🔎 recherche… », plus

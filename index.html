@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 29;
+const VERSION_APP = 30;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11930,8 +11930,33 @@ setInterval(()=>{
 //   essai 3 → ×0,80         (4 cartes derrière franchement décalées)
 // Aucun facteur unique ne convient à tous les cas — c'est mesuré — mais l'identification
 // tranche d'elle-même : un cadre juste donne beaucoup d'inliers, un mauvais n'en donne pas.
-const ECHELLES_ESSAI = [1, 0.90, 0.80];
+// ─── CE QUE LA COMPARAISON A DIT (V.30) ───
+// Mesuré sur les mêmes scènes, coins détectés contre cadre de visée FIXE :
+//
+//   cas                       détecteur        cadre fixe
+//   carte seule, alignée      2/4 · inl 22     2/4 · inl 20
+//   carte seule, plus petite  3/4 · inl 17     2/4 · inl 12
+//   LOT 2 derrière @70        1/4 · inl  7     2/4 · inl 17
+//   LOT 4 derrière @70        1/4 · inl  5     2/4 · inl 17
+//   LOT 4 @70 + décalage      1/4 · inl  7     2/4 · inl 19
+//
+// AUCUNE des deux voies ne domine, et c'est le résultat utile : le détecteur gagne sur une
+// carte seule (il corrige la perspective, que le cadre fixe ignore), le cadre fixe gagne
+// nettement sur un lot (il ignore une géométrie trompeuse — trois fois plus d'inliers).
+// Les essais successifs alternent donc les DEUX STRATÉGIES au lieu de rétrécir à l'aveugle,
+// et l'identification tranche : un cadre juste donne des inliers, un mauvais n'en donne pas.
+const STRATEGIES_ESSAI = [
+  {nom:'coins',       fixe:false, echelle:1},     // carte seule : le meilleur cas
+  {nom:'cadre-fixe',  fixe:true,  echelle:1},     // lot en main : ignore la pile
+  {nom:'coins-0.80',  fixe:false, echelle:0.80},  // pile très étalée, carte bien centrée
+];
 let v2EssaiCadre = 0;
+// Coins du rectangle de visée, dans le même repère (fractions 0-1) que ceux du détecteur :
+// on peut ainsi le faire passer par `redresserAvecCoins`, exactement comme une détection.
+function coinsDuCadreFixe(video){
+  const g = guideRect(video);
+  return { tl:[g.x, g.y], tr:[g.x+g.w, g.y], br:[g.x+g.w, g.y+g.h], bl:[g.x, g.y+g.h] };
+}
 function retrecirCoins(c, f){
   if(f === 1) return c;
   const cx = (c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4;
@@ -11960,10 +11985,13 @@ async function attemptReadV2(corners, score){
   try{
     const video = $('video');
     if(!video || !video.videoWidth) return;
-    // Cadre de cet essai : resserré si les précédents ont échoué (voir ECHELLES_ESSAI).
-    const echelle = ECHELLES_ESSAI[Math.min(v2EssaiCadre, ECHELLES_ESSAI.length - 1)];
-    const coinsEssai = retrecirCoins(corners, echelle);
-    if(echelle !== 1) diagPush('err', {msg:'cadre resserré ×' + echelle + ' (essai ' + (v2EssaiCadre+1) + ')'});
+    // Stratégie de cet essai : voir STRATEGIES_ESSAI. Le premier essai emprunte toujours les
+    // coins détectés — c'est le meilleur cas et de loin le plus fréquent.
+    const strat = STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)];
+    const coinsEssai = strat.fixe
+      ? coinsDuCadreFixe(video)
+      : retrecirCoins(corners, strat.echelle);
+    if(v2EssaiCadre > 0) diagPush('err', {msg:'essai ' + (v2EssaiCadre+1) + ' — stratégie ' + strat.nom});
     const sourceForRead = await redresserAvecCoins(video, coinsEssai, video.videoWidth, video.videoHeight);
     if(!sourceForRead){
       diagPush('try', {ok:false, hint:'redressement échoué', score, ms:Math.round(performance.now()-t0)});
