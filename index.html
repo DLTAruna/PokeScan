@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 39;
+const VERSION_APP = 40;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -10335,6 +10335,7 @@ let meilleureFrame = null;      // canvas : la plus nette vue depuis que cette c
 let meilleureNettete = -1;
 let v2NetteteRetenue = -1;      // ce qu'on a retenu, pour le journal
 let v2SymCourante = 0;          // symétrie du quadrilatère courant (voir SYM_MAX)
+let v2VuSansDeclencherA = 0;    // dernier signalement « carte vue, pas déclenchée » (V.40)
 let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli)
 let meilleursCoins = null;      // les coins DE CETTE image-là, pas ceux de l'instant
 let scratchNettete = null;      // canvas de mesure, réutilisé pour ne pas allouer à 10 Hz
@@ -11882,14 +11883,37 @@ async function detectLoop(){
     const aireVue = d.corners ? airePartCarte(d.corners) : 0;
     const tropLoin = !!d.corners && aireVue < AIRE_LIMITE_V2;
 
-    if(!d.corners || d.score == null || d.score < MIN_SCORE || tropLoin){
+    // ─── UNE CARTE PETITE EST VUE, PAS ABSENTE (V.40) ───
+    // `tropLoin` était rangé ici, avec « aucun coin » et « score trop bas » : une carte un peu
+    // loin était donc comptée ABSENTE. Trois dégâts d'un coup — la patience repartait de zéro,
+    // la série de stabilité s'effaçait, et le compteur d'absence montait, ce qui faisait
+    // croire au système que la carte avait été retirée.
+    // Pire, c'était en contradiction avec le rattrapage à distance juste au-dessus (V.26),
+    // qui dépense une seconde inférence précisément pour retrouver ces cartes-là : un
+    // mécanisme la récupérait, celui-ci la déclarait absente dans la foulée.
+    // Le banc, lui, n'a jamais eu cette garde — `AIRE_LIMITE` n'y sert qu'à écrire un conseil
+    // à l'écran, jamais à bloquer. C'est la première des cinq différences qui expliquent
+    // pourquoi il déclenche tout de suite là où l'application fait attendre.
+    // On garde le cadre rouge : l'utilisateur doit savoir que c'est la DISTANCE qu'il corrige.
+    const rienVu = !d.corners || d.score == null || d.score < MIN_SCORE;
+
+    if(rienVu){
       setOverlayTarget('attente', d.corners);
       prevCorners = null;
       v2StableStreak = 0;
-      v2PresentDepuis = 0;
       // Absence SOUTENUE exigée (deux images sans détection, ~300 ms) : un seul
       // décrochage isolé (reflet, main qui repositionne la carte) ne prouve rien.
       if(++v2AbsenceStreak >= V2_ABSENCE_STREAK){
+        // ─── LA PATIENCE NE DOIT PAS MOURIR D'UN TROU (V.40) ───
+        // `v2PresentDepuis = 0` était exécuté à CHAQUE image manquée. Or le détecteur ne
+        // rend rien une image sur deux dès que la carte est inclinée de 12° — l'angle d'une
+        // carte tenue en main (banc de détection : 53 % de détection à 12°, 60 % à 25 %,
+        // contre 93 % à plat). Le compteur ne dépassait donc jamais quelques centaines de
+        // millisecondes, et les paliers de tolérance à 1,2 s et 2,5 s n'étaient JAMAIS
+        // atteints : l'application restait sur ses réglages les plus stricts précisément
+        // quand la carte était la plus difficile à voir. Nikos : « je tiens la carte sans
+        // bouger pendant 3 secondes ». Il avait raison, la patience ne s'accumulait pas.
+        v2PresentDepuis = 0;
         v2CarteRetiree = true;
         v2DerniereCat = null;
         cardConfirmedAbsentSinceCapture = true;   // lu par gererScanV2 et la fusion de lot
@@ -11956,9 +11980,19 @@ async function detectLoop(){
         // que la carte a été retirée (v2AbsenceStreak) OU qu'elle a franchement bougé —
         // ça permet d'enchaîner en faisant glisser une carte hors du cadre pendant que la
         // suivante y entre, sans jamais montrer de champ vide à la caméra.
-        const tol = v2DerniereCat === 'sure' ? 4 : 2.5;
-        const dejaLue = !v2CarteRetiree && lastCaptureCorners
-          && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * tol;
+        // ─── LE VERROU S'OUVRE ET RESTE OUVERT (V.40) ───
+        // Il se recalculait à chaque image : une carte qui repassait dans le rayon du dernier
+        // scan se REVERROUILLAIT toute seule. Et ce rayon valait `0,035 × 4 = 0,14` quand le
+        // dernier résultat était `sure` — soit, depuis la V.39 qui en produit treize sur
+        // quatorze, presque tout le temps le rayon le plus large.
+        // Le banc fait l'inverse et c'est ce qui le rend fluide : un écart franc depuis la
+        // dernière capture (0,09) le déverrouille UNE FOIS, et il le laisse ouvert jusqu'à la
+        // capture suivante. On aligne, seuil compris.
+        if(!v2CarteRetiree && lastCaptureCorners
+           && maxCornerShift(lastCaptureCorners, d.corners) > V2_BOUGE_BASE * 3){
+          v2CarteRetiree = true;
+        }
+        const dejaLue = !v2CarteRetiree && !!lastCaptureCorners;
         // Plus aucun message de cadrage (V.13) : c'est la COULEUR DU CADRE qui renseigne,
         // comme au banc — ambre tant qu'on cherche la stabilité, vert quand elle est
         // acquise. Une phrase qui change toutes les 200 ms se lisait moins bien qu'un trait
@@ -11968,12 +12002,43 @@ async function detectLoop(){
         // faux, puis lui annoncer que sa carte n'est pas reconnue. Le cadre reste ambre : de
         // son point de vue, on cherche encore — ce qui est exactement le cas.
         if(v2SymCourante > SYM_MAX) etatCadre = 'lecture';
+        // Le rouge dit toujours « rapproche-toi » — mais il ne bloque plus rien. C'est le
+        // partage que fait le banc : renseigner sans interdire. Si la capture part quand même
+        // et réussit, tant mieux ; si elle rate, l'utilisateur savait déjà quoi corriger.
+        if(tropLoin) etatCadre = 'attente';
         if(!dejaLue && d.score >= seuilScore && stable && v2SymCourante <= SYM_MAX){
           etatCadre = 'ok';
           v2PresentDepuis = 0;
           v2StableStreak = 0;
           lastReadAttemptAt = now;
+          v2VuSansDeclencherA = 0;
           attemptReadV2(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
+        } else if(tenue >= 1200){
+          // ─── CE QUI BLOQUE, ENFIN ÉCRIT QUELQUE PART (V.40) ───
+          // Toutes les lignes du journal étaient des scans ABOUTIS. Une carte tenue trois
+          // secondes sans capture ne laissait aucune trace — l'exact symptôme dont Nikos se
+          // plaint, et le seul sur lequel je n'avais aucune donnée. J'ai donc passé plusieurs
+          // tours à proposer des mécanismes plausibles au lieu de lire la cause.
+          // On note ici la PREMIÈRE condition qui manque, dans l'ordre où le déclenchement
+          // les évalue. Une seule ligne toutes les quatre secondes : ce cas dure par nature,
+          // et il n'est pas question d'inonder le journal à 10 Hz.
+          const raison = dejaLue                     ? 'verrou carte déjà lue'
+                       : d.score < seuilScore        ? 'score ' + d.score.toFixed(2) + ' < ' + seuilScore
+                       : !stable                     ? 'pas stable (bougé ' + moved.toFixed(3) + ' / ' + (seuilBouge === Infinity ? '∞' : seuilBouge.toFixed(3)) + ')'
+                       : 'symétrie ' + v2SymCourante.toFixed(3) + ' > ' + SYM_MAX;
+          if(now - v2VuSansDeclencherA > 4000){
+            v2VuSansDeclencherA = now;
+            try{
+              SCAN_V2.relayV2({ fichier:'non-declenchement', categorie:'vu-sans-capture', conf:'vu-sans-capture',
+                predit:'', fiabilite:0, inliers:0, marge:0, ocrLance:false, ms:0, T:{},
+                moteur:(SCAN_V2.moteurV2&&SCAN_V2.moteurV2())||'?', v:VERSION_APP,
+                raison, tenueMs:Math.round(tenue),
+                score:+d.score.toFixed(2), seuilScore, aire:+aireVue.toFixed(3), tropLoin,
+                sym:+v2SymCourante.toFixed(3), bouge:+moved.toFixed(3),
+                seuilBouge: seuilBouge === Infinity ? -1 : +seuilBouge.toFixed(3),
+                carteRetiree:v2CarteRetiree, essai:v2EssaiCadre+1 });
+            }catch(e){}
+          }
         }
       }
       setOverlayTarget(etatCadre, d.corners);
