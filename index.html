@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 30;
+const VERSION_APP = 31;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -10402,8 +10402,19 @@ let diagFlushTimer = null;
 const DIAG_FLUSH_MS = 4000;     // fenêtre de regroupement
 const DIAG_FLUSH_TAILLE = 25;   // ou dès que le lot est plein
 
+// ⚠️ COUPÉ APRÈS ÉCHECS RÉPÉTÉS (V.31) — et ce n'est pas de la prudence de principe.
+// Relevé sur le téléphone de Nikos : le gist répond `409 Gist cannot be updated` (conflit
+// d'écriture), donc CHAQUE envoi échoue. Or l'envoi part toutes les 4 s, EN PLEIN SCAN, et
+// se dispute la bande passante avec le téléchargement des descripteurs ORB — qui est sur le
+// chemin critique et coûte 400 à 800 ms par carte en mobile. On payait donc du réseau, à
+// répétition, pour des données qui n'arrivaient jamais.
+// Après trois échecs de suite on cesse, jusqu'au prochain chargement de page. Le journal
+// LOCAL continue de tout enregistrer (c'est lui qui alimente le rapport de diagnostic et les
+// incidents) : on ne perd que l'envoi, qui de toute façon ne fonctionnait plus.
+let echecsDiagDistant = 0;
+const ECHECS_DIAG_MAX = 3;
 function sendDiagRemote(entry){
-  if(!diagRemoteEnabled) return;
+  if(!diagRemoteEnabled || echecsDiagDistant >= ECHECS_DIAG_MAX) return;
   diagEnAttente.push({device: getDiagDeviceId(), ...entry});
   if(diagEnAttente.length >= DIAG_FLUSH_TAILLE){ viderFileDiag(); return; }
   if(!diagFlushTimer) diagFlushTimer = setTimeout(viderFileDiag, DIAG_FLUSH_MS);
@@ -10432,9 +10443,12 @@ async function viderFileDiag(){
       }catch(e){ detail = await res.text().catch(()=>''); }
       throw new Error('HTTP ' + res.status + (detail ? ' : ' + detail : ''));
     }
+    echecsDiagDistant = 0;   // une réussite efface l'ardoise
     if(statusEl) statusEl.textContent = `✅ ${lot.length} envoyée(s) ${new Date().toLocaleTimeString()}`;
   }catch(err){
-    if(statusEl) statusEl.textContent = '⚠️ ' + err.message;
+    echecsDiagDistant++;
+    if(statusEl) statusEl.textContent = '⚠️ ' + err.message
+      + (echecsDiagDistant >= ECHECS_DIAG_MAX ? ' — envoi suspendu (journal local intact)' : '');
     // Consigné en local UNIQUEMENT (jamais via diagPush, qui rappellerait sendDiagRemote et
     // boucherait indéfiniment si la panne est persistante).
     diagLog.push({k:'err', t:Date.now(), msg:'diagnostic distant : ' + err.message});
@@ -11893,6 +11907,8 @@ setInterval(()=>{
   // soit fermée, ce serait justement une panne à signaler, et l'exiger nous rendrait aveugle
   // à ce cas-là. Seule la caméra ouverte conditionne la surveillance.
   if(!cameraStream) return;
+  // Page masquée : le navigateur suspend `setTimeout`, l'absence de battement est NORMALE.
+  if(document.visibilityState !== 'visible') return;
   if(!detectRunning){
     signalerBlocageScan('boucle arrêtée alors que la caméra est ouverte', null);
     return;
@@ -11911,6 +11927,22 @@ setInterval(()=>{
   // 8 s sans un seul tour : même une inférence lente et un téléphone bridé restent loin.
   if(mort > 8000) signalerBlocageScan('boucle sans tour depuis ' + mort + ' ms', null);
 }, 4000);
+
+// ⚠️ CRIER AU LOUP (corrigé en V.31).
+// Les deux seuls « incidents » remontés du terrain n'étaient PAS des gels : « boucle sans
+// tour depuis 139 741 ms » et « depuis 1 781 050 ms » — vingt-neuf minutes — avec tous les
+// verrous ouverts et la caméra saine. C'est l'écran qui s'éteint, ou l'application qui passe
+// en arrière-plan : le navigateur y suspend `setTimeout`, donc le battement s'arrête. Au
+// réveil, le garde voyait le trou et déclenchait une fausse alerte, avec son bandeau
+// « Scan bloqué » et une remise à zéro du panneau — du bruit qui ressemble à une panne.
+// On remet donc le battement à l'heure au retour au premier plan, et le garde se tait tant
+// que la page est masquée.
+document.addEventListener('visibilitychange', ()=>{
+  if(document.visibilityState === 'visible'){
+    dernierTourBoucle = Date.now();
+    readInFlightDepuis = 0;
+  }
+});
 
 // ─────────── LOT DE CARTES EN MAIN : LE CADRE ENGLOBE LA PILE (V.28) ───────────
 // Quand plusieurs cartes sous toploader sont tenues ensemble, les coins de celles de derrière

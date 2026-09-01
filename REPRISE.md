@@ -28,6 +28,57 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## 📊 HISTORIQUE DES MESURES TERRAIN (journal effacé le 2026-09-01 pour repartir propre)
+
+Le journal `/api/scan-log` a été vidé à la demande de Nikos avant une salve de contrôle.
+**Voici ce qu'il contenait**, conservé ici puisque ce sont nos seuls points de repère réels :
+
+| version | n | ident méd | emb | refs | orb | cadence méd | rebuts |
+|---|---|---|---|---|---|---|---|
+| V.2  | 18 | 1 519 ms | 619 | 669 | 231 | 5 642 ms | 2/18 |
+| V.10 | 7  | 1 250 ms | 321 | 532 | 505 | 4 621 ms | 2/7 |
+| V.14 | 3  | 3 676 ms | 586 | 1 085 | 1 986 | 7 106 ms | 0/3 |
+| V.16 | 7  | 2 344 ms | 413 | 888 | 891 | 9 202 ms | 0/7 |
+| V.18 | 10 | 1 756 ms | 365 | 494 | 944 | 5 225 ms | 3/10 |
+| V.26 | 24 | 1 785 ms | 420 | 803 | 524 | 7 197 ms | 4/24 |
+| V.28 | 7  | 1 251 ms | 300 | 459 | 520 | 6 663 ms | 1/7 |
+| V.30 | 7  | 1 515 ms | 454 | 403 | 525 | 6 161 ms | 0/7 |
+
+**Lecture** : l'identification est stable autour de 1,3-1,8 s depuis la V.18, et la cadence
+carte-à-carte s'améliore de version en version (7,2 → 6,7 → 6,2 s). ⚠️ Mais **5 à 7 écarts par
+version, c'est trop peu pour conclure** — chaque version montre aussi des décrochages isolés
+(46 s en V.26, 19 s en V.28, 25 s en V.30). C'est précisément pour lever ce doute que le
+journal a été vidé.
+
+**L'écart le plus parlant** : identification ~1,6 s, cadence ~6,2 s. **Quatre secondes et
+demie par carte ne sont PAS de l'identification** — ce sont le déclenchement et le geste.
+C'est là qu'il reste à gagner, pas dans la reconnaissance.
+
+## Deux sources de bruit supprimées avant la salve de contrôle (V.31)
+
+Nikos a signalé « c'est un peu plus long qu'avant ». L'analyse du journal n'a **pas** confirmé
+de ralentissement (la médiane s'améliore), mais elle a révélé deux défauts qui donnent cette
+impression — et qui fausseraient toute nouvelle mesure :
+
+**1. Le chien de garde criait au loup.** Les deux seuls « incidents » remontés n'étaient pas
+des gels : « boucle sans tour depuis 139 741 ms » et « depuis **1 781 050 ms** » (29 minutes),
+avec tous les verrous ouverts et la caméra saine. C'est l'écran qui s'éteint ou l'application
+qui passe en arrière-plan — le navigateur y suspend `setTimeout`, donc le battement s'arrête.
+Au réveil, fausse alerte, bandeau « Scan bloqué » et remise à zéro du panneau. → Le garde se
+tait tant que `visibilityState !== 'visible'`, et le battement est remis à l'heure au retour.
+
+**2. Le diagnostic distant échouait en boucle EN CONSOMMANT DU RÉSEAU.** Le gist répond
+`409 Gist cannot be updated` à chaque envoi, et l'envoi part **toutes les 4 s, en plein
+scan** — en concurrence directe avec le téléchargement des descripteurs ORB, qui est sur le
+chemin critique et coûte 400 à 800 ms par carte en mobile. On payait du réseau, à répétition,
+pour des données qui n'arrivaient jamais. → Coupé après 3 échecs consécutifs (`ECHECS_DIAG_MAX`),
+jusqu'au prochain chargement. **Le journal LOCAL reste entier** — c'est lui qui alimente le
+rapport de diagnostic et les incidents ; seul l'envoi, déjà mort, est abandonné.
+
+⚠️ Ne pas confondre les deux canaux : `/api/scan-log` (via `relayV2`, un enregistrement par
+scan — c'est celui qu'on analyse) et `/api/log` (le diagnostic verbeux, toutes les 4 s — c'est
+celui qui était en panne). Seul le second est concerné.
+
 ## ⭐ PISTE C — le cadre de visée FIXE bat les coins détectés (V.30)
 
 ### D'abord, une régression réparée (V.29)
