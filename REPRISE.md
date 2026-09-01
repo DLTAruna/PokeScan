@@ -28,7 +28,80 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
-## Caméra réduite à l'outil brut du banc (V.13, 2026-09-01) — ET la vraie cause de la panne
+## ⭐ LA CAUSE RÉELLE, TROUVÉE PAR LE JOURNAL (V.14, 2026-09-01)
+
+**À lire avant tout le reste.** Deux corrections à l'aveugle (V.12, V.13) n'ont rien réglé
+sur le téléphone de Nikos. La troisième fois, au lieu de deviner, on a lu
+`/api/scan-log?format=json` :
+
+| version | scans enregistrés |
+|---|---|
+| V.11 | oui — dernier `sv03.5-037`, `sure`, score 0,97, 1 649 ms |
+| **V.12** | **aucun** |
+| **V.13** | **aucun** |
+
+Pas un seul scan n'atteignait `gererScanV2` (c'est elle qui appelle `relayV2` → journal).
+La panne n'était donc **pas** dans l'identification, ni dans le déclenchement, ni dans le
+décor : **la boucle ne démarrait jamais.**
+
+### Le verrou : `detectLoop` attendait le worker OCR de la V1
+
+```js
+// AVANT — dans startAimLoop()
+Promise.all([workerCall('init'), detectWorkerCall('init')])   // workerCall = OCR, ~6 Mo
+  .then(() => { ocrReadyForCamera = true; ... })
+```
+et en tête de `detectLoop` : `if(… || !ocrReadyForCamera) { setTimeout(detectLoop,150); return; }`
+
+Si l'init OCR échoue — et sur un téléphone qui charge déjà l'index V2 (~3 Mo) + DINOv2 +
+ORB + le détecteur (~3,5 Mo), la mémoire suffit à la faire échouer — le drapeau reste faux
+**pour toujours** et la boucle tourne à vide, 150 ms après 150 ms, sans jamais rien tenter.
+
+**En V.11 ça ne se voyait pas** : le repli V1/OCR prenait le relais. En supprimant la V1
+(V.12) on a supprimé le repli **sans supprimer le verrou qui l'attendait**. Et en V.13, en
+retirant la bulle d'aide, on a supprimé le dernier message qui aurait pu le dire.
+
+**Corrigé** : la boucle n'attend plus que `detectWorkerCall('init')` — le détecteur de
+contours, seul moteur dont elle dépend. La V2 n'a aucun besoin du worker OCR : `scan-v2.js`
+embarque le sien pour le départage. Drapeau renommé `ocrReadyForCamera` → **`detecteurPret`**,
+parce que le nom mentait sur ce qu'il gardait. **Vérifié** : worker OCR volontairement mis en
+panne (`workerCall` qui lève), le scan aboutit quand même (Pikachu #025 identifié).
+
+### L'ouverture caméra vient maintenant du banc, telle quelle
+
+Le banc marche sur le téléphone de Nikos, pas cette page — alors que la chaîne
+d'identification est le même module. La différence était tout autour de l'ouverture :
+
+- `enumerateDevices()` + **`choisirObjectifNet()`**, qui **arrête et rouvre la caméra**
+  plusieurs fois pour tester les objectifs. Android relâche le capteur en différé : c'est la
+  cause connue des « Could not start video source » et des aperçus noirs — `RELACHE_CAMERA_MS`
+  a justement été écrit pour ça.
+- `applyTrackTweaksAndDiagnostics()` : `frameRate`, `focusMode`, zoom mémorisé appliqués
+  avant même la première image.
+
+`startCamera()` fait désormais ce que fait le banc, et rien de plus :
+```js
+getUserMedia({ video:{ facingMode:{ideal:'environment'}, width:{ideal:1920},
+                       height:{ideal:1440}, advanced:[{focusMode:'continuous'}] }, audio:false })
+```
+`buildCameraConstraints`, `choisirObjectifNet`, `switchLens`, `reprendreCamera` restent dans
+le fichier (le bouton « changer d'objectif » des réglages s'en sert) mais **ne sont plus sur
+le chemin du démarrage**. Conséquence assumée : `availableCameras` n'est plus rempli au
+démarrage, donc le bouton d'objectif reste masqué — module à rebrancher plus tard.
+
+### Une panne muette ne doit plus être possible
+
+L'autre attente (`SCAN_V2.pretV2()`) pouvait geler la session en silence de la même façon.
+Elle **parle** maintenant, par le bandeau (`toast`, espacé de 6 s), et **relance
+`initV2()`** si personne ne l'a fait. Le bandeau est passé de `z-index:100` à **280** : sous
+la caméra plein écran (220) il était invisible — les messages d'erreur ne s'affichaient
+littéralement nulle part. (Le plein écran natif porte sur `documentElement`, pas sur la zone
+caméra, donc le bandeau est bien dans le sous-arbre rendu — vérifié.)
+
+**Leçon de méthode, la vraie** : `/api/scan-log` répond en trois secondes et dit si le code
+a seulement été atteint. Deux versions ont été poussées sans le consulter. **Le lire d'abord.**
+
+## Caméra réduite à l'outil brut du banc (V.13, 2026-09-01)
 
 Retour de Nikos sur la V.12 : « ça ne fonctionne pas. Retire tous les éléments superflus,
 car j'ai encore les conseils de cadrage etc. Je veux l'outil brut du bench V2 dans notre

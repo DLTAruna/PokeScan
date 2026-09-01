@@ -3628,7 +3628,11 @@
   .toast{
     position:fixed; bottom:20px; left:50%; transform:translateX(-50%); background:linear-gradient(135deg,#26304a,#1a2233); color:#fff;
     padding:10px 18px; border-radius:20px; font-size:13px; box-shadow:0 4px 16px rgba(0,0,0,.5); border:1px solid var(--border);
-    z-index:100; opacity:0; transition:opacity .25s;
+    /* Au-dessus de la caméra plein écran (220) et de sa feuille de réglages (260) : le
+       bandeau est devenu le SEUL canal d'information du scanner depuis que la bulle d'aide
+       a été retirée du cadre (V.13). À z-index 100 il était masqué par la caméra, donc les
+       messages d'attente et d'erreur ne s'affichaient nulle part. */
+    z-index:280; opacity:0; transition:opacity .25s;
   }
   .toast.show{opacity:1;}
   .guide h3{font-size:14px; margin:18px 0 6px; color:var(--accent); border-left:3px solid var(--accent2); padding-left:8px;}
@@ -5635,7 +5639,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 13;
+const VERSION_APP = 14;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9408,36 +9412,39 @@ async function applyTrackTweaksAndDiagnostics(track){
   }
 }
 
+// ─────────────────────────── OUVERTURE CAMÉRA (V.14) ───────────────────────────
+// REPRISE TELLE QUELLE DE bench-v2.html (fonction ouvrirCamera), sur demande de Nikos :
+// « supprimer la page scanner pour réintégrer le scanner du bench, en repartant à zéro ».
+// Le banc marche sur son téléphone ; cette page ne marchait pas. La différence n'était pas
+// la chaîne d'identification (identique, même module) mais TOUT ce que l'application
+// faisait autour de l'ouverture, et qui a été retiré ici :
+//
+//   • enumerateDevices() + choix d'objectif « le plus net » (choisirObjectifNet) — cette
+//     routine ARRÊTE ET ROUVRE la caméra plusieurs fois de suite pour tester les objectifs.
+//     Android relâche le capteur en différé : c'est la cause connue des « Could not start
+//     video source » et des aperçus noirs (voir RELACHE_CAMERA_MS, écrit pour ce motif).
+//   • applyTrackTweaksAndDiagnostics() — contraintes supplémentaires (frameRate, focus,
+//     zoom mémorisé) appliquées juste après l'ouverture, avant même la première image.
+//
+// Le banc n'en fait AUCUNE : une seule demande, `focusMode:'continuous'`, et plus rien.
+// `buildCameraConstraints`, `choisirObjectifNet`, `switchLens` et `reprendreCamera` restent
+// dans le fichier — le bouton « changer d'objectif » des réglages s'en sert encore — mais
+// ne sont plus sur le chemin du démarrage.
 async function startCamera(){
   $('cam-error').textContent = '';
   try{
-    cameraStream = await navigator.mediaDevices.getUserMedia(buildCameraConstraints(null));
+    cameraStream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: {ideal:'environment'},
+        width: {ideal:1920}, height: {ideal:1440},
+        advanced: [{focusMode:'continuous'}]
+      },
+      audio: false
+    });
     currentCameraDeviceId = cameraStream.getVideoTracks()[0].getSettings().deviceId || null;
 
-    // Énumère les caméras dispo maintenant que l'autorisation est accordée (les
-    // labels ne sont visibles qu'à partir de là) — remonté au diagnostic pour savoir,
-    // sur CET appareil précis, si plusieurs objectifs distincts existent réellement.
-    try{
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      availableCameras = devices.filter(d => d.kind === 'videoinput');
-      diagPush('err', {msg:'caméra: objectifs détectés = ' + JSON.stringify(
-        availableCameras.map(d => ({id:d.deviceId.slice(0,8), label:d.label || '(sans nom)'})))});
-    }catch(e){
-      availableCameras = [];
-      diagPush('err', {msg:'caméra: énumération des objectifs échouée (' + e.message + ')'});
-    }
-    // Seules les caméras ARRIÈRE ont un sens ici. Le bouton s'affichait dès que deux
-    // caméras existaient — soit toujours, puisqu'il y a une caméra frontale — et basculait
-    // donc vers l'avant, ce qui n'a aucun intérêt pour scanner une carte posée devant soi.
-    const arriere = availableCameras.filter(d => !/front|avant|user/i.test(d.label || ''));
-    $('btn-switch-lens').style.display = arriere.length > 1 ? 'block' : 'none';
-
-    await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
-    // Après l'énumération : c'est seulement ici qu'on sait quels objectifs existent ET ce
-    // que celui qu'on a ouvert sait faire.
-    await choisirObjectifNet();
-
     $('video').srcObject = cameraStream;
+    await $('video').play().catch(()=>{});
     $('video-wrap').classList.add('active');
     $('cam-start-row').style.display = 'none';
     $('cam-fullscreen-area').classList.add('fs');
@@ -9612,7 +9619,11 @@ let detectRunning = false;
 // une fois startAimLoop() exécutée au moins une fois. Lire le diagnostic ("voir")
 // AVANT le tout premier démarrage de la caméra levait donc une ReferenceError et
 // cassait tout buildDiagReport(), silencieusement.
-let ocrReadyForCamera = false;
+// Renommé en V.14 (ex-`ocrReadyForCamera`) : il ne garde plus l'OCR — qui n'est plus
+// démarré ici du tout — mais le DÉTECTEUR DE CONTOURS, seul moteur dont `detectLoop` a
+// besoin. L'ancien nom décrivait un verrou qui, en attendant les 6 Mo de l'OCR V1, pouvait
+// empêcher le scanner de jamais démarrer. Voir startAimLoop.
+let detecteurPret = false;
 let lastCaptureAt = 0;
 let lastCaptureHash = null;   // empreinte hexadécimale renvoyée par le worker
 let lastCaptureNumber = null; // {number, denominator} de la dernière capture — voir cardConfirmedAbsentSinceCapture
@@ -9819,6 +9830,9 @@ function airePartCarte(c){
 }
 let v2RienDepuis = 0;
 let aireBasseDepuis = 0;
+// Attente de l'index V2 : dernier message affiché, et relance d'initialisation déjà tentée.
+// Voir la garde en tête de detectLoop — sans eux, l'attente est muette ou le bandeau clignote.
+let dernierMotV2 = 0, v2RelanceDemandee = false;
 
 // Miroir de surveillerNettete (§ CORRIGER SUR CONSTAT, PAS SUR SUPPOSITION), pour la V2.
 // La mesure qui déclenchait la correction d'objectif était le flou — coupée en V2 (voir
@@ -10096,7 +10110,7 @@ function buildDiagReport(){
   l.push('navigateur  : ' + navigator.userAgent);
   l.push('écran       : ' + screen.width + 'x' + screen.height + ' dpr=' + (window.devicePixelRatio||1));
   l.push('vidéo       : ' + (v && v.videoWidth ? v.videoWidth+'x'+v.videoHeight : 'non démarrée'));
-  l.push('OCR prêt    : ' + ocrReadyForCamera + (workerBroken ? '  (worker HS, repli fil principal)' : '  (worker)'));
+  l.push('Détecteur   : ' + detecteurPret + (workerBroken ? '  (worker HS)' : '  (worker)'));
   // Analyse de fond glissée dans les creux entre deux cartes. À lire avec les ocrMs des
   // tentatives ci-dessous : si les lectures en direct s'allongent quand ce compteur
   // monte, c'est que les creux ne sont pas aussi libres qu'annoncé.
@@ -11000,7 +11014,7 @@ async function detectLoop(){
   if(!detectRunning) return;
   const video = $('video');
 
-  if(!cameraStream || !video || !video.videoWidth || !ocrReadyForCamera){
+  if(!cameraStream || !video || !video.videoWidth || !detecteurPret){
     setTimeout(detectLoop, 150);
     return;
   }
@@ -11012,8 +11026,34 @@ async function detectLoop(){
   // tenterait des identifications vouées à l'échec (SCAN_V2.identifierV2 rejette tant que
   // l'index n'est pas prêt) — l'ancienne version retombait sur l'OCR du numéro pendant ce
   // délai ; il n'y a plus d'OCR à qui retomber, donc on attend au lieu d'échouer en boucle.
+  // ─── L'AUTRE GEL SILENCIEUX, RENDU VISIBLE (V.14) ───
+  // L'index d'empreintes (~3 Mo, téléchargé une fois puis gardé en IndexedDB) met plusieurs
+  // secondes sur une installation neuve, et peut carrément échouer (réseau, quota, mémoire).
+  // Tant qu'il n'est pas prêt on ne peut rien identifier — mais en V.13 cette attente était
+  // MUETTE : caméra ouverte, cadre rouge, rien qui bouge, aucune explication. Depuis qu'il
+  // n'y a plus de bulle d'aide dans le cadre, l'attente doit se dire autrement, sinon elle
+  // est indiscernable d'une panne. On passe donc par le bandeau (toast), espacé pour ne pas
+  // clignoter, et on relance l'initialisation si personne ne l'a fait.
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     setOverlayTarget('attente', null);
+    const maintenant = Date.now();
+    if(maintenant - dernierMotV2 > 6000){
+      dernierMotV2 = maintenant;
+      if(!window.SCAN_V2){
+        toast('⚠️ Reconnaissance visuelle absente — recharge la page.');
+      }else{
+        toast('⏳ Chargement de la reconnaissance visuelle…');
+        // Relance au cas où l'initialisation du module aurait échoué : sans ça, un échec au
+        // chargement de la page condamnait la session entière, sans recours ni message.
+        if(!v2RelanceDemandee && SCAN_V2.initV2){
+          v2RelanceDemandee = true;
+          SCAN_V2.initV2({}).catch(e => {
+            diagPush('err', {msg:'V2: initialisation impossible (' + e.message + ')'});
+            toast('⚠️ Reconnaissance visuelle indisponible : ' + e.message);
+          });
+        }
+      }
+    }
     setTimeout(detectLoop, 300);
     return;
   }
@@ -11672,7 +11712,7 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
 
 function startAimLoop(){
   stopAimLoop();
-  ocrReadyForCamera = false;
+  detecteurPret = false;
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
   sessionCardHashes = []; // nouvelle session caméra -> le raccourci visuel repart de zéro
@@ -11687,38 +11727,44 @@ function startAimLoop(){
   requestAnimationFrame(renderOverlayLoop);
   demarrerQualite();
 
-  // Les deux moteurs (~6 Mo OCR + ~3,5 Mo détecteur, au premier lancement), chacun dans
-  // son propre worker, sont initialisés en parallèle sans figer l'aperçu — et AVANT la
-  // boucle, sinon la première tentative resterait bloquée dessus sans aucun retour visible.
-  Promise.all([workerCall('init'), detectWorkerCall('init')])
-    .then(([ocrInit])=>{
-      ocrReadyForCamera = true;
+  // ⚠️ LE VERROU QUI BLOQUAIT TOUT (corrigé en V.14) ⚠️
+  // Cette attente portait sur `Promise.all([workerCall('init'), detectWorkerCall('init')])`
+  // — donc AUSSI sur le worker OCR, ~6 Mo, LE MOTEUR DE LA V1. Or `detectLoop` refuse de
+  // tourner tant que le drapeau est faux. Si l'init OCR échouait (mémoire : le téléphone
+  // charge déjà l'index V2 ~3 Mo + DINOv2 + ORB + le détecteur ~3,5 Mo), le drapeau restait
+  // faux POUR TOUJOURS et la boucle tournait à vide, 150 ms après 150 ms, sans rien tenter.
+  // En V.11 ça ne se voyait pas : le repli V1/OCR prenait le relais. En V.12/V.13 il n'y a
+  // plus de repli — et le journal /api/scan-log le confirme : dernière entrée en V.11,
+  // AUCUNE en V.12 ni V.13. Le scan n'atteignait jamais l'identification.
+  // La V2 n'a aucun besoin de ce worker : scan-v2.js embarque son propre OCR de départage.
+  // On n'attend donc plus que le détecteur de contours, seul moteur dont la boucle dépend.
+  detectWorkerCall('init')
+    .then(()=>{
+      detecteurPret = true;
       setAimHint('Vise la carte');
-      diagPush('err', {msg:'worker OCR + détecteur prêts'});
+      diagPush('err', {msg:'détecteur prêt (worker OCR V1 plus attendu)'});
 
-      // Diagnostic d'environnement, une fois par démarrage caméra (voir §4.23) : sans
-      // ça, une durée OCR élevée pouvait venir du CPU, du réseau, ou du moteur
-      // d'inférence choisi (GPU/WebGPU vs CPU/WASM — la librairie tente le GPU en
-      // premier avec repli automatique, mais jusqu'ici invisible) sans aucun moyen de
-      // les distinguer entre deux appareils, ou même entre deux sessions sur le même.
+      // Diagnostic d'environnement, une fois par démarrage caméra (voir §4.23) : il sert à
+      // distinguer, entre deux appareils ou deux sessions, ce qui vient du processeur, du
+      // réseau ou du moteur d'inférence. Les champs propres à l'OCR ont disparu avec
+      // l'attente du worker OCR — ils décrivaient un moteur qu'on ne démarre plus ici.
       const nav = navigator;
-      const diag = (ocrInit && ocrInit.ocrDiag) || {};
       diagPush('err', {msg:'environnement : cœurs=' + (nav.hardwareConcurrency ?? '?') +
         ' mémoire=' + (nav.deviceMemory != null ? nav.deviceMemory+'Go' : '?') +
         ' isolationCrossOrigin=' + self.crossOriginIsolated +
-        ' réseau=' + (nav.connection?.effectiveType ?? '?') +
-        ' initOCR=' + (diag.initMs != null ? diag.initMs+'ms' : '?') +
-        ' moteurDemandé=' + JSON.stringify(diag.requested ?? null) +
-        ' moteurRéel=' + JSON.stringify(diag.actual ?? null) +
-        ' repli=' + (diag.fallbackWarnings ? JSON.stringify(diag.fallbackWarnings) : 'aucun averti')});
+        ' réseau=' + (nav.connection?.effectiveType ?? '?')});
     })
     .catch(err=>{
+      // Le détecteur, lui, est indispensable : sans lui il n'y a pas de coins, donc pas de
+      // redressement et pas d'identification. On le DIT, au lieu de laisser une caméra
+      // ouverte sur une boucle qui ne tentera jamais rien — c'est exactement ce qui se
+      // passait en V.12/V.13, en silence.
       workerBroken = true;
-      diagPush('err', {msg:'worker indisponible ('+err.message+')'});
-      setAimHint('⚠️ Lecture auto indisponible — utilise 📸', true);
+      diagPush('err', {msg:'détecteur indisponible ('+err.message+')'});
       if($('cam-error')) $('cam-error').textContent =
-        '⚠️ Le moteur de lecture n\'a pas pu démarrer dans un fil séparé ('+err.message+
-        '). La capture automatique est désactivée ; le bouton 📸 reste utilisable.';
+        '⚠️ Le détecteur de contours n\'a pas pu démarrer ('+err.message+'). Ferme et '
+        + 'relance la caméra ; si ça persiste, recharge la page.';
+      toast('⚠️ Détecteur indisponible — le scan ne peut pas démarrer.');
     });
 
   detectRunning = true;
