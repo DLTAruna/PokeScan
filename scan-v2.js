@@ -578,7 +578,14 @@ export async function initV2(opts = {}) {
 }
 
 // Identifie une carte déjà redressée (canvas). Renvoie pick + fiabilité + catégorie.
-export async function identifierV2(carte) {
+// `opts.onProvisoire(avis)` — appelé UNIQUEMENT quand l'OCR de départage va se lancer, juste
+// avant qu'il ne parte, avec le meilleur candidat de l'ORB à cet instant. Il permet à
+// l'appelant d'afficher tout de suite une première idée pendant que la vérification se fait,
+// au lieu de laisser l'écran vide 0,3 à 3,2 s (relevé terrain : 3 226 ms sur `me02-123`).
+// L'avis est PROVISOIRE : c'est exactement le candidat que l'OCR est en train de contester.
+// Le résultat renvoyé par la promesse reste la seule vérité, et c'est lui qui décide de tout
+// ce qui s'enregistre — la file, le classeur, le stock, le journal.
+export async function identifierV2(carte, opts = {}) {
   if (!pret) throw new Error('V2 pas prête');
   const T = {};
   const chrono = async (k, p) => { const t = performance.now(); const r = await p; T[k] = Math.round(performance.now() - t); return r; };
@@ -649,6 +656,20 @@ export async function identifierV2(carte) {
   let ocrCands = [], ocrTxt = '', ocrLance = false;
   if (ocr && orbEgalite && dernierOrbMs < R.OCR_ORB_MS_MAX) {
     ocrLance = true;
+    // Première idée, tout de suite : l'ORB a déjà un favori, il est simplement trop serré
+    // pour qu'on s'y fie seul. Autant le montrer pendant qu'on tranche.
+    if (typeof opts.onProvisoire === 'function') {
+      const c0 = pick && cleToCard.get(pick);
+      if (c0) {
+        try {
+          opts.onProvisoire({
+            pick: { cle: c0.cle, numero: c0.numero, name: c0.name, setId: c0.setId,
+                    localId: c0.localId, image: c0.image },
+            inliers: Math.round(inl), marge: Math.round(marge),
+          });
+        } catch (e) { /* l'affichage ne doit jamais casser l'identification */ }
+      }
+    }
     try { const r = await chrono('ocr', ocrLire(bandeBasse(carte))); ocrCands = r.cands || []; ocrTxt = r.text || ''; } catch (e) {}
     if (ocrCands.length) {
       const nums = new Set(ocrCands.map(c => c.number));

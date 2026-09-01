@@ -28,6 +28,30 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## « Vérification approfondie » : la première idée s'affiche pendant le départage (V.20)
+
+Idée de Nikos : « en cas de besoin OCR, indiquer *vérification approfondie*, traiter à part,
+et afficher d'abord la 1ʳᵉ idée dans le cadre sous l'appareil photo. »
+
+C'est le principe de l'accusé de réception (V.15) descendu d'un cran. Quand l'ORB hésite
+entre deux cartes, il passe la main à l'OCR du numéro : 0,3 à 3,2 s pendant lesquelles le
+cadre du bas ne montrait rien. Or **l'ORB a déjà un favori à cet instant** — il est seulement
+trop serré pour qu'on s'y fie seul. Autant le montrer.
+
+- **`identifierV2(carte, opts)`** accepte désormais `opts.onProvisoire(avis)`, appelé
+  uniquement quand l'OCR va partir, juste avant, avec le meilleur candidat courant.
+- **`gererScanV2`** l'affiche aussitôt : nom, set, numéro, badge 🔍, ligne « vérification
+  approfondie… » en ambre, et un liseré ambre qui respire autour du cadre.
+- **⚠️ Cet avis ne sert QU'À L'AFFICHAGE.** Rien ne s'enregistre à partir de lui : la file,
+  le classeur, le stock et le journal attendent tous `res`, la seule vérité. C'est ce qui
+  rend le procédé sûr même quand l'OCR change d'avis.
+- Piège d'ordre, corrigé : `showLiveResultDone` repose le badge, donc la marque de
+  vérification doit être appliquée APRÈS, sinon son 🔍 est écrasé.
+
+**Vérifié** (`PKMN-151-009`, vrai cas de départage) : première idée à t+0, résultat définitif
+**1 024 ms plus tard**, même carte, fiabilité 75 %. Sur le cas du téléphone (`me02-123`,
+3 226 ms d'OCR), le nom apparaîtrait donc plus de trois secondes plus tôt.
+
 ## 🔬 CAMPAGNE DE MESURE 31 CARTES + OPTIMISATIONS (V.19, 2026-09-01)
 
 Demande de Nikos : mesurer par lot de 30 sur cartes réelles en simulant l'appareil photo,

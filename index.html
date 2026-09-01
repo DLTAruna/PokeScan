@@ -325,6 +325,23 @@
     #cam-fullscreen-area.fs .live-result img{transition:none;}
   }
   #cam-fullscreen-area.fs .live-result-info{font-size:12px;}
+  /* Vérification approfondie : l'ORB hésite, l'OCR du numéro tranche. On montre la première
+     idée, donc il faut que le cadre DISE qu'elle n'est pas acquise — un liseré ambre qui
+     respire, la même couleur que « vu mais pas encore stable » sur le cadre de visée. La
+     nuance se joue sur la bordure et non sur le texte : le nom doit rester lisible d'un coup
+     d'œil, c'est justement ce qu'on est venu chercher. Animation en opacity seule (composée),
+     pour la même raison que l'écran de chargement — le fil principal travaille. */
+  .live-result.verif{
+    border-color:rgba(224,161,42,.75) !important;
+    box-shadow:0 0 0 1px rgba(224,161,42,.35), 0 6px 20px rgba(0,0,0,.45);
+  }
+  .live-result.verif::after{
+    content:''; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+    box-shadow:inset 0 0 0 1px rgba(255,208,120,.55);
+    animation:verifRespire 1.25s ease-in-out infinite;
+  }
+  @keyframes verifRespire{ 0%,100%{opacity:.25;} 50%{opacity:1;} }
+  @media (prefers-reduced-motion: reduce){ .live-result.verif::after{animation:none; opacity:.6;} }
 
   /* Bande des ajouts : plus de place reservee, elle se deploie a la demande AU-DESSUS
      de la video. Le rattrapage d'une erreur remontant a trois cartes reste possible sans
@@ -5744,7 +5761,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 19;
+const VERSION_APP = 20;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11528,6 +11545,7 @@ function showLiveResultWaiting(){
   const el = $('live-result');
   if(!el) return;
   el.style.display = 'flex';
+  marquerVerificationApprofondie(false);   // une session neuve ne doit rien hériter
   $('live-result-img').src = BLANK_THUMB;
   $('live-result-name').textContent = 'En attente d’une carte…';
   $('live-result-set').textContent = '—';
@@ -11632,9 +11650,29 @@ function showLiveResultDone(card, confidence, fiabilite){
 // à surveiller ; en dessous, la chaîne classe « douteuse » et la carte demande confirmation.
 // La couleur dit ça sans avoir à connaître les seuils. `null` quand la valeur n'a pas de
 // sens (panneau en attente, capture de secours, identification venue d'un autre chemin).
+// Vérification approfondie en cours : l'ORB hésite entre deux cartes et l'OCR du numéro est
+// en train de trancher. On montre la première idée, mais on doit dire SANS AMBIGUÏTÉ qu'elle
+// n'est pas acquise — sinon un chiffre de fiabilité, ou même un nom affiché comme les autres,
+// se lirait comme un résultat. D'où la ligne dédiée plutôt qu'un simple sablier.
+let verificationEnCours = false;
+function marquerVerificationApprofondie(actif){
+  verificationEnCours = actif;
+  const el = $('live-result');
+  if(el) el.classList.toggle('verif', actif);
+  const badge = $('live-result-badge');
+  if(badge && actif){ badge.textContent = '🔍'; badge.title = 'Vérification approfondie du numéro en cours'; }
+  if(actif) majFiabilite(null);
+}
+
 function majFiabilite(fiabilite){
   const cf = $('live-result-conf');
   if(!cf) return;
+  // Pendant la vérification, la ligne dit ce qui se passe au lieu d'un tiret muet.
+  if(verificationEnCours){
+    cf.textContent = 'vérification approfondie…';
+    cf.style.color = '#e0a12a';
+    return;
+  }
   if(fiabilite == null){ cf.textContent = '—'; cf.style.color = ''; return; }
   cf.textContent = Math.round(fiabilite) + ' %';
   cf.style.color = fiabilite >= 90 ? '#3ba55d' : fiabilite >= 70 ? '#e0a12a' : '#e0553f';
@@ -11784,7 +11822,26 @@ let derniereCarteAffichee = null;
 // l'appui (voir captureFrameInterne). Les rejouer ici ferait un second flash une seconde
 // et demie plus tard, sur une carte déjà acquittée.
 async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, prise){
-  const res = await SCAN_V2.identifierV2(sourceForRead).catch(()=> null);
+  // `onProvisoire` (V.20) : quand l'ORB hésite entre deux cartes, il passe la main à l'OCR
+  // du numéro pour trancher — 0,3 à 3,2 s pendant lesquelles le cadre du bas ne montrait
+  // rien. Or l'ORB a déjà un favori à cet instant ; il est seulement trop serré pour qu'on
+  // s'y fie seul. On l'affiche donc tout de suite, explicitement donné pour provisoire, et
+  // la vérification vient le confirmer ou le corriger.
+  // ⚠️ Cet avis ne sert QU'À L'AFFICHAGE. Rien ne s'enregistre à partir de lui : la file, le
+  // classeur, le stock et le journal attendent tous `res`, la seule vérité.
+  const res = await SCAN_V2.identifierV2(sourceForRead, {
+    onProvisoire: avis => {
+      try{
+        // On ne touche PAS à la vignette : celle de la prise est déjà affichée (accusé de
+        // réception) et la remplacer la ferait clignoter pour rien. Seul le texte change.
+        // L'ordre compte : showLiveResultDone repose le badge, donc la marque de
+        // vérification doit venir APRÈS, sinon son 🔍 est écrasé par le 🤔 habituel.
+        showLiveResultDone(carteDepuisPack(avis.pick), 'uncertain', null);
+        marquerVerificationApprofondie(true);
+      }catch(e){ /* jamais bloquant */ }
+    }
+  }).catch(()=> null);
+  marquerVerificationApprofondie(false);
 
   // Pas d'identification fiable. On NE retombe PAS sur l'OCR (l'utilisateur a choisi la
   // V2). D'abord on laisse deux ou trois chances de recadrer ; si ça persiste, la photo
@@ -20156,7 +20213,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=20';
+import * as V2 from './scan-v2.js?v=21';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
