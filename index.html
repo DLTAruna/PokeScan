@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 37;
+const VERSION_APP = 38;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -10308,6 +10308,93 @@ let prevCorners = null;
 let v2StableStreak = 0;
 let v2DerniereCat = null;   // catégorie du dernier résultat V2 ('sure' verrouille jusqu'au retrait)
 
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// MÉMOIRE DE LA PLUS NETTE — on identifie la meilleure image vue, pas celle de l'instant.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// La stabilité ne dit rien de la netteté : une main peut être parfaitement immobile pendant
+// que l'objectif cherche encore son point. Le scanner déclenchait sur la stabilité seule et
+// identifiait l'image de l'instant — souvent prise en pleine chasse au point.
+//
+// Mesuré (tools/build-packs/banc-declenchement.mjs, 20 cartes, séquences de mise au point
+// synthétiques sur art propre, donc à sommet de netteté connu) :
+//
+//     image de l'instant        9/20 justes (45 %)   embTop médian 0,662
+//     la plus nette gardée     18/20 justes (90 %)   embTop médian 0,798
+//     attendre le sommet       18/20 justes (90 %)   embTop médian 0,798
+//
+// Garder la plus nette égale l'attente du sommet SANS RIEN ATTENDRE — elle choisit parmi des
+// images déjà vues. Et le 0,662 de la politique de l'instant tombe sur le 0,687 relevé sur le
+// téléphone de Nikos, ce qui confirme que la séquence simulée reproduit bien le terrain.
+//
+// ⚠️ La variance du laplacien ne vaut RIEN en absolu : elle dépend autant de l'illustration
+// que de la mise au point (mesuré : une carte nette à fond sobre score sous une carte floue à
+// fond chargé). On ne l'utilise donc QUE de façon relative, entre images d'une même présence
+// de carte — même contenu, seule la netteté varie. C'est le seul cas où elle est fiable, et
+// c'est pourquoi il n'y a AUCUN seuil ici : jamais de rejet, seulement un choix.
+let meilleureFrame = null;      // canvas : la plus nette vue depuis que cette carte est là
+let meilleureNettete = -1;
+let v2NetteteRetenue = -1;      // ce qu'on a retenu, pour le journal
+let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli)
+let meilleursCoins = null;      // les coins DE CETTE image-là, pas ceux de l'instant
+let scratchNettete = null;      // canvas de mesure, réutilisé pour ne pas allouer à 10 Hz
+
+function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; }
+
+// Netteté de la zone visée, sur une vignette : le coût doit rester négligeable devant la
+// détection, qui tourne déjà à chaque tour de boucle.
+function netteteVisee(video, coins){
+  try{
+    // 140×196 et pas davantage : cette mesure tourne à chaque tour de boucle, derrière une
+    // détection qui coûte déjà ~52 ms. Mesuré ici — 200×280 : 2,41 ms ; 140×196 : 1,19 ms ;
+    // 110×154 : 0,73 ms, pour un pouvoir de discrimination qui reste énorme dans tous les cas
+    // (rapport net/flou de 245 à 750). Sur le téléphone de Nikos, compter trois à quatre fois
+    // ces durées. Le repliement de spectre introduit par la réduction gonfle un peu la
+    // variance, et pas également selon la taille — sans importance ici, puisqu'on ne compare
+    // JAMAIS deux tailles ni deux cartes, seulement des images successives de la même carte
+    // à la même taille.
+    if(!scratchNettete){ scratchNettete = document.createElement('canvas'); scratchNettete.width = 140; scratchNettete.height = 196; }
+    const w = scratchNettete.width, h = scratchNettete.height;
+    const ctx = scratchNettete.getContext('2d', {willReadFrequently:true});
+    // Cadre englobant des coins, en pixels source. On mesure la CARTE, pas le décor : un
+    // arrière-plan chargé ferait monter la variance sans rien dire de la mise au point.
+    const xs = [coins.tl[0], coins.tr[0], coins.br[0], coins.bl[0]];
+    const ys = [coins.tl[1], coins.tr[1], coins.br[1], coins.bl[1]];
+    const x0 = Math.max(0, Math.min(...xs)) * video.videoWidth;
+    const y0 = Math.max(0, Math.min(...ys)) * video.videoHeight;
+    const x1 = Math.min(1, Math.max(...xs)) * video.videoWidth;
+    const y1 = Math.min(1, Math.max(...ys)) * video.videoHeight;
+    if(x1 - x0 < 8 || y1 - y0 < 8) return -1;
+    ctx.drawImage(video, x0, y0, x1 - x0, y1 - y0, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    for(let i = 0, p = 0; i < d.length; i += 4, p++) g[p] = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+    let sum = 0, sq = 0, n = 0;
+    for(let y = 1; y < h - 1; y++) for(let x = 1; x < w - 1; x++){
+      const p = y*w + x;
+      const L = 4*g[p] - g[p-1] - g[p+1] - g[p-w] - g[p+w];
+      sum += L; sq += L*L; n++;
+    }
+    const m = sum / n;
+    return sq / n - m * m;
+  }catch(e){ return -1; }
+}
+
+// Retient l'image courante si elle est la plus nette depuis que la carte est là. On la garde
+// déjà réduite à EXTRACT_LONG_EDGE : c'est exactement ce que le redressement utilisera, donc
+// aucune perte, et une seule image en mémoire plutôt qu'une fenêtre entière.
+function retenirSiPlusNette(video, coins){
+  const net = netteteVisee(video, coins);
+  if(net < 0 || net <= meilleureNettete) return;
+  const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
+  const vw = Math.max(1, Math.round(video.videoWidth * ech));
+  const vh = Math.max(1, Math.round(video.videoHeight * ech));
+  if(!meilleureFrame) meilleureFrame = document.createElement('canvas');
+  if(meilleureFrame.width !== vw || meilleureFrame.height !== vh){ meilleureFrame.width = vw; meilleureFrame.height = vh; }
+  meilleureFrame.getContext('2d').drawImage(video, 0, 0, vw, vh);
+  meilleureNettete = net;
+  meilleursCoins = { tl:[...coins.tl], tr:[...coins.tr], br:[...coins.br], bl:[...coins.bl] };
+}
+
 // Retrait de carte, version V2. Le verrou « déjà lue » se relâchait sur
 // cardConfirmedAbsentSinceCapture, qui exige 4 images ET 1,2 s de champ vide — un garde-fou
 // taillé pour la V1 (le fantôme d'un numéro relu). En V2 il imposait de montrer 1,2 s de vide
@@ -11819,6 +11906,12 @@ async function detectLoop(){
         else v2StableStreak = 0;
         const stable = v2StableStreak >= 1;
 
+        // Tant que la carte est là, on retient la plus nette. Rien n'est rejeté ici : quand
+        // le déclenchement viendra, il aura le choix entre l'image de l'instant et la
+        // meilleure de la présence — et il prendra la meilleure. Voir la mémoire de la plus
+        // nette, plus haut, pour les chiffres qui justifient ce détour.
+        retenirSiPlusNette(video, d.corners);
+
         // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
         // que la carte a été retirée (v2AbsenceStreak) OU qu'elle a franchement bougé —
         // ça permet d'enchaîner en faisant glisser une carte hors du cadre pendant que la
@@ -11913,6 +12006,9 @@ function reinitialiserEtatScanV2(){
   derniereCarteAffichee = null;
   cardConfirmedAbsentSinceCapture = true;
   readInFlight = false;
+  // Sans ça, la caméra rouverte comparerait la première carte à la netteté de la dernière
+  // carte de la session précédente, et ne retiendrait jamais rien.
+  oublierMeilleureFrame();
 }
 function reprendreApresBlocage(){
   reinitialiserEtatScanV2();
@@ -12136,14 +12232,31 @@ async function attemptReadV2(corners, score){
   try{
     const video = $('video');
     if(!video || !video.videoWidth) return;
+    // ─── ON IDENTIFIE LA PLUS NETTE, PAS CELLE DE L'INSTANT ───
+    // La stabilité a déclenché, mais l'objectif cherchait peut-être encore son point à cette
+    // image précise. La boucle de détection a gardé la plus nette de la présence : on la
+    // préfère, avec LES COINS QUI VONT AVEC — reprendre les coins de l'instant sur une image
+    // d'il y a trois tours découperait à côté.
+    // Mesuré au banc : 45 % → 90 % de justes, sans une milliseconde d'attente en plus.
+    const source = meilleureFrame && meilleursCoins ? meilleureFrame : video;
+    const coinsSource = source === meilleureFrame ? meilleursCoins : corners;
+    const srcW = source === meilleureFrame ? meilleureFrame.width : video.videoWidth;
+    const srcH = source === meilleureFrame ? meilleureFrame.height : video.videoHeight;
+    // La mémoire est CONSOMMÉE par la lecture : la prochaine carte doit repartir de zéro,
+    // sinon elle hériterait de la netteté de la précédente et ne retiendrait plus rien. Le
+    // canvas, lui, ne sera pas réécrit d'ici la fin de la lecture — la détection est suspendue
+    // tant que `readInFlight` tient.
+    v2NetteteRetenue = Math.round(meilleureNettete);
+    v2ImageRetenue = source === meilleureFrame ? 'memoire' : 'instant';
+    oublierMeilleureFrame();
     // Stratégie de cet essai : voir STRATEGIES_ESSAI. Le premier essai emprunte toujours les
     // coins détectés — c'est le meilleur cas et de loin le plus fréquent.
     const strat = STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)];
     const coinsEssai = strat.fixe
       ? coinsDuCadreFixe(video)
-      : retrecirCoins(corners, strat.echelle);
+      : retrecirCoins(coinsSource, strat.echelle);
     if(v2EssaiCadre > 0) diagPush('err', {msg:'essai ' + (v2EssaiCadre+1) + ' — stratégie ' + strat.nom});
-    const sourceForRead = await redresserAvecCoins(video, coinsEssai, video.videoWidth, video.videoHeight);
+    const sourceForRead = await redresserAvecCoins(source, coinsEssai, srcW, srcH);
     if(!sourceForRead){
       diagPush('try', {ok:false, hint:'redressement échoué', score, ms:Math.round(performance.now()-t0)});
       return;
@@ -12613,6 +12726,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
         embPremier:(res&&res.embPremier)||null,
         embEtaitBon:(res&&res.pick&&res.embPremier)?(res.pick.cle===res.embPremier):null,
         cadrage:(STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length-1)]||{}).nom||'?',
+        nettete:v2NetteteRetenue, image:v2ImageRetenue,
         essai:v2EssaiCadre+1, rebutsDeSuite:v2RebutsConsecutifs });
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
@@ -12728,6 +12842,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     embPremier: res.embPremier || null,
     embEtaitBon: res.pick && res.embPremier ? (res.pick.cle === res.embPremier) : null,
     cadrage: (STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)] || {}).nom || '?',
+    nettete: v2NetteteRetenue, image: v2ImageRetenue,
     essai: v2EssaiCadre + 1,
     // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
     // à supposer que le téléphone avait bien pris le déploiement entre les deux.
