@@ -59,7 +59,7 @@
   details.serie summary::before{content:'▸';color:var(--dim);font-size:11px;transition:transform .15s;flex:none}
   details.serie[open] summary::before{transform:rotate(90deg)}
   .serieCase{width:18px;height:18px;flex:none;accent-color:var(--accent)}
-  .serieCase:disabled{accent-color:var(--ok)}
+  .serieLock{font-size:15px;flex:none;line-height:1;opacity:.85}
   .serieName{font-weight:650;min-width:0}
   .serieName small{display:block;font-weight:400;color:var(--dim);font-size:11.5px}
   .serieRight{margin-left:auto;display:flex;align-items:center;gap:8px;white-space:nowrap}
@@ -97,7 +97,10 @@
       dessous — déplie une série pour voir. Un set déjà sur R2 (✓, en vert) est relu en
       quelques secondes au prochain build, jamais reconstruit : cocher une série entière ne
       coûte rien pour ce qu'elle contient déjà, seuls les sets manquants sont téléchargés.
-      Tout ce qui n'est pas encore complet est coché par défaut.
+      Tout ce qui n'est pas encore complet est coché par défaut. <b>Une série qui affiche
+      🔒 n'a rien à cocher</b> — elle contient déjà des sets construits, donc elle est
+      TOUJOURS dans la commande, sets manquants inclus ; la case à cocher n'existe même
+      plus pour elle, volontairement, pour ne pas laisser croire qu'il faut l'activer.
     </div>
     <div id="serieList"><span class="muted">Chargement du catalogue TCGdex (19 séries, chaque set)…</span></div>
     <div class="row" style="margin-top:10px">
@@ -161,16 +164,30 @@
   </div>
 
   <div class="card">
-    <div class="lbl" style="margin-bottom:8px">Pilotage</div>
+    <div class="lbl" style="margin-bottom:8px">Pilotage — pour un build DÉJÀ en cours</div>
+    <div class="sub" id="pilotageEtat" style="margin:2px 0 10px"></div>
+    <div class="warnbox" style="margin:0 0 12px">
+      Ces quatre boutons ne démarrent RIEN — ils envoient une consigne qu'un script déjà
+      lancé au terminal lit entre deux cartes. <b>Pour lancer un build, il n'y a qu'un
+      chemin : copier la commande tout en haut de cette page et la coller dans un terminal,
+      sur le poste de Nikos.</b> Sans script en train de tourner, cliquer ici ne fait rien
+      d'immédiat — sauf « Tout reprendre », qui reste actif exprès (voir plus bas) et POSE
+      une consigne que le PROCHAIN lancement lira à son démarrage.
+    </div>
     <div class="ctl">
       <button id="bRestart">Relancer le set en cours</button>
       <button id="bSkip">Passer ce set</button>
-      <button id="bAll" class="danger">Tout reprendre</button>
+      <button id="bAll" class="danger">Tout reprendre depuis zéro</button>
       <button id="bStop" class="danger">Stopper</button>
+      <button class="small" id="bAnnuler">Annuler la consigne en attente</button>
     </div>
     <div class="muted" id="ctlMsg" style="margin-top:8px">
       Le script relit ces commandes entre deux cartes. « Relancer » sert si un set est bloqué
       ou incomplet ; le script repart de toute façon après un crash, du dernier set terminé.
+      « Tout reprendre » ne « rattrape » PAS les séries manquantes — il ignore le manifest en
+      ligne et refait TOUT depuis zéro, y compris ce qui est déjà construit (des heures,
+      pour un résultat identique). Pour ajouter des séries, la commande d'en haut suffit ;
+      ne touche à « Tout reprendre » que si le manifest lui-même semble corrompu.
     </div>
   </div>
 
@@ -267,9 +284,16 @@ function rendreSeries(){
       `<tr><td>${st.nom}<span class="muted"> · ${st.id}</span></td><td>${st.cartes.toLocaleString('fr')} cartes</td>`
       + `<td>${st.fait ? '<span class="setOk">✓</span>' : '<span class="setTodo">à construire</span>'}</td></tr>`
     ).join('');
+    // Verrouillée = pas de case à cocher DU TOUT, remplacée par un cadenas. Une case
+    // désactivée-mais-cochée se lit trop souvent comme « décochée, et je ne peux rien y
+    // faire » — exactement le rapport de Nikos. Un cadenas ne peut pas être mal lu : soit
+    // il est là (toujours inclus), soit il n'y est pas (à décider).
+    const controle = verr
+      ? '<span class="serieLock" title="Contient déjà des sets construits — incluse automatiquement, rien à cocher">🔒</span>'
+      : `<input type="checkbox" class="serieCase" data-id="${s.id}" ${coche?'checked':''} onclick="event.stopPropagation()">`;
     return `<details class="serie"${ouvert}>
       <summary>
-        <input type="checkbox" class="serieCase" data-id="${s.id}" ${coche?'checked':''} ${verr?'disabled':''} onclick="event.stopPropagation()">
+        ${controle}
         <span class="serieName">${s.nom}<small>${s.id} · ${(s.releaseDate||'').slice(0,4)}</small></span>
         <span class="serieRight"><span class="serieNums">${s.totalSets} set${s.totalSets>1?'s':''} · ${s.totalCartes.toLocaleString('fr')} cartes</span>${chip}</span>
       </summary>
@@ -278,7 +302,7 @@ function rendreSeries(){
     </details>`;
   }).join('');
 
-  $('serieList').querySelectorAll('.serieCase:not(:disabled)').forEach(cb=>{
+  $('serieList').querySelectorAll('.serieCase').forEach(cb=>{
     cb.onchange = ()=>{ cb.checked ? selection.add(cb.dataset.id) : selection.delete(cb.dataset.id); rendreCommande(); };
   });
   rendreCommande();
@@ -387,8 +411,20 @@ async function tick(){
 
   $('log').textContent = (s.log||[]).join('\n') || '—';
 
+  // « fini » désactive Relancer/Passer/Stopper — logique, ils n'ont aucun sens sans script
+  // actif à interrompre. « Tout reprendre » reste volontairement cliquable même à l'arrêt
+  // (pour pré-armer le prochain lancement) : c'est justement ce qui en fait, une fois
+  // ces trois-là grisés, le SEUL bouton qui réagisse — et qui se fait donc prendre pour
+  // « le » bouton de lancement. D'où l'état écrit en toutes lettres juste au-dessus.
   const fini = s.phase === 'done' || s.phase === 'stopped';
   ['bRestart','bSkip','bStop'].forEach(id => $(id).disabled = fini);
+  // `stale` est déjà calculé plus haut dans cette même fonction — même portée, pas de redéfinition.
+  $('pilotageEtat').innerHTML = fini
+    ? '⚪ Aucun script en cours (dernier statut : <b>' + (s.phase==='done'?'terminé':'stoppé') + '</b>). '
+      + 'Ces boutons n\'ont un effet immédiat sur rien tant qu\'un <code>bash run.sh</code> ne tourne pas quelque part.'
+    : stale
+    ? '🔴 Le dernier signal date de plus de 30 s — le script semble bloqué ou arrêté sans le dire.'
+    : '🟢 Un script semble actif (signal récent) — ces boutons agiront à la prochaine carte.';
 }
 
 async function envoyer(command){
@@ -396,13 +432,21 @@ async function envoyer(command){
   try{
     const r = await fetch(CONTROL, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command})});
     const j = await r.json();
-    $('ctlMsg').textContent = j.ok ? 'Commande « ' + command + ' » posée. Le script la prendra à la prochaine carte.' : ('Refusé : ' + (j.error||'?'));
+    $('ctlMsg').textContent = j.ok ? 'Commande « ' + command + ' » posée. Le script la prendra à la prochaine carte (ou à son PROCHAIN démarrage s\'il ne tourne pas encore).' : ('Refusé : ' + (j.error||'?'));
   }catch(e){ $('ctlMsg').textContent = 'Échec : ' + e.message; }
 }
 $('bRestart').onclick = ()=> envoyer('restart-set');
 $('bSkip').onclick    = ()=> confirm('Passer le set en cours ? Il ne sera pas construit.') && envoyer('skip-set');
-$('bAll').onclick     = ()=> confirm('Tout reprendre depuis zéro ? Les packs déjà envoyés seront reconstruits.') && envoyer('rebuild-all');
+$('bAll').onclick     = ()=> confirm(
+  'Tout reprendre depuis zéro ?\n\n'
+  + 'Ceci ne lance AUCUN build et n\'ajoute AUCUNE série. Ça pose une consigne que le PROCHAIN '
+  + '« bash run.sh » lira à SON démarrage : ignorer le manifest en ligne et TOUT reconstruire, '
+  + 'y compris ce qui est déjà fait (des heures en plus, pour un résultat identique). '
+  + 'Pour ajouter des séries manquantes, utilise la commande composée en haut de page — '
+  + 'pas ce bouton.\n\nContinuer quand même ?'
+) && envoyer('rebuild-all');
 $('bStop').onclick    = ()=> confirm('Stopper le build ?') && envoyer('stop');
+$('bAnnuler').onclick = ()=> envoyer('');
 
 tick();
 setInterval(tick, 3000);
