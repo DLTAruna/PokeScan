@@ -28,6 +28,56 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ LE CADRE QUI FIGE DÉFINITIVEMENT — cause trouvée (V.25)
+
+Nikos : « par moment le cadre de détection freeze, et ensuite plus moyen de scanner ». Il
+demandait des logs pour comprendre. La lecture du code a suffi à identifier la cause, et
+l'instrumentation demandée est ajoutée par-dessus pour confirmer sur le terrain.
+
+### La cause : un appel worker qui ne se règle jamais
+
+`faireWorker().call()` (scan-v2.js) créait une promesse et l'oubliait dans `pending` : elle ne
+se réglait que sur `onmessage` ou `onerror`. **Aucun délai de garde.** Et surtout :
+
+```js
+terminate: () => { try { w.terminate(); } catch (e) {} },   // ← ne rejette RIEN
+```
+
+Or `recyclerOrb()` appelle `terminate()` **tous les `RECYCLE_ORB` (12) scans**. Un appel en vol
+à cet instant n'est ni résolu ni rejeté — `onerror` ne se déclenche pas sur une terminaison
+volontaire. La promesse pend pour toujours, et la cascade est mécanique :
+
+`identifierV2` ne rend jamais la main → `gererScanV2` non plus → le `finally` de
+`attemptReadV2` ne s'exécute pas → **`readInFlight` reste vrai** → et depuis la V.16 la boucle
+sort immédiatement tant qu'il l'est → **cadre figé, plus rien de scannable, définitivement.**
+
+Le « par moment » s'explique de lui-même : il faut qu'un recyclage tombe pendant un appel.
+
+**Corrigé** : tout appel worker se règle désormais — délai de garde de 20 s
+(`APPEL_WORKER_MS_MAX`), et `terminate()` **rejette les appels en vol avant de tuer le worker**.
+
+### L'instrumentation demandée
+
+Un gel ne laisse par définition aucune trace : plus de scan, donc plus rien à journaliser. On
+envoie donc un **relevé d'état** (`etatBoucleScan()`), dont chaque champ correspond à une
+cause possible et une seule — `readInFlight`, `detectRunning`, `detecteurPret`, `v2Pret`,
+`workerBroken`, `camera`, `videoW`, temps depuis la dernière tentative et la dernière capture,
+`carteRetiree`, `rebutsConsecutifs`, `scansSession` (pour recouper avec le recyclage ORB).
+Il part dans `/api/scan-log` sous `categorie:'blocage'`, et dans le diagnostic local.
+
+⚠️ **Piège évité, à retenir** : un chien de garde qui ne surveillerait que « la boucle
+tourne-t-elle ? » ne verrait RIEN dans ce scénario — quand `readInFlight` est bloqué, la
+boucle continue de se replanifier toutes les 120 ms, elle bat normalement. On surveille donc
+**deux symptômes distincts** : la boucle sans tour depuis 8 s, ET le verrou de lecture fermé
+depuis 30 s.
+
+**Filet de sécurité** en plus du correctif : `attemptReadV2` borne l'attente à 25 s
+(`Promise.race`) et **signale** le rattrapage. Un blocage rattrapé en silence se reproduirait
+sans qu'on l'apprenne jamais.
+
+**Vérifié** : relevé complet produit à la demande, scan normal intact (Sabelette, 99 %), et
+**zéro signalement parasite** en fonctionnement nominal.
+
 ## ⭐ DÉMARRAGE : l'OCR et le détecteur bloquaient le scanner (V.24)
 
 Nikos : « le chargement et l'ouverture du scanner prennent plus de 30 secondes ». Deux causes

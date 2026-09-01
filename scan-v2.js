@@ -79,16 +79,38 @@ function chargerImage(src) {
 }
 
 // ─────────────────────────────── plomberie Worker
+// ⚠️ TOUT APPEL DOIT FINIR PAR SE RÉSOUDRE OU ÉCHOUER (durci en V.25).
+// La version d'avant créait une promesse et l'oubliait dans `pending` : elle ne se réglait
+// que sur `onmessage` ou `onerror`. Deux chemins la laissaient donc en suspens POUR TOUJOURS :
+//   • `terminate()` — appelé par `recyclerOrb()` tous les RECYCLE_ORB scans. Un appel en vol
+//     à cet instant n'était ni résolu ni rejeté, et `w.onerror` ne se déclenche pas sur une
+//     terminaison volontaire ;
+//   • un worker tué par le système (mémoire) sans émettre d'erreur exploitable.
+// Conséquence en cascade, constatée par Nikos : `identifierV2` ne rend jamais la main →
+// `gererScanV2` non plus → le `finally` de `attemptReadV2` ne s'exécute pas → `readInFlight`
+// reste vrai → et depuis la V.16 la boucle de détection sort immédiatement tant qu'il l'est.
+// Le cadre se fige et plus rien n'est scannable, définitivement.
+const APPEL_WORKER_MS_MAX = 20000;   // au-delà, ce n'est plus de la lenteur, c'est une perte
 function faireWorker(src, type) {
   const w = new Worker(URL.createObjectURL(new Blob([src], { type: 'text/javascript' })), type ? { type } : undefined);
   const pending = new Map(); let seq = 0;
-  w.onmessage = e => { const p = pending.get(e.data.id); if (!p) return; pending.delete(e.data.id);
-    e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error)); };
-  w.onerror = e => { for (const p of pending.values()) p.reject(new Error(e.message || 'worker KO')); pending.clear(); };
+  const regler = (id, fn) => { const p = pending.get(id); if (p) { pending.delete(id); clearTimeout(p.minuteur); fn(p); } };
+  w.onmessage = e => regler(e.data.id, p => e.data.ok ? p.resolve(e.data) : p.reject(new Error(e.data.error)));
+  w.onerror = e => { for (const id of [...pending.keys()]) regler(id, p => p.reject(new Error(e.message || 'worker KO'))); };
   return {
-    call: (payload, transfer) => new Promise((resolve, reject) => { const id = ++seq;
-      pending.set(id, { resolve, reject }); w.postMessage(Object.assign({ id }, payload), transfer || []); }),
-    terminate: () => { try { w.terminate(); } catch (e) {} },
+    call: (payload, transfer) => new Promise((resolve, reject) => {
+      const id = ++seq;
+      const minuteur = setTimeout(
+        () => regler(id, p => p.reject(new Error('worker muet (' + (payload && payload.type || '?') + ')'))),
+        APPEL_WORKER_MS_MAX);
+      pending.set(id, { resolve, reject, minuteur });
+      w.postMessage(Object.assign({ id }, payload), transfer || []);
+    }),
+    // Rejette AVANT de terminer : sinon les appels en vol restent orphelins.
+    terminate: () => {
+      for (const id of [...pending.keys()]) regler(id, p => p.reject(new Error('worker recyclé')));
+      try { w.terminate(); } catch (e) {}
+    },
   };
 }
 let ocr = null, emb = null, orb = null;

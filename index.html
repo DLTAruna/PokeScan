@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 24;
+const VERSION_APP = 25;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11519,6 +11519,7 @@ function hexHamming(a, b){
 // la reconnaissance visuelle s'avérait un jour ne pas suffire.
 async function detectLoop(){
   if(!detectRunning) return;
+  dernierTourBoucle = Date.now();   // battement lu par le chien de garde (voir plus haut)
   const video = $('video');
 
   if(!cameraStream || !video || !video.videoWidth || !detecteurPret){
@@ -11697,6 +11698,71 @@ async function detectLoop(){
 // réellement identifiée plutôt que sur un numéro OCR bruité — comparer l'identifiant à
 // l'identifiant, pas une approximation de l'identifiant à une autre approximation. Le
 // V1 (lecture du numéro) reste entier sur la branche git `archive/v1-numero`.
+// ─────────── INSTRUMENTATION DES BLOCAGES DE SCAN (V.25) ───────────
+// Demande de Nikos : « par moment le cadre freeze, et ensuite plus moyen de scanner ; peux-tu
+// mettre ça dans les logs ? » Un gel de la boucle ne laisse par définition aucune trace — il
+// n'y a plus de scan, donc plus rien à journaliser. On envoie donc un relevé D'ÉTAT, qui dit
+// lequel des verrous est resté fermé. Chaque champ correspond à une cause possible et une
+// seule, pour qu'un relevé suffise à trancher sans avoir à deviner.
+let dernierBlocageSignaleA = 0;
+function etatBoucleScan(){
+  return {
+    readInFlight,                                   // verrou qui suspend la boucle (V.16)
+    detectRunning,                                  // la boucle est-elle seulement lancée ?
+    detecteurPret,                                  // worker de détection initialisé ?
+    v2Pret: !!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2()),
+    workerBroken,                                   // détecteur déclaré HS
+    camera: !!cameraStream,
+    videoW: $('video')?.videoWidth || 0,
+    depuisDerniereTentativeMs: lastReadAttemptAt ? Date.now() - lastReadAttemptAt : null,
+    depuisDerniereCaptureMs: lastCaptureAt ? Date.now() - lastCaptureAt : null,
+    carteRetiree: v2CarteRetiree,                   // le verrou « déjà lue » s'est-il relâché ?
+    rebutsConsecutifs: v2RebutsConsecutifs,
+    scansSession: capturedThisSession,              // pour recouper avec le recyclage ORB
+  };
+}
+function signalerBlocageScan(cause, score){
+  // Un seul signalement par minute : un blocage dure, et on veut un constat, pas un flot.
+  if(Date.now() - dernierBlocageSignaleA < 60000) return;
+  dernierBlocageSignaleA = Date.now();
+  const etat = etatBoucleScan();
+  diagPush('err', {msg:'BLOCAGE SCAN — ' + cause + ' — ' + JSON.stringify(etat)});
+  try{
+    SCAN_V2.relayV2({ fichier:'incident', predit:'', categorie:'blocage', conf:'blocage',
+      fiabilite:0, inliers:0, marge:0, ocrLance:false, ms:0, T:{}, moteur:(SCAN_V2.moteurV2&&SCAN_V2.moteurV2())||'?',
+      diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score||0).toFixed(2),
+      incident: cause, etat, v:VERSION_APP });
+  }catch(e){}
+  toast('⚠️ Scan bloqué — relance détectée, réessaie');
+}
+
+// Chien de garde de la boucle elle-même : si `detectLoop` cesse de tourner alors que la
+// caméra est ouverte, c'est le symptôme exact décrit (cadre figé, plus rien de scannable).
+// On le constate ici, depuis un minuteur indépendant de la boucle — donc insensible à son gel.
+// DEUX symptômes distincts, à ne pas confondre :
+//   • la boucle ne tourne plus du tout (exception hors try, minuteur jamais rendu) ;
+//   • la boucle tourne mais ressort aussitôt parce que `readInFlight` est resté vrai — elle
+//     bat alors normalement, et un chien de garde qui ne surveillerait que le battement ne
+//     verrait RIEN. C'est pourtant le cas décrit par Nikos : cadre figé sur sa dernière
+//     position, plus aucune détection.
+let dernierTourBoucle = 0, readInFlightDepuis = 0;
+setInterval(()=>{
+  if(!detectRunning || !cameraStream) return;
+  if(readInFlight){
+    if(!readInFlightDepuis) readInFlightDepuis = Date.now();
+    const bloque = Date.now() - readInFlightDepuis;
+    // 30 s : bien au-delà du filet de 25 s posé dans attemptReadV2. Si on arrive ici, c'est
+    // que le verrou s'est fermé par un chemin qui échappe à ce filet — ça vaut un relevé.
+    if(bloque > 30000) signalerBlocageScan('verrou de lecture fermé depuis ' + bloque + ' ms', null);
+  }else{
+    readInFlightDepuis = 0;
+  }
+  if(!dernierTourBoucle) return;
+  const mort = Date.now() - dernierTourBoucle;
+  // 8 s sans un seul tour : même une inférence lente et un téléphone bridé restent loin.
+  if(mort > 8000) signalerBlocageScan('boucle sans tour depuis ' + mort + ' ms', null);
+}, 4000);
+
 async function attemptReadV2(corners, score){
   if(readInFlight) return;
   readInFlight = true;
@@ -11735,8 +11801,25 @@ async function attemptReadV2(corners, score){
     // d'être rendus ci-dessus, les rejouer ferait un second flash trois secondes plus tard.
     // La toile et son dataURL sont passés pour ne pas refaire un toDataURL plein format sur
     // le fil principal — il coûte cher sur téléphone, et il est déjà fait.
-    await gererScanV2(sourceForRead, corners, score, t0, true, {cv: cvPrise, dataUrl: dataUrlPrise})
-      .catch(e => { console.warn('V2', e); });
+    // ─── FILET DE SÉCURITÉ (V.25) ───
+    // `readInFlight` suspend la boucle de détection entière (V.16). Si l'identification ne
+    // rend JAMAIS la main, le cadre se fige et plus rien n'est scannable — définitivement.
+    // La cause connue (appels worker sans délai de garde) est corrigée dans scan-v2.js, mais
+    // ce verrou est trop coûteux pour reposer sur la seule promesse qu'aucun autre chemin ne
+    // pendra un jour. On borne donc l'attente ici aussi, et on le DIT : un blocage rattrapé
+    // en silence se reproduirait sans qu'on l'apprenne jamais.
+    const gardeMs = 25000;
+    let garde;
+    const surveille = new Promise((res)=>{ garde = setTimeout(()=>{
+      signalerBlocageScan('identification sans réponse après ' + gardeMs + ' ms', score);
+      res();
+    }, gardeMs); });
+    await Promise.race([
+      gererScanV2(sourceForRead, corners, score, t0, true, {cv: cvPrise, dataUrl: dataUrlPrise})
+        .catch(e => { console.warn('V2', e); diagPush('err', {msg:'V2 : ' + e.message}); }),
+      surveille,
+    ]);
+    clearTimeout(garde);
   }catch(e){
     diagPush('err', {msg:'lecture V2 : ' + e.message});
   }finally{
@@ -20473,7 +20556,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=22';
+import * as V2 from './scan-v2.js?v=23';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
