@@ -294,55 +294,29 @@ function parseBlobOrb(buf) {
   return { rows, des, kp };
 }
 
-const nomPack = setId => String(setId).replace(/[^\w.-]/g, '_');
-const setsComplets = new Set();   // sets dont le pack ENTIER est déjà en mémoire du worker
-
-// —— charge d'un coup TOUT l'ORB d'un set (pack de ~5 Mo, une requête) : rentable dès qu'on
-//    dépouille un classeur d'une extension — après le 1er scan, les suivants du même set
-//    ne téléchargent plus rien.
-const setsEnCours = new Set();
-async function chargerSetComplet(setId) {
-  if (setsComplets.has(setId) || setsEnCours.has(setId)) return;
-  setsEnCours.add(setId);
-  try {
-    onEtat('Chargement du set ' + setId + '…');
-    let buf = await idbGet('pack:' + setId);
-    if (!buf) { buf = await telechargerR2('pack-' + nomPack(setId) + '.pack'); idbSet('pack:' + setId, buf); }
-    const dv = new DataView(buf);
-    const hLen = dv.getUint32(0, true);
-    const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 4, hLen)));
-    let off = 4 + hLen;
-    const jobs = [];
-    for (const c of header.cards) {
-      off += header.embDim;
-      const des = new Uint8Array(buf.slice(off, off + c.or * 32)); off += c.or * 32;
-      const kpI16 = new Int16Array(buf.slice(off, off + c.or * 4)); off += c.or * 4;
-      const kp = []; for (let i = 0; i < c.or; i++) kp.push({ x: kpI16[i * 2], y: kpI16[i * 2 + 1] });
-      jobs.push({ cle: c.cle, des, or: c.or, kp });
-    }
-    for (let i = 0; i < jobs.length; i += 20) {
-      await Promise.all(jobs.slice(i, i + 20).map(j =>
-        orb.call({ type: 'refImport', cle: j.cle, bytes: j.des, rows: j.or, kp: j.kp })
-          .then(() => orbCharges.set(j.cle, { ts: Date.now(), pleinSet: true }))));
-    }
-    setsComplets.add(setId);
-    onEtat('');
-  } catch (e) { /* best effort */ }
-  finally { setsEnCours.delete(setId); }
-}
-
-// Détection « classeur » : les 3 derniers scans du même set → on charge son pack entier,
-// le reste du classeur ne télécharge alors plus rien. (Les illustrations Pokémon se
-// ressemblent trop d'un set à l'autre pour que la shortlist se regroupe par set ; c'est
-// l'historique des scans, pas la shortlist, qui dit qu'on dépouille une extension.)
-const recents = [];
-export function noterPickV2(setId) {
-  if (!setId) return;
-  recents.push(setId); if (recents.length > 5) recents.shift();
-  if (setsComplets.has(setId)) return;
-  const memeSet = recents.filter(s => s === setId).length;
-  if (memeSet >= 3) chargerSetComplet(setId).catch(() => {});   // en fond
-}
+// ─── MODE « CLASSEUR » SUPPRIMÉ (V.15, décision de Nikos sur relevé réel) ───
+//
+// Il y avait ici `chargerSetComplet(setId)` + `noterPickV2(setId)` : au bout de 3 scans du
+// même set, le pack ORB ENTIER de ce set (~5 Mo) était téléchargé en arrière-plan, au motif
+// qu'on dépouille souvent un classeur d'une seule extension et que les scans suivants
+// n'auraient alors plus rien à télécharger.
+//
+// LE RELEVÉ TERRAIN DIT QUE ÇA NE MARCHE PAS (journal /api/scan-log, 3 cartes du set 151
+// scannées à la suite sur téléphone, V.14) :
+//
+//   carte 1 : nManque 18, nReseau 18, net 905 ms, packTelecharge true, sets consultés 14
+//   carte 2 : nManque 17, nReseau 17, net 549 ms, packTelecharge true, sets consultés 21
+//   carte 3 : nManque 17, nReseau 17, net 719 ms, packTelecharge true, sets consultés 27
+//
+// Trois cartes du MÊME set, et chacune télécharge quand même 17-18 descripteurs. La raison
+// est écrite dans le champ `sets`, qui grossit à chaque scan (14 → 21 → 27) : **la shortlist
+// est cross-set**. Les 18 candidats que l'ORB doit départager viennent d'une vingtaine de
+// sets différents — les illustrations Pokémon se ressemblent d'une extension à l'autre —
+// donc avoir le pack du set dominant ne dispense de presque aucun téléchargement.
+//
+// Bilan : ~5 Mo de données mobiles dépensés, en concurrence de bande passante avec les
+// descripteurs dont le scan a réellement besoin, pour un gain non mesurable. Supprimé.
+// Le cache par carte (`orbCharges`, LRU) reste : lui, il sert à chaque scan.
 
 // —— récupère plusieurs blobs ORB d'un coup via le Worker (une requête). Renvoie une
 //    Map cle -> ArrayBuffer (ou null si absent).
@@ -411,16 +385,15 @@ async function assurerOrbCartes(cles) {
     detailRefs.imp = Math.round(performance.now() - tImp);
   }
   for (const c of cles) { const v = orbCharges.get(c); if (v) v.ts = Date.now(); }
-  // éviction LRU — jeter un pack entier invalide le set correspondant
+  // Éviction LRU. Le suivi `pleinSet` a disparu avec le mode « classeur » (voir plus haut) :
+  // toutes les entrées sont désormais des cartes chargées à l'unité, il n'y a plus de pack
+  // entier dont l'éviction partielle invaliderait un set.
   if (orbCharges.size > R.MAX_CARTES_ORB) {
     const tries = [...orbCharges.entries()].sort((a, b) => a[1].ts - b[1].ts);
     const aJeter = tries.slice(0, orbCharges.size - R.MAX_CARTES_ORB).map(x => x[0]);
     const reels = aJeter.filter(c => !orbCharges.get(c).absent);
     if (reels.length) { try { await orb.call({ type: 'dropSet', cles: reels }); } catch (e) {} }
-    for (const c of aJeter) {
-      if (orbCharges.get(c).pleinSet) setsComplets.delete(cleToCard.get(c).setId);
-      orbCharges.delete(c);
-    }
+    for (const c of aJeter) orbCharges.delete(c);
   }
   return telecharge;
 }
@@ -445,7 +418,7 @@ async function recyclerOrb() {
   try { orb.terminate(); } catch (e) {}
   demarrerOrb();
   await orb.call({ type: 'warm' }).catch(() => {});
-  orbCharges.clear(); setsComplets.clear();
+  orbCharges.clear();
 }
 
 // Remise à zéro des caches, pour le banc : mesurer un démarrage à froid, ou isoler ce que
@@ -651,8 +624,7 @@ export async function identifierV2(carte) {
   else if (fiabilite >= 80 || ocrOk || geoFranche) categorie = 'sure';
   else categorie = 'douteuse';
 
-  if (categorie !== 'rebut' && cible) noterPickV2(cible.setId);   // détection « classeur »
-  scansV2++;
+  scansV2++;   // (l'appel à noterPickV2 — mode « classeur » — est retiré, voir plus haut)
 
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,

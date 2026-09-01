@@ -28,6 +28,61 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ POURQUOI LE BANC ÉTAIT 2 À 3× PLUS RAPIDE (V.16, 2026-09-01)
+
+Question de Nikos : « le banc de test V2 paraissait beaucoup plus rapide, comment expliquer
+ça ? » Le journal permet de comparer, **sur le même téléphone, avec le même module et le
+même moteur (`webgpu/fp16`)** :
+
+| | ms par carte |
+|---|---|
+| banc (`outil:'banc-v2'`) | 1 091 · 1 122 · 1 135 · 1 282 · 1 407 · 1 465 · 1 545 — **médiane ~1 400** |
+| application (V.14) | 3 078 · 3 676 · 4 063 |
+
+**La différence n'est pas dans la chaîne d'identification. Elle est dans la boucle.**
+
+Le banc pose `occupeCam = true` pendant toute sa capture et **suspend sa détection** :
+```js
+if(!v.videoWidth || occupeCam){ await new Promise(r=>setTimeout(r,120)); continue; }
+```
+L'application, elle, continuait de détecter pendant l'identification. `readInFlight`
+n'empêchait que le **déclenchement**, pas la détection : `createImageBitmap` + une inférence
+ONNX du détecteur de contours **toutes les ~60 ms**, soit **25 à 50 inférences** pendant les
+3,5 s d'identification, à disputer le GPU et le CPU à l'embedding puis à l'ORB.
+
+Et cela **explique aussi la dérive de `T.orb`** au fil d'une salve (1 407 → 2 612 ms sur
+trois cartes) : ce n'est pas seulement du throttle thermique subi, c'est du throttle qu'on
+fabriquait en faisant tourner le détecteur pour rien.
+
+**Corrigé** : `detectLoop` sort immédiatement tant que `readInFlight` est vrai, exactement
+comme le banc. **Vérifié en local : 0 détection pendant l'identification** (compteur posé sur
+`detectWorkerCall('detect')`, mesuré entre l'accusé de réception et l'affichage du nom).
+Aucun coût d'usage : le déclenchement était de toute façon verrouillé, et Nikos attend le
+résultat avant de présenter la carte suivante.
+
+### Fiabilité affichée
+
+Demande de Nikos. Le ✅/🤔 du coin ne disait que « sûre » ou « douteuse » ; le panneau du bas
+porte maintenant une ligne **Fiabilité** en pourcentage (`res.fiabilite`, celui-là même qui
+part dans le journal), colorée : **vert ≥ 90**, **ambre 70-89**, **rouge < 70**. Repères tirés
+des campagnes du banc — aucune erreur jamais observée au-dessus de 90 %.
+
+### Mode « classeur » supprimé (`chargerSetComplet`)
+
+Décision de Nikos sur relevé réel. Au bout de 3 scans du même set, le pack ORB entier
+(~5 Mo) était téléchargé en fond. **Le journal montre que ça n'évitait aucun
+téléchargement** : trois cartes du même set, et chacune récupère quand même 17-18
+descripteurs (`nManque` 18/17/17), parce que la liste `sets` consultés **grossit à chaque
+scan** (14 → 21 → 27) — la shortlist est cross-set, les 18 candidats viennent d'une
+vingtaine d'extensions différentes. Cinq mégaoctets de données mobiles, en concurrence de
+bande passante avec les descripteurs réellement nécessaires, pour un gain nul. Supprimé
+(avec `noterPickV2`, `setsComplets`, le suivi `pleinSet` de l'éviction LRU). Le cache par
+carte (`orbCharges`, LRU 900) reste — lui sert à chaque scan.
+
+⚠️ Les anciens packs déjà mis en cache (`pack:<setId>` dans IndexedDB `pokescan_v2`) ne sont
+plus jamais lus : quelques Mo dorment sur les appareils qui ont tourné avant la V.16. Sans
+conséquence fonctionnelle, à balayer un jour si on touche au schéma.
+
 ## Fluidité : l'accusé de réception arrivait après l'identification (V.15, 2026-09-01)
 
 Nikos, 4 cartes en V.14 : « il y a un problème de fluidité entre la capture et l'affichage

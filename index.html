@@ -4699,6 +4699,12 @@
           <div class="lr-row"><span class="lr-lbl">Ensemble</span><span id="live-result-set">—</span></div>
           <div class="lr-row"><span class="lr-lbl">Numéro</span><span id="live-result-num">—</span></div>
           <div class="lr-row"><span class="lr-lbl">Évaluation</span><span id="live-result-price">—</span></div>
+          <!-- Fiabilité de l'identification, demandée par Nikos : le ✅/🤔 du coin dit
+               seulement « sûre » ou « douteuse », alors que le chiffre permet de juger sur
+               pièce — et de repérer une série de scans qui se dégrade avant qu'elle ne
+               produise une erreur. C'est `res.fiabilite` de scan-v2.js, celui-là même qui
+               part dans /api/scan-log. -->
+          <div class="lr-row"><span class="lr-lbl">Fiabilité</span><span id="live-result-conf">—</span></div>
         </div>
         <div class="live-etat" id="live-etat" style="display:none;">
           <button data-e="NM" class="on" title="Near Mint — comme neuve">NM</button>
@@ -5639,7 +5645,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 15;
+const VERSION_APP = 16;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11018,6 +11024,29 @@ async function detectLoop(){
     setTimeout(detectLoop, 150);
     return;
   }
+
+  // ─── POURQUOI LE BANC PARAISSAIT DEUX À TROIS FOIS PLUS RAPIDE (V.16) ───
+  // Même téléphone, même module, même moteur (`webgpu/fp16`), et pourtant :
+  //   banc  → ms médian ~1 400   (relevés `outil:'banc-v2'` du journal)
+  //   app   → ms 3 078 / 4 063 / 3 676   (relevés V.14)
+  //
+  // La différence n'est pas dans la chaîne d'identification, elle est ICI. Le banc pose
+  // `occupeCam = true` pendant toute sa capture et SUSPEND sa boucle :
+  //     if(!v.videoWidth || occupeCam){ await …(120); continue; }
+  // L'application, elle, continuait de détecter pendant l'identification — `readInFlight`
+  // n'empêchait que le DÉCLENCHEMENT, pas la détection. Soit, sur 3,5 s à ~60 ms le tour,
+  // vingt-cinq à cinquante inférences ONNX du détecteur de contours qui disputent le GPU et
+  // le CPU à l'embedding puis à l'ORB — et qui chauffent l'appareil, ce qui explique aussi
+  // la dérive de `T.orb` au fil d'une salve (1 407 → 2 612 ms sur trois cartes).
+  //
+  // Détecter pendant qu'on identifie ne servait à rien : le déclenchement est verrouillé,
+  // et Nikos attend le résultat avant de présenter la carte suivante. On suspend donc,
+  // exactement comme le banc. Le cadre reste vert et la vignette est déjà affichée
+  // (accusé de réception, V.15) : l'utilisateur sait que ça travaille.
+  if(readInFlight){
+    setTimeout(detectLoop, 120);
+    return;
+  }
   // La bascule auto/manuel a disparu avec le reste du décor (V.13) : il n'y a plus de mode
   // manuel puisqu'il n'y a plus de déclencheur à presser. `autoCaptureEnabled` reste lu ici
   // au cas où un futur module le remette, mais rien ne le met plus à faux.
@@ -11280,6 +11309,7 @@ function showLiveResultWaiting(){
   $('live-result-set').textContent = '—';
   $('live-result-num').textContent = '—';
   $('live-result-price').textContent = '—';
+  majFiabilite(null);
   $('live-result-badge').textContent = '';
   $('live-result-badge').title = '';
 }
@@ -11295,6 +11325,7 @@ function showLiveResultPending(dataUrl, number, denominator){
   // l'identification depuis V.15) : « / » tout seul se lisait comme une donnée manquante.
   $('live-result-num').textContent = number ? (number + (denominator ? '/' + denominator : '')) : '—';
   $('live-result-price').textContent = '—';
+  majFiabilite(null);
   $('live-result-badge').textContent = '';
   $('live-result-badge').title = '';
 }
@@ -11347,7 +11378,7 @@ function renderTotalSession(){
     ? totalSession.valorisees + ' carte(s) valorisée(s), ' + totalSession.sansPrix + ' sans prix connu'
     : totalSession.valorisees + ' carte(s) valorisée(s)';
 }
-function showLiveResultDone(card, confidence){
+function showLiveResultDone(card, confidence, fiabilite){
   // Le panneau de résultat occupe le bas de l'écran : son apparition réduit la place
   // libre, donc déplace le centre sur lequel le cadre doit se caler.
   setTimeout(majCadrageVisible, 0);
@@ -11369,6 +11400,20 @@ function showLiveResultDone(card, confidence){
     : '';
   $('live-result-price').textContent = price.market ? formatPrice(price) : '—';
   $('live-result-badge').textContent = confidence === 'high' ? '✅' : '🤔';
+  majFiabilite(fiabilite);
+}
+
+// Fiabilité chiffrée. Repères tirés des campagnes du banc : une « sûre » descend rarement
+// sous ~90 %, et aucune erreur n'y a jamais été observée ; entre 70 et 90 c'est jouable mais
+// à surveiller ; en dessous, la chaîne classe « douteuse » et la carte demande confirmation.
+// La couleur dit ça sans avoir à connaître les seuils. `null` quand la valeur n'a pas de
+// sens (panneau en attente, capture de secours, identification venue d'un autre chemin).
+function majFiabilite(fiabilite){
+  const cf = $('live-result-conf');
+  if(!cf) return;
+  if(fiabilite == null){ cf.textContent = '—'; cf.style.color = ''; return; }
+  cf.textContent = Math.round(fiabilite) + ' %';
+  cf.style.color = fiabilite >= 90 ? '#3ba55d' : fiabilite >= 70 ? '#e0a12a' : '#e0553f';
 }
 
 // Carte capturée sans avoir été lue. Le panneau doit montrer CETTE photo, et dire
@@ -11383,6 +11428,7 @@ function montrerSecoursEnBas(dataUrl, redressee){
   $('live-result-set').textContent = redressee ? 'photo redressée' : 'photo brute';
   $('live-result-num').textContent = '—';
   $('live-result-price').textContent = '—';
+  majFiabilite(null);
   $('live-result-badge').textContent = '📥';
   $('live-result-badge').title = 'Envoyée dans « À vérifier » avec sa photo';
   // Le réglage de quantité pilote la dernière ligne du LOT : il n'y en a pas ici.
@@ -11394,6 +11440,7 @@ function showLiveResultNotFound(){
   $('live-result-name').textContent = 'Carte non identifiée';
   $('live-result-set').textContent = '—';
   $('live-result-price').textContent = '—';
+  majFiabilite(null);
   $('live-result-badge').textContent = '❌';
 }
 
@@ -11558,7 +11605,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     // l'accusé de réception a déjà mis le panneau sur « 🔎 recherche… » (V.15) — sans ce
     // rattrapage il y resterait pour toujours, alors que la carte EST identifiée et était
     // affichée juste avant. On remet donc ce qui y était.
-    if(derniereCarteAffichee) showLiveResultDone(derniereCarteAffichee.carte, derniereCarteAffichee.confiance);
+    if(derniereCarteAffichee) showLiveResultDone(derniereCarteAffichee.carte, derniereCarteAffichee.confiance, derniereCarteAffichee.fiabilite);
     return 'rejet-doublon';
   }
 
@@ -11592,8 +11639,8 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
   // La vignette du bas doit montrer LA photo qu'on vient de prendre (elle y reste :
   // showLiveResultDone ne touche pas à l'image, seulement au texte).
   showLiveResultPending(dataUrl, stripLeadingZero(String(carteMin.number)), '');
-  showLiveResultDone(carteMin, confiance);
-  derniereCarteAffichee = {carte: carteMin, confiance};   // pour le rattrapage « rejet-doublon »
+  showLiveResultDone(carteMin, confiance, res.fiabilite);
+  derniereCarteAffichee = {carte: carteMin, confiance, fiabilite: res.fiabilite};   // rattrapage « rejet-doublon »
   ajouterAuTotalSession(carteMin);
   setAimHint(`${confiance === 'high' ? '✅' : '🤔'} ${carteMin.name} — V2 ${res.fiabilite}%`);
   if(!dejaAcquitte){ flashScreen(dataUrl); if(navigator.vibrate) navigator.vibrate(40); }
@@ -11629,7 +11676,10 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     const carte = await getCardDetailCached(res.pick.cle).catch(()=> null);
     const cardComplete = carte || carteMin;
     item._analysis.card = cardComplete;
-    if(carte && mySeq === liveResultSeq) showLiveResultDone(cardComplete, confiance);   // met à jour prix/rareté si toujours à l'écran
+    // La fiche complète met à jour prix/rareté si la carte est toujours à l'écran. On
+    // repasse `res.fiabilite` : sans elle, l'arrivée de la fiche effacerait le chiffre
+    // affiché une seconde plus tôt, alors que l'identification n'a pas changé.
+    if(carte && mySeq === liveResultSeq) showLiveResultDone(cardComplete, confiance, res.fiabilite);
     if(validationAuto && confiance === 'high' && pendingQueue.includes(item)){
       const rr = validerAutomatiquement(cardComplete, item, 'v2');
       if(mySeq === liveResultSeq) setAimHint(rr.fusionnee
@@ -19871,7 +19921,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=17';
+import * as V2 from './scan-v2.js?v=18';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
