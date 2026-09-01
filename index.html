@@ -4635,13 +4635,20 @@
           la carte, sans avoir à deviner le set.
         </p>
 
-        <label class="dest-case" style="margin-top:12px;">
-          <input type="checkbox" id="chk-scan-v2">
-          <span><b>Scanner V2 — reconnaissance visuelle <span style="color:var(--accent)">[BÊTA]</span></b><small>Identifie la
-          carte par son <b>illustration</b> (DINOv2 + points d'intérêt), pas par le numéro — marche
-          même quand le chiffre est illisible, et sur <b>tous les sets à la fois</b> : rien à choisir.
-          Décoché, c'est la V1 (lecture du numéro) qui scanne. Chaque scan est enregistré pour analyse.</small></span>
-        </label>
+        <!-- La case décoché/coché V1-V2 a disparu avec la boucle de détection V1 (voir
+             REPRISE.md, « unification sur la logique du banc ») : la reconnaissance
+             visuelle est désormais le seul scanner en direct, plus un choix. `chk-scan-v2`
+             reste dans le DOM (coché, masqué) uniquement parce que le module V2 lit encore
+             son état — le retirer casserait l'initialisation pour un gain cosmétique nul.
+             Le V1 (lecture du numéro) reste entier sur la branche git `archive/v1-numero`
+             si la reconnaissance visuelle s'avérait un jour ne pas suffire. -->
+        <input type="checkbox" id="chk-scan-v2" checked style="display:none;">
+        <p class="hint" style="margin-top:12px;">
+          <b>Scanner — reconnaissance visuelle</b> : identifie la carte par son
+          <b>illustration</b>, pas par le numéro — marche même quand le chiffre est
+          illisible, et sur <b>tous les sets à la fois</b>. Chaque scan est enregistré pour
+          analyse.
+        </p>
         <p class="hint" id="v2-etat" style="margin:6px 0 0; display:none;"></p>
 
         <button class="lens-switch" id="btn-switch-lens" style="display:none;">🔄 Changer d’objectif</button>
@@ -5730,7 +5737,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 11;
+const VERSION_APP = 12;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -6942,9 +6949,11 @@ function getVisionWorker(){
               return;
             }
 
-            // 'read' : l'image reçue est DÉJÀ la carte redressée (perspective corrigée
-            // par le fil principal, voir attemptRead) — il ne reste qu'à cadrer la bande
-            // du numéro, vérifier la netteté et lire le texte.
+            // 'read' : l'image reçue est DÉJÀ la carte redressée (perspective corrigée par
+            // le fil principal) — il ne reste qu'à cadrer la bande du numéro, vérifier la
+            // netteté et lire le texte. Plus appelé depuis la boucle live V2 (attemptReadV2
+            // va droit à gererScanV2, qui ne lit le numéro qu'en dernier recours interne) ;
+            // reste ici pour l'import photo / le panneau Debug OCR — à auditer un jour.
             if(type === 'read'){
               // Chronométrage détaillé par phase, remonté au diagnostic (voir
               // buildDiagReport et §4.23) : un seul total agrégé ne disait pas SI le
@@ -8916,7 +8925,7 @@ function pushToQueue(dataUrl, sourceBlob, origine){
   planifierSauvegardeSession();
   updateCaptureProgress();  // l'analyse pouvant être suspendue, c'est ici que le compteur avance
   processQueueAnalysis();
-  return item; // exploité par attemptRead pour le panneau de résultat live (voir resolveLiveResult)
+  return item; // exploité par attemptReadV2 pour le panneau de résultat live (voir resolveLiveResult)
 }
 
 // ---------------- ARCHIVE DES CLICHÉS (phase de test) ----------------
@@ -9361,7 +9370,6 @@ const FLOU_AVANT_OBJECTIF_MS = 2500;
 let paliersObjectif = [];      // zooms à essayer, du plus large au plus serré
 let palierCourant = -1;        // -1 = on n'a encore rien changé
 let correctionObjectifActive = false;
-let flouDepuis = 0;
 let pisteObjectif = null;      // track courant, pour appliquer le zoom
 
 // Décide s'il y a lieu de tenter quoi que ce soit, et prépare les paliers.
@@ -9370,7 +9378,6 @@ let pisteObjectif = null;      // track courant, pour appliquer le zoom
 function preparerCorrectionObjectif(track, caps){
   paliersObjectif = [];
   palierCourant = -1;
-  flouDepuis = 0;
   pisteObjectif = track;
   correctionObjectifActive = false;
 
@@ -9385,44 +9392,10 @@ function preparerCorrectionObjectif(track, caps){
   correctionObjectifActive = paliersObjectif.length > 0;
 }
 
-// Appelée depuis la boucle de détection, uniquement quand une carte EST détectée : un flou
-// sans carte dans le cadre ne dit rien sur l'objectif.
-function surveillerNettete(){
-  // Même garde que dans indiceVisee, et pour une raison plus sérieuse qu'un message faux :
-  // sans mesure, `netBrut` vaut 0, donc « flou » en permanence — et cette fonction agit,
-  // elle change le zoom de la caméra palier par palier. Chaque changement force une remise
-  // au point : la carte devient réellement floue, se déplace, les coins bougent, la série
-  // de stabilité de la V2 repart à zéro. Toutes les 2,5 s. C'était l'essentiel du délai
-  // ressenti en auto — le correctif contre le flou fabriquait le flou.
-  if(!qualiteTimer){ flouDepuis = 0; return; }
-  if(!correctionObjectifActive || !pisteObjectif) return;
-  // La netteté doit être franchement mauvaise, pas seulement moyenne : on utilise le seuil
-  // du rouge de la jauge, celui-là même qu'aucune des 37 captures réussies du relevé réel
-  // n'atteignait.
-  if(qualite.netBrut >= NET_MIN){ flouDepuis = 0; return; }
-  if(!flouDepuis){ flouDepuis = Date.now(); return; }
-  if(Date.now() - flouDepuis < FLOU_AVANT_OBJECTIF_MS) return;
-
-  flouDepuis = 0;
-  palierCourant++;
-  if(palierCourant >= paliersObjectif.length){
-    // Tous les paliers essayés sans succès : le problème n'est pas l'objectif. On cesse
-    // d'insister plutôt que de faire tourner le zoom indéfiniment sous les doigts.
-    correctionObjectifActive = false;
-    setAimHint('Toujours flou — approche ou éloigne un peu la carte', true);
-    diagPush('err', {msg:'caméra: paliers d\'objectif épuisés, correction abandonnée'});
-    return;
-  }
-
-  const z = paliersObjectif[palierCourant];
-  pisteObjectif.applyConstraints({advanced:[{zoom:z}]}).then(()=>{
-    toast('🔍 Objectif ajusté (zoom ' + z.toFixed(1) + '×) — l\'ultra grand-angle ne fait pas la mise au point de près.');
-    diagPush('err', {msg:'caméra: correction automatique d\'objectif -> zoom ' + z.toFixed(2)});
-  }).catch(e=>{
-    diagPush('err', {msg:'caméra: correction d\'objectif refusée (' + e.message + ')'});
-    correctionObjectifActive = false;
-  });
-}
+// surveillerNettete() — la version déclenchée par le flou — a été retirée avec le reste du
+// scanner V1 (voir REPRISE.md, « unification sur la logique du banc ») : son déclencheur
+// dépendait de `qualiteTimer`, qui n'existe plus. `surveillerCadrageV2()` (ci-dessous,
+// déclenchée par l'aire) est l'unique voie restante vers ces mêmes paliers.
 
 // Une capture réussie VALIDE le réglage courant : c'est la preuve empirique qu'on cherchait,
 // bien plus fiable qu'une valeur choisie a priori. Mémorisée pour cet appareil, elle évite
@@ -9808,37 +9781,15 @@ function hashIllustration(carte){
 // précédent ET que la carte n'a jamais été confirmée absente entre-temps, la capture est
 // écartée même si l'image ne ressemblait pas assez à la précédente pour le premier test.
 let cardConfirmedAbsentSinceCapture = true;
-// Absence exigée SOUTENUE, et non validée sur une seule image. Retour terrain : 11 doublons
-// sur 36 captures (31 %), la plupart 1,6 à 4,7 s après l'originale, en retirant la carte.
-// Cause : pendant le retrait, la détection décroche brièvement — une image suffisait à
-// déclarer la carte « partie », si bien qu'une lecture tardive de la MÊME carte était
-// ensuite acceptée comme nouvelle. Exiger plusieurs images consécutives distingue un vrai
-// retrait d'un décrochage passager, sans rien coûter : c'est une condition, pas un délai.
-let absenceStreak = 0;
-const ABSENCE_STREAK_REQUISE = 4;
 
 // Identifiant de la dernière carte capturée, quel que soit le chemin qui l'a produite.
 let lastCaptureCardId = null;
 
-// ... mais compter des IMAGES était le mauvais étalon, et c'est ce qui a fait revenir les
-// doublons. La cadence de détection n'est pas fixe : elle dépend du coût de l'inférence et
-// de la charge du fil principal. Quatre images valaient environ 600 ms quand ce seuil a été
-// choisi ; après les corrections de performance, la détection tourne plus vite et les mêmes
-// quatre images ne représentent plus que quelques centaines de millisecondes — soit moins
-// qu'un décrochage passager. La carte était donc déclarée « partie » alors qu'elle était
-// toujours là, ce qui rouvrait la porte à une nouvelle capture.
-//
-// Relevé réel : la carte 41/165 capturée QUATRE fois en neuf secondes, sans jamais quitter
-// le champ.
-//
-// Exprimé en temps, le seuil veut dire ce qu'il prétend dire, et ne bougera plus avec les
-// performances de l'appareil ou du code. 700 ms : bien au-delà d'un décrochage de
-// détection, bien en deçà du temps qu'il faut pour échanger physiquement deux cartes.
-// 1200 ms et non 700 : un decrochage de detection dure quelques centaines de
-// millisecondes, alors que retirer une carte et en presenter une autre en demande au moins
-// le double. Le seuil doit tomber franchement entre les deux, pas les frôler tous les deux.
-const ABSENCE_MIN_MS = 1200;
-let absenceDepuis = 0;
+// absenceStreak/ABSENCE_STREAK_REQUISE/absenceDepuis/ABSENCE_MIN_MS — la preuve d'absence
+// du scanner V1 (quatre images ET 1,2 s de champ vide) sont parties avec lui. La V2 a la
+// sienne, bien plus rapide (~300 ms, voir v2AbsenceStreak/V2_ABSENCE_STREAK dans
+// detectLoop) : c'est justement l'écart entre les deux horloges qui faisait dérailler le
+// scanner unifié — voir REPRISE.md, « unification sur la logique du banc ».
 
 // Complète le signal ci-dessus : retour utilisateur — sur une carte tenue à la main,
 // parfaitement immobile en apparence, plusieurs captures du MÊME numéro se sont quand
@@ -9861,7 +9812,6 @@ let absenceDepuis = 0;
 // proche de cette référence indéfiniment, alors qu'un vrai retrait/repositionnement
 // s'en écarte réellement et durablement.
 let lastCaptureCorners = null;
-const SAME_CARD_MOVE_THRESHOLD = 0.12; // nettement au-dessus du tremblement de main normal
 
 // Seuils resserrés (retour terrain : "l'image me paraît nette mais ça ne capture pas").
 // Diagnostic du pipeline réel : ce n'est PAS l'OCR qui bloque ici (son coût n'intervient
@@ -10007,14 +9957,6 @@ function surveillerCadrageV2(corners){
     correctionObjectifActive = false;
   });
 }
-
-// Tolère un score de détection isolé, ponctuellement sous MIN_SCORE (occlusion
-// passagère, reflet, main qui repositionne la carte un instant), sans repartir de zéro
-// sur la comparaison de stabilité. Avant ce compteur, UN SEUL raté suffisait à effacer
-// prevCorners et à redémarrer toute la séquence — c'était la cause la plus concrète du
-// délai ressenti de 1-2s, bien plus que le seuil de tolérance lui-même.
-let lowScoreStreak = 0;
-const LOW_SCORE_RESET_STREAK = 3;
 
 function maxCornerShift(a, b){
   let m = 0;
@@ -10889,29 +10831,10 @@ function rendreJauges(){
   }
 }
 
-// Nomme la cause la plus probable au lieu d'un « Vise la carte » qui n'apprend rien.
-// Ordre volontaire : le reflet d'abord (c'est le défaut le moins évident à l'œil, et le
-// premier tueur de lecture sur les holos), puis l'obscurité, puis le flou.
-let conseilActif = false;
-function indiceVisee(base){
-  // Ne JAMAIS juger une image qu'on ne mesure plus. En V2 l'échantillonnage est coupé
-  // (demarrerQualite) et `qualite` reste à zéro : `net = 0` passait sous le seuil de flou
-  // à chaque appel, donc TOUS les messages de la V2 devenaient « Flou — éloigne un peu le
-  // téléphone », y compris sur une carte parfaitement nette. Pire qu'un message faux : il
-  // fait reculer le téléphone, la carte bouge, et la capture attend une stabilité qu'on
-  // vient soi-même de détruire. La garde porte sur la mesure, pas sur le mode — tout futur
-  // mode qui coupe l'échantillonnage est couvert d'office.
-  if(!qualiteTimer){ conseilActif = false; return base; }
-  conseilActif = true;
-  if(qualite.clip > CLIP_MAX) return 'Reflet — incline un peu la carte';
-  if(qualite.lumMoy && qualite.lumMoy < LUM_BONNE_MIN) return 'Trop sombre — rapproche une lampe';
-  // Seuil aligné sur le rouge de la jauge, et non plus sur une valeur indépendante : les
-  // deux disaient des choses différentes de la même image, ce qui n'a aucun sens pour
-  // l'utilisateur — barre verte et message « Flou » en même temps.
-  if(qualite.net < 0.4) return 'Flou — éloigne un peu le téléphone';
-  conseilActif = false;
-  return base;
-}
+// indiceVisee()/conseilActif ont suivi surveillerNettete() dans la retraite du scanner V1
+// (voir REPRISE.md) : ils ne faisaient plus que retourner leur argument tel quel depuis
+// que `qualiteTimer` ne s'active plus jamais. Les indices affichés en V2 sont maintenant
+// de simples chaînes, écrites directement là où elles se décident (detectLoop).
 
 function demarrerQualite(){
   arreterQualite();
@@ -10950,7 +10873,7 @@ function arreterQualite(){
 // La détection (~5-8/s, limitée par le coût de l'inférence ONNX) est trop lente pour
 // qu'afficher sa position brute à chaque résultat paraisse fluide à l'œil — le cadre
 // "saute" d'une position à l'autre. On sépare donc la CIBLE (dernière géométrie connue,
-// mise à jour par detectLoop/attemptRead via setOverlayTarget) de ce qui est RÉELLEMENT
+// mise à jour par detectLoop via setOverlayTarget) de ce qui est RÉELLEMENT
 // DESSINÉ (overlayCurrent*, glissé vers la cible à chaque frame d'écran). Le
 // rafraîchissement visuel tourne ainsi à la cadence de l'écran (60 Hz typiquement, plus
 // sur les appareils 90/120 Hz), indépendamment de la cadence réelle de détection : la
@@ -11157,39 +11080,25 @@ function hexHamming(a, b){
 }
 
 
-// ---------------- CONDITIONS DE DÉCLENCHEMENT ----------------
-// Une lecture coûte cher : 806 ms de recognize() en médiane sur téléphone, soit 82 % du
-// temps total d'une tentative. La lancer sur une image dont on sait déjà qu'elle ne peut
-// pas aboutir, c'est bloquer le worker OCR pendant presque une seconde — pendant laquelle
-// aucune bonne image ne peut être lue non plus. Refuser tôt est donc doublement gagnant.
-//
-// Les seuils sont ceux, mesurés, de la zone ROUGE des jauges : sur les 37 captures
-// réussies du relevé réel, AUCUNE n'y tombe. Le filtre ne peut donc pas faire rater une
-// carte qui serait passée, et il écarte 4 des 13 échecs constatés. C'est volontairement
-// prudent : un filtre trop zélé transformerait un scan qui marche en scan qui ne
-// déclenche jamais, ce qui est bien pire que quelques lectures perdues.
-function conditionsReunies(){
-  // Pas encore de mesure (tout premier instant après le démarrage caméra) : on laisse
-  // passer plutôt que de bloquer sur une absence d'information.
-  if(qualite.lumMoy == null || qualite.lumMoy === 0) return {ok: true};
-
-  if(qualite.netBrut < NET_MIN) return {ok: false, raison: 'flou'};
-  if(qualite.clip > CLIP_MAX) return {ok: false, raison: 'reflet'};
-  if(qualite.lumMoy < LUM_BASSE) return {ok: false, raison: 'sombre'};
-  return {ok: true};
-}
-
 // ---------------- BOUCLE DE SCAN ----------------
 // Deux boucles indépendantes, pas une seule chaîne séquentielle :
 //  - detectLoop() : tourne en continu (auto-replanifiée, pas un setInterval fixe), ne
 //    fait QUE la détection (rapide, dans son propre worker) et met à jour le cadre.
-//    Rien ici n'attend jamais l'OCR.
-//  - attemptRead() : déclenchée par detectLoop quand une carte est probable, mais SANS
-//    être attendue (fire-and-forget) — elle tourne en tâche de fond (redressement sur
-//    le fil principal, lecture OCR dans l'autre worker) pendant que detectLoop continue
+//    Rien ici n'attend jamais l'identification.
+//  - attemptReadV2() : déclenchée par detectLoop quand une carte est probable, mais SANS
+//    être attendue (fire-and-forget) — elle tourne en tâche de fond (redressement sur le
+//    fil principal, identification dans les Workers V2) pendant que detectLoop continue
 //    d'avancer et de rafraîchir le cadre à son propre rythme.
-// Avant cette séparation, le cadre restait figé pendant toute la durée d'une tentative
-// de lecture (jusqu'à ~2s) puisque tout passait par un seul aller-retour séquentiel.
+//
+// Reprise directe du banc (bench-v2.html, mode caméra) : c'était la même boucle, mesurée
+// et réglée là-bas, mais empêtrée ici dans une seconde version — le scanner V1 par
+// numéro — avec laquelle elle partageait des variables écrites à deux rythmes différents.
+// Le symptôme le plus concret : `cardConfirmedAbsentSinceCapture` restait à l'heure du V1
+// (quatre images ET 1,2 s de champ vide) alors que le verrou V2 lui-même, juste à côté,
+// se relâchait en ~300 ms — deux horloges pour un seul signal, lu par gererScanV2 et par
+// la fusion de doublons du lot. Une seule horloge maintenant. Le V1 (lecture du numéro)
+// est retiré de cette boucle ; il reste entier sur la branche git `archive/v1-numero` si
+// la reconnaissance visuelle s'avérait un jour ne pas suffire.
 async function detectLoop(){
   if(!detectRunning) return;
   const video = $('video');
@@ -11202,6 +11111,17 @@ async function detectLoop(){
     setOverlayTarget('attente', null);
     setAimHint('Mode manuel — appuie sur 📸');
     setTimeout(detectLoop, 200);
+    return;
+  }
+  // L'index d'empreintes (quelques Mo, téléchargé une fois puis mis en cache) peut prendre
+  // plusieurs secondes à charger sur une installation neuve. Sans cette attente, la boucle
+  // tenterait des identifications vouées à l'échec (SCAN_V2.identifierV2 rejette tant que
+  // l'index n'est pas prêt) — l'ancienne version retombait sur l'OCR du numéro pendant ce
+  // délai ; il n'y a plus d'OCR à qui retomber, donc on attend au lieu d'échouer en boucle.
+  if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
+    setOverlayTarget('attente', null);
+    setAimHint('Chargement de la reconnaissance visuelle…');
+    setTimeout(detectLoop, 300);
     return;
   }
 
@@ -11224,160 +11144,78 @@ async function detectLoop(){
       setOverlayTarget('attente', d.corners);
       // Rien vu depuis plusieurs secondes. Le banc de détection est formel : la cause de
       // très loin la plus fréquente est une carte TROP PETITE dans le cadre (voir
-      // AIRE_LIMITE_V2). « Vise la carte » envoyait corriger un cadrage qui n'était pas en
-      // cause, pendant que l'utilisateur voyait parfaitement sa carte à l'écran.
+      // AIRE_LIMITE_V2), pas un mauvais cadrage — d'où ce message plutôt que « Vise la
+      // carte », qui envoyait corriger un problème absent.
       if(!v2RienDepuis) v2RienDepuis = Date.now();
-      const trop = (window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2())
-                   && Date.now() - v2RienDepuis > 2500;
-      setAimHint(trop ? 'Rapproche la carte — elle doit remplir le cadre'
-                      : indiceVisee('Vise la carte'), trop ? true : conseilActif);
-      // Un raté isolé (reflet, main qui repositionne la carte un instant) ne doit pas
-      // effacer la progression déjà accumulée — seul un décrochage SOUTENU signifie
-      // vraiment que la carte est sortie du champ. Avant ce compteur, un seul coup dur
-      // remettait tout à zéro et forçait à réaccumuler deux détections concordantes
-      // depuis le début : la cause la plus concrète du délai ressenti de 1-2s.
-      lowScoreStreak++;
-      if(lowScoreStreak >= LOW_SCORE_RESET_STREAK) prevCorners = null;
-      // Absence SOUTENUE exigée (voir absenceStreak) : une seule image sous le seuil ne
-      // prouve pas que la carte est partie — pendant un retrait la détection décroche
-      // brièvement, et cette validation immédiate faisait ensuite accepter une lecture
-      // tardive de la même carte comme si c'était une nouvelle. Mesuré : 31 % des captures
-      // étaient des doublons.
-      absenceStreak++;
-      if(!absenceDepuis) absenceDepuis = Date.now();
-      // Verrou V2 : relâché bien plus tôt que le verrou V1 ci-dessous (voir v2CarteRetiree).
+      const trop = Date.now() - v2RienDepuis > 2500;
+      setAimHint(trop ? 'Rapproche la carte — elle doit remplir le cadre' : 'Vise la carte', trop);
+      prevCorners = null;
+      v2StableStreak = 0;
+      v2PresentDepuis = 0;
+      // Absence SOUTENUE exigée (deux images sans détection, ~300 ms) : un seul
+      // décrochage isolé (reflet, main qui repositionne la carte) ne prouve rien.
       if(++v2AbsenceStreak >= V2_ABSENCE_STREAK){
         v2CarteRetiree = true;
-        v2StableStreak = 0; v2DerniereCat = null;
-      }
-      v2PresentDepuis = 0;   // plus de carte : la patience repart de zéro
-      if(absenceStreak >= ABSENCE_STREAK_REQUISE && Date.now() - absenceDepuis >= ABSENCE_MIN_MS){
-        cardConfirmedAbsentSinceCapture = true;
-        v2StableStreak = 0; v2DerniereCat = null;   // carte partie : le verrou V2 saute
-        // La carte est partie : les échecs accumulés concernaient CELLE-LÀ, ils ne doivent
-        // pas se reporter sur la suivante et déclencher un secours immédiat sur une carte
-        // qui n'a même pas encore eu sa chance.
-        echecsConsecutifs = 0;
-        blocageDepuis = 0;
-        secoursDejaFait = false;
+        v2DerniereCat = null;
+        cardConfirmedAbsentSinceCapture = true;   // lu par gererScanV2 et la fusion de lot
       }
     } else {
-      lowScoreStreak = 0;
-      absenceStreak = 0;
-      absenceDepuis = 0;
       v2AbsenceStreak = 0;
       v2RienDepuis = 0;
-      // Une carte EST là : si elle reste floue (V1) ou trop petite dans le cadre (V2),
-      // c'est le moment de soupçonner l'objectif. Les deux partagent la même échelle de
-      // paliers ; chacune ne fait rien dans le mode de l'autre (gardes internes).
-      surveillerNettete();
       surveillerCadrageV2(d.corners);
       setOverlayTarget('lecture', d.corners);
-      // Carte localisée : on oriente la mise au point vers la bande du numéro plutôt que
-      // de laisser l'autofocus viser le centre du cadre (voir viserMiseAuPoint).
+      // Carte localisée : on oriente la mise au point vers l'illustration (voir
+      // viserMiseAuPoint) plutôt que de laisser l'autofocus viser le centre du cadre.
       viserMiseAuPoint(d.corners);
 
-      // Le verrou de stabilité (exiger deux détections consécutives concordantes avant
-      // de tenter une lecture) a été RETIRÉ comme condition de déclenchement. Le vrai
-      // filet de sécurité contre le flou est le contrôle de netteté fait APRÈS coup sur
-      // l'image réellement capturée (MIN_SHARPNESS) — pas cette comparaison de position,
-      // qui ne faisait que retarder la toute première tentative. Un échec de netteté (ou
-      // un numéro non trouvé) ne coûte plus que quelques centaines de ms maintenant que
-      // le repli sur la bande large a été retiré (voir le worker) : autant tenter tôt,
-      // quitte à échouer vite, plutôt que d'attendre un cadrage jugé "parfait" avant
-      // d'essayer. `moved` reste calculé pour l'indice visuel, plus pour bloquer.
       const moved = prevCorners ? maxCornerShift(prevCorners, d.corners) : Infinity;
       prevCorners = d.corners;
-      if(moved > MAX_CORNER_SHIFT){
-        // Message à deux paliers, purement informatif désormais : un vrai signal de
-        // proximité basé sur l'écart mesuré, pas une simple animation — mais qui ne
-        // retient plus la tentative de lecture ci-dessous.
-        setAimHint(indiceVisee(moved <= MAX_CORNER_SHIFT*2.5 ? 'Presque… reste immobile' : 'Stabilise la carte'), conseilActif);
-      }
 
       const now = Date.now();
       if(!readInFlight
          && now - lastReadAttemptAt >= MIN_READ_INTERVAL_MS
          && now - lastCaptureAt >= AIM_COOLDOWN_MS){
 
-        // ── Scanner V2 : déclenchement propre. ORB tolère un flou léger, donc AUCUNE
-        //    dépendance aux jauges (netteté/lumière/cadrage) — c'est ça, le « tenir la
-        //    carte 2 s ». On EXIGE juste : carte présente (score franc) et immobile.
-        if(window.SCAN_V2 && SCAN_V2.actifV2()){
-          // Stabilité RÉELLE : `moved` est l'écart avec l'image PRÉCÉDENTE (calculé plus
-          // haut, avant que prevCorners ne soit réécrit). On exige deux images de suite
-          // quasi immobiles avant de déclencher.
-          // Patience : plus la carte reste en cadre, moins on est exigeant (voir
-          // V2_PATIENCE_DOUCE). Les seuils de départ sont inchangés — une carte posée nette
-          // et immobile part toujours aussi vite ; c'est seulement la main qui hésite ou qui
-          // tremble qui cesse d'être punie.
-          if(!v2PresentDepuis) v2PresentDepuis = now;
-          const tenue = now - v2PresentDepuis;
-          // UNE SEULE image immobile suffit, mais elle doit l'être franchement.
-          // Banc de déclenchement, 30 présentations simulées (posée lentement, posée vite,
-          // main tremblante, arrivée de côté, tenue loin) : exiger DEUX images concordantes
-          // coûtait 768 ms contre 576, pour exactement la même fiabilité — 100 % de
-          // captures identifiables dans les deux cas. La deuxième image ne prouvait rien
-          // que la première n'ait déjà prouvé, elle faisait seulement attendre une image de
-          // plus. En revanche ne rien exiger du tout s'effondre à 25 % d'identifiables :
-          // on capture alors la carte en vol, floue. Le seuil est resserré (0,030 au lieu
-          // de 0,049) — gratuit en temps d'après le banc, et c'est lui qui remplace la
-          // seconde image comme garde-fou contre une carte simplement en transit.
-          const seuilBouge = tenue >= V2_PATIENCE_FRANCHE ? Infinity
-                           : tenue >= V2_PATIENCE_DOUCE   ? V2_BOUGE_BASE * 3
-                           : V2_BOUGE_BASE;
-          const seuilScore = tenue >= V2_PATIENCE_DOUCE ? MIN_SCORE : 0.5;
+        // Patience : plus la carte reste en cadre, moins on est exigeant. Les seuils de
+        // départ sont inchangés — une carte posée nette et immobile part toujours aussi
+        // vite ; c'est la main qui hésite ou qui tremble qui cesse d'être punie.
+        if(!v2PresentDepuis) v2PresentDepuis = now;
+        const tenue = now - v2PresentDepuis;
+        // UNE SEULE image immobile suffit, mais elle doit l'être franchement (banc de
+        // déclenchement, 30 présentations simulées) : exiger deux images concordantes
+        // coûtait 768 ms contre 576 pour la même fiabilité — la seconde ne prouvait rien
+        // que la première n'ait déjà prouvé. Le seuil resserré (0,030) remplace cette
+        // deuxième image comme garde-fou contre une carte simplement en transit.
+        const seuilBouge = tenue >= V2_PATIENCE_FRANCHE ? Infinity
+                         : tenue >= V2_PATIENCE_DOUCE   ? V2_BOUGE_BASE * 3
+                         : V2_BOUGE_BASE;
+        const seuilScore = tenue >= V2_PATIENCE_DOUCE ? MIN_SCORE : 0.5;
 
-          if(moved < seuilBouge) v2StableStreak++;
-          else v2StableStreak = 0;
-          const stable = v2StableStreak >= 1;
+        if(moved < seuilBouge) v2StableStreak++;
+        else v2StableStreak = 0;
+        const stable = v2StableStreak >= 1;
 
-          // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
-          // que la carte a été retirée (v2AbsenceStreak, ~300 ms de champ vide) OU qu'elle a
-          // franchement bougé. La tolérance ×8 essayée après les doubles du 31/08 ne les
-          // empêchait pas — ils survenaient sur des cartes en transit, donc hors tolérance —
-          // et bloquait en revanche la carte SUIVANTE posée au même endroit du cadre guide.
-          const tol = v2DerniereCat === 'sure' ? 4 : 2.5;
-          const dejaLue = !v2CarteRetiree && lastCaptureCorners
-            && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * tol;
-          if(dejaLue){
-            setAimHint('✓ lue — retire la carte', conseilActif);
-          }else if(d.score >= seuilScore && stable){
-            blocageDepuis = 0;
-            v2PresentDepuis = 0;
-            v2StableStreak = 0;
-            lastReadAttemptAt = now;
-            attemptRead(d.corners, d.score);
-          }else{
-            const aireV2 = airePartCarte(d.corners);
-            setAimHint(aireV2 < AIRE_LIMITE_V2 ? 'Rapproche la carte — elle est trop petite dans le cadre'
-                       : d.score < seuilScore ? 'Approche la carte'
-                       : stable ? 'Prêt'
-                       : tenue >= V2_PATIENCE_DOUCE ? 'Tiens encore un instant…' : 'Stabilise', conseilActif);
-          }
-        } else {
-        // Dernier verrou avant de mobiliser le worker OCR pour ~800 ms : si l'image est
-        // dans le rouge, on n'essaie même pas. L'utilisateur voit pourquoi (l'indice
-        // nomme la cause) au lieu de subir une tentative qui échouera de toute façon.
-        const cond = conditionsReunies();
-        if(cond.ok){
-          blocageDepuis = 0;
+        // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
+        // que la carte a été retirée (v2AbsenceStreak) OU qu'elle a franchement bougé —
+        // ça permet d'enchaîner en faisant glisser une carte hors du cadre pendant que la
+        // suivante y entre, sans jamais montrer de champ vide à la caméra.
+        const tol = v2DerniereCat === 'sure' ? 4 : 2.5;
+        const dejaLue = !v2CarteRetiree && lastCaptureCorners
+          && maxCornerShift(lastCaptureCorners, d.corners) < MAX_CORNER_SHIFT * tol;
+        if(dejaLue){
+          setAimHint('✓ lue — retire la carte', true);
+        }else if(d.score >= seuilScore && stable){
+          v2PresentDepuis = 0;
+          v2StableStreak = 0;
           lastReadAttemptAt = now;
-          attemptRead(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
-        } else {
-          setAimHint(indiceVisee('Ajuste la prise de vue'), conseilActif);
-          if(!blocageDepuis){
-            blocageDepuis = now;
-            diagPush('try', {ok:false, hint:'conditions non réunies (' + cond.raison + ')', score: d.score});
-          } else if(now - blocageDepuis >= SECOURS_BLOCAGE_MS){
-            // Quatre secondes à refuser la même carte : le filtre a beau avoir raison sur
-            // la qualité, il a tort de laisser l'utilisateur sans issue. On capture, il
-            // tranchera dans « À vérifier ».
-            blocageDepuis = 0;
-            tenterSecours(null, 'blocage ' + cond.raison);
-          }
+          attemptReadV2(d.corners, d.score); // pas d'await : ne doit jamais ralentir la détection
+        }else{
+          const aireV2 = airePartCarte(d.corners);
+          setAimHint(aireV2 < AIRE_LIMITE_V2 ? 'Rapproche la carte — elle est trop petite dans le cadre'
+                     : d.score < seuilScore ? 'Approche la carte'
+                     : stable ? 'Prêt'
+                     : tenue >= V2_PATIENCE_DOUCE ? 'Tiens encore un instant…' : 'Stabilise', true);
         }
-        } // fin du else (mode OCR classique)
       }
     }
   }catch(e){
@@ -11388,560 +11226,43 @@ async function detectLoop(){
   setTimeout(detectLoop, Math.max(0, DETECT_MIN_DELAY_MS - elapsed));
 }
 
-// Redressement (fil principal) + lecture OCR (worker OCR) d'une détection prometteuse.
+// Redressement (fil principal) puis identification V2, sur une détection prometteuse.
 // Appelée sans await par detectLoop : toute erreur doit donc être interceptée ICI, une
 // exception qui s'en échapperait deviendrait un rejet de promesse non attrapé.
-
-// ---------------- DOUBLE LECTURE : GARDER L'IMAGE LA PLUS NETTE ----------------
-// Le flou de bougé est la cause dominante des lectures ratées : l'image est prise à
-// l'instant où le détecteur valide la géométrie, sans aucune considération pour la netteté,
-// et il suffit d'un micro-tremblement à ce moment-là pour perdre la carte — alors que
-// l'image d'après est souvent bonne. Jusqu'ici, cet échec coûtait un cycle complet
-// (~400 ms) avant de pouvoir réessayer.
 //
-// On prend donc DEUX images consécutives et on ne garde que la plus nette. Le surcoût est
-// tenu bas par deux choix :
-//  - l'attente utilise requestVideoFrameCallback, qui rend la main dès que la caméra a
-//    décodé l'image suivante — soit le minimum absolu (~1 intervalle, ~33 ms à 30 i/s), là
-//    où un setTimeout fixe attendrait un délai deviné, forcément trop long ou trop court ;
-//  - la mesure de netteté se fait sur une vignette de 128 px de large limitée à la carte,
-//    soit quelques milliers de pixels : ~1 ms, à comparer aux ~1700 ms d'un recognize().
-// Le pipeline lourd (redressement, worker, OCR) ne tourne ensuite qu'UNE fois, sur
-// l'image retenue.
-let toileNettete = null;
-
-// Variance du laplacien sur une vignette en niveaux de gris : même mesure que celle du
-// worker, en beaucoup plus petit. On ne cherche pas une valeur absolue comparable, juste à
-// départager deux images de la même scène prise à 33 ms d'écart — un simple ordre suffit.
-function netteteRapide(source, corners, vw, vh){
-  if(!toileNettete){
-    toileNettete = document.createElement('canvas');
-    toileNettete.width = 128; toileNettete.height = 128;
-  }
-  const ctx = toileNettete.getContext('2d', {willReadFrequently:true});
-  // Restreint à la boîte englobante de la carte : mesurer sur toute l'image ferait
-  // dépendre le résultat du décor (un fond de bureau texturé donnerait un score élevé
-  // même avec une carte parfaitement floue).
-  const xs = [corners.tl[0], corners.tr[0], corners.br[0], corners.bl[0]];
-  const ys = [corners.tl[1], corners.tr[1], corners.br[1], corners.bl[1]];
-  const x0 = Math.max(0, Math.min(...xs) * vw), x1 = Math.min(vw, Math.max(...xs) * vw);
-  const y0 = Math.max(0, Math.min(...ys) * vh), y1 = Math.min(vh, Math.max(...ys) * vh);
-  const w = x1 - x0, h = y1 - y0;
-  if(w < 8 || h < 8) return 0;
-  ctx.drawImage(source, x0, y0, w, h, 0, 0, 128, 128);
-  const d = ctx.getImageData(0, 0, 128, 128).data;
-
-  const gris = new Float32Array(128 * 128);
-  for(let i = 0; i < gris.length; i++){
-    gris[i] = 0.299 * d[i*4] + 0.587 * d[i*4+1] + 0.114 * d[i*4+2];
-  }
-  let somme = 0, sommeCarres = 0, n = 0;
-  for(let y = 1; y < 127; y++){
-    for(let x = 1; x < 127; x++){
-      const i = y * 128 + x;
-      const lap = 4*gris[i] - gris[i-1] - gris[i+1] - gris[i-128] - gris[i+128];
-      somme += lap; sommeCarres += lap * lap; n++;
-    }
-  }
-  const moy = somme / n;
-  return sommeCarres / n - moy * moy;
-}
-
-// Rend la main dès que la caméra a livré une nouvelle image. Le plafond de 60 ms évite de
-// bloquer indéfiniment si le flux se fige (onglet en arrière-plan, caméra occupée) : dans
-// ce cas on repart avec la seule image déjà en main plutôt que de faire attendre.
-function prochaineImageVideo(video){
-  return new Promise(resolve=>{
-    let fini = false;
-    const stop = (ok)=>{ if(!fini){ fini = true; resolve(ok); } };
-    const secours = setTimeout(()=> stop(false), 60);
-    if(typeof video.requestVideoFrameCallback === 'function'){
-      video.requestVideoFrameCallback(()=>{ clearTimeout(secours); stop(true); });
-    } else {
-      // Repli pour les navigateurs sans rVFC : un délai d'une image à 30 i/s.
-      setTimeout(()=>{ clearTimeout(secours); stop(true); }, 34);
-    }
-  });
-}
-
-// Renvoie la plus nette de deux images consécutives, déjà redimensionnées.
-async function meilleureDeDeuxImages(video, vw, vh, corners){
-  const prise = ()=> createImageBitmap(video, {resizeWidth: vw, resizeHeight: vh, resizeQuality:'medium'});
-  const a = await prise();
-  const na = netteteRapide(a, corners, vw, vh);
-
-  const eu = await prochaineImageVideo(video);
-  if(!eu || !video.videoWidth) return {bmp: a, nettete: na, choisie: 'A', ecart: 0};
-
-  const b = await prise();
-  const nb = netteteRapide(b, corners, vw, vh);
-  if(nb > na){ a.close(); return {bmp: b, nettete: nb, choisie: 'B', ecart: +(nb - na).toFixed(1)}; }
-  b.close();
-  return {bmp: a, nettete: na, choisie: 'A', ecart: +(na - nb).toFixed(1)};
-}
-
-async function attemptRead(corners, score){
+// Reprise directe de bench-v2.html (fonction capturer → redresserVideo). L'ancienne
+// version (attemptRead) redressait EN LIGNE, avec son propre pré-filtre de forme, sa
+// propre marge, sa propre gestion de la rotation — un troisième endroit qui refaisait ce
+// que redresserAvecCoins fait déjà pour la prise manuelle et l'import de photos. Une seule
+// chaîne de redressement désormais, utilisée par les trois entrées.
+//
+// Le double filtrage anti-doublon (empreinte visuelle + numéro/dénominateur du numéro lu,
+// ~250 lignes) disparaît avec le reste du V1 : gererScanV2 a le sien, fondé sur la carte
+// réellement identifiée plutôt que sur un numéro OCR bruité — comparer l'identifiant à
+// l'identifiant, pas une approximation de l'identifiant à une autre approximation. Le
+// V1 (lecture du numéro) reste entier sur la branche git `archive/v1-numero`.
+async function attemptReadV2(corners, score){
   if(readInFlight) return;
   readInFlight = true;
   const t0 = performance.now();
-  // Déclarées au niveau de la fonction pour rester lisibles depuis le `finally`, qui fait
-  // le bilan de la tentative : c'est le seul endroit traversé par TOUS les chemins de
-  // sortie, succès comme échecs, présents et à venir.
-  let captureFaite = false;
-  let redressement = null;
-  // Trois issues possibles, et non deux. Un refus délibéré (carte déjà capturée) et une
-  // lecture ratée sortent tous deux par un return, mais ne veulent pas dire la même chose :
-  // le premier signifie que la carte est traitée, le second qu'elle ne l'est pas.
-  let refusVolontaire = false;
-  // Vrai seulement à partir du moment où une vraie tentative commence. Les sorties
-  // anticipées (flux pas encore prêt) ne sont pas des échecs de lecture non plus.
-  let tentativeReelle = false;
   try{
     const video = $('video');
     if(!video || !video.videoWidth) return;
-    tentativeReelle = true;
-
-    // Pré-filtre de forme, bon marché, AVANT le redressement complet (qui coûte
-    // ~100ms de calcul sur le fil principal — la seule partie du pipeline qui ne
-    // tourne pas dans un Worker). Estimation grossière du ratio directement à partir
-    // des coins bruts déjà en main (aucun coût de calcul supplémentaire), pour écarter
-    // tout de suite une forme manifestement incompatible sans attendre l'extraction
-    // pour s'en apercevoir. Constaté sur diagnostic réel : depuis le retrait du verrou
-    // de stabilité (§4.22, pour capturer plus vite), "forme incompatible" représentait
-    // à lui seul 29 tentatives sur 60 — chacune occupant readInFlight ~400ms pour rien,
-    // retardant d'autant la tentative suivante. Tolérance volontairement plus large
-    // (0.35 contre 0.25) que le filtre précis ci-dessous : cette estimation ne corrige
-    // pas la perspective, un faux rejet ici coûterait une vraie carte ratée — seuls les
-    // cas clairement hors sujet doivent s'arrêter là, les cas limites vont jusqu'au
-    // filtre précis, inchangé, après redressement.
-    {
-      const vw0 = video.videoWidth, vh0 = video.videoHeight;
-      const toPx = (c) => [c[0]*vw0, c[1]*vh0];
-      const [rtl, rtr, rbr, rbl] = [toPx(corners.tl), toPx(corners.tr), toPx(corners.br), toPx(corners.bl)];
-      const dist = (a,b) => Math.hypot(a[0]-b[0], a[1]-b[1]);
-      const estW = (dist(rtl,rtr) + dist(rbl,rbr)) / 2;
-      const estH = (dist(rtl,rbl) + dist(rtr,rbr)) / 2;
-      const estRatio = estH / (estW || 1);
-      const roughInv = 1/CARD_RATIO;
-      const roughlyPortrait  = Math.abs(estRatio - CARD_RATIO) / CARD_RATIO <= 0.35;
-      const roughlyLandscape = Math.abs(estRatio - roughInv) / roughInv <= 0.35;
-      // Coins collés au bord de l'image : le quadrilatère détecté n'est pas la carte mais
-      // ce qu'il en reste dans le champ. C'est la forme tronquée qui produit ces ratios
-      // aberrants, pas un chevauchement.
-      const MARGE_BORD = 0.015;
-      const auBord = [corners.tl, corners.tr, corners.br, corners.bl]
-        .filter(c => c[0] <= MARGE_BORD || c[0] >= 1 - MARGE_BORD
-                  || c[1] <= MARGE_BORD || c[1] >= 1 - MARGE_BORD).length;
-      if(!roughlyPortrait && !roughlyLandscape){
-        // Cause fréquente, signalée par un retour utilisateur : en empilant les cartes
-        // déjà scannées, le bord de la carte du dessous peut dépasser et se glisser
-        // dans le quadrilatère détecté — le modèle de détection ne peut pas distinguer
-        // ça d'une vraie carte biscornue. On ne peut pas apprendre à ce modèle (pas le
-        // nôtre) à démêler deux cartes qui se chevauchent ; le filtre de forme fait
-        // déjà ce qu'il faut en rejetant plutôt que de risquer une lecture mélangeant
-        // les deux — la seule chose à corriger ici est le silence : dire à
-        // l'utilisateur ce qui se passe probablement plutôt que de ne rien afficher.
-        // Trois causes distinctes, trois gestes différents à demander. Le motif est
-        // consigné pour pouvoir vérifier, au prochain relevé, laquelle domine réellement
-        // plutôt que de le déduire des ratios après coup.
-        let motif, conseil;
-        if(auBord >= 2){
-          motif = 'déborde';
-          conseil = 'Éloigne le téléphone — la carte dépasse du cadre';
-        } else if(estRatio < 0.45 || estRatio > 3){
-          motif = 'dégénéré';
-          conseil = 'Pose la carte bien à plat, sur un fond uni';
-        } else {
-          motif = 'chevauchement';
-          conseil = 'Écarte les autres cartes du cadre';
-        }
-        setAimHint(conseil, true);
-        diagPush('try', {ok:false, hint:'forme incompatible (pré-filtre)', score,
-                         ratio:+estRatio.toFixed(2), motif, auBord,
-                         ocrMs:Math.round(performance.now()-t0)});
-        return;
-      }
-    }
-
-    const scanic = await getScanic();
-    // Chronométrage détaillé (voir §4.23) : tExtract couvre le redimensionnement natif +
-    // le redressement par perspective (fil principal, coût proportionnel à ce qu'on lui
-    // donne) — la seule partie de tout le pipeline qui ne tourne PAS dans un Worker,
-    // donc celle qui peut concrètement geler l'interface si elle traîne.
-    const tExtract0 = performance.now();
-    // Redimensionnement natif AVANT toute copie sur canvas : extractDocument tourne sur le
-    // fil principal, donc son coût est proportionnel à ce qu'on lui donne — inutile de lui
-    // faire mâcher la pleine résolution capteur pour au final ne garder qu'une carte réduite
-    // à 600px de large côté worker (voir EXTRACT_LONG_EDGE plus haut).
-    const extractScale = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
-    const vw = Math.max(1, Math.round(video.videoWidth * extractScale));
-    const vh = Math.max(1, Math.round(video.videoHeight * extractScale));
-    const tChoix0 = performance.now();
-    // Départager deux images sur leur netteté sert à lire un NUMÉRO : quelques pixels de
-    // haut, où le flou est rédhibitoire. L'ORB, lui, travaille sur toute l'illustration et
-    // encaisse un flou léger. En V2 on garde donc la première image venue : attendre la
-    // trame suivante puis relire deux fois les pixels sur le fil principal ne rachetait
-    // rien, et retardait la seule chose qui compte, l'identification.
-    const v2Actif = !!(window.SCAN_V2 && SCAN_V2.actifV2 && SCAN_V2.actifV2());
-    const choix = v2Actif
-      ? { bmp: await createImageBitmap(video, {resizeWidth: vw, resizeHeight: vh, resizeQuality:'medium'}), nettete: 0, choisie: 'V2', ecart: 0 }
-      : await meilleureDeDeuxImages(video, vw, vh, corners);
-    const tChoix = Math.round(performance.now() - tChoix0);
-    const frame = document.createElement('canvas');
-    frame.width = vw; frame.height = vh;
-    frame.getContext('2d').drawImage(choix.bmp, 0, 0);
-    choix.bmp.close();
-    // Marge de sécurité autour du quadrilatère détecté, AVANT redressement (voir §4.36).
-    // Diagnostic : sur les échecs « numéro illisible », le texte OCR contient la ligne
-    // Faiblesse/Résistance ET celle de l'illustrateur ("Hus,Scay" = "Illus. Sacay"),
-    // mais JAMAIS le numéro qui est juste en dessous — la carte redressée est donc
-    // rognée par le bas, là précisément où se trouve le numéro. Cohérent avec un
-    // détecteur qui cadre le visuel de la carte plutôt que son bord physique.
-    // Élargir les coins depuis le centre garantit d'inclure le bord réel, quitte à
-    // ramener un peu de fond autour (sans conséquence : la bande de lecture est
-    // exprimée en fractions, et 4 % ne déplacent le numéro que de ~2 points — il
-    // reste largement dans la bande 84-99 %). Homothétie pure : le ratio est préservé,
-    // les filtres de forme en aval sont donc inchangés.
-    const EXTRACT_MARGIN = 0.04;
-    const cx = (corners.tl[0] + corners.tr[0] + corners.br[0] + corners.bl[0]) / 4;
-    const cy = (corners.tl[1] + corners.tr[1] + corners.br[1] + corners.bl[1]) / 4;
-    const grown = (c) => ({
-      x: (cx + (c[0] - cx) * (1 + EXTRACT_MARGIN)) * vw,
-      y: (cy + (c[1] - cy) * (1 + EXTRACT_MARGIN)) * vh
-    });
-    const cornersPx = {
-      topLeft:     grown(corners.tl),
-      topRight:    grown(corners.tr),
-      bottomRight: grown(corners.br),
-      bottomLeft:  grown(corners.bl)
-    };
-    const extracted = await scanic.extractDocument(frame, cornersPx, {output:'canvas'});
-    const tExtract = Math.round(performance.now() - tExtract0);
-    if(!extracted.success || !extracted.output){
-      diagPush('try', {ok:false, hint:'redressement échoué', score, ocrMs:Math.round(performance.now()-t0), tExtract});
+    const sourceForRead = await redresserAvecCoins(video, corners, video.videoWidth, video.videoHeight);
+    if(!sourceForRead){
+      diagPush('try', {ok:false, hint:'redressement échoué', score, ms:Math.round(performance.now()-t0)});
       return;
     }
-
-    // Filtre de forme : un quadrilatère détecté dont le ratio ne ressemble à une carte
-    // Pokémon NI à l'endroit NI de côté est un faux positif (livre, écran, table…), pas
-    // une carte floue. scanic étiquette les coins par position dans l'image (le plus
-    // proche du coin haut-gauche de la PHOTO), pas selon l'orientation imprimée de la
-    // carte : si la carte est tenue légèrement tournée, la sortie redressée peut être en
-    // "paysage" (ratio proche de l'inverse) sans que ce soit une fausse détection —
-    // constaté sur diagnostic réel (ratios 0.61/0.68/0.73, tous ≈ 63/88).
-    const outRatio = extracted.output.height / extracted.output.width;
-    const INV_CARD_RATIO = 1/CARD_RATIO;
-    const isPortrait  = Math.abs(outRatio - CARD_RATIO)     / CARD_RATIO     <= 0.25;
-    const isLandscape = Math.abs(outRatio - INV_CARD_RATIO) / INV_CARD_RATIO <= 0.25;
-    if(!isPortrait && !isLandscape){
-      // Même cause probable qu'au pré-filtre ci-dessus (cartes empilées, bord de la
-      // précédente qui dépasse) — voir ce commentaire pour le détail.
-      setAimHint('Écarte les autres cartes du cadre', true);
-      diagPush('try', {ok:false, hint:'forme incompatible', score, ratio:+outRatio.toFixed(2), ocrMs:Math.round(performance.now()-t0)});
-      return;
-    }
-
-    // Redressée "de côté" : on ne peut pas savoir dans quel sens (le détecteur ne connaît
-    // pas l'orientation imprimée), donc on tranche arbitrairement. Une carte réellement
-    // à l'envers restera "illisible" ensuite — ni pire ni mieux qu'aujourd'hui — mais
-    // celles tombées dans le bon sens deviennent lisibles, ce qui ne l'étaient pas avant
-    // (rejetées en bloc comme "forme incompatible").
-    let sourceForRead = extracted.output;
-    // Conservé au niveau de la fonction : c'est cette image, déjà redressée et payée, que
-    // la capture de secours réutilise au lieu de la jeter.
-    redressement = sourceForRead;
-    const rotated = isLandscape && !isPortrait; // pour diagnostic : sens de rotation deviné, pas garanti correct
-    if(rotated){
-      const src = extracted.output;
-      const rot = document.createElement('canvas');
-      rot.width = src.height; rot.height = src.width;
-      const rctx = rot.getContext('2d');
-      rctx.translate(rot.width/2, rot.height/2);
-      rctx.rotate(-Math.PI/2);
-      rctx.drawImage(src, -src.width/2, -src.height/2);
-      sourceForRead = rot;
-      redressement = rot;
-    }
-
-    // ─────────────────────────── SCANNER V2 (bêta) ───────────────────────────
-    // Identification par l'illustration (DINOv2 → ORB → OCR de départage). Quand la V2 est
-    // active, elle gère TOUT — succès comme échec. Pas de repli silencieux sur la lecture
-    // du numéro : l'utilisateur a choisi la V2, un message « numéro non lu » sous une
-    // pastille verte n'aurait aucun sens (voir gererScanV2, branche rebut).
-    if(window.SCAN_V2 && SCAN_V2.actifV2()){
-      const rV2 = await gererScanV2(sourceForRead, corners, score, t0).catch(e => { console.warn('V2', e); return 'erreur'; });
-      if(rV2 === 'rejet-doublon') return;
-      captureFaite = (rV2 === 'traite' || rV2 === 'rebut');
-      return;   // en V2, on ne retombe jamais sur l'OCR
-    }
-
-    // Raccourci visuel : compare la carte redressée aux cartes déjà confirmées cette
-    // session (voir sessionCardHashes) AVANT d'envoyer quoi que ce soit au worker OCR.
-    // Même algorithme (dHash 9x8, gradient horizontal) que resolveCardByVisualMatch,
-    // appliqué ici en amont plutôt qu'en repli de dernier recours. Coût : quelques ms
-    // (comparaison de bits), sans commune mesure avec recognize() (~1,7s).
-    // Empreinte de la carte redressée, calculée ICI (fil principal, ~1 ms) et non reprise
-    // du worker : c'est exactement la même fonction qui servira à mémoriser la carte une
-    // fois identifiée (voir registerSessionCardHash), donc les deux côtés de la
-    // comparaison passent par le même chemin de calcul — condition nécessaire pour que
-    // les distances mesurées veuillent dire quelque chose.
-    let liveHash = null;
-    try{
-      liveHash = hashIllustration(sourceForRead);
-    }catch(e){ /* pas de raccourci possible cette fois, l'OCR normal prend le relais */ }
-
-    let hashShortcut = null, bestHashDist = null, hashViaMemoire = false;
-    if(liveHash != null && (sessionCardHashes.length || hashesPersistes.length)){
-      let best = null, bestDist = Infinity, bestPersiste = false;
-      for(const c of sessionCardHashes){
-        const dist = hammingDistance(liveHash, c.hash);
-        if(dist < bestDist){ bestDist = dist; best = c; bestPersiste = false; }
-      }
-      // Empreintes des sessions précédentes, au même seuil : une photo prise hier par le
-      // même appareil vaut exactement celle prise il y a deux minutes.
-      for(const h of hashesPersistes){
-        const dist = hammingDistance(liveHash, h.hash);
-        if(dist < bestDist){ bestDist = dist; best = h; bestPersiste = true; }
-      }
-      bestHashDist = bestDist; // journalisé même sans déclenchement : c'est ce qui permettra de calibrer le seuil
-      if(best && bestDist <= SAME_PHOTO_MATCH_DIST){
-        // Une entrée mémorisée ne porte que l'identifiant : la fiche vient du cache local
-        // (elle y est forcément, la carte ayant déjà été identifiée une fois).
-        const carte = bestPersiste ? (await idbGet('cardDetail', best.cardId))?.detail : best.card;
-        if(carte){
-          hashShortcut = {card: carte, distance: bestDist};
-          hashViaMemoire = bestPersiste;
-        }
-      }
-    }
-
-    // Même logique de redimensionnement précoce : le worker redessine de toute façon la
-    // carte reçue sur un canvas de cardW=600 de large (voir plus bas), donc transférer la
-    // sortie d'extractDocument en pleine résolution ne servait qu'à alourdir le postMessage
-    // et à refaire un travail de mise à l'échelle déjà inutile.
-    const tCardBmp0 = performance.now();
-    const readTargetW = Math.min(sourceForRead.width, 700); // 600 + marge pour la qualité du resize
-    const readTargetH = Math.round(sourceForRead.height * (readTargetW / sourceForRead.width));
-    const cardBmp = await createImageBitmap(sourceForRead, {resizeWidth: readTargetW, resizeHeight: readTargetH, resizeQuality:'medium'});
-    const tCardBmp = Math.round(performance.now() - tCardBmp0);
-    const tWorker0 = performance.now();
-    // skipRecognize : la géométrie/netteté restent vérifiées normalement dans le worker
-    // (sécurité inchangée), seul l'appel recognize() — le vrai coût — est sauté quand le
-    // raccourci visuel ci-dessus a trouvé une correspondance nette.
-    const r = await workerCall('read', {bitmap:cardBmp, cardW:600, skipRecognize: !!hashShortcut}, [cardBmp]);
-    const tWorker = Math.round(performance.now() - tWorker0); // aller-retour worker complet (transfert inclus)
-    const ms = Math.round(performance.now()-t0);
-    // Détail des phases, pour comprendre OÙ passe réellement le temps plutôt que de
-    // deviner à partir d'un seul total (voir §4.23) :
-    //  - tExtract    : redressement par perspective (fil principal, hors Worker)
-    //  - tCardBmp    : redimensionnement natif avant transfert au Worker
-    //  - tWorker     : aller-retour Worker complet (transfert + tout ce qui suit)
-    //  - r.tPrep     : dessin/découpe de la bande dans le Worker
-    //  - r.tSharp    : calcul de netteté dans le Worker
-    //  - r.tEnsure   : ré-initialisation du service OCR (0 sauf 1er appel jamais réussi)
-    //  - r.tRecognize: l'appel recognize() lui-même — le vrai plancher du moteur OCR
-    // Alimente le calibrage du plein écran : c'est cette durée-là qui s'allonge quand le
-    // compositeur prend le processeur, et elle ne dépend ni de la lumière ni du cadrage.
-    noterMesureLecture(tWorker);
-    const timing = {tExtract, tCardBmp, tWorker, tPrep:r.tPrep, tSharp:r.tSharp, tEnsure:r.tEnsure, tRecognize:r.tRecognize,
-                    tChoix, imgChoisie: choix.choisie, ecartNettete: choix.ecart};
-
-    if(r.reason === 'flou'){
-      setAimHint('Stabilise — image floue', true);
-      diagPush('try', {ok:false, hint:'flou', sharp:r.sharp, score, ocrMs:ms, rotated, ...timing});
-      return;
-    }
-    // Le raccourci visuel renvoie volontairement number/denominator vides (voir le
-    // worker) : ne pas les traiter comme un échec de lecture dans ce cas précis.
-    if(!hashShortcut && (r.reason === 'illisible' || !r.number)){
-      setAimHint('Numéro non lu — rapproche-toi', true);
-      diagPush('try', {ok:false, hint:'numéro illisible', sharp:r.sharp, score, ocrMs:ms,
-                       hashDist: bestHashDist, raw:r.text, rotated, ...timing});
-      return;
-    }
-    // Départage des candidats : on préfère celui dont le DÉNOMINATEUR correspond à un total
-    // de cartes réellement existant. Un « ©2014 Pokémon » mal découpé produit par exemple
-    // « 2/14 », dont le dénominateur n'existe dans aucun set — alors qu'un vrai numéro a
-    // forcément un dénominateur au catalogue. Mesuré au banc : cette seule règle supprime
-    // un tiers à la moitié des cartes fausses, sans coûter un seul point de réussite.
-    // Le fil principal est le bon endroit : c'est lui qui détient setDenominatorMap.
-    const choisi = choisirCandidat(r.cands, r.number, r.denominator);
-
-    // Refus explicite du départage : aucun candidat n'avait un dénominateur existant. On
-    // traite ça comme une lecture ratée — surtout PAS comme une capture avec un numéro vide,
-    // qui produirait une entrée inexploitable dans la file. Une tentative ratée coûte
-    // quelques centaines de ms et sera immédiatement rejouée sur l'image suivante.
-    if(!hashShortcut && !choisi.number){
-      setAimHint('Numéro peu sûr — réessaie', true);
-      diagPush('try', {ok:false, hint:'numéro invraisemblable', sharp:r.sharp, score, ocrMs:ms,
-                       hashDist: bestHashDist, raw:r.text, rotated, ...timing});
-      return;
-    }
-
-    // Numéro/dénominateur "finaux" utilisés pour tout le reste de la fonction : ceux lus
-    // par l'OCR normalement, ou ceux de la carte trouvée par raccourci visuel — l'id de
-    // la carte sert d'équivalent stable au dénominateur pour les comparaisons d'égalité
-    // ci-dessous (l'anti-doublon n'a besoin que d'une valeur stable par carte, pas de la
-    // vraie fraction imprimée).
-    const finalNumber = hashShortcut ? hashShortcut.card.number : choisi.number;
-    const finalDenominator = hashShortcut ? hashShortcut.card.id : choisi.denominator;
-
-    // Anti-doublon "carte fantôme" (voir la déclaration de cardConfirmedAbsentSinceCapture
-    // et lastCaptureCorners) : écarté par ressemblance visuelle directe (dHash), OU —
-    // repli plus robuste — si le numéro lu est identique au précédent ET qu'aucun des
-    // deux signaux de "la carte a vraiment bougé/disparu" ne s'est déclenché depuis :
-    // ni un passage sous MIN_SCORE, ni un écart net (pas cumulé) entre la position
-    // actuelle des coins et celle enregistrée à la dernière capture. Une carte qui a
-    // vraiment quitté puis revient (deux exemplaires, nouveau scan volontaire, la carte
-    // bougera forcément pour ça) déclenche presque toujours l'un des deux ; un simple
-    // tremblement de main sur une carte immobile ne déclenche ni l'un ni l'autre,
-    // contrairement à une comparaison stricte du numéro lu seul (le bruit de l'OCR peut
-    // faire varier le texte reconnu même sans mouvement réel).
-    const visuallyDuplicate = lastCaptureHash && hexHamming(r.hash, lastCaptureHash) <= SAME_PHOTO_MATCH_DIST;
-    const netMoveSinceCapture = lastCaptureCorners ? maxCornerShift(lastCaptureCorners, corners) : Infinity;
-    // L'ABSENCE SOUTENUE est désormais la seule preuve qu'une carte a été remplacée. Le
-    // déplacement des coins ne peut plus valider seul une nouvelle carte : retirer une
-    // carte et en présenter une autre déplacent tous deux les coins bien au-delà du seuil,
-    // ces deux situations sont donc indistinguables par le mouvement. C'était la porte de
-    // sortie par laquelle passaient les doublons — mesuré à 31 % des captures.
-    //
-    // Un vrai changement de carte comporte forcément un moment SANS carte dans le cadre,
-    // ce que le mouvement seul ne garantit jamais. Le déplacement reste exigé en plus de
-    // l'absence : une carte reposée exactement au même endroit reste écartée, ce qui est le
-    // comportement voulu quand on ne fait que trembler sur place.
-    const cardConfirmedNewSinceCapture = cardConfirmedAbsentSinceCapture
-      && netMoveSinceCapture > SAME_CARD_MOVE_THRESHOLD * 0.5;
-    // Deux façons indépendantes de reconnaître la carte précédente, parce qu'aucune des
-    // deux n'est disponible sur les deux chemins :
-    //  - l'identifiant de carte, quand il est connu des deux côtés (le raccourci visuel le
-    //    connaît toujours, la lecture normale l'apprend à la résolution) ;
-    //  - le couple numéro/dénominateur, avec les zéros de tête retirés — « 041 » et « 41 »
-    //    désignent la même carte et doivent se comparer comme telles.
-    const memeCarteParId = lastCaptureCardId && hashShortcut
-      && hashShortcut.card.id === lastCaptureCardId;
-    // Le dénominateur ne se compare que si les deux côtés en ont un VRAI. Le raccourci
-    // visuel y met l'identifiant de la carte (« sv03.5-041 ») là où la lecture normale y
-    // met le total imprimé (« 165 ») : exiger leur égalité revenait à ne jamais rien
-    // reconnaître dès que les deux chemins se croisaient. Or c'est exactement ce qui arrive
-    // pendant la seconde de résolution, où l'identifiant de carte n'est pas encore connu du
-    // côté de la lecture normale.
-    //
-    // Quand l'un des deux n'est pas numérique, on s'en tient au numéro. Deux cartes
-    // différentes portant le même numéro dans deux sets différents pourraient alors se
-    // confondre — mais seulement si la carte n'a jamais quitté le champ entre les deux, ce
-    // que la condition d'absence exige par ailleurs. Le cas ne peut donc pas se produire.
-    const denomComparable = (d) => /^\d+$/.test(String(d || ''));
-    const memeCarteParNumero = lastCaptureNumber
-      && stripLeadingZero(String(finalNumber)) === lastCaptureNumber.number
-      && ((denomComparable(finalDenominator) && denomComparable(lastCaptureNumber.denominator))
-            ? String(finalDenominator) === lastCaptureNumber.denominator
-            : true);
-    const sameNumberNeverConfirmedNew = (memeCarteParId || memeCarteParNumero)
-      && !cardConfirmedNewSinceCapture;
-    if(visuallyDuplicate || sameNumberNeverConfirmedNew){
-      setAimHint('Même carte — présente la suivante', true);
-      refusVolontaire = true;
-      if(r.carte && r.carte.close) r.carte.close();
-      return;
-    }
-
-    // Lecture réussie : on garde la carte redressée puis recadrée renvoyée par le worker.
-    lastCaptureHash = r.hash;
-    lastCaptureNumber = {number: stripLeadingZero(String(finalNumber)), denominator: String(finalDenominator)};
-    lastCaptureCorners = corners;
-    // Connu tout de suite par le raccourci visuel ; la lecture normale le renseignera à la
-    // résolution (voir resolveLiveResult), quelques centaines de millisecondes plus tard.
-    lastCaptureCardId = hashShortcut ? hashShortcut.card.id : null;
-    cardConfirmedAbsentSinceCapture = false;
-    lastCaptureAt = Date.now();
-    const cv = document.createElement('canvas');
-    cv.width = r.carte.width; cv.height = r.carte.height;
-    cv.getContext('2d').drawImage(r.carte, 0, 0);
-    r.carte.close();
-
-    const dataUrl = cv.toDataURL('image/jpeg', 0.8);
-    const mySeq = ++liveResultSeq;
-    showLiveResultPending(dataUrl, finalNumber, hashShortcut ? '' : finalDenominator);
-
-    // Bande du nom (haut de carte), pour une confirmation de confiance APRÈS coup —
-    // jamais lue par la lecture rapide du numéro (bande du bas, voir §4.8), donc sans
-    // elle le panneau live ne peut jamais atteindre ✅ même quand tout est juste (voir
-    // confirmLiveResultByName). Simple crop-resize natif, pas d'OCR ici : coût négligeable.
-    // Inutile pour un raccourci visuel : la carte est déjà connue avec certitude.
-    const nameBmp = hashShortcut ? null : await createImageBitmap(sourceForRead, 0, 0, sourceForRead.width,
-      Math.round(sourceForRead.height * 0.22),
-      {resizeWidth: 500, resizeHeight: Math.round(500 * Math.round(sourceForRead.height * 0.22) / sourceForRead.width), resizeQuality:'medium'});
-
-    cv.toBlob(b => {
-      const item = pushToQueue(dataUrl, b, 'caméra');
-      if(hashShortcut){
-        // Carte déjà identifiée avec certitude par correspondance visuelle : on saute la
-        // résolution TCGdex (resolveLiveResult) entièrement, plus besoin de redeviner
-        // depuis un numéro/nom quand on a déjà l'objet carte complet en main.
-        item._analysis = {
-          status: 'ok', card: hashShortcut.card,
-          note: `correspondance visuelle (doublon confirmé, écart ${hashShortcut.distance})`,
-          rawText: '', number: finalNumber, denominator: finalDenominator
-        };
-        showLiveResultDone(hashShortcut.card, 'high');
-        ajouterAuTotalSession(hashShortcut.card);
-        if(validationAuto) validerAutomatiquement(hashShortcut.card, item, 'visuel');
-      } else {
-        resolveLiveResult(mySeq, item, dataUrl, finalNumber, finalDenominator, r.text, nameBmp, liveHash);
-      }
-    }, 'image/png');
-
-    captureFaite = true;
-    validerObjectifCourant();
-    capturedThisSession++;
-    flashScreen(dataUrl);
-    if(navigator.vibrate) navigator.vibrate(40);
-    setOverlayTarget('ok', corners);
-    setAimHint(hashShortcut
-      ? '✅ ' + hashShortcut.card.name + ' — doublon reconnu (visuel)'
-      : '✅ #' + finalNumber + '/' + finalDenominator + ' — identification en cours');
-    diagPush('try', {ok:true, hint:'capture', sharp:r.sharp, score, ocrMs:ms, via:r.via,
-                     num: hashShortcut ? (finalNumber+' (visuel'+(hashViaMemoire?' mémorisé':'')+', écart '+hashShortcut.distance+')') : (finalNumber+'/'+finalDenominator),
-                     hashDist: bestHashDist, raw:r.text, rotated, ...timing});
+    // gererScanV2 gère tout son propre aval : panneau, file, retour à « rebut » après
+    // plusieurs échecs (elle a son propre compteur, v2RebutsConsecutifs — inutile de lui
+    // superposer un second seuil ici).
+    await gererScanV2(sourceForRead, corners, score, t0).catch(e => { console.warn('V2', e); });
   }catch(e){
-    diagPush('err', {msg:'lecture : ' + e.message});
+    diagPush('err', {msg:'lecture V2 : ' + e.message});
   }finally{
     readInFlight = false;
-    // Bilan de la tentative, en un seul endroit plutôt qu'à chacun des cinq points
-    // d'échec : impossible d'en oublier un, aujourd'hui ou plus tard.
-    if(captureFaite || refusVolontaire || !tentativeReelle){
-      // Capturée, ou volontairement refusée parce que déjà connue : dans les deux cas la
-      // carte est traitée, il n'y a rien à secourir.
-      if(captureFaite || refusVolontaire) echecsConsecutifs = 0;
-    } else {
-      echecsConsecutifs++;
-      if(echecsConsecutifs >= ECHECS_AVANT_SECOURS){
-        // Le redressement quand on l'a (meilleur cadrage, déjà calculé), sinon le contenu
-        // du cadre de visée — pour que la sortie de secours fonctionne AUSSI quand l'échec
-        // survient avant le redressement, ce qui est justement le cas le plus désespéré.
-        tenterSecours(redressement, 'après ' + echecsConsecutifs + ' échecs');
-      }
-    }
   }
 }
-
-
-// ---------------- SORTIE DE SECOURS : CAPTURER SANS AVOIR SU LIRE ----------------
-// La capture ne se déclenchait QUE si l'OCR avait lu le numéro. Une carte qu'il n'arrive
-// pas à lire n'était donc jamais capturée : elle n'entrait ni dans la file, ni dans le
-// lot, ni dans aucun compteur. Elle n'existait nulle part.
-//
-// Ce n'est pas un cas marginal. Sur la dernière session réelle : 64 tentatives, 26
-// captures, 38 échecs dont 33 « numéro illisible ». Près de six tentatives sur dix
-// n'aboutissaient à rien de visible — l'utilisateur présente une carte, l'application
-// réessaie en boucle, et rien ne se passe. Sans repère, impossible de savoir s'il faut
-// insister ou passer à la suivante.
-//
-// Au-delà de ce seuil, on capture donc quand même. L'image part dans « À vérifier », où
-// elle sera identifiée à la main via la comparaison photo/proposition — ce qui redonne à
-// cet onglet son rôle : le refuge des cartes que la lecture automatique ne sait pas traiter.
-const ECHECS_AVANT_SECOURS = 5;   // ~3 s de tentatives infructueuses sur la même carte
-let echecsConsecutifs = 0;
 
 // L'analyse de file N'EST PAS pré-remplie : on la laisse volontairement vide pour que
 // processQueueAnalysis rejoue la lecture en arrière-plan. Ce second passage emprunte un
@@ -11960,7 +11281,6 @@ function capturerSansLecture(canvas, raison, redressee){
     lastCaptureCorners = null;
     cardConfirmedAbsentSinceCapture = true;
     lastCaptureAt = Date.now();
-    echecsConsecutifs = 0;
 
     capturedThisSession++;
     flashScreen(dataUrl);
@@ -11974,44 +11294,10 @@ function capturerSansLecture(canvas, raison, redressee){
 }
 
 
-// Source d'image la plus fidèle disponible, et capture de secours. Partagée entre les deux
-// situations qui bloquent l'utilisateur : la lecture qui échoue, et la prise de vue jugée
-// inexploitable. Du point de vue de celui qui tient la carte, c'est le même problème —
-// l'application ne fait rien et ne dit pas quoi changer.
-async function tenterSecours(redressement, raison){
-  if(secoursDejaFait) return false;
-  // Marque prise AVANT le premier await : sans elle, deux appels rapprochés passeraient
-  // tous les deux la garde et captureraient la même carte en double.
-  secoursDejaFait = true;
-  const video = $('video');
-  let source = redressement;
-  // Rien de redressé n'a été produit : on tente depuis les derniers coins connus du
-  // détecteur. Même chaîne que la prise manuelle. Elle coûte ~150 ms, sur une carte qui
-  // vient d'échouer cinq fois — le moment où l'on est le moins pressé.
-  if(!source) source = await redresserDepuisDetection(video);
-  if(!source && video && video.videoWidth){
-    const g = guideRect(video);
-    const W = 600, H = Math.round(W*CARD_RATIO);
-    source = document.createElement('canvas');
-    source.width = W; source.height = H;
-    source.getContext('2d').drawImage(video,
-      g.x*video.videoWidth, g.y*video.videoHeight,
-      g.w*video.videoWidth, g.h*video.videoHeight, 0, 0, W, H);
-  }
-  if(!source){ secoursDejaFait = false; return false; }
-  capturerSansLecture(source, raison, !!redressement || source !== null);
-  return true;
-}
-
-// Durée de blocage tolérée avant de capturer quand même, quand c'est le FILTRE qui refuse.
-// Exprimée en temps et non en nombre de refus : le filtre est évalué à la cadence de la
-// détection (6 à 8 fois par seconde), où cinq refus représenteraient moins d'une seconde —
-// bien trop court pour laisser à quiconque le temps d'ajuster sa prise de vue.
-const SECOURS_BLOCAGE_MS = 4000;
-let blocageDepuis = 0;
-// Un seul secours par carte présentée. Remis à zéro quand la carte quitte réellement le
-// champ (voir detectLoop), c'est-à-dire quand il y a de nouveau quelque chose à décider.
-let secoursDejaFait = false;
+// tenterSecours() — le filet de rattrapage du scanner V1 après cinq échecs de lecture —
+// est parti avec lui (voir REPRISE.md, « unification sur la logique du banc »). La V2 a
+// le sien, propre à elle : gererScanV2 appelle déjà capturerSansLecture ci-dessus après
+// trois « rebut » consécutifs (v2RebutsConsecutifs).
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
@@ -12238,7 +11524,7 @@ function registerSessionCardHash(card, liveHash){
 }
 
 // ─────────────────────────── SCANNER V2 : traitement d'une carte redressée ───────────────
-// Appelé depuis attemptRead quand la V2 est active. Retourne :
+// Appelé depuis attemptReadV2. Retourne :
 //   'traite'        → identifiée, panneau + lot gérés
 //   'rebut'         → pas d'identification fiable : photo envoyée dans « À vérifier »
 //   'rejet-doublon' → même carte que la précédente, toujours en place : ne rien faire
@@ -12554,7 +11840,6 @@ function stopAimLoop(){
   readInFlight = false;
   overlayRenderRunning = false;
   prevCorners = null;
-  lowScoreStreak = 0;
   overlayCurrentState = overlayTargetState = 'attente';
   overlayCurrentCorners = overlayTargetCorners = null;
   const cvs = $('aim-overlay');
@@ -20585,10 +19870,12 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
 });
 </script>
 
-<!-- ─────────────────────── SCANNER V2 (bêta) ───────────────────────
-     Module séparé : ses propres Workers (DINOv2, ORB, OCR), l'index de référence
-     téléchargé en pack précalculé. Le reste de l'app l'ignore tant que la case n'est
-     pas cochée. Le hook est dans attemptRead → gererScanV2(). -->
+<!-- ─────────────────────── SCANNER (reconnaissance visuelle) ───────────────────────
+     Module séparé : ses propres Workers (DINOv2, ORB, OCR de départage), l'index de
+     référence téléchargé en pack précalculé. Le hook est dans attemptReadV2 →
+     gererScanV2(). Chargée sans condition depuis l'« unification sur la logique du banc »
+     (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
+     commentaire à côté de la case, dans les réglages. -->
 <script type="module">
 import * as V2 from './scan-v2.js?v=17';
 window.SCAN_V2 = V2;
@@ -20596,17 +19883,15 @@ window.SCAN_V2 = V2;
 const $$ = id => document.getElementById(id);
 const chk = $$('chk-scan-v2'), etat = $$('v2-etat'), chip = $$('cam-v2-chip');
 if(chk){
-  const sauver = () => { try{ localStorage.setItem('pokescan_v2', chk.checked ? '1' : '0'); }catch(e){} };
+  chk.checked = true;   // plus de V1 vers laquelle basculer — voir le commentaire HTML ci-dessus
   function majChip(txt){
-    V2.basculerV2(chk.checked);   // le hook dans attemptRead ne se déclenche que si actif
+    V2.basculerV2(true);
     if(!chip) return;
     const pret = V2.pretV2();
-    chip.classList.toggle('on', chk.checked && pret);
-    chip.classList.toggle('charge', chk.checked && !pret);
-    chip.lastChild.textContent = chk.checked ? (pret ? 'V2' : '…') : 'V2';
-    chip.title = txt || (chk.checked ? (pret ? 'Scanner V2 (illustration) actif — appuie pour revenir à la V1 (numéro)'
-                                             : 'V2 en préparation…')
-                                     : 'Scanner V1 (numéro) actif — appuie pour la V2 (illustration)');
+    chip.classList.toggle('on', pret);
+    chip.classList.toggle('charge', !pret);
+    chip.lastChild.textContent = pret ? 'V2' : '…';
+    chip.title = txt || (pret ? 'Scanner actif (reconnaissance visuelle).' : 'Chargement…');
   }
   const dire = (txt, err) => {
     if(etat){ etat.style.display = txt ? '' : 'none'; etat.textContent = txt || '';
@@ -20618,32 +19903,23 @@ if(chk){
 
   let enCours = false;
   async function activer(){
-    if(!chk.checked){ dire(''); return; }
     if(V2.pretV2()){ dire('V2 active.'); return; }
     if(enCours) return;
     enCours = true;
     try{
       await V2.initV2({ onProgress: (p, m) => dire(m || `V2 : ${Math.round(p*100)} %`) });
       dire('V2 active.');
-    }catch(e){ dire('V2 indisponible : ' + e.message, true); chk.checked = false; sauver(); }
+    }catch(e){ dire('V2 indisponible : ' + e.message, true); }
     enCours = false;
     majChip();
   }
 
-  chk.addEventListener('change', () => {
-    sauver();
-    try{ window.majJaugesSelonMode && window.majJaugesSelonMode(); }catch(e){}   // masque/réaffiche les jauges
-    activer();
-  });
-  if(chip) chip.addEventListener('click', () => {
-    chk.checked = !chk.checked;
-    chk.dispatchEvent(new Event('change'));
-  });
+  // Le chip reste cliquable comme simple raccourci vers les réglages (utile s'il affiche
+  // « … » longtemps) plutôt que comme bascule : il n'y a plus de second mode à activer.
+  if(chip) chip.addEventListener('click', () => { try{ ouvrirFeuilleReglages(); }catch(e){} });
 
-  try{ if(localStorage.getItem('pokescan_v2') === '1') chk.checked = true; }catch(e){}
-  if(new URLSearchParams(location.search).has('v2')) chk.checked = true;
   majChip();
-  if(chk.checked) activer();
+  activer();
 }
 </script>
 </body>

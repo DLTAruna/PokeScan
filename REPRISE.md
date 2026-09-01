@@ -28,6 +28,76 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Unification du scanner sur la logique du banc (V.12, 2026-09-01)
+
+Constat de Nikos : « ce qu'on a dans la page de bench test V2 marche extrêmement mieux
+que sur notre scanner principal — je pense qu'il y a des couches qui rentrent en
+conflit. » Vrai : `index.html` faisait encore cohabiter la boucle de détection **V1**
+(jauges, `conditionsReunies()`, `attemptRead()` avec son propre redressement dupliqué,
+`tenterSecours()`) et la logique **V2** posée par-dessus via un `if(actifV2())`, alors
+que la case V1/V2 était devenue un choix fictif — plus personne ne repassait en V1 en
+pratique, et son plein pipeline restait chargé, actif, à consommer du temps CPU et à
+gérer des variables d'état (`absenceStreak`, `lowScoreStreak`…) que la V2 réarmait de son
+côté avec ses propres compteurs. Deux machines à états sur la même boucle, chacune
+persuadée d'être aux commandes.
+
+**Décision : la V2 devient le seul scanner, en reprenant telle quelle la boucle de
+déclenchement déjà validée dans `bench-v2.html`.** Plus un choix de mode — un scanner.
+
+- **V1 sauvegardée avant suppression** (consigne explicite de Nikos) : branche git
+  `archive/v1-numero`, poussée sur origin, figée au dernier commit avant toute coupe. À
+  restaurer en entier si la reconnaissance visuelle s'avérait un jour insuffisante.
+- **Supprimé** : `surveillerNettete()`, `indiceVisee()`/`conseilActif` (déjà des no-op
+  morts sous la garde `qualiteTimer`, voir § piège plus bas), `conditionsReunies()`,
+  `attemptRead()` en entier (~450 lignes — pré-filtre de forme, comparaison de netteté
+  entre deux images, redressement dupliqué, dédoublonnage par hash, `choisirCandidat`),
+  `tenterSecours()` et ses constantes (`SECOURS_BLOCAGE_MS`, `blocageDepuis`), toutes les
+  variables d'état V1 orphelines (`absenceStreak`, `lowScoreStreak`,
+  `SAME_CARD_MOVE_THRESHOLD`, `ECHECS_AVANT_SECOURS`…).
+- **Ajouté** : `attemptReadV2(corners, score)` (~25 lignes) — redresse via
+  `redresserAvecCoins()` (le MÊME helper déjà utilisé par la prise manuelle et l'import
+  photo, donc plus qu'un seul redressement dans tout le fichier) puis appelle
+  `gererScanV2()` directement, sans repli OCR intermédiaire.
+- **`detectLoop()` réécrite** : reprend mot pour mot la logique de patience/stabilité du
+  banc (seuils qui se desserrent avec `v2PresentDepuis` — voir § PATIENCE plus bas,
+  inchangée dans son principe), sans plus aucune branche V1. Garde ajoutée en tête,
+  absente du code d'origine : `if(!SCAN_V2.pretV2()) { attendre }` — l'ancien code
+  retombait naturellement sur l'OCR pendant le téléchargement de l'index V2 ; sans V1 à
+  qui se raccrocher, sans cette garde la caméra aurait tenté des identifications vouées à
+  l'échec pendant tout le chargement.
+- **Case ⚙️ V1/V2 masquée** (`#chk-scan-v2` reste dans le DOM, cochée, `display:none` —
+  le module JS lit encore son état) ; texte remplacé par une description honnête du
+  scanner. **La pastille `V2` dans la caméra n'est plus un bouton de bascule** — juste un
+  indicateur d'état (vert = prêt, cliquer ouvre les réglages).
+
+**Vérifié en local** (`localhost:8802`, mode « Continuer sans compte » — pas de vraie
+caméra disponible dans le navigateur de test, flux simulé via
+`canvas.captureStream(30)` + `navigator.mediaDevices.getUserMedia` remplacé, deux photos
+réelles de `photos-test/`) :
+- Chaîne complète caméra → `detectLoop` → `attemptReadV2` → `gererScanV2` → panneau du
+  bas : carte 1 (Dracaufeu-ex #006) identifiée avec confiance, fiche correcte affichée
+  dans le cadre du bas (nom, ensemble, numéro, cote).
+- Carte 2 (Arbok ex #024) : détection et cadrage corrects, mais identification jugée
+  incertaine par `gererScanV2` → correctement envoyée en « Non lue — à confirmer », donc
+  la branche `rebut` du panneau du bas fonctionne aussi (comportement de `gererScanV2`
+  lui-même, non modifié par ce chantier).
+- Cycle retrait/nouvelle carte : après une lecture, présenter un fond neutre puis une
+  carte différente relance bien un nouveau cycle de détection (pas de blocage sur
+  « ✓ lue »).
+- Aucune erreur JS pendant tout le test (console vérifiée après chaque étape).
+- **Pas encore testé sur téléphone réel** — seule la simulation en navigateur de bureau a
+  été faite cette session. La logique portée est celle déjà validée sur le banc, mais un
+  test en conditions réelles (main qui tremble, vraie caméra, vrai éclairage) reste à
+  faire avant de considérer le réglage terminé.
+
+**Volontairement laissé pour plus tard** (« on viendra peaufiner le reste après »,
+Nikos) : le sous-système des jauges (`demarrerQualite`/`echantillonnerQualite`/
+`rendreJauges`) est maintenant inerte en permanence mais pas retiré ; plusieurs aides OCR
+(`choisirCandidat`, `resolveLiveResult`, le handler `'read'` du worker OCR,
+`hexHamming`, `noterMesureLecture`) ne sont plus appelées depuis la boucle live mais
+servent peut-être encore à l'import photo par lot ou au panneau « 🔬 Debug OCR » — pas
+audité, à trancher avec Nikos avant de couper.
+
 ## Objectif automatique en V2 + tentative anti-bruit (V.11, 2026-09-01)
 
 Nikos a demandé « force le zoom x1 sur tous les téléphones », puis lui-même corrigé en
@@ -142,7 +212,7 @@ après session de test, via `/api/scan-log`.
   carte »), au 3e la photo part dans « À vérifier ».
 - **Prise manuelle 📸 identifie aussi** (`7035bec`, voir plus bas) : passe par
   `gererScanV2`, affiche le résultat dans le panneau du bas comme la capture auto.
-- Import du module : **`./scan-v2.js?v=14`** dans `index.html` (bumper à chaque modif de
+- Import du module : **`./scan-v2.js?v=17`** dans `index.html` (bumper à chaque modif de
   `scan-v2.js`).
 
 ### Ce qui reste
@@ -570,18 +640,21 @@ Par entrée : `predit`, `categorie` (`sure`/`douteuse`/`rebut`), `fiabilite`, `i
   la carte qu'on tient). Même logique dans `bench-v2.html`, qui affiche les trois verrous
   en direct (`#c-jauges`) — c'est ce qui a permis de lire 0,054 contre 0,049 au lieu de le
   supposer.
-- `detectLoop()` branche V2 (~ligne 11130) : déclenche sur `d.score >= 0.5 && stable`
-  (`v2StableStreak >= 2`), **aucune** dépendance aux jauges. `dejaLue` empêche de
-  re-scanner une carte déjà lue et toujours en place ; il se relâche sur `v2CarteRetiree`
-  (2 images sous le seuil, ~300 ms — **pas** la preuve d'absence V1 à 1,2 s, qui rendait le
-  mode auto deux fois plus lent que le manuel) ou sur un vrai déplacement de la carte.
-- `attemptRead()` hook V2 (~ligne 11440) : `gererScanV2()` gère tout, jamais de repli OCR.
-  Retours : `'traite'` / `'rebut'` / `'reessai'` / `'rejet-doublon'`.
-- `gererScanV2()` (~ligne 12025) : identif → si rebut, 2 `'reessai'` puis
+- `detectLoop()` (depuis V.12, seule boucle — plus de branche V1) : déclenche sur
+  `d.score >= seuilScore && stable` (`v2StableStreak >= 1`, seuils desserrés par
+  `v2PresentDepuis`, voir § PATIENCE ci-dessus), **aucune** dépendance aux jauges.
+  `dejaLue` empêche de re-scanner une carte déjà lue et toujours en place ; il se
+  relâche sur `v2CarteRetiree` (2 images sous le seuil, ~300 ms) ou sur un vrai
+  déplacement de la carte. Garde en tête de fonction : attend `SCAN_V2.pretV2()` avant
+  de tenter quoi que ce soit (rien à quoi se raccrocher pendant le chargement de l'index).
+- `attemptReadV2(corners, score)` (depuis V.12, remplace l'ancien `attemptRead`) :
+  redresse via `redresserAvecCoins()`, puis `gererScanV2()` gère tout, jamais de repli
+  OCR. Retours : `'traite'` / `'rebut'` / `'reessai'` / `'rejet-doublon'`.
+- `gererScanV2()` : identif → si rebut, 2 `'reessai'` puis
   `capturerSansLecture`. Succès : `showLiveResultPending` (photo prise) + `showLiveResultDone`
   (depuis le pack) tout de suite, fiche complète + validation auto en arrière-plan.
-- `captureFrame()` / `captureFrameInterne()` (~ligne 12517) : prise manuelle, route par
-  `gererScanV2` si V2 actif.
+- `captureFrame()` / `captureFrameInterne()` : prise manuelle, route par `gererScanV2`
+  (V2 est désormais le seul chemin, plus de condition).
 - `demarrerQualite()` / `majJaugesSelonMode()` : masquent les jauges + coupent
-  l'échantillonnage quand V2 actif.
+  l'échantillonnage — désormais permanent, plus de mode V1 où elles servaient.
 - `SCAN_V2.relayV2({...})` appelé dans `gererScanV2` (succès et rebut) → `/api/scan-log`.
