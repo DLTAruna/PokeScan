@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 36;
+const VERSION_APP = 37;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -12597,10 +12597,23 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
   if(!res || !res.pick || res.categorie === 'rebut'){
     v2RebutsConsecutifs++;
     try{
+      // ⚠️ DEUX POINTS DE JOURNALISATION, PAS UN. Celui-ci trace les rebuts, l'autre (plus
+      // bas, dans le cas nominal) les réussites. En V.36 je n'avais instrumenté que le
+      // second : les nouveaux champs sont arrivés remplis sur les réussites et vides sur les
+      // rebuts, c'est-à-dire précisément à l'envers du besoin — on cherche à comprendre les
+      // ÉCHECS. C'est aussi l'origine du « sets: 0 sur tous les rebuts » que j'avais pris
+      // pour un cache ORB vide et qui n'était qu'un champ jamais envoyé d'ici. Toute colonne
+      // ajoutée là-bas doit l'être ici, sans quoi elle ne décrit que les cas déjà compris.
       SCAN_V2.relayV2({ fichier:'live', predit:(res&&res.pick&&res.pick.cle)||'', categorie:'rebut', conf:'rebut',
         fiabilite:(res&&res.fiabilite)||0, inliers:(res&&res.inliers)||0, marge:(res&&res.marge)||0,
         ocrLance:(res&&res.ocrLance)||false, ms:(res&&res.ms)||0, T:(res&&res.T)||{}, moteur:(res&&res.moteur)||'?',
-        diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score).toFixed(2), v:VERSION_APP });
+        diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score).toFixed(2), v:VERSION_APP,
+        sets:(res&&res.setsCharges)||(SCAN_V2.setV2&&SCAN_V2.setV2())||null,
+        embTop:(res&&typeof res.embTop==='number')?+res.embTop.toFixed(4):null,
+        embPremier:(res&&res.embPremier)||null,
+        embEtaitBon:(res&&res.pick&&res.embPremier)?(res.pick.cle===res.embPremier):null,
+        cadrage:(STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length-1)]||{}).nom||'?',
+        essai:v2EssaiCadre+1, rebutsDeSuite:v2RebutsConsecutifs });
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
       v2RebutsConsecutifs = 0;
@@ -12715,6 +12728,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     embPremier: res.embPremier || null,
     embEtaitBon: res.pick && res.embPremier ? (res.pick.cle === res.embPremier) : null,
     cadrage: (STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)] || {}).nom || '?',
+    essai: v2EssaiCadre + 1,
     // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
     // à supposer que le téléphone avait bien pris le déploiement entre les deux.
     v: VERSION_APP
