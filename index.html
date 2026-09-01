@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 25;
+const VERSION_APP = 26;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11517,6 +11517,35 @@ function hexHamming(a, b){
 // la fusion de doublons du lot. Une seule horloge maintenant. Le V1 (lecture du numéro)
 // est retiré de cette boucle ; il reste entier sur la branche git `archive/v1-numero` si
 // la reconnaissance visuelle s'avérait un jour ne pas suffire.
+// Part du cadre reprise pour la seconde passe. 0,55 mesuré comme le meilleur compromis :
+// assez serré pour rendre une carte lointaine évidente (6/6 dès 22 % de hauteur), assez large
+// pour ne pas manquer une carte simplement décentrée.
+const RECADRE_DETECTION = 0.55;
+async function detecterRecadre(video){
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if(!vw || !vh) return null;
+  const cw = Math.round(vw * RECADRE_DETECTION), ch = Math.round(vh * RECADRE_DETECTION);
+  const ox = Math.round((vw - cw) / 2), oy = Math.round((vh - ch) / 2);
+  const ech = Math.min(1, DETECT_LONG_EDGE / Math.max(cw, ch));
+  // createImageBitmap sait recadrer À LA SOURCE (sx,sy,sw,sh) : pas de toile intermédiaire,
+  // pas de copie de plus sur le fil principal.
+  const bmp = await createImageBitmap(video, ox, oy, cw, ch, {
+    resizeWidth:  Math.max(1, Math.round(cw * ech)),
+    resizeHeight: Math.max(1, Math.round(ch * ech)),
+    resizeQuality: 'medium'
+  });
+  const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+  if(!d || !d.corners || d.score == null || d.score < MIN_SCORE) return null;
+  // Les coins reviennent en fractions DU RECADRAGE : on les ramène dans le repère de l'image
+  // entière, sans quoi le cadre se dessinerait au mauvais endroit et le redressement
+  // découperait à côté.
+  const m = (1 - RECADRE_DETECTION) / 2, P = RECADRE_DETECTION;
+  const ramener = p => [m + p[0] * P, m + p[1] * P];
+  return { score: d.score, recadre: true, corners: {
+    tl: ramener(d.corners.tl), tr: ramener(d.corners.tr),
+    br: ramener(d.corners.br), bl: ramener(d.corners.bl) } };
+}
+
 async function detectLoop(){
   if(!detectRunning) return;
   dernierTourBoucle = Date.now();   // battement lu par le chien de garde (voir plus haut)
@@ -11591,9 +11620,31 @@ async function detectLoop(){
       resizeHeight: Math.max(1, Math.round(video.videoHeight * dScale)),
       resizeQuality: 'medium'
     });
-    const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+    let d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
 
+    // ─── RATTRAPAGE À DISTANCE (V.26) ───
+    // Le détecteur ne voit pas une carte PETITE dans un grand cadre, et ce n'est pas une
+    // question de finesse : mesuré sur scènes simulées, à 22 % de hauteur il trouve 0 fois
+    // sur 6, et monter la résolution de 512 à 1024 px n'y change RIEN (0/6 aussi). Le modèle
+    // est entraîné à trouver un document qui occupe une bonne part de l'image ; en dessous,
+    // il ne reconnaît tout simplement pas la forme.
+    // La parade n'est donc pas plus de pixels mais un CADRE PLUS SERRÉ : sur un recadrage
+    // central, la même carte occupe une part bien plus grande et redevient évidente —
+    // 6/6 à 22 %, 6/6 à 28 %, contre 0/6 et 1/6 en plein cadre.
+    // Ne coûte une seconde inférence QUE lorsque la première n'a rien trouvé, c'est-à-dire
+    // précisément quand la boucle n'avait rien à faire de son tour.
     if(!d.corners || d.score == null || d.score < MIN_SCORE){
+      const dLoin = await detecterRecadre(video).catch(()=> null);
+      if(dLoin) d = dLoin;
+    }
+
+    // Vue mais trop petite pour être lue : on la DESSINE quand même (cadre rouge), au lieu
+    // de faire comme si de rien n'était. L'utilisateur voit que l'application l'a repérée,
+    // et que c'est la distance qu'il faut corriger — pas sa visée.
+    const aireVue = d.corners ? airePartCarte(d.corners) : 0;
+    const tropLoin = !!d.corners && aireVue < AIRE_LIMITE_V2;
+
+    if(!d.corners || d.score == null || d.score < MIN_SCORE || tropLoin){
       setOverlayTarget('attente', d.corners);
       prevCorners = null;
       v2StableStreak = 0;

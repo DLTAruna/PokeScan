@@ -28,6 +28,67 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ DÉTECTION À DISTANCE : la parade n'est pas plus de pixels, c'est un cadre plus serré (V.26)
+
+Demande de Nikos : que la carte soit détectée de loin comme de près, quitte à afficher un
+cadre rouge quand les conditions ne sont pas réunies.
+
+### Ce que les scènes simulées ont dit
+
+Banc reconstruit dans l'application (cartes synthétiques sur fond bruité, décentrage ±18 %,
+rotation ±10°, lumière ×0,8-1,2), passées au **vrai détecteur** :
+
+| hauteur de la carte | détectée (score ≥ 0,35) |
+|---|---|
+| 0,22 | **0/6** |
+| 0,28 | **0/6** |
+| 0,35 | 2/6 |
+| 0,45 et plus | 6/6 (score 1,00) |
+
+**Falaise nette : parfait au-dessus de 0,45, aveugle en dessous de 0,35.**
+
+⚠️ **La résolution n'y est pour RIEN** — c'était l'hypothèse évidente, elle est fausse :
+à 512, 768 et 1024 px, le résultat est le même (0/6 à 22 %, et même *légèrement pire* à
+1024). Le modèle est entraîné à trouver un document qui **occupe une bonne part de l'image** ;
+en dessous, il ne reconnaît pas la forme, quelle que soit la finesse.
+
+### La parade : une seconde passe sur un recadrage central
+
+| hauteur | plein cadre | recadré 0,6 | recadré 0,45 |
+|---|---|---|---|
+| 0,22 | 0/6 | 5/6 | **6/6** |
+| 0,28 | 1/6 | **6/6** | 6/6 |
+| 0,35 | 5/6 | **6/6** | 6/6 |
+
+`detecterRecadre()` reprend les 55 % centraux (`RECADRE_DETECTION`), **uniquement quand la
+première passe n'a rien trouvé** — donc au tour de boucle où il n'y avait rien à faire de
+toute façon. Recadrage fait à la source par `createImageBitmap(video, sx,sy,sw,sh)` : ni
+toile intermédiaire, ni copie de plus sur le fil principal.
+
+**Le report des coins dans le repère de l'image entière est le point risqué** (un mauvais
+calcul dessinerait le cadre à côté et découperait au mauvais endroit). Vérifié contre la
+vérité terrain des scènes : 9/9, **erreur de centre ≤ 0,003 et de hauteur ≤ 0,004**.
+
+### Résultat mesuré, avant / après
+
+| hauteur | avant | après |
+|---|---|---|
+| 0,18 | 0/8 | **5/8** |
+| 0,22 | 0/8 | **8/8** |
+| 0,28 | 0/8 | **8/8** |
+| 0,35 | 2/8 | **8/8** |
+| 0,45 · 0,60 · 0,80 | 8/8 | 8/8 (**aucune régression**) |
+
+Le plancher de détection passe de ~0,45 à ~0,22.
+
+### Vue mais trop loin : cadre ROUGE, et pas de déclenchement
+
+Une carte détectée sous `AIRE_LIMITE_V2` est désormais **dessinée quand même**, en rouge, sans
+déclencher. L'utilisateur voit que l'application l'a repérée et comprend que c'est la distance
+qu'il faut corriger, pas sa visée. Vérifié en boucle réelle : carte à 28 % → quadrilatère
+rouge tracé sur la carte, panneau toujours « En attente » ; carte approchée à 62 % →
+déclenchement normal (Pikachu, 89 %), zéro blocage signalé.
+
 ## ⭐ LE CADRE QUI FIGE DÉFINITIVEMENT — cause trouvée (V.25)
 
 Nikos : « par moment le cadre de détection freeze, et ensuite plus moyen de scanner ». Il
