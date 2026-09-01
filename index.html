@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 28;
+const VERSION_APP = 29;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9842,6 +9842,24 @@ function quitterPleinEcranScan(){
   majLoaderV2(1);
 }
 
+// Mise au point visée au CENTRE, posée UNE SEULE FOIS à l'ouverture.
+// À ne pas confondre avec `viserMiseAuPoint()` (débranchée en V.16, conservée plus bas comme
+// mise en garde) : celle-là redemandait une mise au point à chaque déplacement de la carte,
+// donc plusieurs fois par carte, et chaque demande relance un cycle d'autofocus — flou
+// transitoire, coins qui bougent, stabilité perdue. Ici c'est l'inverse : on dit une fois à
+// l'appareil « la scène qui t'intéresse est au milieu », et on ne lui reparle plus jamais.
+// L'autofocus continu fait le reste, sans être relancé de force.
+async function viserCentreUneFois(track){
+  try{
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if(!caps.pointsOfInterest) return;
+    await track.applyConstraints({advanced:[{pointsOfInterest:[{x:0.5, y:0.5}]}]});
+    diagPush('err', {msg:'caméra: mise au point visée au centre (une fois)'});
+  }catch(e){
+    diagPush('err', {msg:'caméra: point de mise au point refusé (' + e.message + ')'});
+  }
+}
+
 async function startCamera(){
   $('cam-error').textContent = '';
   entrerPleinEcranScan();
@@ -9866,6 +9884,21 @@ async function startCamera(){
       audio: false
     });
     currentCameraDeviceId = cameraStream.getVideoTracks()[0].getSettings().deviceId || null;
+
+    // ─── RÉGLAGES DE PISTE, UNE SEULE FOIS (rétabli en V.29) ───
+    // Ces réglages avaient disparu en V.14 par dommage collatéral : en reprenant l'ouverture
+    // caméra du banc, j'ai retiré `applyTrackTweaksAndDiagnostics` en même temps que
+    // `choisirObjectifNet`. Or seule la seconde était nocive (elle ARRÊTE et rouvre le
+    // capteur plusieurs fois) ; celle-ci se contente d'appliquer des contraintes sur une
+    // piste déjà ouverte. Sans elle, depuis la V.14 :
+    //   • aucune contrainte `frameRate` → RIEN n'empêchait le mode nuit par empilement de
+    //     trames, alors que c'était tout l'objet de la V.11 ;
+    //   • `focusMode:'continuous'` posé uniquement dans `advanced` au getUserMedia, que tous
+    //     les navigateurs n'honorent pas — d'où sa reprise ici, en second essai.
+    // Appelée ICI, avant que la boucle ne démarre : c'est la règle posée en V.16 — on ne
+    // touche pas à la piste vidéo PENDANT la détection, mais à l'ouverture rien ne l'interdit.
+    await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
+    await viserCentreUneFois(cameraStream.getVideoTracks()[0]);
 
     $('video').srcObject = cameraStream;
     await $('video').play().catch(()=>{});
