@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 34;
+const VERSION_APP = 35;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -12104,12 +12104,34 @@ async function attemptReadV2(corners, score){
   // `toDataURL` travaille sur une image pleine taille. N'importe lequel de ces points peut
   // pendre — et `readInFlight` reste alors fermé, ce qui arrête la boucle pour de bon.
   // Ce minuteur-ci ne dépend d'aucun `await` : il rouvre le verrou quoi qu'il arrive.
+  // ─── UNE IDENTIFICATION TROP LONGUE PASSE LA MAIN (V.35) ───
+  // Idée de Nikos, et c'est la bonne : le scanner a pour métier de CAPTURER ; identifier peut
+  // attendre. Plutôt que de rendre le verrou en perdant la photo (ce que faisait la version
+  // précédente, au bout de 25 s), on met la carte DANS LA FILE — elle apparaît aussitôt en
+  // « à vérifier » avec sa photo, et l'analyse de fond la reprendra dans les creux ou à la
+  // fermeture de la caméra. L'utilisateur, lui, enchaîne sans attendre.
+  // 7 s : l'identification tient en ~1,6 s de médiane et ~3 s au p90 sur téléphone, et un
+  // départage OCR légitime peut ajouter 3 s. Au-delà, ce n'est plus de la lenteur.
+  const jetonLecture = ++v2JetonLecture;
+  let cvPourLaFile = null;
   const liberation = setTimeout(()=>{
-    if(!readInFlight) return;
-    signalerBlocageScan('lecture jamais terminée (verrou rouvert de force)', score);
+    if(!readInFlight || jetonLecture !== v2JetonLecture) return;
+    v2LectureAbandonnee = jetonLecture;   // le résultat tardif sera ignoré
+    diagPush('try', {ok:false, hint:'identification trop longue — carte mise en file', score});
+    if(cvPourLaFile) capturerSansLecture(cvPourLaFile, 'identification trop longue', true);
+    // Une carte lente est une carte lente ; TROIS de suite, c'est le moteur qui ne répond
+    // plus. Continuer à capturer reste la bonne conduite — c'est tout l'intérêt de la file —
+    // mais l'utilisateur doit savoir qu'il empile au lieu d'identifier, sinon il croit
+    // scanner normalement et découvre trente cartes à trier.
+    if(++v2AbandonsConsecutifs === 3){
+      toast('⚠️ L’identification ne répond pas — les cartes sont mises de côté et seront traitées plus tard.');
+      signalerBlocageScan('identification abandonnée 3 fois de suite', score);
+    }
     readInFlight = false;
-    reprendreApresBlocage();
-  }, 25000);
+    // On repart propre pour la carte suivante, sans effacer la file.
+    prevCorners = null; v2StableStreak = 0; v2PresentDepuis = 0;
+    v2CarteRetiree = true; v2EssaiCadre = 0;
+  }, 7000);
   const t0 = performance.now();
   try{
     const video = $('video');
@@ -12141,6 +12163,7 @@ async function attemptReadV2(corners, score){
     cvPrise.width = sourceForRead.width; cvPrise.height = sourceForRead.height;
     cvPrise.getContext('2d').drawImage(sourceForRead, 0, 0);
     const dataUrlPrise = cvPrise.toDataURL('image/jpeg', 0.8);
+    cvPourLaFile = cvPrise;   // de quoi sauver la photo si l'identification s'éternise
     showLiveResultPending(dataUrlPrise, '', '');
     setOverlayTarget('ok', corners);
     flashScreen(dataUrlPrise);
@@ -12168,7 +12191,8 @@ async function attemptReadV2(corners, score){
       res();
     }, gardeMs); });
     await Promise.race([
-      gererScanV2(sourceForRead, coinsEssai, score, t0, true, {cv: cvPrise, dataUrl: dataUrlPrise})
+      gererScanV2(sourceForRead, coinsEssai, score, t0, true,
+                  {cv: cvPrise, dataUrl: dataUrlPrise, jeton: jetonLecture})
         .then(r => {
           // « reessai » = pas d'identification exploitable et la carte est toujours là.
           // On resserre le cadre au coup suivant : c'est le cas du lot tenu en main, où le
@@ -12524,6 +12548,9 @@ function carteDepuisPack(p){
            image: p.image, set: { id: p.setId, name: nomDeSet(p.setId) || '' }, rarity: '', variants: {}, _pack: true };
 }
 let v2RebutsConsecutifs = 0;
+// Jeton de lecture : identifie la tentative en cours, pour pouvoir ignorer un résultat qui
+// arriverait APRÈS que la carte a été confiée à la file (voir attemptReadV2, V.35).
+let v2JetonLecture = 0, v2LectureAbandonnee = 0, v2AbandonsConsecutifs = 0;
 // Dernière carte réellement affichée dans le cadre du bas. Sert à restaurer le panneau
 // quand une identification est rejetée comme doublon après que l'accusé de réception l'a
 // déjà basculé sur « 🔎 recherche… » (voir gererScanV2).
@@ -12552,6 +12579,17 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     }
   }).catch(()=> null);
   marquerVerificationApprofondie(false);
+
+  // Cette lecture a-t-elle été abandonnée en cours de route ? (identification trop longue,
+  // carte déjà partie dans la file — voir attemptReadV2). Si oui, on s'arrête ici : la photo
+  // est déjà en attente d'analyse, et poursuivre l'enregistrerait une seconde fois.
+  if(prise && prise.jeton && prise.jeton === v2LectureAbandonnee){
+    diagPush('err', {msg:'résultat tardif ignoré (carte déjà mise en file)'});
+    return 'abandonnee';
+  }
+  // L'identification a répondu : la série d'abandons est rompue. Sans cette remise à zéro,
+  // trois lenteurs isolées réparties sur une session finiraient par déclencher l'alerte.
+  v2AbandonsConsecutifs = 0;
 
   // Pas d'identification fiable. On NE retombe PAS sur l'OCR (l'utilisateur a choisi la
   // V2). D'abord on laisse deux ou trois chances de recadrer ; si ça persiste, la photo
