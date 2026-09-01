@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 31;
+const VERSION_APP = 32;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9628,13 +9628,23 @@ function surveillerFluxMort(){
   })();
 }
 
-async function applyTrackTweaksAndDiagnostics(track){
+// `avecZoom` : ne JAMAIS le mettre à vrai depuis l'ouverture de la caméra (voir V.32).
+async function applyTrackTweaksAndDiagnostics(track, {avecZoom = false} = {}){
   try{
     const caps = track.getCapabilities ? track.getCapabilities() : {};
     if(caps.focusMode && caps.focusMode.includes('continuous')){
       await track.applyConstraints({advanced:[{focusMode:'continuous'}]});
     }
-    if(hasZoomPreference()){
+    // ⚠️ ZOOM MÉMORISÉ : PLUS RESTAURÉ À L'OUVERTURE (V.32).
+    // `pokescanZoomPref` était écrit par `validerObjectifCourant()` au fil des captures
+    // réussies, pour retenir le palier trouvé par l'escalade de zoom (`surveillerNettete`,
+    // puis `surveillerCadrageV2`). Ces deux mécanismes ont été SUPPRIMÉS en V.13 et V.16 —
+    // la préférence est donc devenue orpheline : plus rien ne la produit, ni ne la corrige.
+    // En rebranchant cette fonction en V.29 j'ai ressuscité une valeur périmée, et Nikos
+    // s'est retrouvé avec une caméra zoomée : cadrage faux, carte hors du cadre, scanner
+    // inutilisable. La valeur reste en mémoire (on ne détruit pas un réglage sans le dire),
+    // mais elle n'est plus appliquée d'office. Le pincement à l'écran reste maître du zoom.
+    if(avecZoom && hasZoomPreference()){
       const preferredZoom = getPreferredZoom();
       if(caps.zoom && caps.zoom.min <= preferredZoom && caps.zoom.max >= preferredZoom){
         await track.applyConstraints({advanced:[{zoom:preferredZoom}]});
@@ -9658,6 +9668,7 @@ async function applyTrackTweaksAndDiagnostics(track){
                         ' pointDeMiseAuPoint=' + (focusPointSupporte ? 'supporté' : 'non supporté') +
                         ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
                         ' réglage=' + (settings.zoom ?? '?') +
+                        ' préférenceMémorisée=' + (hasZoomPreference() ? getPreferredZoom() + ' (NON appliquée)' : 'aucune') +
                         ' résolution=' + settings.width + 'x' + settings.height +
                         ' frameRate capacités=' + JSON.stringify(caps.frameRate||null) +
                         ' réglage=' + (settings.frameRate ?? '?') +
@@ -9860,6 +9871,41 @@ async function viserCentreUneFois(track){
   }
 }
 
+// Réglages de piste bornés dans le temps. `applyConstraints` peut ne jamais rendre la main
+// sur certains pilotes ; ces réglages sont un CONFORT (mise au point, anti-mode-nuit), jamais
+// une condition pour scanner. Ils ne doivent donc en aucun cas retarder l'image — au-delà de
+// deux secondes on passe outre, et on le note pour pouvoir le constater ensuite.
+const REGLAGES_PISTE_MS_MAX = 2000;
+async function reglerPisteSansBloquer(track){
+  const t0 = performance.now();
+  const abandon = new Promise(res => setTimeout(()=> res('délai'), REGLAGES_PISTE_MS_MAX));
+  const travail = (async ()=>{
+    await applyTrackTweaksAndDiagnostics(track);
+    await viserCentreUineFoisSafe(track);
+    return 'ok';
+  })();
+  const issue = await Promise.race([travail, abandon]);
+  diagPush('err', {msg:'caméra: réglages de piste ' + issue + ' en ' + Math.round(performance.now()-t0) + ' ms'});
+  // Le capteur peut être RESTÉ zoomé d'une session précédente (V.29 a réappliqué une
+  // préférence périmée pendant trois versions). Comme plus rien ne pilote le zoom
+  // automatiquement, on le ramène une fois à son minimum — c'est-à-dire au cadrage le plus
+  // large, celui qui donne le plus de chances à la détection. Le pincement reste maître
+  // ensuite. Sans ce retour, un appareil zoomé le resterait sans que rien ne le corrige.
+  try{
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    const reglage = track.getSettings ? track.getSettings() : {};
+    if(caps.zoom && reglage.zoom != null && reglage.zoom > caps.zoom.min){
+      await track.applyConstraints({advanced:[{zoom: caps.zoom.min}]});
+      diagPush('err', {msg:'caméra: zoom ramené de ' + reglage.zoom + ' à ' + caps.zoom.min});
+    }
+  }catch(e){}
+}
+// Enveloppe qui n'échoue jamais : une capacité annoncée puis refusée ne doit pas empêcher
+// l'ouverture (constaté par le passé sur `pointsOfInterest`).
+async function viserCentreUineFoisSafe(track){
+  try{ await viserCentreUneFois(track); }catch(e){}
+}
+
 async function startCamera(){
   $('cam-error').textContent = '';
   entrerPleinEcranScan();
@@ -9897,11 +9943,20 @@ async function startCamera(){
     //     les navigateurs n'honorent pas — d'où sa reprise ici, en second essai.
     // Appelée ICI, avant que la boucle ne démarre : c'est la règle posée en V.16 — on ne
     // touche pas à la piste vidéo PENDANT la détection, mais à l'ouverture rien ne l'interdit.
-    await applyTrackTweaksAndDiagnostics(cameraStream.getVideoTracks()[0]);
-    await viserCentreUneFois(cameraStream.getVideoTracks()[0]);
-
+    // ⚠️ L'IMAGE D'ABORD, LES RÉGLAGES ENSUITE (corrigé en V.32).
+    // La V.29 attendait ces deux réglages AVANT de brancher le flux sur la balise vidéo.
+    // Or `applyConstraints` n'est pas un appel anodin sur un vrai capteur : poser `frameRate`
+    // fait renégocier le pipeline de capture sur certains pilotes Android, ce qui prend des
+    // secondes — quand ça répond. Tant que la promesse pendait, `srcObject` n'était pas
+    // assigné : aucune image, l'écran de chargement restait, et le scanner paraissait mort.
+    // Avec une caméra simulée (canvas.captureStream) ces appels sont instantanés, d'où un
+    // test qui passait alors que l'appareil réel échouait.
+    // On branche donc l'image tout de suite. Les réglages suivent, bornés dans le temps et
+    // sans jamais pouvoir bloquer — mais AVANT `startAimLoop`, pour rester fidèle à la règle
+    // de la V.16 : on ne touche pas à la piste pendant que la détection tourne.
     $('video').srcObject = cameraStream;
     await $('video').play().catch(()=>{});
+    await reglerPisteSansBloquer(cameraStream.getVideoTracks()[0]);
     $('video-wrap').classList.add('active');
     $('cam-start-row').style.display = 'none';
     $('cam-fullscreen-area').classList.add('fs');
