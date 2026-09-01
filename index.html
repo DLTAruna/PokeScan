@@ -735,6 +735,70 @@
     background:rgba(224,85,63,.20); color:#ff9d8a;
     border:1px solid rgba(224,85,63,.55);
   }
+  /* ─────────────── ÉCRAN DE CHARGEMENT DU SCANNER (V.18) ───────────────
+     Contrainte de conception : pendant la phase « Décodage », le fil principal décode
+     6,8 Mo d'empreintes et reste bloqué plusieurs secondes. Toute animation pilotée par
+     JS, ou qui touche à la mise en page (width, top, margin), se figerait pile à ce
+     moment-là — c'est-à-dire précisément quand l'utilisateur regarde l'écran en se
+     demandant si ça marche encore. On n'anime donc QUE `transform` et `opacity`, les deux
+     propriétés que le compositeur traite sur son propre fil, sans le fil principal.
+     La barre de progression suit la même règle : `scaleX`, jamais `width`. */
+  .scan-loader{
+    position:absolute; inset:0; z-index:15;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0;
+    background:radial-gradient(120% 90% at 50% 40%, #131a2b 0%, #080a10 70%);
+    padding:24px; text-align:center;
+  }
+  .scan-loader[hidden]{display:none;}
+  /* Silhouette de carte : le sujet même de l'attente. Un rectangle au ratio d'une carte
+     dit ce qu'on prépare mieux qu'un rond qui tourne. */
+  .sl-carte{
+    position:relative; width:104px; height:145px; border-radius:9px; overflow:hidden;
+    background:linear-gradient(150deg, rgba(255,255,255,.09), rgba(255,255,255,.02));
+    border:1px solid rgba(255,255,255,.16);
+    box-shadow:0 12px 34px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.10);
+    animation:slRespire 3.4s ease-in-out infinite;
+  }
+  /* Le faisceau qui balaie : la métaphore du scan, et le seul élément réellement animé
+     en continu. `translateY` sur 100 % de sa propre hauteur, donc composé. */
+  .sl-faisceau{
+    position:absolute; left:0; right:0; top:0; height:42%;
+    background:linear-gradient(to bottom, rgba(212,175,55,0) 0%, rgba(212,175,55,.55) 55%, rgba(255,235,170,.85) 100%);
+    filter:blur(0.5px);
+    animation:slBalaye 1.9s cubic-bezier(.55,0,.45,1) infinite;
+  }
+  @keyframes slBalaye{
+    0%   {transform:translateY(-105%); opacity:0;}
+    18%  {opacity:1;}
+    82%  {opacity:1;}
+    100% {transform:translateY(240%); opacity:0;}
+  }
+  @keyframes slRespire{
+    0%,100%{transform:scale(1)    rotate(-1.1deg);}
+    50%    {transform:scale(1.035) rotate(1.1deg);}
+  }
+  .sl-titre{margin:22px 0 0; font-size:15px; font-weight:700; color:#f2f4f8; letter-spacing:.2px;}
+  .sl-etape{margin:6px 0 0; font-size:12.5px; color:#9aa4b6; min-height:17px;}
+  .sl-piste{
+    width:min(230px, 74vw); height:4px; margin-top:16px; border-radius:99px;
+    background:rgba(255,255,255,.12); overflow:hidden;
+  }
+  .sl-piste > i{
+    display:block; height:100%; border-radius:99px;
+    background:linear-gradient(90deg,#9a7620,#e6c25c,#ffeaa7);
+    /* scaleX depuis la gauche : la largeur ne change jamais, seule la matrice bouge. */
+    transform:scaleX(0); transform-origin:left center;
+    transition:transform .35s cubic-bezier(.22,.61,.36,1);
+  }
+  .sl-note{margin:11px 0 0; font-size:11.5px; color:#6f7789; max-width:270px; line-height:1.45;}
+  /* Une seule fois, à la première ouverture : le sens du réglage système est « moins de
+     mouvement », pas « aucune information ». La barre reste, le reste s'immobilise. */
+  @media (prefers-reduced-motion: reduce){
+    .sl-carte, .sl-faisceau{animation:none;}
+    .sl-faisceau{opacity:.5; transform:translateY(80%);}
+    .sl-piste > i{transition:none;}
+  }
+
   .cam-stop svg{width:22px; height:22px;}
   .cam-stop:active{background:rgba(224,85,63,.42); color:#fff;}
   /* La croix ne vit plus dans .cam-topbar (retirée en V.13, § « caméra réduite au strict
@@ -4696,6 +4760,16 @@
       <div class="video-wrap" id="video-wrap">
         <video id="video" autoplay playsinline muted></video>
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
+        <!-- Écran de chargement du scanner. Posé SOUS la croix de sortie (z-index 15 contre
+             20) : même pendant le chargement, on doit pouvoir refermer la caméra. Il ne
+             couvre pas non plus le panneau du bas, qui vit dans le parent. -->
+        <div class="scan-loader" id="scan-loader" hidden>
+          <div class="sl-carte" aria-hidden="true"><span class="sl-faisceau"></span></div>
+          <p class="sl-titre">Préparation du scanner</p>
+          <p class="sl-etape" id="scan-loader-etape">Démarrage…</p>
+          <div class="sl-piste"><i id="scan-loader-jauge"></i></div>
+          <p class="sl-note" id="scan-loader-note"></p>
+        </div>
         <!-- ─── V.13 : la caméra est réduite au strict nécessaire ───
              Demande de Nikos : « je veux l'outil brut du bench V2, sans rien excepté le
              rectangle en bas qui indique la carte capturée ». Tout ce qui vivait ici —
@@ -5670,7 +5744,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 17;
+const VERSION_APP = 18;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9461,8 +9535,70 @@ async function applyTrackTweaksAndDiagnostics(track){
 // `buildCameraConstraints`, `choisirObjectifNet`, `switchLens` et `reprendreCamera` restent
 // dans le fichier — le bouton « changer d'objectif » des réglages s'en sert encore — mais
 // ne sont plus sur le chemin du démarrage.
+// ─────────────── ÉCRAN DE CHARGEMENT DU SCANNER ───────────────
+// Le catalogue pèse 6,8 Mo depuis qu'il couvre les 18 séries, et il se télécharge une fois
+// par version d'index. Avant, cette attente ne se voyait nulle part : la caméra s'ouvrait
+// sur un cadre rouge immobile et un bandeau toutes les six secondes. On montre donc ce qui
+// se passe, avec l'avancement RÉEL en octets (voir `onOctets` dans scan-v2.js).
+let v2Avancement = { p: 0, message: 'Démarrage…' };
+// Minuteur du fondu de sortie. Gardé pour pouvoir l'ANNULER : sans ça, un masquage
+// programmé juste avant un réaffichage recachait l'écran 300 ms plus tard, sans raison
+// visible. Constaté au test.
+let loaderSortieTimer = 0;
+function majLoaderV2(p, message){
+  if(p != null) v2Avancement = { p, message: message || v2Avancement.message };
+  const zone = $('scan-loader');
+  if(!zone) return;
+
+  if(p === 1){                       // prêt : fondu de sortie, puis on retire de l'affichage
+    if(zone.hidden) return;
+    clearTimeout(loaderSortieTimer);
+    zone.style.transition = 'opacity .3s ease-out';
+    zone.style.opacity = '0';
+    loaderSortieTimer = setTimeout(()=>{
+      zone.hidden = true; zone.style.opacity = ''; zone.style.transition = '';
+    }, 320);
+    return;
+  }
+  if(zone.hidden) return;            // pas affiché : on a mémorisé l'avancement, ça suffit
+
+  const etape = $('scan-loader-etape'), jauge = $('scan-loader-jauge'), note = $('scan-loader-note');
+  if(etape) etape.textContent = message || v2Avancement.message;
+  // Échec : la barre reste où elle est (elle ne doit pas prétendre avancer), et on explique.
+  if(p == null){
+    if(note) note.textContent = 'Vérifie ta connexion, puis referme et rouvre la caméra.';
+    if(etape) etape.style.color = 'var(--red, #e5484d)';
+    return;
+  }
+  if(etape) etape.style.color = '';
+  if(jauge) jauge.style.transform = 'scaleX(' + Math.max(0, Math.min(1, p)).toFixed(3) + ')';
+  // La note n'apparaît que pendant le téléchargement, là où l'attente est longue et où il
+  // vaut la peine de dire qu'elle ne se reproduira pas.
+  if(note) note.textContent = (p > 0.04 && p < 0.5)
+    ? 'Catalogue de 18 646 cartes — téléchargé une seule fois, puis gardé sur l’appareil.'
+    : '';
+}
+function afficherLoaderV2(){
+  const zone = $('scan-loader');
+  if(!zone) return;
+  clearTimeout(loaderSortieTimer);          // annule un fondu de sortie encore en attente
+  zone.hidden = false;
+  zone.style.opacity = ''; zone.style.transition = '';
+  // On n'affiche cet écran QUE si le scanner n'est pas prêt. Rejouer un avancement mémorisé
+  // à 1 relancerait donc aussitôt le masquage — d'où le plafond : tant qu'on montre, on
+  // n'est pas à 100 %.
+  majLoaderV2(Math.min(v2Avancement.p, 0.99), v2Avancement.message);
+}
+
 async function startCamera(){
   $('cam-error').textContent = '';
+  // Avant même de demander la caméra : si le scanner n'est pas prêt, on le dit. Et on
+  // relance l'initialisation si elle avait échoué au chargement de la page — sinon l'écran
+  // resterait figé sur un état dont rien ne peut le sortir.
+  if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
+    afficherLoaderV2();
+    try{ window.relancerInitV2 && window.relancerInitV2(); }catch(e){}
+  }
   try{
     cameraStream = await navigator.mediaDevices.getUserMedia({
       video: {
@@ -9867,7 +10003,9 @@ let v2RienDepuis = 0;
 let aireBasseDepuis = 0;
 // Attente de l'index V2 : dernier message affiché, et relance d'initialisation déjà tentée.
 // Voir la garde en tête de detectLoop — sans eux, l'attente est muette ou le bandeau clignote.
-let dernierMotV2 = 0, v2RelanceDemandee = false;
+// La relance d'initialisation a déménagé dans startCamera (elle y a un déclencheur clair :
+// l'utilisateur ouvre la caméra), d'où la disparition de `v2RelanceDemandee`.
+let dernierMotV2 = 0;
 
 // Miroir de surveillerNettete (§ CORRIGER SUR CONSTAT, PAS SUR SUPPOSITION), pour la V2.
 // La mesure qui déclenchait la correction d'objectif était le flou — coupée en V2 (voir
@@ -11161,23 +11299,13 @@ async function detectLoop(){
   // clignoter, et on relance l'initialisation si personne ne l'a fait.
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     setOverlayTarget('attente', null);
-    const maintenant = Date.now();
-    if(maintenant - dernierMotV2 > 6000){
-      dernierMotV2 = maintenant;
-      if(!window.SCAN_V2){
-        toast('⚠️ Reconnaissance visuelle absente — recharge la page.');
-      }else{
-        toast('⏳ Chargement de la reconnaissance visuelle…');
-        // Relance au cas où l'initialisation du module aurait échoué : sans ça, un échec au
-        // chargement de la page condamnait la session entière, sans recours ni message.
-        if(!v2RelanceDemandee && SCAN_V2.initV2){
-          v2RelanceDemandee = true;
-          SCAN_V2.initV2({}).catch(e => {
-            diagPush('err', {msg:'V2: initialisation impossible (' + e.message + ')'});
-            toast('⚠️ Reconnaissance visuelle indisponible : ' + e.message);
-          });
-        }
-      }
+    // L'attente est désormais montrée par l'écran de chargement (voir majLoaderV2), affiché
+    // par startCamera avec l'avancement réel du téléchargement. Le bandeau toutes les six
+    // secondes qu'il y avait ici a été retiré : deux canaux qui disent la même chose, dont
+    // un qui se répète, c'est plus inquiétant qu'informatif.
+    if(!window.SCAN_V2 && Date.now() - dernierMotV2 > 6000){
+      dernierMotV2 = Date.now();
+      toast('⚠️ Reconnaissance visuelle absente — recharge la page.');
     }
     setTimeout(detectLoop, 300);
     return;
@@ -12103,6 +12231,10 @@ function stopCamera(){
   $('cam-start-row').style.display = 'flex';
   $('cam-fullscreen-area').classList.remove('fs');
   document.body.classList.remove('cam-plein');
+  // L'écran de chargement ne doit pas survivre à la fermeture : réaffiché tel quel à la
+  // réouverture, il montrerait un avancement périmé.
+  const loader = $('scan-loader');
+  if(loader){ loader.hidden = true; loader.style.opacity = ''; loader.style.transition = ''; }
   document.documentElement.style.overflow = '';
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
   cadrageVisible = {w: 1, h: 1};
@@ -20024,7 +20156,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=18';
+import * as V2 from './scan-v2.js?v=19';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
@@ -20050,16 +20182,27 @@ if(chk){
 
   let enCours = false;
   async function activer(){
-    if(V2.pretV2()){ dire('V2 active.'); return; }
+    if(V2.pretV2()){ dire('V2 active.'); majLoaderV2(1, 'Prêt'); return; }
     if(enCours) return;
     enCours = true;
     try{
-      await V2.initV2({ onProgress: (p, m) => dire(m || `V2 : ${Math.round(p*100)} %`) });
+      await V2.initV2({ onProgress: (p, m) => {
+        dire(m || `V2 : ${Math.round(p*100)} %`);
+        majLoaderV2(p, m);
+      }});
       dire('V2 active.');
-    }catch(e){ dire('V2 indisponible : ' + e.message, true); }
+      majLoaderV2(1, 'Prêt');
+    }catch(e){
+      dire('V2 indisponible : ' + e.message, true);
+      majLoaderV2(null, 'Échec : ' + e.message);
+    }
     enCours = false;
     majChip();
   }
+  // Exposée pour que startCamera puisse relancer l'initialisation si l'utilisateur ouvre la
+  // caméra alors qu'un premier essai a échoué (réseau coupé au chargement de la page, par
+  // exemple) : sans ça, il resterait devant un écran de chargement définitivement figé.
+  window.relancerInitV2 = activer;
 
   // Le chip reste cliquable comme simple raccourci vers les réglages (utile s'il affiche
   // « … » longtemps) plutôt que comme bascule : il n'y a plus de second mode à activer.

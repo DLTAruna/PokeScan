@@ -270,10 +270,34 @@ async function idbDelPrefixe(prefixe, sauf) {
   } catch (e) {}
 }
 
-async function telechargerR2(chemin, { json, gunzip } = {}) {
+// `onOctets(recus, total)` : avancement RÉEL du téléchargement, en octets. Sans lui, la
+// progression rapportée par initV2 sautait de 5 % à 55 % — et ce trou, c'est justement le
+// gros fichier (index-global.bin, 6,8 Mo depuis que le catalogue couvre les 18 séries).
+// Une barre de progression y serait restée figée pendant tout ce qui compte. On lit donc
+// le corps en flux quand l'appelant veut suivre, et d'un bloc sinon (les petits fichiers).
+async function telechargerR2(chemin, { json, gunzip, onOctets } = {}) {
   const r = await fetch(R2 + '/' + chemin, { cache: 'no-store' });
   if (!r.ok) throw new Error(chemin + ' : HTTP ' + r.status);
-  let buf = await r.arrayBuffer();
+  let buf;
+  const total = +(r.headers.get('content-length') || 0);
+  if (onOctets && r.body && total) {
+    const lecteur = r.body.getReader();
+    const morceaux = [];
+    let recus = 0;
+    for (;;) {
+      const { done, value } = await lecteur.read();
+      if (done) break;
+      morceaux.push(value);
+      recus += value.length;
+      try { onOctets(recus, total); } catch (e) {}
+    }
+    const tout = new Uint8Array(recus);
+    let off = 0;
+    for (const m of morceaux) { tout.set(m, off); off += m.length; }
+    buf = tout.buffer;
+  } else {
+    buf = await r.arrayBuffer();
+  }
   if (gunzip) {
     const u = new Uint8Array(buf);
     if (u[0] === 0x1f && u[1] === 0x8b && typeof DecompressionStream === 'function') {   // encore compressé
@@ -488,15 +512,26 @@ export async function initV2(opts = {}) {
   if (manifest.model && manifest.model !== MODELE) throw new Error('index pour un autre modèle (' + manifest.model + ')');
   const version = manifest.updatedAt || '0';
 
-  onProgress(0.05, 'Index visuel…');
   const cleIdx = 'idx:' + version;
   let bin = await idbGet(cleIdx);
   let meta = await idbGet('meta:' + version);
   if (!bin || !meta) {
-    bin = await telechargerR2('index-global.bin');
+    // Premier lancement, ou nouvel index après un build : c'est LE moment long. On rapporte
+    // l'avancement en octets (0,05 → 0,50) pour que l'écran de chargement dise la vérité.
+    onProgress(0.05, 'Téléchargement du catalogue…');
+    const mo = o => (Math.round(o / 104857.6) / 10).toFixed(1);
+    bin = await telechargerR2('index-global.bin', {
+      onOctets: (recus, tot) => onProgress(0.05 + 0.45 * (recus / tot),
+        'Téléchargement du catalogue… ' + mo(recus) + ' / ' + mo(tot) + ' Mo')
+    });
+    onProgress(0.5, 'Fiche des cartes…');
     meta = await telechargerR2('index-global-meta.json.gz', { json: true, gunzip: true });
     idbDelPrefixe('idx:', cleIdx); idbDelPrefixe('meta:', 'meta:' + version);
     idbSet(cleIdx, bin); idbSet('meta:' + version, meta);
+  } else {
+    // Déjà en cache : on saute directement à la fin de la phase réseau, sinon la barre
+    // resterait à 5 % puis bondirait à 55 % sans que rien ne se soit passé.
+    onProgress(0.5, 'Catalogue en cache…');
   }
 
   onProgress(0.55, 'Décodage…');

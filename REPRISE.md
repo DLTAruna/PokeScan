@@ -28,6 +28,39 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Écran de chargement du scanner (V.18, 2026-09-01)
+
+Demande de Nikos : « on peut mettre un loading screen le temps de charger le scanner, avec
+des animations modernes ? » — pertinent depuis que le catalogue pèse 6,8 Mo.
+
+**D'abord rendre la progression honnête.** `initV2` sautait de 5 % à 55 % : ce trou EST le
+téléchargement du gros fichier. Une barre y serait restée figée pendant tout ce qui compte.
+`telechargerR2` accepte donc `onOctets(recus, total)` et lit le corps **en flux**
+(`response.body.getReader()`) quand l'appelant veut suivre ; l'index rapporte alors son
+avancement réel, converti en 0,05 → 0,50, avec les mégaoctets affichés.
+
+**Contrainte de conception, notée dans le CSS** : pendant la phase « Décodage », le fil
+principal décode 6,8 Mo d'empreintes et reste bloqué plusieurs secondes. Toute animation
+pilotée par JS, ou touchant à la mise en page (`width`, `top`), se figerait **précisément à
+ce moment-là** — quand l'utilisateur se demande si ça marche encore. On n'anime donc que
+`transform` et `opacity`, traités par le compositeur sur son propre fil. La barre suit la
+même règle : `scaleX`, jamais `width`.
+
+Contenu : silhouette de carte (le sujet de l'attente, plutôt qu'un rond qui tourne) balayée
+par un faisceau, titre, étape en clair, barre, et une note qui n'apparaît que pendant le
+téléchargement pour dire qu'il ne se reproduira pas. Placé sous la croix de sortie
+(z-index 15 contre 20) : on doit pouvoir refermer la caméra même pendant le chargement.
+`prefers-reduced-motion` immobilise tout sauf la barre.
+
+⚠️ **Défaut trouvé au test, corrigé** : un fondu de sortie programmé (`setTimeout` 320 ms)
+pouvait recacher l'écran juste après un réaffichage. Le minuteur est désormais gardé et
+annulé par `afficherLoaderV2`, qui plafonne aussi l'avancement rejoué à 0,99 — rejouer un
+« 100 % » mémorisé relançait le masquage aussitôt.
+
+**Non vérifié ici** : que les animations *bougent*. Le volet navigateur gèle rAF (voir la
+correction en tête de la section V.17). Mise en page, textes, valeurs de la barre et
+séquence afficher/masquer sont vérifiés ; le mouvement ne l'est que sur appareil réel.
+
 ## 🗂️ CATALOGUE COMPLET EN LIGNE — 18 646 cartes (build terminé le 2026-09-01, 12h33)
 
 Le build de fond lancé dans la journée s'est terminé : **185/185 sets, 18 646 cartes, 4 h 17**.
@@ -62,12 +95,33 @@ remonte le cadre de visée ». Les deux constats n'en faisaient qu'un.
 Un élément `position:fixed` se résout contre le **viewport** — *sauf* si un ancêtre porte un
 `transform`, `filter` ou `perspective` : cet ancêtre devient alors le bloc conteneur. Or
 `#section-capture` reçoit l'animation d'entrée d'onglet
-(`section.section.active{animation:ongletEntre .26s}`), et **cette animation restait bloquée**
-— relevé sur l'appareil : `transform: matrix(1,0,0,1,0,7)`, état `running`, `currentTime: 0`.
+(`section.section.active{animation:ongletEntre .26s}`), qui pose un `transform` le temps de
+se jouer.
 
 Conséquence mesurée : la zone caméra, pourtant `inset:0`, se dessinait à **148 px du haut sur
 284 px de haut** au lieu des 812 px de l'écran. Tout ce qui se cale dessus — cadre de visée,
 voile sombre, panneau de résultat — héritait donc d'une boîte fausse.
+
+**⚠️ CORRECTION HONNÊTE (V.18) — la première rédaction de cette section était fautive.**
+Elle affirmait que l'animation « restait bloquée » (`currentTime: 0`, état `running`).
+C'était un **artefact de l'environnement de test** : dans le volet navigateur intégré,
+quand il est masqué, `requestAnimationFrame` **ne se déclenche pas du tout** (vérifié : une
+boucle rAF de 500 ms n'a jamais rendu la main en 45 s), donc animations et transitions sont
+gelées. Sur un vrai appareil, `ongletEntre` se termine en 260 ms et le `transform` redevient
+`none`.
+
+**Le problème n'en reste pas moins réel, mais pour une autre raison** : `startCamera()`
+appelle `majCadrageVisible()` immédiatement après avoir posé `.fs`, c'est-à-dire **pendant**
+ces 260 ms d'animation. La géométrie (`cadrageVisible`, `decalageGuideY`, `hauteurLibreGuide`)
+est donc mesurée contre la boîte piégée, **puis mise en cache** — elle n'est recalculée qu'au
+redimensionnement, à la rotation, ou après la première carte. Le cadre de visée est donc
+faux jusqu'à la première capture. La correction ci-dessous reste donc la bonne, et vaut
+aussi garde-fou : plus aucun ancêtre transformé pendant que la caméra est ouverte.
+
+**Leçon d'outillage à retenir** : dans ce volet, on peut vérifier la MISE EN PAGE (les
+captures d'écran forcent un rendu) et les valeurs de style en ligne, mais **jamais qu'une
+animation ou une transition se déroule**. Ne rien conclure d'un `currentTime` ou d'un
+`getComputedStyle` sur une propriété en cours de transition — les deux mentent ici.
 
 **Corrigé** : `body.cam-plein section.section{animation:none !important; transform:none
 !important;}`, la classe étant posée à l'ouverture de la caméra et retirée à sa fermeture.
