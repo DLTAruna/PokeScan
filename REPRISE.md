@@ -28,6 +28,48 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ DÉMARRAGE : l'OCR et le détecteur bloquaient le scanner (V.24)
+
+Nikos : « le chargement et l'ouverture du scanner prennent plus de 30 secondes ». Deux causes
+distinctes, toutes deux du même genre — **attendre un moteur dont on n'a pas encore besoin**.
+
+### 1. `initV2` attendait tout l'OCR avant de se déclarer prête
+
+Trois coûts s'enchaînaient AVANT `pret = true` :
+1. **`chargerParsing()` retélécharge `index.html` EN ENTIER**, `cache:'no-store'` — mesuré
+   **325 Ko**, juste pour en extraire un bloc de code ;
+2. la création du worker OCR ;
+3. **`ocrLire(warm)`** : une inférence sur une toile vide, qui déclenche à elle seule le
+   chargement du modèle Paddle (~6 Mo) et sa compilation.
+
+Or l'OCR ne sert **qu'à départager une égalité** — une minorité de scans — et `identifierV2`
+le teste déjà (`if (ocr && …)`) : sans lui, elle s'en passe proprement. C'était exactement
+l'erreur corrigée en V.14 côté application, refaite un étage plus bas.
+**Toute la chaîne OCR part maintenant en arrière-plan.** La 2ᵉ inférence d'embedding, qui ne
+servait qu'à MESURER le temps à chaud (`warm2`), a suivi : elle est calculée après coup, le
+diagnostic est conservé.
+
+### 2. Le détecteur de contours ne se chargeait qu'à l'ouverture de la caméra
+
+Le worker de détection (scanic + ONNX, **~3,5 Mo**) n'était créé qu'au premier
+`detectWorkerCall`, c'est-à-dire dans `startAimLoop` — au moment précis où l'utilisateur vient
+d'appuyer sur Scanner et attend l'image. **Préchargé** désormais 1,5 s après le chargement de
+la page (différé pour laisser la bande passante à l'index, lui sur le chemin critique).
+`ensureDetector()` étant idempotent, l'appel de `startAimLoop` retrouve un détecteur prêt :
+**mesuré à 0 ms au lieu du téléchargement complet.**
+
+### Défaut trouvé au test : l'écran de chargement ne se refermait plus
+
+`activer()` ne referme l'écran qu'à la fin de l'initialisation V2. Quand l'index est déjà en
+cache, cette fin survient bien AVANT l'ouverture de la caméra — donc plus rien ne venait le
+masquer, et il restait affiché **par-dessus une caméra pourtant fonctionnelle** (vérifié :
+carte identifiée à 99 % derrière l'écran de chargement). `startCamera` le referme maintenant
+lui-même après `startAimLoop()`.
+
+⚠️ **À mesurer sur téléphone** : les gains ci-dessus sont structurels et vérifiés en local
+(détecteur à 0 ms, chaîne OCR hors du chemin critique), mais les 30 s se jouaient sur réseau
+mobile — seul un test réel dira ce qu'il en reste.
+
 ## ⭐ LE VRAI COUPABLE : un toast posé sur le bouton Scanner (V.23)
 
 **Trouvé par Nikos**, après deux fausses pistes de ma part. Le bandeau flottant

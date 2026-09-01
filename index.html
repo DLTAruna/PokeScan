@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 23;
+const VERSION_APP = 24;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -7335,6 +7335,26 @@ function detectWorkerCall(type, payload, transfer){
     w.postMessage(Object.assign({id, type}, payload||{}), transfer||[]);
   }));
 }
+
+// ─── PRÉCHARGEMENT DU DÉTECTEUR (V.24) ───
+// Le worker de détection charge scanic + son modèle ONNX (~3,5 Mo). Jusqu'ici il n'était
+// créé qu'au PREMIER appel, c'est-à-dire dans startAimLoop — donc au moment précis où
+// l'utilisateur vient d'appuyer sur Scanner et attend de voir l'image. Ces secondes-là
+// s'ajoutaient à l'ouverture de la caméra alors qu'elles pouvaient être payées pendant que
+// la page était simplement ouverte.
+// On l'amorce donc dès que la page respire. `ensureDetector()` est idempotent : l'appel de
+// startAimLoop retrouvera un détecteur déjà prêt et rendra la main aussitôt.
+// Différé d'une seconde et demie : au chargement, la bande passante et le processeur sont
+// déjà pris par l'index d'empreintes, qui lui est sur le chemin critique.
+addEventListener('load', ()=>{
+  setTimeout(()=>{
+    if(detectWorkerBroken) return;
+    const t0 = performance.now();
+    detectWorkerCall('init')
+      .then(()=> diagPush('err', {msg:'détecteur préchargé en ' + Math.round(performance.now()-t0) + ' ms'}))
+      .catch(()=>{ /* startAimLoop réessaiera, et signalera l'échec à ce moment-là */ });
+  }, 1500);
+});
 
 // Reconnaît le texte d'un canvas. Passe par le worker ; si celui-ci est indisponible
 // (navigateur restrictif, échec de chargement), retombe sur le moteur du fil principal
@@ -9866,6 +9886,11 @@ async function startCamera(){
     resetTotalSession();
     renderQueueStrip();
     startAimLoop();
+    // Referme l'écran de chargement : l'image est là, la boucle tourne. Sans ceci il restait
+    // affiché PAR-DESSUS une caméra pourtant fonctionnelle — `activer()` ne le referme qu'à
+    // la fin de l'initialisation V2, or quand l'index est déjà en cache cette fin est
+    // survenue bien avant l'ouverture de la caméra, et plus rien ne venait le masquer.
+    if(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2()) majLoaderV2(1);
   } catch(err){
     // On REVIENT à la page d'accueil du scanner : depuis que le plein écran est posé avant
     // d'attendre la caméra, y rester afficherait une coquille vide, et le message d'erreur
@@ -20448,7 +20473,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=21';
+import * as V2 from './scan-v2.js?v=22';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);

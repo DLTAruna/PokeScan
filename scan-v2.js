@@ -554,8 +554,22 @@ export async function initV2(opts = {}) {
   EMB_Q8 = q8;
   cleToCard = new Map(BASE.map(c => [c.cle, c]));
 
-  onProgress(0.8, 'OCR…');
-  try { demarrerOcr(await chargerParsing()); } catch (e) { /* OCR optionnel */ }
+  // ⚠️ L'OCR PART EN ARRIÈRE-PLAN (V.24). Il bloquait la mise à disposition du scanner, et
+  // c'était l'essentiel des « plus de 30 secondes » signalées. Trois coûts s'y enchaînaient,
+  // tous AVANT que `pret` ne passe à vrai :
+  //   1. `chargerParsing()` retélécharge index.html EN ENTIER, `cache:'no-store'`, juste pour
+  //      en extraire un bloc de code — presque un mégaoctet sur le réseau mobile ;
+  //   2. la création du worker OCR ;
+  //   3. `ocrLire(warm)` : une inférence complète sur une toile vide, qui déclenche à elle
+  //      seule le chargement du modèle Paddle (~6 Mo) et sa compilation.
+  // Or l'OCR ne sert QU'À DÉPARTAGER une égalité — une petite minorité de scans — et
+  // `identifierV2` le teste déjà (`if (ocr && …)`) : sans lui, elle s'en passe proprement.
+  // Le faire attendre au démarrage, c'était refaire l'erreur corrigée en V.14 côté
+  // application, où la boucle attendait ce même moteur pour rien.
+  onProgress(0.8, 'Moteurs…');
+  const ocrEnFond = chargerParsing()
+    .then(p => { demarrerOcr(p); })
+    .catch(() => { /* OCR optionnel : le départage sera simplement sauté */ });
 
   onProgress(0.9, 'Préchauffage…');
   const warm = document.createElement('canvas'); warm.width = 140; warm.height = 196;
@@ -563,16 +577,24 @@ export async function initV2(opts = {}) {
   const [w] = await Promise.all([
     emb.call({ type: 'warm' }).catch(e => ({ moteur: '?', diag: [String(e && e.message || e)] })),
     orb.call({ type: 'warm' }).catch(() => {}),
-    ocr ? ocrLire(warm).catch(() => {}) : null,
   ]);
   moteurEmb = w.moteur || '?';
   diagEmb = w.diag || [];
   const tw = performance.now();
   await embed(versDataUrl(warm, null)).catch(() => {});   // 1re inférence réelle : compile les kernels
-  const tw2 = performance.now();
-  await embed(versDataUrl(warm, null)).catch(() => {});   // 2e : temps « à froid » réel
-  diagEmb.push('warm1=' + Math.round(tw2 - tw) + 'ms warm2=' + Math.round(performance.now() - tw2) + 'ms');
+  diagEmb.push('warm1=' + Math.round(performance.now() - tw) + 'ms');
   pret = true;
+
+  // Après coup, hors du chemin critique : la 2e inférence ne sert QU'À MESURER le temps « à
+  // chaud » (diagnostic), et le préchauffage OCR n'a d'intérêt que pour le premier départage,
+  // qui n'arrivera pas avant plusieurs scans. Ni l'un ni l'autre ne doit retarder la caméra.
+  (async () => {
+    const t2 = performance.now();
+    await embed(versDataUrl(warm, null)).catch(() => {});
+    diagEmb.push('warm2=' + Math.round(performance.now() - t2) + 'ms');
+    await ocrEnFond;
+    if (ocr) await ocrLire(warm).catch(() => {});
+  })();
   onProgress(1, `V2 prête — ${BASE.length} cartes, ${manifest.sets ? Object.keys(manifest.sets).length : '?'} sets (${moteurEmb}).`);
   return { cartes: BASE.length, moteur: moteurEmb };
 }
