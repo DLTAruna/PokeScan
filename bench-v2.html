@@ -1934,6 +1934,7 @@ async function jouerPresentation(img, geste, nImages, S){
   const options = GESTES[geste](nImages);
   let presentDepuis = 0, streak = 0, prev = null, absence = 0;
   let meilleure = null, meilleureNet = -1, meilleursCoins = null;
+  let derniereImage = null;
   const trace = [];
 
   for(let i = 0; i < options.length; i++){
@@ -1967,6 +1968,7 @@ async function jouerPresentation(img, geste, nImages, S){
       }
     }
     const vu = !!(d && d.ok !== false && d.corners && d.score != null && d.score >= S.MIN_SCORE);
+    derniereImage = canvas;
 
     if(!vu){
       streak = 0; prev = null;
@@ -2009,7 +2011,9 @@ async function jouerPresentation(img, geste, nImages, S){
     'symétrie': vus.filter(x=>x.sym > S.SYM_MAX).length,
     'proportions': vus.filter(x=>x.prop > S.PROP_MAX).length};
   const cause = Object.entries(causes).sort((a,b)=>b[1]-a[1])[0];
-  return { declenche:false, cause: cause[1] ? cause[0] : 'score', trace };
+  // On rend AUSSI la dernière image de la séquence : elle sert à mesurer ce qu'un dernier
+  // recours — capturer le cadre de visée sans rien détecter — aurait pu tirer de cet échec.
+  return { declenche:false, cause: cause[1] ? cause[0] : 'score', trace, derniere: derniereImage };
 }
 
 // n cartes × tous les gestes. `patch` remplace des seuils : c'est là qu'on les challenge.
@@ -2037,7 +2041,19 @@ async function lancerPresentation(nCartes, patch){
           else juste = false;
         }catch(e){ juste = false; }
       }
-      acc.get(geste).push({...r, juste});
+      // ── Ce qu'un DERNIER RECOURS aurait donné sur cet échec ────────────────────────
+      // Question posée au banc avant de l'écrire dans le scanner : quand le détecteur reste
+      // muet, que vaudrait une capture du cadre de visée, sans lui ? En principal cette
+      // stratégie ne vaut rien (14 %), mais ici on la compare à zéro, pas à soixante.
+      let rattrapable = null;
+      if(!r.declenche && r.derniere){
+        try{
+          const red = await STRATEGIES['cadre fixe'](r.derniere);
+          if(red){ const res = await V2.identifierV2(red, {}); rattrapable = !!(res && res.pick && res.pick.cle === carte.cle); }
+          else rattrapable = false;
+        }catch(e){ rattrapable = false; }
+      }
+      acc.get(geste).push({...r, juste, rattrapable});
       $('d-etat') && ($('d-etat').textContent = (++fait) + '/' + total + ' — ' + geste);
       await new Promise(r2=>setTimeout(r2, 0));
     }
@@ -2062,6 +2078,10 @@ async function lancerPresentation(nCartes, patch){
   const resume = { n: tous.length,
     declenche: Math.round(100*tous.filter(x=>x.declenche).length/tous.length) + ' %',
     bout: Math.round(100*tous.filter(x=>x.declenche && x.juste).length/tous.length) + ' %',
+    // Ce que le scanner laisse aujourd'hui sur la table : les présentations qui n'ont jamais
+    // déclenché, et parmi elles celles qu'un dernier recours aurait pourtant identifiées.
+    rates: tous.filter(x=>!x.declenche).length,
+    ratesRattrapables: tous.filter(x=>!x.declenche && x.rattrapable).length,
     msMed: med(tous.filter(x=>x.declenche).map(x=>x.msAvant)), seuils: S };
   return { resume, lignes, brut: acc };
 }

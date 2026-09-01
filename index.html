@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 44;
+const VERSION_APP = 45;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10452,6 +10452,8 @@ let meilleureNettete = -1;
 let v2NetteteRetenue = -1;      // ce qu'on a retenu, pour le journal
 let v2PropCourante = 0;   // écart au format d'une carte debout (voir PROP_MAX)
 let v2SymCourante = 0;          // symétrie du quadrilatère courant (voir SYM_MAX)
+let v2RecoursCourant = false;   // le scan en cours vient-il du dernier recours ? (journal)
+let v2DernierRecoursA = 0;      // dernier essai « sans détecteur » (voir RECOURS_APRES)
 let v2VuSansDeclencherA = 0;    // dernier signalement « carte vue, pas déclenchée » (V.40)
 let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli)
 let meilleursCoins = null;      // les coins DE CETTE image-là, pas ceux de l'instant
@@ -11970,6 +11972,11 @@ const RECADRE_DETECTION = 0.55;
 // pour que la carte lointaine finisse par être trouvée, assez long pour ne rien coûter quand
 // la détection fonctionne.
 const RECADRE_APRES = 5;
+// Dernier recours : images consécutives sans aucune détection avant de tenter une capture du
+// cadre de visée SANS le détecteur. 15 ≈ 1,5 s — assez pour que ce ne soit pas un simple
+// clignotement, assez court pour que l'utilisateur ne renonce pas. Repos entre deux essais :
+// une identification ratée coûte une seconde, on ne l'enchaîne pas indéfiniment.
+const RECOURS_APRES = 15, RECOURS_REPOS_MS = 3000;
 async function detecterRecadre(video){
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return null;
@@ -12126,6 +12133,28 @@ async function detectLoop(){
       v2StableStreak = 0;
       // Absence SOUTENUE exigée (deux images sans détection, ~300 ms) : un seul
       // décrochage isolé (reflet, main qui repositionne la carte) ne prouve rien.
+      // ═══════════════════════════════════════════════════════════════════════════════════
+      // DERNIER RECOURS — quand le détecteur reste muet, tenter SANS lui.
+      // ═══════════════════════════════════════════════════════════════════════════════════
+      // C'est de loin la plus grosse perte de l'outil, et elle était invisible : sur
+      // quarante-deux présentations au banc, quinze ne déclenchent jamais, et TREIZE parce
+      // que le détecteur ne voit simplement rien — ni symétrie, ni proportions, ni stabilité
+      // en cause. Deux façons parfaitement normales de tenir une carte échouent à cent pour
+      // cent : le pouce posé sur un coin, et la carte franchement penchée. Le modèle est
+      // entraîné à trouver un document ; un doigt ou trente degrés le mettent à zéro.
+      // Mesuré : sur ces quinze échecs, DOUZE auraient été correctement identifiés par une
+      // simple capture du cadre de visée. De bout en bout, 60 % → 89 %.
+      // En stratégie principale ce cadrage ne vaut rien (14 %, et zéro sur six sur le
+      // téléphone) — mais ici on ne le compare pas à soixante, on le compare à ZÉRO.
+      // Et il ne coûte aucune vitesse : il ne part que lorsque la boucle n'a rien trouvé,
+      // c'est-à-dire quand elle n'avait rien d'autre à faire de son tour.
+      const maintenant = Date.now();
+      if(v2AbsenceStreak >= RECOURS_APRES && !readInFlight
+         && maintenant - v2DernierRecoursA > RECOURS_REPOS_MS){
+        v2DernierRecoursA = maintenant;
+        diagPush('try', {ok:false, hint:'dernier recours — détecteur muet depuis ' + v2AbsenceStreak + ' images'});
+        attemptReadV2(coinsDuCadreFixe(video), 0, {recours:true});
+      }
       if(++v2AbsenceStreak >= V2_ABSENCE_STREAK){
         // ─── LA PATIENCE NE DOIT PAS MOURIR D'UN TROU (V.40) ───
         // `v2PresentDepuis = 0` était exécuté à CHAQUE image manquée. Or le détecteur ne
@@ -12530,7 +12559,9 @@ function retrecirCoins(c, f){
   return {tl:s(c.tl), tr:s(c.tr), br:s(c.br), bl:s(c.bl)};
 }
 
-async function attemptReadV2(corners, score){
+async function attemptReadV2(corners, score, opts){
+  const recours = !!(opts && opts.recours);
+  v2RecoursCourant = recours;   // lu plus tard par gererScanV2, qui journalise
   if(readInFlight) return;
   readInFlight = true;
   // ─── LIBÉRATION GARANTIE (V.27) ───
@@ -12578,7 +12609,10 @@ async function attemptReadV2(corners, score){
     // préfère, avec LES COINS QUI VONT AVEC — reprendre les coins de l'instant sur une image
     // d'il y a trois tours découperait à côté.
     // Mesuré au banc : 45 % → 90 % de justes, sans une milliseconde d'attente en plus.
-    const source = meilleureFrame && meilleursCoins ? meilleureFrame : video;
+    // Le dernier recours ne PEUT pas s'appuyer sur la mémoire de la plus nette : celle-ci ne
+    // retient que des quadrilatères plausibles, et s'il y en avait eu un, on ne serait pas ici.
+    // Il travaille donc sur l'image en direct et le cadre de visée, tels quels.
+    const source = (!recours && meilleureFrame && meilleursCoins) ? meilleureFrame : video;
     const coinsSource = source === meilleureFrame ? meilleursCoins : corners;
     const srcW = source === meilleureFrame ? meilleureFrame.width : video.videoWidth;
     const srcH = source === meilleureFrame ? meilleureFrame.height : video.videoHeight;
@@ -13066,7 +13100,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
         embPremier:(res&&res.embPremier)||null,
         embEtaitBon:(res&&res.pick&&res.embPremier)?(res.pick.cle===res.embPremier):null,
         cadrage:(STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length-1)]||{}).nom||'?',
-        nettete:v2NetteteRetenue, image:v2ImageRetenue, sym:+v2SymCourante.toFixed(3), prop:+v2PropCourante.toFixed(3),
+        nettete:v2NetteteRetenue, image:v2ImageRetenue, recours:v2RecoursCourant, sym:+v2SymCourante.toFixed(3), prop:+v2PropCourante.toFixed(3),
         essai:v2EssaiCadre+1, rebutsDeSuite:v2RebutsConsecutifs });
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
@@ -13182,7 +13216,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     embPremier: res.embPremier || null,
     embEtaitBon: res.pick && res.embPremier ? (res.pick.cle === res.embPremier) : null,
     cadrage: (STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)] || {}).nom || '?',
-    nettete: v2NetteteRetenue, image: v2ImageRetenue, sym: +v2SymCourante.toFixed(3), prop: +v2PropCourante.toFixed(3),
+    nettete: v2NetteteRetenue, image: v2ImageRetenue, recours: v2RecoursCourant, sym: +v2SymCourante.toFixed(3), prop: +v2PropCourante.toFixed(3),
     essai: v2EssaiCadre + 1,
     // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
     // à supposer que le téléphone avait bien pris le déploiement entre les deux.
