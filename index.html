@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 26;
+const VERSION_APP = 28;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -10533,6 +10533,18 @@ function diagPush(kind, data){
   sendDiagRemote(entry);
 }
 
+// Les dernières lignes du journal local, compactées pour voyager dans un incident. C'est là
+// que se trouve l'erreur qui a PRÉCÉDÉ un blocage (worker muet, redressement échoué…), et
+// elle ne sort pas autrement : le journal reste sur l'appareil.
+function dernieresLignesDiag(n){
+  try{
+    return diagLog.slice(-n).map(e => {
+      const q = Math.round((e.t - (camStartedAt || e.t)) / 100) / 10;
+      return q + 's ' + e.k + ' ' + (e.msg || e.hint || (e.ok === false ? 'échec' : 'ok') || '');
+    });
+  }catch(e){ return null; }
+}
+
 {
   const chkDiagRemote = $('chk-diag-remote');
   chkDiagRemote.checked = diagRemoteEnabled;
@@ -11772,19 +11784,65 @@ function etatBoucleScan(){
     scansSession: capturedThisSession,              // pour recouper avec le recyclage ORB
   };
 }
+// Remet la machine à scanner dans un état où la carte suivante PEUT déclencher. Sans ça, un
+// verrou rouvert ne suffit pas : `lastCaptureCorners` et `v2DerniereCle` restent ceux de la
+// carte perdue, et `dejaLue` bloquerait la suivante posée au même endroit.
+function reprendreApresBlocage(){
+  prevCorners = null;
+  v2StableStreak = 0;
+  v2PresentDepuis = 0;
+  lastCaptureCorners = null;
+  v2CarteRetiree = true;
+  v2DerniereCle = null;
+  v2DerniereCat = null;
+  v2RebutsConsecutifs = 0;
+  v2EssaiCadre = 0;
+  cardConfirmedAbsentSinceCapture = true;
+  showLiveResultWaiting();
+}
+
+// ⚠️ Un incident survient précisément quand quelque chose va mal — souvent le réseau. Le
+// POST qui le signale est donc le plus susceptible d'échouer AU MOMENT où on en a besoin, et
+// l'application peut être fermée dans la foulée. On le CONSERVE donc sur l'appareil, et on
+// le renvoie au lancement suivant. C'est ce qui a manqué pour le gel du 2026-09-01 :
+// l'incident n'est jamais arrivé, et on ne saura jamais s'il n'a pas été détecté ou pas
+// transmis.
+const CLE_INCIDENTS = 'pokescanIncidents';
+function conserverIncident(entree){
+  try{
+    const l = JSON.parse(localStorage.getItem(CLE_INCIDENTS) || '[]');
+    l.push(entree);
+    localStorage.setItem(CLE_INCIDENTS, JSON.stringify(l.slice(-10)));
+  }catch(e){}
+}
+async function renvoyerIncidentsEnAttente(){
+  let l = [];
+  try{ l = JSON.parse(localStorage.getItem(CLE_INCIDENTS) || '[]'); }catch(e){}
+  if(!l.length || !(window.SCAN_V2 && SCAN_V2.relayV2)) return;
+  try{
+    if(await SCAN_V2.relayV2(l)) localStorage.removeItem(CLE_INCIDENTS);
+  }catch(e){ /* on retentera au prochain lancement */ }
+}
+addEventListener('load', ()=> setTimeout(renvoyerIncidentsEnAttente, 4000));
+
 function signalerBlocageScan(cause, score){
   // Un seul signalement par minute : un blocage dure, et on veut un constat, pas un flot.
   if(Date.now() - dernierBlocageSignaleA < 60000) return;
   dernierBlocageSignaleA = Date.now();
   const etat = etatBoucleScan();
   diagPush('err', {msg:'BLOCAGE SCAN — ' + cause + ' — ' + JSON.stringify(etat)});
-  try{
-    SCAN_V2.relayV2({ fichier:'incident', predit:'', categorie:'blocage', conf:'blocage',
-      fiabilite:0, inliers:0, marge:0, ocrLance:false, ms:0, T:{}, moteur:(SCAN_V2.moteurV2&&SCAN_V2.moteurV2())||'?',
-      diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score||0).toFixed(2),
-      incident: cause, etat, v:VERSION_APP });
-  }catch(e){}
-  toast('⚠️ Scan bloqué — relance détectée, réessaie');
+  const entree = { fichier:'incident', predit:'', categorie:'blocage', conf:'blocage',
+    fiabilite:0, inliers:0, marge:0, ocrLance:false, ms:0, T:{},
+    moteur:(window.SCAN_V2 && SCAN_V2.moteurV2 && SCAN_V2.moteurV2())||'?',
+    diag:(window.SCAN_V2 && SCAN_V2.diagV2 && SCAN_V2.diagV2())||null,
+    score:+Number(score||0).toFixed(2), incident: cause, etat,
+    // Les dernières lignes du journal local : c'est là que se trouve l'erreur qui a précédé
+    // le blocage (worker muet, redressement échoué…), et elle ne sort pas autrement.
+    trace: (typeof dernieresLignesDiag === 'function') ? dernieresLignesDiag(12) : null,
+    at: new Date().toISOString(), v:VERSION_APP };
+  conserverIncident(entree);
+  try{ if(window.SCAN_V2 && SCAN_V2.relayV2) SCAN_V2.relayV2(entree); }catch(e){}
+  toast('⚠️ Scan bloqué — reprise automatique, réessaie');
 }
 
 // Chien de garde de la boucle elle-même : si `detectLoop` cesse de tourner alors que la
@@ -11798,7 +11856,14 @@ function signalerBlocageScan(cause, score){
 //     position, plus aucune détection.
 let dernierTourBoucle = 0, readInFlightDepuis = 0;
 setInterval(()=>{
-  if(!detectRunning || !cameraStream) return;
+  // `detectRunning` volontairement PAS exigé : s'il était retombé à faux sans que la caméra
+  // soit fermée, ce serait justement une panne à signaler, et l'exiger nous rendrait aveugle
+  // à ce cas-là. Seule la caméra ouverte conditionne la surveillance.
+  if(!cameraStream) return;
+  if(!detectRunning){
+    signalerBlocageScan('boucle arrêtée alors que la caméra est ouverte', null);
+    return;
+  }
   if(readInFlight){
     if(!readInFlightDepuis) readInFlightDepuis = Date.now();
     const bloque = Date.now() - readInFlightDepuis;
@@ -11814,14 +11879,59 @@ setInterval(()=>{
   if(mort > 8000) signalerBlocageScan('boucle sans tour depuis ' + mort + ' ms', null);
 }, 4000);
 
+// ─────────── LOT DE CARTES EN MAIN : LE CADRE ENGLOBE LA PILE (V.28) ───────────
+// Quand plusieurs cartes sous toploader sont tenues ensemble, les coins de celles de derrière
+// dépassent. Le détecteur trouve alors un quadrilatère PARFAITEMENT card-shaped — score 1,00,
+// rapport hauteur/largeur toujours ~1,4 — mais qui englobe TOUTE LA PILE au lieu de la carte
+// de devant. Mesuré sur scènes simulées : avec 4 cartes derrière dépassant de 70 px, la
+// hauteur détectée dépasse la vraie de 0,153 (soit ~25 % trop grand), et le centre, lui,
+// reste juste à 0,017 près. Rien ne l'attrape : ni le score, ni le rapport de forme (la pile
+// grandit dans les deux dimensions à la fois, le rapport reste bon — vérifié, une correction
+// par le ratio ne déclenche jamais).
+//
+// Le redressement produit donc une carte trop grande, où la zone d'illustration tombe à côté,
+// et l'identification échoue. Or l'application réessaie déjà deux fois avant d'abandonner —
+// à l'identique, donc pour rien. On fait désormais VARIER le cadre à chaque essai :
+//   essai 1 → tel quel      (carte seule : la bonne réponse)
+//   essai 2 → ×0,90         (2 cartes derrière, ou 4 peu décalées)
+//   essai 3 → ×0,80         (4 cartes derrière franchement décalées)
+// Aucun facteur unique ne convient à tous les cas — c'est mesuré — mais l'identification
+// tranche d'elle-même : un cadre juste donne beaucoup d'inliers, un mauvais n'en donne pas.
+const ECHELLES_ESSAI = [1, 0.90, 0.80];
+let v2EssaiCadre = 0;
+function retrecirCoins(c, f){
+  if(f === 1) return c;
+  const cx = (c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4;
+  const cy = (c.tl[1]+c.tr[1]+c.br[1]+c.bl[1])/4;
+  const s = p => [cx + (p[0]-cx)*f, cy + (p[1]-cy)*f];
+  return {tl:s(c.tl), tr:s(c.tr), br:s(c.br), bl:s(c.bl)};
+}
+
 async function attemptReadV2(corners, score){
   if(readInFlight) return;
   readInFlight = true;
+  // ─── LIBÉRATION GARANTIE (V.27) ───
+  // Le filet posé en V.25 n'entourait que `gererScanV2`. Or TOUT ce qui précède est aussi
+  // attendu sans borne : `redresserAvecCoins` charge le module scanic par un import
+  // dynamique (aucun délai de garde possible dessus) puis redresse sur le fil principal, et
+  // `toDataURL` travaille sur une image pleine taille. N'importe lequel de ces points peut
+  // pendre — et `readInFlight` reste alors fermé, ce qui arrête la boucle pour de bon.
+  // Ce minuteur-ci ne dépend d'aucun `await` : il rouvre le verrou quoi qu'il arrive.
+  const liberation = setTimeout(()=>{
+    if(!readInFlight) return;
+    signalerBlocageScan('lecture jamais terminée (verrou rouvert de force)', score);
+    readInFlight = false;
+    reprendreApresBlocage();
+  }, 25000);
   const t0 = performance.now();
   try{
     const video = $('video');
     if(!video || !video.videoWidth) return;
-    const sourceForRead = await redresserAvecCoins(video, corners, video.videoWidth, video.videoHeight);
+    // Cadre de cet essai : resserré si les précédents ont échoué (voir ECHELLES_ESSAI).
+    const echelle = ECHELLES_ESSAI[Math.min(v2EssaiCadre, ECHELLES_ESSAI.length - 1)];
+    const coinsEssai = retrecirCoins(corners, echelle);
+    if(echelle !== 1) diagPush('err', {msg:'cadre resserré ×' + echelle + ' (essai ' + (v2EssaiCadre+1) + ')'});
+    const sourceForRead = await redresserAvecCoins(video, coinsEssai, video.videoWidth, video.videoHeight);
     if(!sourceForRead){
       diagPush('try', {ok:false, hint:'redressement échoué', score, ms:Math.round(performance.now()-t0)});
       return;
@@ -11859,14 +11969,23 @@ async function attemptReadV2(corners, score){
     // ce verrou est trop coûteux pour reposer sur la seule promesse qu'aucun autre chemin ne
     // pendra un jour. On borne donc l'attente ici aussi, et on le DIT : un blocage rattrapé
     // en silence se reproduirait sans qu'on l'apprenne jamais.
-    const gardeMs = 25000;
+    // Le filet propre à l'identification reste : il nomme la phase en cause, là où la
+    // libération de force ci-dessus dit seulement « ça n'a pas fini ».
+    const gardeMs = 20000;
     let garde;
     const surveille = new Promise((res)=>{ garde = setTimeout(()=>{
       signalerBlocageScan('identification sans réponse après ' + gardeMs + ' ms', score);
       res();
     }, gardeMs); });
     await Promise.race([
-      gererScanV2(sourceForRead, corners, score, t0, true, {cv: cvPrise, dataUrl: dataUrlPrise})
+      gererScanV2(sourceForRead, coinsEssai, score, t0, true, {cv: cvPrise, dataUrl: dataUrlPrise})
+        .then(r => {
+          // « reessai » = pas d'identification exploitable et la carte est toujours là.
+          // On resserre le cadre au coup suivant : c'est le cas du lot tenu en main, où le
+          // quadrilatère englobe la pile. Tout autre verdict remet l'échelle à zéro.
+          if(r === 'reessai') v2EssaiCadre++;
+          else v2EssaiCadre = 0;
+        })
         .catch(e => { console.warn('V2', e); diagPush('err', {msg:'V2 : ' + e.message}); }),
       surveille,
     ]);
@@ -11874,6 +11993,7 @@ async function attemptReadV2(corners, score){
   }catch(e){
     diagPush('err', {msg:'lecture V2 : ' + e.message});
   }finally{
+    clearTimeout(liberation);
     readInFlight = false;
   }
 }

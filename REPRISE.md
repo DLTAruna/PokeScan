@@ -28,6 +28,81 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Le gel a eu lieu et n'a RIEN remonté — durcissement (V.27)
+
+Nikos a subi un gel en V.26 : après une carte, panneau bloqué sur « 🔎 recherche… », plus
+rien de scannable. **Le journal ne contient aucun incident** (`categorie:'blocage'` : zéro
+entrée), alors que la V.25 était censée les signaler. Deux failles dans mon propre filet :
+
+1. **Le filet ne couvrait que `gererScanV2`.** Tout ce qui le précède dans `attemptReadV2`
+   est aussi attendu sans borne : `redresserAvecCoins` charge le module scanic par un **import
+   dynamique** (sur lequel aucun délai de garde n'est possible) puis redresse sur le fil
+   principal, et `toDataURL` travaille en pleine taille. Un blocage là-dedans laissait
+   `readInFlight` fermé sans qu'aucune garde ne le voie.
+   → Un minuteur `liberation` de 25 s, **indépendant de tout `await`**, rouvre désormais le
+   verrou quoi qu'il arrive, puis `reprendreApresBlocage()` remet l'état à zéro (sans quoi
+   `lastCaptureCorners` et `v2DerniereCle` périmés empêcheraient la carte suivante de
+   déclencher).
+
+2. **Un incident survient quand ça va mal — souvent le réseau.** Le POST qui le signale est
+   donc le plus susceptible d'échouer AU MOMENT où on en a besoin, et l'application peut être
+   fermée dans la foulée. On ne saura jamais si le gel du 2026-09-01 n'a pas été détecté ou
+   simplement pas transmis.
+   → Les incidents sont **conservés dans `localStorage`** (`pokescanIncidents`, 10 derniers)
+   et **renvoyés au lancement suivant**. Ils emportent aussi les 12 dernières lignes du
+   journal local (`dernieresLignesDiag`), là où se trouve l'erreur qui a précédé.
+
+3. Le chien de garde n'exige plus `detectRunning` : si la boucle s'était arrêtée caméra
+   ouverte, ce serait justement la panne à signaler, et l'exiger nous rendait aveugle à ce
+   cas-là.
+
+## ⭐ LOT DE CARTES EN MAIN : le cadre englobe la pile (V.28)
+
+Nikos : « quand je tiens un lot avec des toploaders, les coins des cartes du dessous sont
+visibles et ça devient très complexe à scanner ».
+
+### Ce que les scènes simulées ont révélé — et ce qu'elles ont infirmé
+
+Scènes « éventail » : carte de devant + N cartes derrière dépassant de côtés différents.
+Mesure de la JUSTESSE des coins (pas seulement « détecté ») contre la vérité terrain :
+
+| derrière | décalage | détecté | **bonne carte** | erreur de hauteur |
+|---|---|---|---|---|
+| 0 | — | 5/5 | 5/5 | 0,002 |
+| 2 | 40 px | 5/5 | 5/5 | 0,058 |
+| 2 | **70 px** | 5/5 | **0/5** | 0,098 |
+| 4 | **70 px** | 5/5 | **0/5** | **0,153** |
+
+**Le détecteur ne rate jamais — il se trompe de cible.** Il renvoie un quadrilatère
+parfaitement card-shaped, score 1,00, mais qui englobe TOUTE LA PILE : ~25 % trop grand,
+tandis que le centre reste juste à 0,017 près. Le redressement produit alors une carte trop
+grande, la zone d'illustration tombe à côté, et l'identification échoue.
+
+⚠️ **Piste testée et ÉCARTÉE : la validation par le rapport de forme.** Intuitive — une carte
+fait toujours 1,4 — mais inopérante : la pile grandit dans les DEUX dimensions à la fois, le
+rapport reste bon. Mesuré : la correction ne se déclenche jamais, résultats strictement
+identiques. Ne pas la réintroduire.
+
+### La parade : faire VARIER le cadre d'un essai à l'autre
+
+Aucun facteur de rétrécissement unique ne convient — c'est mesuré :
+
+| cas | meilleur facteur |
+|---|---|
+| carte seule | 1,0 |
+| 2 derrière @40 | 0,92 |
+| 2 @70 · 4 @40 | 0,85 |
+| 4 @70 | 0,78 |
+
+Or l'application **réessayait déjà deux fois** avant d'abandonner — à l'identique, donc pour
+rien. Les essais suivent désormais une échelle (`ECHELLES_ESSAI = [1, 0.90, 0.80]`), et
+**l'identification tranche d'elle-même** : un cadre juste donne beaucoup d'inliers, un mauvais
+n'en donne pas. Aucun coût ajouté — ce sont les mêmes essais, simplement rendus utiles.
+
+**Vérifié en boucle réelle** sur la scène qui échouait (4 derrière, 70 px) : essai 1 échoue,
+×0,90 échoue, **×0,80 identifie (Pikachu, 83 %)**. Et sur carte seule : **zéro resserrage**,
+donc aucune régression.
+
 ## ⭐ DÉTECTION À DISTANCE : la parade n'est pas plus de pixels, c'est un cadre plus serré (V.26)
 
 Demande de Nikos : que la carte soit détectée de loin comme de près, quitte à afficher un
