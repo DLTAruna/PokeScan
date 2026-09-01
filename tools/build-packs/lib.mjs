@@ -37,11 +37,28 @@ export async function telecharger(url, essais = 4) {
   let derniere;
   for (let i = 0; i < essais; i++) {
     try {
-      const r = await fetch(url);
+      // Sans délai, une URL qui ne 404 pas proprement mais reste simplement muette (constaté
+      // sur assets.tcgdex.net pour un dossier de set inexistant : la connexion ne se ferme
+      // jamais) bloquait ce téléchargement indéfiniment — et avec lui tout le build, un
+      // appel à la fois. Le CDN répond normalement en <1 s ; 10 s est déjà large.
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 10000);
+      let r;
+      try { r = await fetch(url, { signal: ctrl.signal }); } finally { clearTimeout(t); }
       if (r.ok) return Buffer.from(await r.arrayBuffer());
       derniere = new Error(r.status + ' ' + r.statusText);
       if (r.status === 404) break;
-    } catch (e) { derniere = e; }
+    } catch (e) {
+      // Un DÉLAI DÉPASSÉ ne se résout pas en réessayant — c'est le même silence qui se
+      // répète. Cas concret : les URL devinées pour les sets sans scan connu (voir
+      // cartesDuSet, baseImage) tombent parfois sur un chemin qui n'existe nulle part ;
+      // sans cette sortie anticipée, chacune aurait coûté 4 × 10 s au lieu d'une seule —
+      // des dizaines de minutes perdues sur un lot de cartes qui ne se téléchargeront
+      // jamais. Les vraies pannes réseau (connexion refusée, DNS) échouent vite et
+      // profitent toujours des réessais normaux.
+      if (e.name === 'AbortError') throw new Error('délai dépassé (10 s) — probablement aucune image à cette adresse');
+      derniere = e;
+    }
     await new Promise(r => setTimeout(r, 400 * (i + 1)));
   }
   throw derniere || new Error('échec téléchargement ' + url);
@@ -122,14 +139,63 @@ export function serialiserPack(setId, rows) {
   return Buffer.concat([head, hj, ...parts]);
 }
 
+// Sous-sets dont TCGdex n'expose l'URL d'illustration NULLE PART (ni sur la liste du set, ni
+// sur la fiche carte individuelle, dans aucune langue — vérifié à la main) : Galerie de
+// Dresseurs (…tg), Galerie Galaroise (…gg), Coffre Étincelant (…sv, suffixe de swsh4.5sv).
+// Leurs images vivent en réalité dans le dossier du set PARENT, sous le même numéro local —
+// deviné puis confirmé en interrogeant assets.tcgdex.net directement sur plusieurs cartes de
+// chaque sous-set. Un suffixe non listé ici (les Collections Classiques, …cc) n'est PAS
+// deviné : mieux vaut laisser ces quelques cartes de côté que risquer la mauvaise image.
+const SUFFIXES_SOUS_SET = ['tg', 'gg', 'sv'];
+
+// Beaucoup de sets anciens ou promotionnels (Diamant & Perle, L'appel des Légendes, la
+// plupart des promos SM/HGSS…) n'ont simplement jamais été scannés en français chez TCGdex —
+// `c.image` est absent pour TOUTES leurs cartes, dans les deux endpoints. L'illustration
+// anglaise, elle, existe presque toujours et c'est la même carte : mêmes dimensions, même
+// zone d'illustration, seul le texte diffère — sans conséquence pour une identification
+// visuelle qui ne lit jamais le texte. Vérifié sur un échantillon de 53 sets : environ
+// 1 550 cartes supplémentaires deviennent exploitables par ce seul repli.
+//
+// C'est un PARI, pas une certitude : environ 860 cartes de l'échantillon (surtout les kits
+// du dresseur et les collections McDonald's) n'ont d'image ni en français ni en anglais —
+// probablement jamais numérisées nulle part. Pour elles, cette URL devinée échouera. On
+// tente quand même plutôt que d'exclure ces sets en bloc (certaines de leurs cartes ONT une
+// image, seule la minorité sans image profite du pari) ; le coût d'un pari perdant est
+// borné à un seul essai rapide (voir telecharger : pas de réessai sur un délai dépassé).
+// Nikos : pour un premier build, laisser `tk` et `mc` décochés dans build.html évite le
+// plus gros de ces paris perdus d'avance.
+function baseImage(c, setId, serieId) {
+  if (c.image) return c.image;
+  for (const suf of SUFFIXES_SOUS_SET) {
+    if (setId.length > suf.length && setId.endsWith(suf)) {
+      return `https://assets.tcgdex.net/${LOCALE}/${serieId}/${setId.slice(0, -suf.length)}/${c.localId}`;
+    }
+  }
+  return `https://assets.tcgdex.net/en/${serieId}/${setId}/${c.localId}`;
+}
+
 export async function cartesDuSet(setId) {
   const d = await (await fetch(`https://api.tcgdex.net/v2/${LOCALE}/sets/${setId}`)).json();
+  const serieId = d.serie?.id || setId;
   const cartes = [];
   for (const c of (d.cards || [])) {
-    if (!c.image || !/^\d+$/.test(String(c.localId || ''))) continue;
+    // Seule condition réelle : une illustration à indexer. L'ancien filtre exigeait un
+    // localId PUREMENT numérique — ça excluait sans le dire des sets entiers dont TOUTES
+    // les cartes sont numérotées autrement : les promos (SWSH001…), la Galerie de
+    // Dresseurs (TG01…), la Galerie Galaroise (GG01…), les coffres (SV001…), les
+    // collections classiques (CC001…). Ces sets tombaient à 0 carte exploitable et
+    // restaient marqués « à construire » indéfiniment — pas parce qu'ils manquaient
+    // vraiment, mais parce que le filtre les rejetait entièrement, en silence.
+    const localId = String(c.localId || '').trim();
+    if (!localId) continue;   // une carte sans numéro n'a pas de clé stable — jamais rencontré, garde-fou
+    const image = baseImage(c, setId, serieId);
+    // Le numéro affiché suit ce qui est réellement imprimé sur la carte : les zéros de
+    // tête sautent pour un numéro purement numérique (« 025 » → « 25 », comme avant) ;
+    // un identifiant alphanumérique (« TG01 ») reste tel quel, c'est son vrai numéro.
+    const numero = /^\d+$/.test(localId) ? String(parseInt(localId, 10)) : localId;
     cartes.push({
-      cle: setId + '-' + c.localId, numero: String(parseInt(c.localId, 10)),
-      setId, localId: c.localId, image: c.image, name: c.name || '',
+      cle: setId + '-' + localId, numero,
+      setId, localId, image, name: c.name || '',
     });
   }
   return { nom: d.name || setId, cartes };

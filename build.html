@@ -260,7 +260,9 @@ function rendreSeries(){
                : '<span class="serieChip none">rien encore</span>';
     const ouvert = !complet ? ' open' : '';
     const note = s.id===SERIE_A_PART
-      ? '<div class="noteRow">⚠ Pokémon TCG Pocket est un jeu mobile, pas le TCG physique — format de carte différent (voir CARD_RATIO). À vérifier avant d\'inclure ; décoché par défaut.</div>' : '';
+      ? '<div class="noteRow">⚠ Pokémon TCG Pocket est un jeu mobile, pas le TCG physique — format de carte différent (voir CARD_RATIO). À vérifier avant d\'inclure ; décoché par défaut.</div>'
+      : (s.id==='tk' || s.id==='mc')
+      ? '<div class="noteRow">⚠ La plupart de ces cartes n\'ont d\'illustration ni en français ni en anglais chez TCGdex (vérifié) — le build les tentera quand même (~10 s chacune avant d\'abandonner proprement) mais peu aboutiront. Coche si tu veux quand même essayer.</div>' : '';
     const lignesSets = s.sets.map(st=>
       `<tr><td>${st.nom}<span class="muted"> · ${st.id}</span></td><td>${st.cartes.toLocaleString('fr')} cartes</td>`
       + `<td>${st.fait ? '<span class="setOk">✓</span>' : '<span class="setTodo">à construire</span>'}</td></tr>`

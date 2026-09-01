@@ -168,6 +168,45 @@ SERIES=swsh,sv,me bash run.sh                          # build une tranche, repr
   **et sélecteur de séries** (voir juste en dessous).
 - Build complet ~2 h pour 7 591 cartes (~585 ms/carte : dl 166 + emb 218 + orb 170 + hash 30).
 
+### Sets « impossibles à télécharger » dans une série déjà faite — corrigé (2026-09-01)
+
+Retour de Nikos : dans des séries déjà construites, certains sets restent « à construire »
+sans jamais avancer — les promos, la Galerie de Dresseurs, les énergies. **Cause : un seul
+filtre dans `cartesDuSet()` (`tools/build-packs/lib.mjs`)**, qui exigeait un `localId`
+purement numérique. Toute carte numérotée autrement (`SWSH001`, `TG01`, `GG01`, `SV001`…)
+était rejetée — le set entier tombait à 0 carte exploitable, silencieusement.
+
+**Deux causes distinctes, deux réglages** :
+1. **Numérotation non numérique** — le filtre lui-même. Retiré : n'importe quel `localId`
+   est accepté du moment qu'il y a une image. Le numéro affiché suit ce qui est imprimé
+   (`TG01` reste `TG01`, `025` devient `25` comme avant).
+2. **Pas de scan français chez TCGdex** — beaucoup de sets anciens/promo (Diamant & Perle,
+   L'appel des Légendes, la plupart des promos SM/HGSS) n'ont **aucune** image côté FR, dans
+   aucun des deux endpoints TCGdex. Repli sur l'illustration **anglaise** (même carte, même
+   zone d'illustration, seul le texte diffère — sans conséquence pour une identification qui
+   ne lit jamais le texte). **Vérifié avec le vrai code (`node -e ...cartesDuSet...`)** :
+   `dp1` (130 cartes), `col1` (106), `cel25cc` (25) passent de 0 à leur plein effectif.
+3. **Trois sous-sets d'exception** — Galerie de Dresseurs (`…tg`), Galerie Galaroise (`…gg`),
+   Coffre Étincelant (`…sv`) : ni FR ni EN sous leur propre id, mais l'image existe dans le
+   dossier du set **parent**, même numéro local. Deviné puis confirmé à la main
+   (`assets.tcgdex.net/fr/swsh/swsh9/TG01/high.webp` → 200). Téléchargement réel testé :
+   fonctionne (86 Ko récupérés pour `swsh9tg-TG01`).
+- **~1 550 cartes supplémentaires deviennent exploitables** rien qu'avec le repli anglais
+  (mesuré sur un échantillon de 53 sets). **~860 restent introuvables** même en anglais —
+  surtout les **kits du dresseur (`tk`)** et les **collections **McDonald's (`mc`)**,
+  probablement jamais numérisées nulle part.
+- **`telecharger()` échoue maintenant en 10 s, une seule fois**, sur un délai dépassé (pas
+  de 4 réessais) : une URL devinée qui ne mène nulle part restait auparavant en attente
+  indéfiniment (constaté : un dossier de set inexistant sur `assets.tcgdex.net` ne 404 pas,
+  il reste muet). Sans ce garde-fou, chaque carte d'un set irrécupérable aurait coûté
+  jusqu'à 40 s au lieu de 10 — des dizaines de minutes perdues sur `tk`/`mc`.
+- **Conseil pour le prochain build** : laisser `tk` et `mc` décochés dans le sélecteur de
+  `build.html` pour l'instant — la plupart de leurs cartes vont échouer (10 s chacune,
+  proprement loggé, sans rien casser, mais ça n'avance à rien).
+- **Aucun `rebuild-all` nécessaire** : les sets manquants (`swshp`, `swsh9tg`…) ne sont
+  simplement jamais entrés dans `manifest.sets` — un run normal `SERIES=swsh,sv,me bash
+  run.sh` les construit tout seul, sans retoucher aux sets déjà faits.
+
 ### Sélecteur de séries dans `build.html` — granularité SET (v2, 2026-09-01)
 
 `build.html` compose la commande à lancer pour ajouter les séries manquantes, avec le
