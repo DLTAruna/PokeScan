@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 42;
+const VERSION_APP = 43;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10492,7 +10492,31 @@ function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; 
 // passer les cartes vues de biais tout en écartant les quadrilatères franchement faux.
 // Une capture refusée ici n'est pas une carte perdue : la boucle continue et reprend l'image
 // suivante, ce qui coûte un dixième de seconde au lieu d'une identification ratée.
-const SYM_MAX = 0.12;
+// ── SEUIL DE SYMÉTRIE : 0,45, ET C'EST LE BANC DE PRÉSENTATION QUI L'A TRANCHÉ ──────────
+// Historique, parce qu'il est instructif : 0,20 posé au juger en V.39, resserré à 0,12 en
+// V.41 « sur données de terrain ». Les deux étaient faux, et pour deux raisons différentes.
+// Le banc de détection ne pouvait pas arbitrer : ses scènes dessinaient la carte À PLAT, donc
+// les côtés opposés restaient égaux par construction et la symétrie n'y dépassait jamais 0,08.
+// Et le journal du téléphone ne le pouvait pas davantage : je n'y lisais que des symétries
+// basses, mais par BIAIS DE SURVIE — seules les captures passant le seuil devenaient des
+// scans, les autres n'existaient nulle part. Je réglais le seuil sur ce qu'il laissait déjà
+// passer.
+// Une fois la perspective simulée, la symétrie MÉDIANE d'une carte normalement tenue est de
+// 0,235, avec des pointes à 0,53 — le téléphone montait à 0,57. Le seuil à 0,12 refusait donc
+// la majorité des présentations légitimes. Mesuré sur huit gestes (24 présentations par
+// valeur), part des présentations qui aboutissent à une carte correctement identifiée :
+//
+//     0,12 → 38 %      0,30 → 58 %      0,60 → 67 % (plateau)
+//     0,20 → 42 %      0,45 → 67 %
+//
+// À 0,12, QUATRE GESTES SUR HUIT ne déclenchaient jamais : de biais, décentrée, lot en main,
+// de loin — c'est-à-dire la façon normale de tenir une carte, et mot pour mot ce dont Nikos
+// se plaignait (« je dois vraiment zoomer et la mettre pile dans le cadre »).
+// Le gain plafonne à 0,45 : au-delà on ne gagne plus rien et on ne fait qu'ouvrir la porte.
+// Ce que ça coûte, honnêtement : le geste « approche » passe de 67 % à 33 % d'identifications
+// justes — desserrer laisse partir quelques captures prises trop tôt. Le solde reste très
+// favorable, et le rebut rattrape ces cas-là.
+const SYM_MAX = 0.45;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
 // PROPORTIONS — une bande de carte est un rectangle PARFAIT, et passait tous les contrôles.
