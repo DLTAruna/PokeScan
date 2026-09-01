@@ -1609,7 +1609,8 @@ function exporter(){
 const SEUILS_PROD = {
   MIN_SCORE: 0.35, SCORE_STRICT: 0.50,
   BOUGE_BASE: 0.030, PATIENCE_DOUCE: 1200, PATIENCE_FRANCHE: 2500,
-  SYM_MAX: 0.12, PROP_MAX: 0.25, ABSENCE: 2, MS_PAR_IMAGE: 100,
+  SYM_MAX: 0.45, PROP_MAX: 0.25, ABSENCE: 2, MS_PAR_IMAGE: 100,
+  STRATEGIE: 'homographie',   // voir STRATEGIES : la brique remise en cause
   // Grain du capteur. 0,012 place la gigue des coins dans la plage relevée sur le téléphone
   // (voir la mesure d'étalonnage plus bas) ; à 0 le banc redevient menteur.
   BRUIT: 0.012,
@@ -1647,6 +1648,30 @@ const GESTES = {
     taille: 0.62, rot: 8, dx: 0.05, dy: 0.03, flou: 0.6, fond:'encombré', incl: 15+4*Math.sin(i/2), pitch: 10 })),
 
   'de loin': n => Array.from({length:n}, () => ({taille:0.42, rot:3, dx:0.03, dy:0, flou:0.6, incl:10, pitch:7})),
+
+  // ── Les conditions hostiles, celles qui font qu'un outil marche « sauf quand ».
+  'sous pochette': n => Array.from({length:n}, (_,i) => ({
+    taille:0.66, rot:6, dx:0.02, dy:0.01, flou:0.5, incl:14, pitch:9,
+    avanies:{reflet:0.55 + 0.15*Math.sin(i/2), refletAngle:-22 + 6*Math.sin(i/3)} })),
+
+  'contre-jour': n => Array.from({length:n}, (_,i) => ({
+    taille:0.64, rot:5, dx:0.02, dy:0, flou:0.5, incl:12, pitch:8, lumiere:0.55,
+    avanies:{gradient:0.55} })),
+
+  'doigts sur les coins': n => Array.from({length:n}, (_,i) => ({
+    taille:0.68, rot:4, dx:0.01, dy:0.01, flou:0.4, incl:12, pitch:8,
+    avanies:{doigts:[[0.34,0.74],[0.66,0.76]]} })),
+
+  'filé de bougé': n => Array.from({length:n}, (_,i) => ({
+    taille:0.66, rot:5*Math.sin(i/1.5), dx:0.02*Math.sin(i), dy:0.015*Math.cos(i), flou:0.4,
+    incl:12, pitch:8, avanies:{file: i%2===0 ? 7 : 2, fileAngle: 12} })),
+
+  'très penchée': n => Array.from({length:n}, (_,i) => ({
+    taille:0.64, rot:10, dx:0.02, dy:0.01, flou:0.5, incl:34+4*Math.sin(i/2), pitch:22 })),
+
+  'tout cumulé': n => Array.from({length:n}, (_,i) => ({
+    taille:0.50, rot:9, dx:0.12, dy:0.06, flou:0.9, incl:24, pitch:15, lumiere:0.6, fond:'encombré',
+    avanies:{reflet:0.35, gradient:0.4, file: i%3===0 ? 5 : 1, doigts:[[0.30,0.72]]} })),
 };
 
 // ⚠️ SANS BRUIT, CE BANC MENT. Première salve : 90 % de déclenchement et 199 ms de médiane
@@ -1750,6 +1775,62 @@ async function bruiter(cv, niveau){
   return cv;
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// LES AVANIES DU RÉEL — reflets, ombres, doigts, filé, contre-jour.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Un utilisateur bouge, penche ses cartes, les tient sous une lampe ou devant une fenêtre,
+// pose le pouce sur un coin, et beaucoup de cartes sont sous pochette — donc brillantes.
+// Aucune de ces conditions n'existait au banc, et toutes cassent un détecteur de contours.
+// On les applique APRÈS la composition de la scène, comme le monde le ferait.
+function avanies(cv, a){
+  if(!a) return cv;
+  const g = cv.getContext('2d'), W = cv.width, H = cv.height;
+
+  // Reflet spéculaire d'une pochette : une bande claire en travers, qui efface les bords.
+  if(a.reflet){
+    g.save();
+    const ang = (a.refletAngle ?? -22) * Math.PI/180;
+    g.translate(W/2, H/2); g.rotate(ang); g.translate(-W/2, -H/2);
+    const grd = g.createLinearGradient(0, H*0.28, 0, H*0.62);
+    grd.addColorStop(0, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.5, 'rgba(255,255,255,' + a.reflet + ')');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(-W, H*0.28, W*3, H*0.34);
+    g.restore();
+  }
+
+  // Contre-jour / ombre portée : un dégradé qui écrase le contraste d'un côté. C'est le cas
+  // le plus courant sous une lampe unique, et celui qui trompe le plus les contours.
+  if(a.gradient){
+    const grd = g.createLinearGradient(0, 0, W, H);
+    grd.addColorStop(0, 'rgba(0,0,0,' + a.gradient + ')');
+    grd.addColorStop(0.55, 'rgba(0,0,0,0)');
+    grd.addColorStop(1, 'rgba(255,255,255,' + (a.gradient*0.7) + ')');
+    g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  }
+
+  // Doigts : deux masses sombres qui mordent sur deux coins. Le tenu réel d'une carte.
+  if(a.doigts){
+    g.fillStyle = 'rgba(60,42,34,0.96)';
+    const r = Math.min(W,H) * 0.075;
+    for(const [px, py] of a.doigts){
+      g.beginPath(); g.ellipse(W*px, H*py, r*1.5, r, 0.4, 0, Math.PI*2); g.fill();
+    }
+  }
+
+  // Filé de bougé : la caméra suit la main. Différent d'un flou de mise au point — il est
+  // DIRECTIONNEL, et il déplace les contours au lieu de seulement les adoucir.
+  if(a.file){
+    const t = document.createElement('canvas'); t.width = W; t.height = H;
+    const tg = t.getContext('2d');
+    const n = 6, dx = a.file * Math.cos((a.fileAngle ?? 15)*Math.PI/180), dy = a.file * Math.sin((a.fileAngle ?? 15)*Math.PI/180);
+    tg.globalAlpha = 1/n;
+    for(let i = 0; i < n; i++) tg.drawImage(cv, (i-(n-1)/2)*dx, (i-(n-1)/2)*dy);
+    g.clearRect(0,0,W,H); g.drawImage(t, 0, 0);
+  }
+  return cv;
+}
+
 function netteteCanvas(cv){
   const w = 140, h = 196;
   const s = document.createElement('canvas'); s.width = w; s.height = h;
@@ -1790,6 +1871,63 @@ function bougeQuad(a, b){
                   Math.abs(Math.sqrt(aireQuad(a))-Math.sqrt(aireQuad(b))));
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// STRATÉGIES DE CAPTURE — l'homographie sur coins détectés n'est qu'une hypothèse.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Toute la chaîne repose sur un pari : que le détecteur rende quatre coins JUSTES, dont on
+// tire une homographie. C'est ce pari qui coûte cher depuis dix versions — le détecteur rend
+// des coins faux avec 0,97 de confiance, gigote d'une image à l'autre, et s'effondre entre
+// 12° et 45° d'inclinaison.
+// Rien n'oblige à le tenir. Ce que la chaîne veut vraiment, c'est une image de carte
+// exploitable par l'embedding, qui n'a pas besoin d'une rectification parfaite pour
+// reconnaître une illustration. On met donc les hypothèses en concurrence, à conditions
+// identiques, et on garde celle qui identifie le plus souvent juste.
+const STRATEGIES = {
+  // Ce que fait la production : rectification projective sur les quatre coins.
+  'homographie': async (cv, coins) => {
+    const sc = await scanic();
+    const M = 0.04, p = q => ({x:(cx + (q[0]-cx)*(1+M))*cv.width, y:(cy + (q[1]-cy)*(1+M))*cv.height});
+    const cx = (coins.tl[0]+coins.tr[0]+coins.br[0]+coins.bl[0])/4;
+    const cy = (coins.tl[1]+coins.tr[1]+coins.br[1]+coins.bl[1])/4;
+    const r = await sc.extractDocument(cv, {topLeft:p(coins.tl), topRight:p(coins.tr),
+      bottomRight:p(coins.br), bottomLeft:p(coins.bl)}, {output:'canvas'});
+    return (r && r.success && r.output) ? r.output : null;
+  },
+
+  // On ne garde des coins que le CENTRE et la TAILLE — les deux grandeurs qui ne gigotent
+  // pas — et on impose le format d'une carte. Aucune rectification : l'embedding travaille
+  // sur l'illustration, qui reste lisible sous une inclinaison modérée.
+  'centre+format': async (cv, coins) => {
+    const P = [coins.tl, coins.tr, coins.br, coins.bl];
+    const cx = P.reduce((s,p)=>s+p[0],0)/4 * cv.width, cy = P.reduce((s,p)=>s+p[1],0)/4 * cv.height;
+    let aire = 0;
+    for(let i=0;i<4;i++){ const b=P[(i+1)%4]; aire += P[i][0]*b[1]-b[0]*P[i][1]; }
+    aire = Math.abs(aire)/2 * cv.width * cv.height;
+    const h = Math.sqrt(aire * CARD_RATIO) * 1.04, w = h / CARD_RATIO;
+    const out = document.createElement('canvas'); out.width = 640; out.height = Math.round(640*CARD_RATIO);
+    out.getContext('2d').drawImage(cv, cx-w/2, cy-h/2, w, h, 0, 0, out.width, out.height);
+    return out;
+  },
+
+  // Aucune détection : on prend le rectangle de visée, comme un appareil argentique. Sert de
+  // témoin — si cette stratégie tient, la détection n'est pas indispensable au cadrage.
+  'cadre fixe': async (cv) => {
+    const h = cv.height * 0.78, w = h / CARD_RATIO;
+    const out = document.createElement('canvas'); out.width = 640; out.height = Math.round(640*CARD_RATIO);
+    out.getContext('2d').drawImage(cv, (cv.width-w)/2, (cv.height-h)/2, w, h, 0, 0, out.width, out.height);
+    return out;
+  },
+
+  // Homographie, mais sur des coins élargis de 10 % : un doigt ou un reflet fait rétrécir le
+  // quadrilatère détecté, et l'illustration se retrouve rognée.
+  'homographie élargie': async (cv, coins) => {
+    const cx = (coins.tl[0]+coins.tr[0]+coins.br[0]+coins.bl[0])/4;
+    const cy = (coins.tl[1]+coins.tr[1]+coins.br[1]+coins.bl[1])/4;
+    const e = k => [cx + (coins[k][0]-cx)*1.10, cy + (coins[k][1]-cy)*1.10];
+    return STRATEGIES['homographie'](cv, {tl:e('tl'), tr:e('tr'), br:e('br'), bl:e('bl')});
+  },
+};
+
 // Rejoue UNE présentation et rend ce que le déclenchement en a fait.
 async function jouerPresentation(img, geste, nImages, S){
   const options = GESTES[geste](nImages);
@@ -1801,6 +1939,7 @@ async function jouerPresentation(img, geste, nImages, S){
     const t = i * S.MS_PAR_IMAGE;
     const base = {taille:0.72, rot:0, dx:0, dy:0, fond:'bois', lumiere:1, flou:0, incl:0, pitch:0};
     const {canvas, coins:vrais} = composerScene3D(img, {...base, ...options[i]});
+    avanies(canvas, options[i].avanies);
     await bruiter(canvas, S.BRUIT);
     const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(canvas.width, canvas.height));
     const bmp = await createImageBitmap(canvas, {
@@ -1872,7 +2011,7 @@ async function lancerPresentation(nCartes, patch){
         // On identifie CE QUI A ÉTÉ CAPTURÉ, pas l'illustration d'origine : c'est le seul
         // moyen de savoir si le déclenchement a pris une image exploitable.
         try{
-          const red = await redresserCanvas(r.canvas);
+          const red = await STRATEGIES[S.STRATEGIE](r.canvas, r.coins);
           if(red){ const res = await V2.identifierV2(red, {}); juste = !!(res && res.pick && res.pick.cle === carte.cle); }
           else juste = false;
         }catch(e){ juste = false; }
