@@ -2070,6 +2070,11 @@ async function lancerPresentation(nCartes, patch){
 //    qu'aucun appel ne dépasse le délai d'attente d'un outil, et sans dépendre des clics.
 window.BANC = {
   presentation: lancerPresentation, gestes: ()=>Object.keys(GESTES), seuils: ()=>({...SEUILS_PROD}),
+  // Rouages exposés pour le diagnostic : sans eux, toute mesure ponctuelle depuis la console
+  // échoue sur « n'est pas défini », et un `catch` maladroit le fait en silence — ça m'est
+  // arrivé trois fois dans la même session.
+  outils: { composerScene, composerScene3D, avanies, bruiter, netteteCanvas, symQuad, propQuad,
+            bougeQuad, STRATEGIES, chargerIllustration, workerDetection, tirage },
   camera: ouvrirCamera, fermer: fermerCamera, capturer: ()=>capturer('manuel'),
   zoom: (z)=> z == null ? {caps:capsZoom, courant:zoomCourant, memorise:localStorage.getItem(CLE_ZOOM)} : appliquerZoom(z, true),
   patience: (p)=>{ if(p) Object.assign(PATIENCE, p); return {...PATIENCE, bougeBase:BOUGE_BASE}; },

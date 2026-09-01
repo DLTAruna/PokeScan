@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 43;
+const VERSION_APP = 44;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -11966,6 +11966,10 @@ function hexHamming(a, b){
 // assez serré pour rendre une carte lointaine évidente (6/6 dès 22 % de hauteur), assez large
 // pour ne pas manquer une carte simplement décentrée.
 const RECADRE_DETECTION = 0.55;
+// Images consécutives sans rien voir avant de payer le second passage. 5 ≈ 0,5 s : assez court
+// pour que la carte lointaine finisse par être trouvée, assez long pour ne rien coûter quand
+// la détection fonctionne.
+const RECADRE_APRES = 5;
 async function detecterRecadre(video){
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return null;
@@ -12078,7 +12082,20 @@ async function detectLoop(){
     // 6/6 à 22 %, 6/6 à 28 %, contre 0/6 et 1/6 en plein cadre.
     // Ne coûte une seconde inférence QUE lorsque la première n'a rien trouvé, c'est-à-dire
     // précisément quand la boucle n'avait rien à faire de son tour.
-    if(!d.corners || d.score == null || d.score < MIN_SCORE){
+    // ─── RARE, PARCE QU'IL COÛTE UNE DÉTECTION ENTIÈRE (V.44) ───
+    // Ce second passage tournait à CHAQUE image où le premier échouait — c'est-à-dire tout le
+    // temps pendant qu'on cherche la carte, donc précisément quand la boucle doit être vive.
+    // Il coûte 47,9 ms mesurés, soit le prix d'une détection complète : la cadence tombait de
+    // moitié au pire moment.
+    // Ce qu'il rapporte, mesuré sur quarante-deux présentations : UNE. Soixante-quatre pour
+    // cent de déclenchement avec, soixante-deux sans, et soixante pour cent d'identifications
+    // justes dans les deux cas.
+    // On ne le retire pas pour autant : il avait été ajouté en V.26 sur des cartes à 22 % de
+    // hauteur d'image, et le geste « de loin » du banc est à 42 % — le banc ne reproduit donc
+    // pas le cas qu'il vise, et je me refuse à supprimer sur un essai qui ne juge pas la
+    // bonne situation. Il ne se déclenche plus qu'après une demi-seconde sans rien voir :
+    // gratuit en régime normal, toujours là pour la carte lointaine qui s'obstine.
+    if(v2AbsenceStreak >= RECADRE_APRES && (!d.corners || d.score == null || d.score < MIN_SCORE)){
       const dLoin = await detecterRecadre(video).catch(()=> null);
       if(dLoin) d = dLoin;
     }
@@ -12579,7 +12596,7 @@ async function attemptReadV2(corners, score){
       ? coinsDuCadreFixe(video)
       : retrecirCoins(coinsSource, strat.echelle);
     if(v2EssaiCadre > 0) diagPush('err', {msg:'essai ' + (v2EssaiCadre+1) + ' — stratégie ' + strat.nom});
-    const sourceForRead = await redresserAvecCoins(source, coinsEssai, srcW, srcH);
+    const sourceForRead = extraireCarteCentree(source, coinsEssai, srcW, srcH);
     if(!sourceForRead){
       diagPush('try', {ok:false, hint:'redressement échoué', score, ms:Math.round(performance.now()-t0)});
       return;
@@ -13557,6 +13574,53 @@ function stopCamera(){
 // Partage par la prise manuelle (coins du detecteur en direct) et par les photos importees
 // (coins cherches sur le fichier) : c'est le meme traitement, il n'a pas a exister deux
 // fois — marge de securite, filtre de forme, remise d'aplomb.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// EXTRACTION : LE CENTRE ET LA TAILLE, PAS L'HOMOGRAPHIE — 52,4 ms → 0,8 ms.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// La rectification projective de `redresserAvecCoins` était le pari central de la chaîne. Le
+// banc de présentation l'a mise en concurrence sur quatorze gestes, dont six hostiles
+// (reflet de pochette, contre-jour, doigts sur les coins, filé de bougé, forte inclinaison,
+// et le cumul de tout cela) : elle rend EXACTEMENT le même résultat qu'un simple recadrage
+// centre + format de carte — 60 % de présentations correctement identifiées de part et
+// d'autre. Elle coûte en revanche 52,4 ms contre 0,8, soit soixante-cinq fois plus, et trois
+// à quatre fois cela sur le téléphone de Nikos.
+// L'embedding travaille sur l'illustration ; il n'a pas besoin qu'elle soit rectifiée au
+// pixel, il a besoin qu'elle soit là. Un banc l'a dit, pas une intuition.
+//
+// Trois ennuis disparaissent avec elle, et ce n'est pas le moindre de l'affaire :
+//   • l'import dynamique de `scanic`, sur lequel aucun délai de garde n'était possible et
+//     qui figure au dossier des blocages de la V.27 ;
+//   • l'homographie sur le FIL PRINCIPAL, qui gelait l'aperçu ;
+//   • la remise d'aplomb à 90°, qui prenait une bande basse de carte pour une carte couchée
+//     et la retournait — le bug Sablaireau 028/165.
+// On ne garde des coins que le centre et l'aire, c'est-à-dire les deux seules grandeurs que
+// la gigue du détecteur n'emporte pas (V.41). Le format est imposé, donc plus rien à deviner.
+const MARGE_EXTRACTION = 1.04;   // même 4 % qu'avant : le détecteur cadre le visuel, pas le bord
+function extraireCarteCentree(source, coins, largeurSrc, hauteurSrc){
+  if(!coins || !source) return null;
+  try{
+    const P = [coins.tl, coins.tr, coins.br, coins.bl];
+    const cx = (P[0][0]+P[1][0]+P[2][0]+P[3][0])/4 * largeurSrc;
+    const cy = (P[0][1]+P[1][1]+P[2][1]+P[3][1])/4 * hauteurSrc;
+    let aire = 0;
+    for(let i = 0; i < 4; i++){ const b = P[(i+1)%4]; aire += P[i][0]*b[1] - b[0]*P[i][1]; }
+    aire = Math.abs(aire)/2 * largeurSrc * hauteurSrc;
+    if(!(aire > 16)) return null;
+    // Une carte d'aire A au format CARD_RATIO a pour hauteur √(A·ratio).
+    const h = Math.sqrt(aire * CARD_RATIO) * MARGE_EXTRACTION, w = h / CARD_RATIO;
+    const out = document.createElement('canvas');
+    out.width = 640; out.height = Math.round(640 * CARD_RATIO);
+    out.getContext('2d').drawImage(source, cx - w/2, cy - h/2, w, h, 0, 0, out.width, out.height);
+    return out;
+  }catch(e){
+    diagPush('err', {msg: 'extraction impossible : ' + e.message});
+    return null;
+  }
+}
+
+// ⚠️ CONSERVÉE mais plus appelée par la capture (voir extraireCarteCentree). Elle sert encore
+// aux photos importées, où le temps ne compte pas et où l'image peut être franchement de
+// travers — c'est le seul cas où la rectification projective garde un intérêt démontré.
 async function redresserAvecCoins(source, coins, largeurSrc, hauteurSrc){
   if(!coins || !source) return null;
   try{
