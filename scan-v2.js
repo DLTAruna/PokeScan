@@ -241,7 +241,7 @@ function demarrerOrb() {
 
 // ─────────────────────────────── extraction du parsing OCR depuis index.html
 async function chargerParsing() {
-  const res = await fetch('index.html?nocache=' + Date.now(), { cache: 'no-store' });
+  const res = await fetchBorne('index.html?nocache=' + Date.now(), { cache: 'no-store' }, 15000);
   if (!res.ok) throw new Error('index.html introuvable');
   const html = await res.text();
   const a = html.indexOf('const LOOKALIKES =');
@@ -298,8 +298,30 @@ async function idbDelPrefixe(prefixe, sauf) {
 // gros fichier (index-global.bin, 6,8 Mo depuis que le catalogue couvre les 18 séries).
 // Une barre de progression y serait restée figée pendant tout ce qui compte. On lit donc
 // le corps en flux quand l'appelant veut suivre, et d'un bloc sinon (les petits fichiers).
+// ⚠️ AUCUN `fetch` DE CE FICHIER NE DOIT ÊTRE SANS DÉLAI DE GARDE (V.33).
+// C'est la cause du blocage signalé deux fois par Nikos : « ça scanne, ça marque recherche,
+// et plus moyen de scanner ». Un `fetch` sans borne ne se règle JAMAIS si le réseau décroche
+// en cours de route — ni résolu, ni rejeté. Or chaque scan en déclenche : 15 à 18
+// descripteurs ORB par carte (voir `nReseau` dans le journal). Le premier qui pend fige
+// `identifierV2`, donc `gererScanV2`, donc `readInFlight` — et la boucle de détection s'arrête
+// pour de bon. Les délais de garde posés en V.25 ne couvraient que les appels aux WORKERS,
+// pas le réseau : c'est le trou par lequel ça passait.
+// Le corps du message d'erreur nomme l'URL : sans elle, un « échec réseau » ne dit pas si
+// c'est le Worker, R2, ou l'index qui a lâché.
+async function fetchBorne(url, opts = {}, ms = 12000) {
+  const ctrl = new AbortController();
+  const minuteur = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal });
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('délai dépassé (' + ms + ' ms) : ' + url);
+    throw e;
+  } finally { clearTimeout(minuteur); }
+}
+
 async function telechargerR2(chemin, { json, gunzip, onOctets } = {}) {
-  const r = await fetch(R2 + '/' + chemin, { cache: 'no-store' });
+  // L'index global pèse près de 7 Mo : il lui faut plus large que les petits objets.
+  const r = await fetchBorne(R2 + '/' + chemin, { cache: 'no-store' }, onOctets ? 120000 : 20000);
   if (!r.ok) throw new Error(chemin + ' : HTTP ' + r.status);
   let buf;
   const total = +(r.headers.get('content-length') || 0);
@@ -368,7 +390,10 @@ function parseBlobOrb(buf) {
 // —— récupère plusieurs blobs ORB d'un coup via le Worker (une requête). Renvoie une
 //    Map cle -> ArrayBuffer (ou null si absent).
 async function telechargerLotOrb(cles) {
-  const r = await fetch(R.WORKER_ORB + '?k=' + cles.join(','), { cache: 'no-store' });
+  // Le poste le plus exposé : appelé à CHAQUE scan, pour 15 à 18 descripteurs. C'est ici que
+  // le blocage se produisait. 10 s suffisent largement — au-delà, le repli par carte ou le
+  // rebut valent mieux qu'une attente sans fin.
+  const r = await fetchBorne(R.WORKER_ORB + '?k=' + cles.join(','), { cache: 'no-store' }, 10000);
   if (!r.ok) throw new Error('worker ' + r.status);
   const buf = await r.arrayBuffer();
   const dv = new DataView(buf); const u = new Uint8Array(buf);
@@ -763,7 +788,7 @@ function idAppareil() {
 export async function relayV2(entries) {
   const liste = Array.isArray(entries) ? entries : [entries];
   try {
-    const r = await fetch('/api/scan-log', {
+    const r = await fetchBorne('/api/scan-log', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ device: idAppareil(), outil: 'v2-prod', entries: liste }),
     });

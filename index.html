@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 32;
+const VERSION_APP = 33;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11869,7 +11869,7 @@ async function detectLoop(){
 // n'y a plus de scan, donc plus rien à journaliser. On envoie donc un relevé D'ÉTAT, qui dit
 // lequel des verrous est resté fermé. Chaque champ correspond à une cause possible et une
 // seule, pour qu'un relevé suffise à trancher sans avoir à deviner.
-let dernierBlocageSignaleA = 0;
+let dernierBlocageSignaleA = {};   // par genre de cause — voir signalerBlocageScan
 function etatBoucleScan(){
   return {
     readInFlight,                                   // verrou qui suspend la boucle (V.16)
@@ -11928,9 +11928,15 @@ async function renvoyerIncidentsEnAttente(){
 addEventListener('load', ()=> setTimeout(renvoyerIncidentsEnAttente, 4000));
 
 function signalerBlocageScan(cause, score){
-  // Un seul signalement par minute : un blocage dure, et on veut un constat, pas un flot.
-  if(Date.now() - dernierBlocageSignaleA < 60000) return;
-  dernierBlocageSignaleA = Date.now();
+  // ⚠️ UN COMPTEUR PAR CAUSE, ET NON UN SEUL POUR TOUTES (corrigé en V.33).
+  // La limite globale d'une minute avait un effet pervers : une FAUSSE alerte (écran éteint,
+  // caméra en cours d'ouverture) consommait le quota, et le vrai blocage survenu 25 s plus
+  // tard était **silencieusement avalé**. C'est exactement ce qui s'est produit : trois
+  // incidents remontés du terrain, tous des faux positifs, et pas une ligne sur le blocage
+  // réel que Nikos subissait au même moment.
+  const genre = String(cause).split(' ').slice(0, 3).join(' ');
+  if(Date.now() - (dernierBlocageSignaleA[genre] || 0) < 60000) return;
+  dernierBlocageSignaleA[genre] = Date.now();
   const etat = etatBoucleScan();
   diagPush('err', {msg:'BLOCAGE SCAN — ' + cause + ' — ' + JSON.stringify(etat)});
   const entree = { fichier:'incident', predit:'', categorie:'blocage', conf:'blocage',
@@ -11964,6 +11970,12 @@ setInterval(()=>{
   if(!cameraStream) return;
   // Page masquée : le navigateur suspend `setTimeout`, l'absence de battement est NORMALE.
   if(document.visibilityState !== 'visible') return;
+  // Caméra en cours d'ouverture : `cameraStream` est affecté AVANT `startAimLoop`, et la
+  // vidéo n'a pas encore de dimensions. Se plaindre là est une fausse alerte — relevée sur
+  // le terrain (`videoW:0, detectRunning:false, scansSession:0`, à l'instant zéro).
+  const video0 = $('video');
+  if(!video0 || !video0.videoWidth) return;
+  if(camStartedAt && Date.now() - camStartedAt < 10000) return;   // temps de s'installer
   if(!detectRunning){
     signalerBlocageScan('boucle arrêtée alors que la caméra est ouverte', null);
     return;
@@ -20875,7 +20887,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=23';
+import * as V2 from './scan-v2.js?v=24';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
