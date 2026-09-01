@@ -28,6 +28,43 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## Objectif automatique en V2 + tentative anti-bruit (V.11, 2026-09-01)
+
+Nikos a demandé « force le zoom x1 sur tous les téléphones », puis lui-même corrigé en
+« plutôt forcer l'objectif PRINCIPAL, pas x1 ». Bon réflexe — forcer `zoom:1` est
+**exactement** ce que `index.html` a déjà essayé et rejeté (voir § OBJECTIF ci-dessous,
+~ligne 9330) : sur un Samsung réel, `zoom:1` du navigateur EST le grand-angle 0,6×. Aucune
+valeur numérique fixe ne peut être « le principal » de façon universelle.
+
+**Ce qui existait déjà et marchait, mais seulement en V1** : `surveillerNettete()` +
+`preparerCorrectionObjectif()` — une correction « sur constat » qui monte les paliers de
+zoom (`min×1.7`, `min×2.5`) quand le flou persiste 2,5 s, et qu'une capture réussie valide
+et mémorise (`validerObjectifCourant()`, dans `localStorage` — `pokescanZoomPref`). Le
+problème : `surveillerNettete()` est coupée en V2 (`if(!qualiteTimer) return`, voir le
+piège plus bas) — **donc cette correction ne se déclenchait JAMAIS en V2**. La caméra
+pouvait rester ouverte sur le grand-angle toute une session, sans que rien ne réagisse.
+
+**Fix : `surveillerCadrageV2()`**, miroir exact de `surveillerNettete()` mais déclenchée
+par l'**aire** (part du cadre occupée par la carte) au lieu du flou — le signal qu'on a
+établi comme LE facteur dominant de la détection (banc de détection, V.9). Sous
+`AIRE_LIMITE_V2` (0,08) pendant 2,5 s → monte au palier suivant. Partage `paliersObjectif`
+/ `palierCourant` / `pisteObjectif` avec la version V1 (même mémorisation au succès,
+`validerObjectifCourant()` était déjà appelée dans `gererScanV2` — il ne manquait QUE le
+déclencheur). Testé en isolant l'état (petite carte → armé sans agir → délai simulé → zoom
+1,7× appliqué ; grande carte ensuite → réarmement sans re-déclenchement ; paliers épuisés →
+abandon propre ; hors V2 → aucun effet).
+
+**Bruit en faible lumière** — hypothèse : le pilote caméra enclenche un mode nuit par
+empilement de plusieurs expositions longues, physiquement incompatible avec une cadence
+d'image élevée. Ajouté `frameRate:{ideal:30}` dans `buildCameraConstraints()` (contraintes
+initiales) + retenté dans `applyTrackTweaksAndDiagnostics()` (certains navigateurs
+n'honorent pas `advanced` au premier essai). **Non vérifié sur téléphone** — c'est un levier
+plausible et sans risque (ideal, jamais exact ; aucune dégradation possible si non
+supporté), pas une certitude. Le diagnostic remonte maintenant `frameRate capacités=` et
+`réglage=` : à lire après un test en salon peu éclairé pour savoir si Chrome honore la
+demande et si le bruit diminue. Si non concluant, il faudra regarder `exposureMode`/
+`exposureTime` — capacités déjà loggées nulle part encore, à ajouter si besoin.
+
 ## ⚠️ Le piège `qualite` en V2 (V.2) — à connaître avant de toucher au scanner
 
 En V2, `demarrerQualite()` coupe l'échantillonnage et `arreterQualite()` remet `qualite`

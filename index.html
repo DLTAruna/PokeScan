@@ -5730,7 +5730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 10;
+const VERSION_APP = 11;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9312,6 +9312,15 @@ function buildCameraConstraints(deviceId){
     video: {
       ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:'environment'}),
       width:{ideal:1920}, height:{ideal:1440},
+      // Cadence haute demandée EN IDÉAL (jamais en exact — un appareil qui ne peut pas la
+      // tenir doit rester utilisable, pas refuser d'ouvrir). Un mode nuit par empilement de
+      // plusieurs expositions longues (le bruit signalé en faible lumière) est physiquement
+      // incompatible avec une cadence élevée : les deux se disputent le même budget de
+      // temps par image. Demander 30 i/s n'élimine pas la pénombre, mais retire au pilote
+      // caméra la marge dont ce mode a besoin pour s'enclencher tout seul. Voir aussi le
+      // second essai après ouverture, dans applyTrackTweaksAndDiagnostics — certains
+      // navigateurs n'honorent pas frameRate dans les contraintes initiales.
+      frameRate:{ideal:30},
       advanced
     },
     audio:false
@@ -9495,6 +9504,13 @@ async function applyTrackTweaksAndDiagnostics(track){
         await track.applyConstraints({advanced:[{zoom:preferredZoom}]});
       }
     }
+    // Contre le mode nuit par empilement de trames (bruit signalé en faible lumière) :
+    // voir buildCameraConstraints pour le raisonnement. Repris ici en second essai —
+    // `advanced` dans les contraintes initiales n'est pas honoré par tous les navigateurs
+    // (c'est déjà pourquoi focusMode/zoom sont retentés à ce même endroit).
+    if(caps.frameRate && caps.frameRate.max >= 24){
+      await track.applyConstraints({advanced:[{frameRate: Math.min(30, caps.frameRate.max)}]});
+    }
     const settings = track.getSettings ? track.getSettings() : {};
     // `pointsOfInterest` remonté explicitement : c'est lui qui permet de viser la mise au
     // point ailleurs qu'au centre du cadre, et sa disponibilité varie fortement d'un
@@ -9507,6 +9523,8 @@ async function applyTrackTweaksAndDiagnostics(track){
                         ' zoom capacités=' + JSON.stringify(caps.zoom||null) +
                         ' réglage=' + (settings.zoom ?? '?') +
                         ' résolution=' + settings.width + 'x' + settings.height +
+                        ' frameRate capacités=' + JSON.stringify(caps.frameRate||null) +
+                        ' réglage=' + (settings.frameRate ?? '?') +
                         ' label=' + (track.label || '?')});
     preparerCorrectionObjectif(track, caps);
     initZoom(track, caps);
@@ -9948,6 +9966,47 @@ function airePartCarte(c){
   return Math.abs(a) / 2;
 }
 let v2RienDepuis = 0;
+let aireBasseDepuis = 0;
+
+// Miroir de surveillerNettete (§ CORRIGER SUR CONSTAT, PAS SUR SUPPOSITION), pour la V2.
+// La mesure qui déclenchait la correction d'objectif était le flou — coupée en V2 (voir
+// surveillerNettete, garde `!qualiteTimer`), donc la correction ne se déclenchait JAMAIS en
+// V2 : la caméra pouvait rester ouverte sur le grand-angle toute la session, sans qu'aucun
+// mécanisme ne la corrige. Or on a un signal plus précoce et plus fiable que le flou pour
+// repérer cet objectif : l'AIRE. Le banc de détection l'a établi comme le seul facteur qui
+// compte pour que le détecteur voie ne serait-ce qu'une carte (lumière, flou, inclinaison :
+// aucune influence mesurable ; taille dans le cadre : le seul). Un objectif grand-angle à
+// focus fixe ne peut de toute façon jamais faire une mise au point nette de près — mais bien
+// avant d'en arriver au flou, la carte y occupe trop peu de pixels pour être détectée du
+// tout. Partage la même échelle de paliers que la version V1 (préparée une fois à l'ouverture
+// de la caméra, voir preparerCorrectionObjectif) : une capture réussie, quel que soit le
+// mode, valide et mémorise le réglage trouvé (validerObjectifCourant, déjà appelée par
+// gererScanV2).
+function surveillerCadrageV2(corners){
+  if(!(window.SCAN_V2 && SCAN_V2.actifV2())){ aireBasseDepuis = 0; return; }
+  if(!correctionObjectifActive || !pisteObjectif){ aireBasseDepuis = 0; return; }
+  const aire = airePartCarte(corners);
+  if(aire >= AIRE_LIMITE_V2){ aireBasseDepuis = 0; return; }
+  if(!aireBasseDepuis){ aireBasseDepuis = Date.now(); return; }
+  if(Date.now() - aireBasseDepuis < FLOU_AVANT_OBJECTIF_MS) return;
+
+  aireBasseDepuis = 0;
+  palierCourant++;
+  if(palierCourant >= paliersObjectif.length){
+    correctionObjectifActive = false;
+    diagPush('err', {msg:'caméra: paliers d\'objectif épuisés (V2, cadrage trop serré), correction abandonnée'});
+    return;
+  }
+
+  const z = paliersObjectif[palierCourant];
+  pisteObjectif.applyConstraints({advanced:[{zoom:z}]}).then(()=>{
+    toast('🔍 Objectif ajusté (zoom ' + z.toFixed(1) + '×) — le grand-angle ne remplit pas assez le cadre.');
+    diagPush('err', {msg:'caméra: correction automatique d\'objectif (V2, cadrage) -> zoom ' + z.toFixed(2)});
+  }).catch(e=>{
+    diagPush('err', {msg:'caméra: correction d\'objectif refusée (' + e.message + ')'});
+    correctionObjectifActive = false;
+  });
+}
 
 // Tolère un score de détection isolé, ponctuellement sous MIN_SCORE (occlusion
 // passagère, reflet, main qui repositionne la carte un instant), sans repartir de zéro
@@ -11208,8 +11267,11 @@ async function detectLoop(){
       absenceDepuis = 0;
       v2AbsenceStreak = 0;
       v2RienDepuis = 0;
-      // Une carte EST là : si elle reste floue, c'est le moment de soupçonner l'objectif.
+      // Une carte EST là : si elle reste floue (V1) ou trop petite dans le cadre (V2),
+      // c'est le moment de soupçonner l'objectif. Les deux partagent la même échelle de
+      // paliers ; chacune ne fait rien dans le mode de l'autre (gardes internes).
       surveillerNettete();
+      surveillerCadrageV2(d.corners);
       setOverlayTarget('lecture', d.corners);
       // Carte localisée : on oriente la mise au point vers la bande du numéro plutôt que
       // de laisser l'autofocus viser le centre du cadre (voir viserMiseAuPoint).
