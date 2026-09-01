@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 46;
+const VERSION_APP = 47;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10002,19 +10002,46 @@ async function reglerPisteSansBloquer(track){
   })();
   const issue = await Promise.race([travail, abandon]);
   diagPush('err', {msg:'caméra: réglages de piste ' + issue + ' en ' + Math.round(performance.now()-t0) + ' ms'});
-  // Le capteur peut être RESTÉ zoomé d'une session précédente (V.29 a réappliqué une
-  // préférence périmée pendant trois versions). Comme plus rien ne pilote le zoom
-  // automatiquement, on le ramène une fois à son minimum — c'est-à-dire au cadrage le plus
-  // large, celui qui donne le plus de chances à la détection. Le pincement reste maître
-  // ensuite. Sans ce retour, un appareil zoomé le resterait sans que rien ne le corrige.
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+  // VISER L'OBJECTIF PRINCIPAL, PAS LE PLUS LARGE (V.47).
+  // ═══════════════════════════════════════════════════════════════════════════════════════
+  // Ce bloc ramenait le zoom à `caps.zoom.min` à chaque ouverture, en croyant revenir « au
+  // cadrage le plus large, celui qui donne le plus de chances à la détection ». Sur un
+  // téléphone multi-objectifs c'est exactement l'inverse : le minimum EST l'ultra grand-angle.
+  // Relevé sur le Samsung de Nikos, capacités annoncées {min: 1, max: 30} — quand
+  // l'application caméra du téléphone, elle, affiche 0,6× à 30×. Le « 1 » du navigateur est
+  // donc le 0,6× du constructeur.
+  // Et cet ultra grand-angle est à FOCUS FIXE, distance minimale de mise au point de trente à
+  // cinquante centimètres : une carte tenue assez près pour remplir le cadre est à l'intérieur
+  // de cette distance et ne peut PHYSIQUEMENT pas être nette. Aucun réglage logiciel n'y
+  // changera rien, et cela pourrait bien expliquer une part du flou qu'on pourchasse depuis
+  // des versions.
+  // Le navigateur n'expose qu'UNE caméra arrière logique — vérifié sur l'appareil, deux
+  // entrées seulement — donc on ne peut pas choisir l'objectif par `deviceId` : le zoom est le
+  // seul levier. Monter à 1,7× le minimum (≈ 1/0,6) fait basculer sur l'objectif principal.
+  //
+  // ⚠️ On ne le fait QUE si les capacités trahissent un appareil multi-objectifs : un facteur
+  // trente entre min et max ne s'obtient pas avec un capteur unique. Sur un téléphone à
+  // objectif unique, ce même geste ne serait qu'un recadrage numérique — on perdrait des
+  // pixels pour rien. D'où le garde-fou sur le rapport, et non une valeur imposée à tous.
+  const FACTEUR_PRINCIPAL = 1.7;   // 1/0,6 : l'écart entre ultra grand-angle et objectif principal
   try{
     const caps = track.getCapabilities ? track.getCapabilities() : {};
     const reglage = track.getSettings ? track.getSettings() : {};
-    if(caps.zoom && reglage.zoom != null && reglage.zoom > caps.zoom.min){
-      await track.applyConstraints({advanced:[{zoom: caps.zoom.min}]});
-      diagPush('err', {msg:'caméra: zoom ramené de ' + reglage.zoom + ' à ' + caps.zoom.min});
+    if(caps.zoom && typeof caps.zoom.min === 'number' && typeof caps.zoom.max === 'number'){
+      const multiObjectifs = caps.zoom.max / Math.max(caps.zoom.min, 0.0001) >= 5;
+      const cible = multiObjectifs
+        ? Math.min(caps.zoom.max, caps.zoom.min * FACTEUR_PRINCIPAL)
+        : caps.zoom.min;
+      if(reglage.zoom == null || Math.abs(reglage.zoom - cible) > 0.01){
+        await track.applyConstraints({advanced:[{zoom: cible}]});
+        const obtenu = track.getSettings ? track.getSettings().zoom : null;
+        diagPush('err', {msg:'caméra: zoom ' + reglage.zoom + ' → ' + cible
+          + (obtenu != null ? ' (obtenu ' + obtenu + ')' : '')
+          + (multiObjectifs ? ' — objectif principal visé' : ' — objectif unique, minimum conservé')});
+      }
     }
-  }catch(e){}
+  }catch(e){ diagPush('err', {msg:'caméra: choix d\'objectif refusé — ' + e.message}); }
 }
 // Enveloppe qui n'échoue jamais : une capacité annoncée puis refusée ne doit pas empêcher
 // l'ouverture (constaté par le passé sur `pointsOfInterest`).
