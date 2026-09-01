@@ -8,6 +8,8 @@
 // Le piège à éviter : sur le terrain embTop ne CORRÈLE pas avec la réussite, ce dont j'avais
 // conclu que l'image allait bien. Faux — toutes les valeurs étaient mauvaises, la corrélation
 // disparaît par restriction d'étendue. Il faut comparer le NIVEAU, pas la pente.
+import zlib from 'zlib';
+import sharp from 'sharp';
 import { pipeline, env, RawImage } from '@huggingface/transformers';
 import { ZONE_ILLUSTRATION, telecharger } from './lib.mjs';
 env.allowLocalModels = false;
