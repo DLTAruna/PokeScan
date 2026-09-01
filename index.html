@@ -312,7 +312,18 @@
        c'est ce qui rendait l'apercu noir sur certains GPU Android. */
     background:rgba(8,10,16,.70); border-color:rgba(255,255,255,.14);
   }
-  #cam-fullscreen-area.fs .live-result img{width:38px; height:53px;}
+  /* Le contenu du panneau change d'un coup à chaque carte (vignette, nom, cote). Une
+     transition douce sur ce qui change VRAIMENT de forme — la vignette — suffit à faire
+     lire le remplacement comme un enchaînement plutôt que comme un clignotement. Le texte
+     n'est pas animé : une valeur qui glisse se lit moins vite qu'une valeur qui s'affiche,
+     et ici on veut pouvoir vérifier d'un coup d'œil. (V.17) */
+  #cam-fullscreen-area.fs .live-result img{
+    width:38px; height:53px;
+    transition:opacity .18s ease-out;
+  }
+  @media (prefers-reduced-motion: reduce){
+    #cam-fullscreen-area.fs .live-result img{transition:none;}
+  }
   #cam-fullscreen-area.fs .live-result-info{font-size:12px;}
 
   /* Bande des ajouts : plus de place reservee, elle se deploie a la demande AU-DESSUS
@@ -961,6 +972,20 @@
   /* ---- Bascule d'onglet ---- */
   @keyframes ongletEntre{from{opacity:0; transform:translateY(7px);} to{opacity:1; transform:none;}}
   section.section.active{animation:ongletEntre .26s ease-out;}
+
+  /* ⚠️ CAMÉRA PLEIN ÉCRAN : AUCUN ANCÊTRE TRANSFORMÉ (corrigé en V.17)
+     Un élément `position:fixed` se résout contre le VIEWPORT — sauf si un ancêtre porte un
+     `transform`, `filter` ou `perspective` : il devient alors le bloc conteneur. C'est
+     exactement ce qui arrivait ici. `#section-capture` reçoit l'animation d'entrée
+     d'onglet ci-dessus, et son animation restait bloquée à `currentTime: 0` (relevé sur
+     l'appareil : `transform: matrix(1,0,0,1,0,7)`, état « running », temps 0). Résultat :
+     la zone caméra, pourtant `inset:0`, se dessinait à 148 px du haut sur 284 px de haut
+     au lieu de remplir l'écran — le cadre de visée, le voile et le panneau se calaient
+     donc tous sur une boîte fausse. C'est le « bug d'interface » constaté.
+     Tant que la caméra est ouverte, on neutralise donc toute transformation sur les
+     sections. Le `!important` est délibéré : c'est une garde de correction, elle doit
+     l'emporter sur l'animation comme sur tout style ajouté plus tard. */
+  body.cam-plein section.section{animation:none !important; transform:none !important;}
 
   /* Respect du réglage système : ces animations sont du confort, jamais de l'information —
      tout reste lisible et utilisable sans elles. */
@@ -5645,7 +5670,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 16;
+const VERSION_APP = 17;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -9454,6 +9479,10 @@ async function startCamera(){
     $('video-wrap').classList.add('active');
     $('cam-start-row').style.display = 'none';
     $('cam-fullscreen-area').classList.add('fs');
+    // Voir le commentaire CSS de `body.cam-plein` : tant que la caméra est en plein écran,
+    // AUCUN ancêtre ne doit porter de transform, sinon le `position:fixed` de la zone
+    // caméra se résout contre cet ancêtre au lieu de la fenêtre.
+    document.body.classList.add('cam-plein');
     document.documentElement.style.overflow = 'hidden';
     demanderPleinEcran();
     // Après la bascule en plein écran ET une fois la vidéo dimensionnée : c'est la
@@ -10217,17 +10246,21 @@ let cadrageVisible = {w: 1, h: 1};
 let decalageGuideY = 0;
 // Marge horizontale a laisser libre de chaque cote, en fraction d'image.
 let margeLaterale = 0;
+// Hauteur exploitable entre la croix de sortie et le panneau de résultat, en fraction
+// d'image. 0 = non mesurée (hors plein écran) : guideRect retombe alors sur la borne
+// habituelle. Voir majCadrageVisible.
+let hauteurLibreGuide = 0;
 function majCadrageVisible(){
   const video = $('video');
   const plein = $('cam-fullscreen-area')?.classList.contains('fs');
   const wrap0 = $('video-wrap');
   if(!video || !video.videoWidth || !plein){
-    cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; margeLaterale = 0;
+    cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; margeLaterale = 0; hauteurLibreGuide = 0;
     if(wrap0) wrap0.style.setProperty('--decalage-cadre', '0px');
     return;
   }
   const b = video.getBoundingClientRect();
-  if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; return; }
+  if(!b.width || !b.height){ cadrageVisible = {w: 1, h: 1}; decalageGuideY = 0; hauteurLibreGuide = 0; return; }
   const rEl = b.width / b.height, rIm = video.videoWidth / video.videoHeight;
   cadrageVisible = rEl > rIm ? {w: 1, h: rIm / rEl} : {w: rEl / rIm, h: 1};
 
@@ -10238,12 +10271,26 @@ function majCadrageVisible(){
   const margeLatPx = (jRect && jRect.width) ? (jRect.right + 10) : 0;
   margeLaterale = margeLatPx / (b.width / cadrageVisible.w);
 
-  // Recentrage vertical entre la barre du haut et le declencheur : les deux ont disparu en
-  // V.13, donc plus rien a compenser — le cadre se centre sur l'image, ce que fait le banc.
-  const barre = document.querySelector('.cam-topbar')?.getBoundingClientRect();
-  const fab = $('btn-capture-frame')?.getBoundingClientRect();
-  if(!barre || !fab || !fab.height){ decalageGuideY = 0; return; }
-  const centreLibre = (barre.bottom + fab.top) / 2;
+  // RECENTRAGE VERTICAL — corrigé en V.17.
+  // En V.13 les deux repères de ce calcul (barre du haut, déclencheur) ont été retirés du
+  // cadre, et le repli mettait le décalage à 0 : le cadre de visée se centrait donc sur
+  // l'IMAGE. Or le panneau de résultat occupe le bas de l'écran — deux cents pixels et
+  // davantage depuis qu'il porte la ligne Fiabilité — si bien que le bas du cadre passait
+  // DERRIÈRE lui. On visait une zone dont on ne voyait pas le bord, et le quadrilatère
+  // détecté disparaissait sous le panneau : c'est le « bug d'interface » constaté.
+  //
+  // On recentre donc sur la place réellement libre, mesurée sur ce qui existe VRAIMENT
+  // aujourd'hui : du bas de la croix de sortie au haut du panneau de résultat.
+  const croix = $('btn-stop-cam')?.getBoundingClientRect();
+  const panneau = $('live-result');
+  const pRect = (panneau && panneau.offsetParent) ? panneau.getBoundingClientRect() : null;
+  const hautLibre = croix && croix.height ? croix.bottom + 8 : b.top + 8;
+  const basLibre  = pRect && pRect.height ? pRect.top - 8 : b.bottom - 8;
+  if(!(basLibre > hautLibre)){ decalageGuideY = 0; hauteurLibreGuide = 0; return; }
+  // Hauteur exploitable, en fraction d'IMAGE (même conversion que decalageGuideY plus bas) :
+  // sert de troisième borne à guideRect pour que le cadre TIENNE dans cette place.
+  hauteurLibreGuide = ((basLibre - hautLibre) * cadrageVisible.h) / b.height;
+  const centreLibre = (hautLibre + basLibre) / 2;
   const centreImage = b.top + b.height / 2;
   // Le facteur cadrageVisible.h convertit des pixels d'écran en fraction d'IMAGE : quand
   // l'image déborde verticalement, la hauteur de l'élément ne couvre qu'une partie d'elle.
@@ -10271,7 +10318,11 @@ function guideRect(video){
   // Deux bornes, la plus stricte l'emporte : la part visible de l'image, et la place
   // laissee libre pour le bandeau de jauges.
   const wMax = Math.min(cadrageVisible.w * 0.94, cadrageVisible.w - 2 * margeLaterale);
-  const hMax = cadrageVisible.h * 0.94;
+  // Troisième borne (V.17) : la place réellement libre entre la croix de sortie et le
+  // panneau de résultat. Sans elle, remonter le cadre ne suffisait pas — il restait trop
+  // HAUT de sorte que son bas passait quand même sous le panneau. Mesurée par
+  // majCadrageVisible, en fraction d'image comme les deux autres.
+  const hMax = Math.min(cadrageVisible.h * 0.94, hauteurLibreGuide || cadrageVisible.h * 0.94);
   if(w > wMax){ w = wMax; h = (w*vw*CARD_RATIO)/vh; }
   if(h > hMax){ h = hMax; w = (h*vh/CARD_RATIO)/vw; }
   // Bornée : le cadre remonte, mais jamais au point de sortir de l'image — on capture ce
@@ -10363,7 +10414,11 @@ function drawGuideOverlay(video, state, corners){
   const R = {x: g.x*OW, y: g.y*OH, w: g.w*OW, h: g.h*OH};
   const radius = Math.min(R.w, R.h) * 0.055;
 
+  // Couleur INTERPOLÉE (V.17) plutôt que choisie dans une table : c'est renderOverlayLoop
+  // qui fait glisser `couleurAffichee` vers la couleur de l'état courant. Les valeurs fixes
+  // restent utilisées pour l'impulsion de capture, qui doit être franche, elle.
   const couleurs = {attente:'#e0553f', lecture:'#e0a12a', ok:'#3ba55d'};
+  const couleurLissee = 'rgb(' + couleurAffichee.map(v => Math.round(v)).join(',') + ')';
 
   // Impulsion de capture : le vrai signal « c'est pris ». Animée ici, dans la boucle
   // rAF déjà en place, elle suit le rafraîchissement réel de l'écran — là où l'ancien
@@ -10371,7 +10426,7 @@ function drawGuideOverlay(video, state, corners){
   const maintenant = performance.now();
   const dt = maintenant - pulseCaptureAt;
   const pulse = dt >= 0 && dt < PULSE_DUREE_MS ? Math.pow(1 - dt/PULSE_DUREE_MS, 2) : 0;
-  const couleur = pulse > 0 ? couleurs.ok : (couleurs[state] || couleurs.attente);
+  const couleur = pulse > 0 ? couleurs.ok : couleurLissee;
   // Part de 1 (équerres écartées) et retombe à 0 (posées sur le cadre). Cube : le geste
   // freine en arrivant, comme une mise au point qui se cale.
   const dv = maintenant - verrouAt;
@@ -10399,11 +10454,13 @@ function drawGuideOverlay(video, state, corners){
   // pendant que les équerres, elles, sont immobiles et ne prouvent rien. Il reste deux
   // fois plus fin que les équerres pour rester lisible comme une information de second
   // plan et non comme un second cadre.
-  if(corners){
+  // `presenceContour` (V.17) fait fondre ce trait au lieu de le faire clignoter à chaque
+  // décrochage du détecteur — la carte, elle, n'a pas disparu entre deux images.
+  if(corners && presenceContour > 0.01){
     const pts = [corners.tl, corners.tr, corners.br, corners.bl].map(p => [p[0]*OW, p[1]*OH]);
     const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
     ctx.save();
-    ctx.globalAlpha = 0.85;
+    ctx.globalAlpha = 0.85 * presenceContour;
     ctx.strokeStyle = couleur;
     ctx.lineWidth = Math.max(1.6, OW*0.0032);
     ctx.lineJoin = 'round';
@@ -10839,6 +10896,22 @@ let overlayTargetAt = 0;
 let overlayVitesse = null;
 let dernierRenduAt = 0;
 
+// ─── COULEUR ET PRÉSENCE LISSÉES (V.17) ───
+// La position des coins était déjà lissée, mais deux choses sautaient encore d'un coup, et
+// ce sont elles qu'on lit comme un outil qui hésite plutôt qu'un outil qui sait :
+//   • la COULEUR d'état — rouge (rien) → ambre (vue) → vert (prête) — changeait d'un seul
+//     coup, souvent deux fois par seconde sur une main qui bouge un peu : ça clignote.
+//   • la PRÉSENCE du quadrilatère — il apparaissait et disparaissait sèchement à chaque
+//     décrochage du détecteur, alors que la carte, elle, est toujours là.
+// On interpole donc la couleur, et on fait fondre le contour au lieu de le faire clignoter.
+// Constantes de temps volontairement plus LENTES que le suivi de position (40 ms) : une
+// couleur qui rattrape aussi vite que la géométrie redevient un clignotement.
+const COULEURS_ETAT = { attente:[224,85,63], lecture:[224,161,42], ok:[59,165,93] };
+const COULEUR_TAU_MS = 130;     // ~95 % en 400 ms : franc, mais on voit la transition
+const PRESENCE_TAU_MS = 90;     // fondu du contour détecté
+let couleurAffichee = COULEURS_ETAT.attente.slice();
+let presenceContour = 0;        // 0 = pas de contour, 1 = pleinement dessiné
+
 function setOverlayTarget(state, corners){
   // Une seule fois par accroche, au passage AU vert : réarmer à chaque image tant que
   // l'état reste vert ferait vibrer le téléphone en continu.
@@ -10905,13 +10978,31 @@ function renderOverlayLoop(now){
     overlayCurrentState = overlayTargetState;
     const cible = cornersPredits(now);
     if(!cible){
-      // Rien détecté : pas de position à lisser, retour immédiat au placeholder.
-      overlayCurrentCorners = null;
+      // Plus de détection : on NE supprime plus le contour d'un coup — il s'efface (voir
+      // presenceContour). La dernière géométrie connue est conservée le temps du fondu,
+      // sinon il n'y aurait rien à faire disparaître.
+      if(presenceContour <= 0.02) overlayCurrentCorners = null;
     } else if(!overlayCurrentCorners){
-      // Première apparition : rien à interpoler depuis, on affiche direct.
+      // Première apparition : rien à interpoler depuis, on affiche direct (en fondu).
       overlayCurrentCorners = cible;
     } else {
       overlayCurrentCorners = lerpCorners(overlayCurrentCorners, cible, 1 - Math.exp(-dt / OVERLAY_TAU_MS));
+    }
+
+    // Fondu de présence et interpolation de couleur, tous deux en temps (indépendants de
+    // la fréquence de l'écran, comme le lissage de position).
+    const presenceAvant = presenceContour;
+    const kP = 1 - Math.exp(-dt / PRESENCE_TAU_MS);
+    presenceContour += ((cible ? 1 : 0) - presenceContour) * kP;
+    if(presenceContour < 0.002) presenceContour = 0;
+
+    const cibleCouleur = COULEURS_ETAT[overlayCurrentState] || COULEURS_ETAT.attente;
+    const kC = 1 - Math.exp(-dt / COULEUR_TAU_MS);
+    let couleurBouge = false;
+    for(let i = 0; i < 3; i++){
+      const d = cibleCouleur[i] - couleurAffichee[i];
+      if(Math.abs(d) > 0.4) couleurBouge = true;
+      couleurAffichee[i] += d * kC;
     }
 
     // Seuil en fraction d'image : en dessous, le déplacement ne vaut même pas un pixel à
@@ -10923,6 +11014,11 @@ function renderOverlayLoop(now){
       || etatPrecedent !== overlayCurrentState
       || pulseActive
       || verrouActif
+      // Tant que la couleur ou le fondu bougent encore, il FAUT redessiner : sans ces deux
+      // conditions, une transition se figerait à mi-chemin dès que la carte est immobile —
+      // le cas le plus fréquent, puisqu'on attend justement qu'elle le soit.
+      || couleurBouge
+      || Math.abs(presenceContour - presenceAvant) > 0.002
       || (!avant) !== (!overlayCurrentCorners)
       || (avant && overlayCurrentCorners && maxCornerShift(avant, overlayCurrentCorners) > 0.0004);
 
@@ -11812,6 +11908,9 @@ function startAimLoop(){
   stopAimLoop();
   detecteurPret = false;
   overlayCurrentState = overlayTargetState = 'attente';
+  // Repart du rouge sans transition : une nouvelle session ne doit pas hériter du vert de
+  // la carte précédente, ni la faire fondre depuis elle (V.17).
+  couleurAffichee = COULEURS_ETAT.attente.slice(); presenceContour = 0;
   overlayCurrentCorners = overlayTargetCorners = null;
   sessionCardHashes = []; // nouvelle session caméra -> le raccourci visuel repart de zéro
   camStartedAt = Date.now(); // origine de temps pour l'instrumentation session (voir diagPush)
@@ -11881,6 +11980,9 @@ function stopAimLoop(){
   overlayRenderRunning = false;
   prevCorners = null;
   overlayCurrentState = overlayTargetState = 'attente';
+  // Repart du rouge sans transition : une nouvelle session ne doit pas hériter du vert de
+  // la carte précédente, ni la faire fondre depuis elle (V.17).
+  couleurAffichee = COULEURS_ETAT.attente.slice(); presenceContour = 0;
   overlayCurrentCorners = overlayTargetCorners = null;
   const cvs = $('aim-overlay');
   if(cvs) cvs.getContext('2d').clearRect(0,0,cvs.width,cvs.height);
@@ -12000,6 +12102,7 @@ function stopCamera(){
   $('video-wrap').classList.remove('active');
   $('cam-start-row').style.display = 'flex';
   $('cam-fullscreen-area').classList.remove('fs');
+  document.body.classList.remove('cam-plein');
   document.documentElement.style.overflow = '';
   $('live-result').style.display = 'none'; // n'a de sens que pendant un scan actif
   cadrageVisible = {w: 1, h: 1};

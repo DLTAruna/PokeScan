@@ -28,6 +28,76 @@ scan. Annoncer le numéro en même temps que le push (« poussé en V.4 »), sin
 à rien. `BUILD_VERSION` (horodatage déduit de `document.lastModified`) reste le recours
 automatique en cas de doute — il est dans l'infobulle du badge.
 
+## ⭐ LE BUG D'INTERFACE : UN ANCÊTRE TRANSFORMÉ (V.17, 2026-09-01)
+
+**À connaître avant de toucher au plein écran.** Nikos : « on dirait que l'interface bug,
+remonte le cadre de visée ». Les deux constats n'en faisaient qu'un.
+
+Un élément `position:fixed` se résout contre le **viewport** — *sauf* si un ancêtre porte un
+`transform`, `filter` ou `perspective` : cet ancêtre devient alors le bloc conteneur. Or
+`#section-capture` reçoit l'animation d'entrée d'onglet
+(`section.section.active{animation:ongletEntre .26s}`), et **cette animation restait bloquée**
+— relevé sur l'appareil : `transform: matrix(1,0,0,1,0,7)`, état `running`, `currentTime: 0`.
+
+Conséquence mesurée : la zone caméra, pourtant `inset:0`, se dessinait à **148 px du haut sur
+284 px de haut** au lieu des 812 px de l'écran. Tout ce qui se cale dessus — cadre de visée,
+voile sombre, panneau de résultat — héritait donc d'une boîte fausse.
+
+**Corrigé** : `body.cam-plein section.section{animation:none !important; transform:none
+!important;}`, la classe étant posée à l'ouverture de la caméra et retirée à sa fermeture.
+Vérifié : `transform: none`, zone caméra `0 → 812`, plein écran exact.
+
+### Cadre de visée remonté, et surtout borné
+
+Le décalage vertical était à 0 depuis la V.13 (ses deux repères, barre du haut et
+déclencheur, avaient été retirés) : le cadre se centrait donc sur l'IMAGE, et son bas passait
+**derrière** le panneau de résultat — devenu plus haut encore avec la ligne Fiabilité. Il se
+recentre désormais sur la place réellement libre, **mesurée sur ce qui existe** : du bas de
+la croix de sortie au haut du panneau. Et `guideRect` reçoit une **troisième borne**
+(`hauteurLibreGuide`) pour que le cadre TIENNE dans cette place — sans elle, le remonter ne
+faisait que déplacer le débordement. Vérifié : 72 px de marge en haut comme en bas.
+
+### Animations : ce qui sautait encore
+
+La position des coins était déjà lissée (exponentielle en temps + extrapolation à l'estime).
+Deux choses sautaient encore, et ce sont elles qui se lisaient comme une hésitation :
+
+- **La couleur d'état** (rouge → ambre → vert) changeait d'un bloc, souvent deux fois par
+  seconde sur une main qui bouge : ça clignotait. Elle est maintenant interpolée
+  (`COULEUR_TAU_MS = 130`, volontairement plus lent que les 40 ms du suivi de position — une
+  couleur qui rattrape aussi vite que la géométrie redevient un clignotement).
+- **La présence du contour** : il apparaissait et disparaissait sèchement à chaque décrochage
+  du détecteur, alors que la carte, elle, est toujours là. Fondu (`PRESENCE_TAU_MS = 90`).
+
+⚠️ **Piège** : la condition `change` de `renderOverlayLoop` doit inclure ces deux animations
+(`couleurBouge`, delta de `presenceContour`), sinon une transition se **fige à mi-chemin** dès
+que la carte est immobile — c'est-à-dire précisément le cas qu'on attend. Les deux convergent
+(seuils d'arrêt 0,4 et 0,002), donc aucun redessin perpétuel.
+
+### Résultats V.16 — la correction de concurrence est confirmée
+
+7 scans, **tous `sure`**, fiabilité 85 à 99 %.
+
+| | V.14 | V.16 |
+|---|---|---|
+| `orb` | 1 407 · 2 612 · 1 986 (**dérive**) | 575 · 891 · 862 · 910 · 770 · 905 · 926 (**plat**) |
+| total médian | 3 676 ms | **2 344 ms** |
+
+**`T.orb` ne dérive plus** : il reste à ~900 ms sur sept scans au lieu de doubler. La dérive
+attribuée au throttle thermique était donc bien, pour l'essentiel, **fabriquée** par les
+inférences du détecteur pendant l'identification.
+
+**Nouveau poste dominant : `refs`** (537-1223 ms, dont 374-1075 de réseau, 8 à 18
+descripteurs par carte). C'est désormais là qu'il faut chercher.
+
+**Et un piège nouveau** : la carte `me02-123` a coûté **5 377 ms dont 3 226 d'OCR**, alors
+qu'elle avait 93 inliers et 98 % de fiabilité — elle n'était pas ambiguë. L'OCR de départage
+se lance sur `inl >= 25 && dominance < 0.6` (ici 54/93 ≈ 0,58, juste sous le seuil), et le
+garde-fou « session chaude » qui le sautait (`dernierOrbMs >= 1800`) **ne se déclenche plus
+maintenant que l'ORB est rapide** : accélérer l'ORB a rendu l'OCR plus fréquent. À traiter —
+piste : sauter l'OCR quand les inliers sont très élevés (au banc, il n'a jamais changé un
+verdict au-dessus de ~53 inliers).
+
 ## ⭐ POURQUOI LE BANC ÉTAIT 2 À 3× PLUS RAPIDE (V.16, 2026-09-01)
 
 Question de Nikos : « le banc de test V2 paraissait beaucoup plus rapide, comment expliquer
