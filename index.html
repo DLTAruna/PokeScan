@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 33;
+const VERSION_APP = 34;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -11889,17 +11889,33 @@ function etatBoucleScan(){
 // Remet la machine à scanner dans un état où la carte suivante PEUT déclencher. Sans ça, un
 // verrou rouvert ne suffit pas : `lastCaptureCorners` et `v2DerniereCle` restent ceux de la
 // carte perdue, et `dejaLue` bloquerait la suivante posée au même endroit.
-function reprendreApresBlocage(){
+// ⚠️ TOUT L'ÉTAT DU SCANNER, EN UN SEUL ENDROIT (V.34).
+// Il était éparpillé, et `stopAimLoop` n'en remettait AUCUN à zéro : ni `v2DerniereCle`, ni
+// `v2RebutsConsecutifs`, ni `v2EssaiCadre`, ni `derniereCarteAffichee`. Conséquence vécue par
+// Nikos : une clé restée coincée dans `v2DerniereCle` fait repartir chaque identification en
+// `rejet-doublon`, lequel laisse le panneau sur « 🔎 recherche… » — et **fermer puis rouvrir
+// la caméra n'y changeait rien**, puisque rien n'était nettoyé entre deux sessions.
+// Une session de scan doit toujours commencer vierge. Appelée par `startAimLoop` ET par la
+// reprise après blocage.
+function reinitialiserEtatScanV2(){
   prevCorners = null;
   v2StableStreak = 0;
   v2PresentDepuis = 0;
+  v2AbsenceStreak = 0;
+  v2RienDepuis = 0;
   lastCaptureCorners = null;
+  lastCaptureAt = 0;
   v2CarteRetiree = true;
   v2DerniereCle = null;
   v2DerniereCat = null;
   v2RebutsConsecutifs = 0;
   v2EssaiCadre = 0;
+  derniereCarteAffichee = null;
   cardConfirmedAbsentSinceCapture = true;
+  readInFlight = false;
+}
+function reprendreApresBlocage(){
+  reinitialiserEtatScanV2();
   showLiveResultWaiting();
 }
 
@@ -11962,7 +11978,7 @@ function signalerBlocageScan(cause, score){
 //     bat alors normalement, et un chien de garde qui ne surveillerait que le battement ne
 //     verrait RIEN. C'est pourtant le cas décrit par Nikos : cadre figé sur sa dernière
 //     position, plus aucune détection.
-let dernierTourBoucle = 0, readInFlightDepuis = 0;
+let dernierTourBoucle = 0, readInFlightDepuis = 0, rechercheOrphelineDepuis = 0;
 setInterval(()=>{
   // `detectRunning` volontairement PAS exigé : s'il était retombé à faux sans que la caméra
   // soit fermée, ce serait justement une panne à signaler, et l'exiger nous rendrait aveugle
@@ -11989,6 +12005,20 @@ setInterval(()=>{
   }else{
     readInFlightDepuis = 0;
   }
+  // Panneau resté sur « 🔎 recherche… » alors que PLUS RIEN ne tourne : c'est un affichage
+  // orphelin, et c'est ce que Nikos a pris pour un scanner mort. Aucun chemin ne devrait le
+  // produire depuis la V.34, mais un affichage qui ment est trop coûteux pour qu'on parie
+  // là-dessus : on le rétablit, et on le signale pour savoir qu'il s'est produit.
+  const nomAffiche = $('live-result-name')?.textContent || '';
+  if(!readInFlight && nomAffiche.includes('recherche')){
+    if(!rechercheOrphelineDepuis) rechercheOrphelineDepuis = Date.now();
+    else if(Date.now() - rechercheOrphelineDepuis > 8000){
+      rechercheOrphelineDepuis = 0;
+      signalerBlocageScan('panneau resté sur « recherche » sans lecture en cours', null);
+      showLiveResultWaiting();
+    }
+  }else rechercheOrphelineDepuis = 0;
+
   if(!dernierTourBoucle) return;
   const mort = Date.now() - dernierTourBoucle;
   // 8 s sans un seul tour : même une inférence lente et un téléphone bridé restent loin.
@@ -12284,6 +12314,22 @@ function renderTotalSession(){
     ? totalSession.valorisees + ' carte(s) valorisée(s), ' + totalSession.sansPrix + ' sans prix connu'
     : totalSession.valorisees + ' carte(s) valorisée(s)';
 }
+// Un essai a échoué mais la carte est toujours là : on le DIT, au lieu de laisser « recherche »
+// tourner en boucle sans explication. La vignette de la prise reste, seul le texte change.
+function montrerRecherchePersistante(raison){
+  const el = $('live-result');
+  if(!el) return;
+  el.style.display = 'flex';
+  marquerVerificationApprofondie(false);
+  $('live-result-name').textContent = raison;
+  $('live-result-set').textContent = '—';
+  $('live-result-num').textContent = '—';
+  $('live-result-price').textContent = '—';
+  majFiabilite(null);
+  $('live-result-badge').textContent = '↻';
+  $('live-result-badge').title = 'Nouvel essai en cours';
+}
+
 function showLiveResultDone(card, confidence, fiabilite){
   // Le panneau de résultat occupe le bas de l'écran : son apparition réduit la place
   // libre, donc déplace le centre sur lequel le cadre doit se caler.
@@ -12537,10 +12583,15 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     // ou carte trop petite dans le cadre ; « recentre » y était un contresens, la carte
     // étant souvent parfaitement centrée. Au-dessus, l'homographie a bien travaillé mais
     // n'a rien trouvé de convaincant : c'est plutôt une carte hors catalogue.
+    // ⚠️ `setAimHint` ne fait plus RIEN depuis que la bulle d'aide a été retirée du cadre
+    // (V.13) : ces deux messages ne s'affichaient nulle part. Et « reessai » ne touchait pas
+    // au panneau, qui restait donc sur « 🔎 recherche… » — c'est-à-dire exactement ce que
+    // Nikos voyait, sans aucune indication de ce qui se passait.
+    // On le dit maintenant dans le seul endroit qui reste visible : le cadre du bas.
     const inl = (res && res.inliers) || 0;
-    setAimHint(inl <= 2
-      ? '🤔 V2 : rapproche-toi et tiens la carte immobile'
-      : '🤔 V2 : carte non reconnue — peut-être hors catalogue');
+    montrerRecherchePersistante(inl <= 2
+      ? 'Rapproche-toi et tiens la carte immobile'
+      : 'Pas reconnue — nouvel essai…');
     return 'reessai';   // rien capturé : la carte reste, on retente
   }
   v2RebutsConsecutifs = 0;
@@ -12550,7 +12601,11 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     // l'accusé de réception a déjà mis le panneau sur « 🔎 recherche… » (V.15) — sans ce
     // rattrapage il y resterait pour toujours, alors que la carte EST identifiée et était
     // affichée juste avant. On remet donc ce qui y était.
+    // Le panneau est sur « 🔎 recherche… » (posé par l'accusé de réception) : il FAUT l'en
+    // sortir. Sans ce `else`, une carte déjà lue le laissait indéfiniment sur « recherche »,
+    // et l'utilisateur croyait le scanner mort alors qu'il refusait simplement un doublon.
     if(derniereCarteAffichee) showLiveResultDone(derniereCarteAffichee.carte, derniereCarteAffichee.confiance, derniereCarteAffichee.fiabilite);
+    else showLiveResultWaiting();
     return 'rejet-doublon';
   }
 
@@ -12755,6 +12810,9 @@ async function confirmLiveResultByName(mySeq, item, card, nameBmp){
 
 function startAimLoop(){
   stopAimLoop();
+  // Session vierge : sans ceci, l'état du scan précédent survit à la fermeture de la caméra
+  // et peut la condamner définitivement (voir reinitialiserEtatScanV2).
+  reinitialiserEtatScanV2();
   detecteurPret = false;
   overlayCurrentState = overlayTargetState = 'attente';
   // Repart du rouge sans transition : une nouvelle session ne doit pas hériter du vert de
