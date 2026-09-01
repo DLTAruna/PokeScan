@@ -5839,7 +5839,16 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 41;
+const VERSION_APP = 42;
+
+// ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
+// temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
+// ouverture et l'empêchait de voir l'effet des corrections.
+// Remettre à `true` avant toute mise en ligne destinée au public : sans elle, un visiteur
+// non connecté tombe directement sur la coquille de l'application au lieu de la porte
+// d'entrée. Les données restent protégées (elles passent par la session Supabase) — c'est la
+// présentation qui manque, pas la serrure.
+const PAGE_PUBLIQUE_ACTIVE = false;
 
 // Écrit tout de suite, avant tout code susceptible de lever : un marqueur de version qui
 // disparaît quand l'application va mal est précisément muet au moment où on le consulte.
@@ -10441,6 +10450,7 @@ let v2DerniereCat = null;   // catégorie du dernier résultat V2 ('sure' verrou
 let meilleureFrame = null;      // canvas : la plus nette vue depuis que cette carte est là
 let meilleureNettete = -1;
 let v2NetteteRetenue = -1;      // ce qu'on a retenu, pour le journal
+let v2PropCourante = 0;   // écart au format d'une carte debout (voir PROP_MAX)
 let v2SymCourante = 0;          // symétrie du quadrilatère courant (voir SYM_MAX)
 let v2VuSansDeclencherA = 0;    // dernier signalement « carte vue, pas déclenchée » (V.40)
 let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli)
@@ -10483,6 +10493,39 @@ function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; 
 // Une capture refusée ici n'est pas une carte perdue : la boucle continue et reprend l'image
 // suivante, ce qui coûte un dixième de seconde au lieu d'une identification ratée.
 const SYM_MAX = 0.12;
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// PROPORTIONS — une bande de carte est un rectangle PARFAIT, et passait tous les contrôles.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Nikos, sur Sablaireau 028/165 : « ça ne capture que le bas de la carte et la retourne sans
+// raison à 90° ». Les deux symptômes n'en font qu'un, et les logs le montrent : ces rebuts
+// ont une symétrie BASSE (0,038 à 0,118, donc admise) mais un embTop de 0,31 à 0,45 et cinq
+// inliers. Un quadrilatère bien formé sur la mauvaise région.
+// `symetrieQuad` compare les côtés opposés — or une bande horizontale les a rigoureusement
+// égaux. Elle ne pouvait pas voir le problème : il est dans les PROPORTIONS.
+// Et la rotation vient de là aussi. `redresserAvecCoins` classe « couchée », donc tourne de
+// 90°, tout ce dont le rapport tombe dans [0,537 ; 0,895]. Or une bande prise sur le bas de
+// la carte y tombe exactement : 40 % de la hauteur → 0,559 ; 50 % → 0,698 ; 60 % → 0,838.
+//
+// ⚠️ CE CONTRÔLE REFUSE AUSSI LES CARTES PRÉSENTÉES COUCHÉES, et c'est assumé : aucun rapport
+// ne distingue une vraie carte de travers (0,716) d'une demi-carte debout (0,698). Il fallait
+// choisir. Le viseur est vertical, les cartes se présentent debout, et la chaîne
+// d'identification suppose de toute façon une carte debout (ZONE_ILLUSTRATION). Si une carte
+// franchement couchée devait redevenir capturable, ce serait par un autre chemin que le
+// rapport — la présenter droite reste la solution la moins coûteuse.
+const PROP_MAX = 0.25;   // écart relatif toléré au format d'une carte debout (1,397)
+
+function proportionQuad(c, W, H){
+  // En PIXELS : les coins sont en fractions d'image, et un cadre 16:9 déforme un rapport
+  // lu dans ce repère. C'est l'erreur qui m'avait fait écarter cette piste au banc — je
+  // comparais un rapport normalisé à celui d'une carte, et les bonnes détections
+  // ressortaient « fausses » à 0,35.
+  const P = [c.tl, c.tr, c.br, c.bl].map(p => [p[0] * W, p[1] * H]);
+  const L = (a, b) => Math.hypot(P[b][0]-P[a][0], P[b][1]-P[a][1]);
+  const larg = (L(0,1) + L(3,2)) / 2, haut = (L(0,3) + L(1,2)) / 2;
+  if(larg < 1 || haut < 1) return 1;
+  return Math.abs(haut/larg - CARD_RATIO) / CARD_RATIO;
+}
 
 function symetrieQuad(c){
   const P = [c.tl, c.tr, c.br, c.bl];
@@ -12113,7 +12156,9 @@ async function detectLoop(){
         // On ne retient QUE des quadrilatères plausibles : mémoriser une image dont les coins
         // sont faux reviendrait à garantir un mauvais découpage au déclenchement.
         v2SymCourante = symetrieQuad(d.corners);
-        if(v2SymCourante <= SYM_MAX) retenirSiPlusNette(video, d.corners);
+        v2PropCourante = proportionQuad(d.corners, video.videoWidth, video.videoHeight);
+        const formeOk = v2SymCourante <= SYM_MAX && v2PropCourante <= PROP_MAX;
+        if(formeOk) retenirSiPlusNette(video, d.corners);
 
         // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
         // que la carte a été retirée (v2AbsenceStreak) OU qu'elle a franchement bougé —
@@ -12140,12 +12185,12 @@ async function detectLoop(){
         // bouger d'un centimètre que dépenser une seconde d'identification sur un découpage
         // faux, puis lui annoncer que sa carte n'est pas reconnue. Le cadre reste ambre : de
         // son point de vue, on cherche encore — ce qui est exactement le cas.
-        if(v2SymCourante > SYM_MAX) etatCadre = 'lecture';
+        if(!formeOk) etatCadre = 'lecture';
         // Le rouge dit toujours « rapproche-toi » — mais il ne bloque plus rien. C'est le
         // partage que fait le banc : renseigner sans interdire. Si la capture part quand même
         // et réussit, tant mieux ; si elle rate, l'utilisateur savait déjà quoi corriger.
         if(tropLoin) etatCadre = 'attente';
-        if(!dejaLue && d.score >= seuilScore && stable && v2SymCourante <= SYM_MAX){
+        if(!dejaLue && d.score >= seuilScore && stable && formeOk){
           etatCadre = 'ok';
           v2PresentDepuis = 0;
           v2StableStreak = 0;
@@ -12164,7 +12209,8 @@ async function detectLoop(){
           const raison = dejaLue                     ? 'verrou carte déjà lue'
                        : d.score < seuilScore        ? 'score ' + d.score.toFixed(2) + ' < ' + seuilScore
                        : !stable                     ? 'pas stable (bougé ' + moved.toFixed(3) + ' / ' + (seuilBouge === Infinity ? '∞' : seuilBouge.toFixed(3)) + ')'
-                       : 'symétrie ' + v2SymCourante.toFixed(3) + ' > ' + SYM_MAX;
+                       : v2SymCourante > SYM_MAX ? 'symétrie ' + v2SymCourante.toFixed(3) + ' > ' + SYM_MAX
+                       : 'proportions ' + v2PropCourante.toFixed(3) + ' > ' + PROP_MAX;
           if(now - v2VuSansDeclencherA > 4000){
             v2VuSansDeclencherA = now;
             try{
@@ -12173,7 +12219,7 @@ async function detectLoop(){
                 moteur:(SCAN_V2.moteurV2&&SCAN_V2.moteurV2())||'?', v:VERSION_APP,
                 raison, tenueMs:Math.round(tenue),
                 score:+d.score.toFixed(2), seuilScore, aire:+aireVue.toFixed(3), tropLoin,
-                sym:+v2SymCourante.toFixed(3), bouge:+moved.toFixed(3),
+                sym:+v2SymCourante.toFixed(3), prop:+v2PropCourante.toFixed(3), bouge:+moved.toFixed(3),
                 seuilBouge: seuilBouge === Infinity ? -1 : +seuilBouge.toFixed(3),
                 carteRetiree:v2CarteRetiree, essai:v2EssaiCadre+1 });
             }catch(e){}
@@ -12979,7 +13025,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
         embPremier:(res&&res.embPremier)||null,
         embEtaitBon:(res&&res.pick&&res.embPremier)?(res.pick.cle===res.embPremier):null,
         cadrage:(STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length-1)]||{}).nom||'?',
-        nettete:v2NetteteRetenue, image:v2ImageRetenue, sym:+v2SymCourante.toFixed(3),
+        nettete:v2NetteteRetenue, image:v2ImageRetenue, sym:+v2SymCourante.toFixed(3), prop:+v2PropCourante.toFixed(3),
         essai:v2EssaiCadre+1, rebutsDeSuite:v2RebutsConsecutifs });
     }catch(e){}
     if(v2RebutsConsecutifs >= 3){
@@ -13095,7 +13141,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     embPremier: res.embPremier || null,
     embEtaitBon: res.pick && res.embPremier ? (res.pick.cle === res.embPremier) : null,
     cadrage: (STRATEGIES_ESSAI[Math.min(v2EssaiCadre, STRATEGIES_ESSAI.length - 1)] || {}).nom || '?',
-    nettete: v2NetteteRetenue, image: v2ImageRetenue, sym: +v2SymCourante.toFixed(3),
+    nettete: v2NetteteRetenue, image: v2ImageRetenue, sym: +v2SymCourante.toFixed(3), prop: +v2PropCourante.toFixed(3),
     essai: v2EssaiCadre + 1,
     // La version qui a produit ce scan : sans elle, comparer deux sessions de test revient
     // à supposer que le téléphone avait bien pris le déploiement entre les deux.
@@ -20477,7 +20523,7 @@ function initCompte(){
     // se lit comme un bug, parce que c'en est un. Elle reste traversable, sans quoi une
     // installation non configuree serait murée ; et le choix est retenu, sans quoi il
     // faudrait le refaire a chaque ouverture.
-    if(pub) pub.hidden = localStorage.getItem('pokescanSansCompte') === '1';
+    if(pub) pub.hidden = !PAGE_PUBLIQUE_ACTIVE || localStorage.getItem('pokescanSansCompte') === '1';
     $('pub-local')?.removeAttribute('hidden');
     // Le bloc compte du menu doit exister ici AUSSI : c'est lui qui porte le chemin de
     // retour vers la presentation, et il n'etait rempli que par appliquerSession, qui ne
@@ -20500,7 +20546,7 @@ function appliquerSession(session){
   const avant = utilisateur && utilisateur.id;
   utilisateur = session && session.user ? {id: session.user.id, email: session.user.email} : null;
   const pub = $('page-publique');
-  if(pub) pub.hidden = !!utilisateur;
+  if(pub) pub.hidden = !PAGE_PUBLIQUE_ACTIVE || !!utilisateur;
   if(utilisateur) fermerModaleCompte();
   majMenuCompte();
   if(utilisateur && utilisateur.id !== avant){
@@ -20675,7 +20721,7 @@ function brancherCompte(){
   $('menu-deconnexion')?.addEventListener('click', async (e)=>{
     if(e.currentTarget.dataset.action === 'entrer'){
       try{ localStorage.removeItem('pokescanSansCompte'); }catch(err){}
-      $('page-publique').hidden = false;
+      $('page-publique').hidden = !PAGE_PUBLIQUE_ACTIVE;
       fermerMenu();
       return;
     }
