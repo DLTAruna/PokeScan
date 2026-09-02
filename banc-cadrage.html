@@ -201,16 +201,56 @@ function composer(img, o){
   }
   g.restore();
 
-  // Une carte tenue l'est PAR QUELQUE CHOSE. Sans doigts, le banc ne teste que des cartes
-  // posées ou flottantes, et manque le cas où un pouce mange un coin — qui échouait à cent
-  // pour cent au banc de présentation.
-  if(o.doigts){
-    g.fillStyle = 'rgba(58,40,32,.97)';
-    const r = Math.min(SCENE_W, SCENE_H) * 0.055;
-    for(const [u, v] of o.doigts){
-      const p = (() => { const h=(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
-        return h(h(quad[0],quad[1],u), h(quad[3],quad[2],u), v); })();
-      g.beginPath(); g.ellipse(p[0], p[1], r*1.6, r, 0.35, 0, Math.PI*2); g.fill();
+  // ── UNE MAIN, ET NON DEUX PASTILLES ────────────────────────────────────────────────
+  // Une carte tenue l'est entre le POUCE, posé à plat sur l'avant, et les DOIGTS qui la
+  // pincent par-derrière et dépassent de l'autre bord. Ce n'est pas symétrique, et ça ne
+  // masque pas les mêmes surfaces : le pouce couvre une large zone d'un côté, les doigts
+  // mordent en trois petits arcs de l'autre. La première version posait deux ellipses
+  // identiques sur les coins du bas — commode à écrire, mais ça ne ressemble à rien de ce
+  // qu'un utilisateur fait vraiment.
+  // Tout est exprimé en coordonnées de CARTE (u,v de 0 à 1), donc la main suit la
+  // perspective et l'inclinaison au lieu de flotter par-dessus.
+  if(o.main){
+    const pt = (u, v) => { const h=(x,y,t)=>[x[0]+(y[0]-x[0])*t, x[1]+(y[1]-x[1])*t];
+      return h(h(quad[0],quad[1],u), h(quad[3],quad[2],u), v); };
+    const ech = Math.hypot(quad[1][0]-quad[0][0], quad[1][1]-quad[0][1]);   // largeur en pixels
+    const gauche = o.main.cote !== 'droite';
+    const uP = gauche ? 0 : 1, sens = gauche ? 1 : -1;
+    const peau = '#c08a63', ombre = 'rgba(0,0,0,.28)';
+
+    // Ombre portée sous la main : sans elle, la main paraît collée et le détecteur y voit
+    // un bord net qu'il n'aurait pas dans la réalité.
+    g.save(); g.filter = 'blur(' + Math.max(2, ech*0.02) + 'px)';
+    g.fillStyle = ombre;
+    const oc = pt(uP + sens*0.10, 0.72);
+    g.beginPath(); g.ellipse(oc[0], oc[1], ech*0.20, ech*0.30, 0, 0, Math.PI*2); g.fill();
+    g.restore();
+
+    // Le pouce : une masse allongée qui entre par le bord et couvre environ un cinquième
+    // de la largeur, sur le tiers bas de la carte.
+    g.fillStyle = peau;
+    const p1 = pt(uP + sens*0.02, 0.58), p2 = pt(uP + sens*0.17, 0.80);
+    g.save();
+    g.translate((p1[0]+p2[0])/2, (p1[1]+p2[1])/2);
+    g.rotate(Math.atan2(p2[1]-p1[1], p2[0]-p1[0]));
+    g.beginPath(); g.ellipse(0, 0, ech*0.20, ech*0.105, 0, 0, Math.PI*2); g.fill();
+    g.restore();
+
+    // Les doigts, de l'autre bord : trois arcs qui dépassent à peine, comme des phalanges
+    // vues par-dessus l'arête.
+    for(const [v, taille] of [[0.62, 0.075], [0.76, 0.082], [0.89, 0.070]]){
+      const q = pt(uP + sens*(1 - 0.055), v);
+      g.beginPath(); g.ellipse(q[0], q[1], ech*taille*1.15, ech*taille, 0.2*sens, 0, Math.PI*2); g.fill();
+    }
+
+    // La paume, en bas, partiellement derrière la carte : c'est elle qui casse le bord
+    // inférieur, celui que le détecteur utilise le plus.
+    if(o.main.paume !== false){
+      const c1 = pt(uP + sens*0.10, 1.02), c2 = pt(uP + sens*0.55, 1.16);
+      g.beginPath();
+      g.ellipse((c1[0]+c2[0])/2, (c1[1]+c2[1])/2, ech*0.42, ech*0.24,
+                Math.atan2(c2[1]-c1[1], c2[0]-c1[0]), 0, Math.PI*2);
+      g.fill();
     }
   }
 
@@ -349,7 +389,8 @@ const SITUATIONS = [
   {nom:'12 cm, trop près',    o:{distance:12, rot:0,  incl:5,  pitch:4}},
   {nom:'16 cm, dans le repère',o:{distance:16, rot:0, incl:5,  pitch:4}},
   {nom:'18 cm, dans le repère',o:{distance:18, rot:0, incl:6,  pitch:4}},
-  {nom:'16 cm, à deux doigts',o:{distance:16, rot:3,  incl:7,  pitch:5, doigts:[[0.12,0.86],[0.88,0.88]]}},
+  {nom:'16 cm, tenue en main',o:{distance:16, rot:3, incl:7, pitch:5, main:{cote:'gauche'}}},
+  {nom:'16 cm, main droite',  o:{distance:16, rot:-4, incl:-8, pitch:6, main:{cote:'droite'}}},
   {nom:'22 cm, un peu loin',  o:{distance:22, rot:0,  incl:6,  pitch:5}},
   {nom:'30 cm, bras tendu',   o:{distance:30, rot:4,  incl:8,  pitch:6}},
   {nom:'17 cm, inclinée 15°', o:{distance:17, rot:8,  incl:16, pitch:10}},
