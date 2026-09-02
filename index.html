@@ -809,8 +809,22 @@
      ═══════════════════════════════════════════════════════════════════════════════════ */
   .xx-cadre{ position:relative; width:100%; max-width:520px; margin:0 auto; background:#000;
     border-radius:14px; overflow:hidden; aspect-ratio:3/4; max-height:56vh; }
-  /* « contain » comme au banc : on voit exactement le champ que le détecteur analyse. */
+  /* Le cadre du bas se pose SUR l'image : translucide, puisque la caméra occupe tout. */
+  body.xx-plein #xx-resultat{ background:rgba(10,13,18,.72); border-color:rgba(255,255,255,.18); }
+  /* La vignette qui descend vers le cadre du bas. */
+  #xx-vol{ position:fixed; z-index:340; pointer-events:none; border-radius:6px;
+    background-size:cover; background-position:center; box-shadow:0 10px 28px rgba(0,0,0,.55); }
+  #xx-vol[hidden]{ display:none; }
+  #xx-photo.pose{ animation:xx-pose .3s cubic-bezier(.2,1.5,.4,1); }
+  @keyframes xx-pose{ 0%{transform:scale(.85);} 60%{transform:scale(1.06);} 100%{transform:scale(1);} }
+  @media (prefers-reduced-motion: reduce){ #xx-photo.pose{ animation:none; } }
+  /* Hors plein écran : « contain », on voit tout le champ analysé.
+     En plein écran : « cover », l'image occupe tout l'écran sans bordure — demande de Nikos,
+     comme la V1. Le repère est alors calculé DANS LE REPÈRE DE L'IMAGE puis projeté par la
+     même transformation : il désigne donc la même part du champ analysé, qu'on rogne ou non.
+     C'est ce calcul qui manquait en V.63 et qui rendait le repère menteur. */
   #xx-video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
+  body.xx-plein #xx-video{ object-fit:cover; }
   #xx-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
   .xx-etat{ text-align:center; color:#9fb0c0; font-size:13px; margin:10px 0; min-height:18px; }
   .xx-actions{ display:flex; gap:10px; justify-content:center; margin:0 0 16px; }
@@ -4877,6 +4891,7 @@
       </button>
       <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
 
+      <div id="xx-vol" hidden></div>
       <div id="xx-resultat" hidden>
         <img id="xx-photo" alt="">
         <div class="xx-infos">
@@ -6367,7 +6382,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 90;
+const VERSION_APP = 91;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14586,26 +14601,79 @@ function xxEtat(t){ const e = $('xx-etat'); if(e) e.textContent = t; }
 
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
 
-// ── Le cadre, tel que le banc le dessine : un trait, rien de plus ───────────────────────
-function xxDessinerCadre(coins, couleur){
+// ── LE VISEUR : le dessin du scanner principal, et lui seul ─────────────────────────────
+// Demande de Nikos : reprendre le design du capteur principal, pas sa logique. On réutilise
+// donc ses deux primitives — rectCartePath et dessinerCoins — plutôt que de les recopier, et
+// on garde la boucle de décision du banc, inchangée.
+// Le repère est exprimé en fraction de l'IMAGE, puis projeté par la même transformation que
+// le quadrilatère détecté. Il désigne donc toujours la même part du champ analysé, que
+// l'aperçu soit en « contain » (hors plein écran) ou en « cover » (plein écran). C'est
+// exactement le calcul qui manquait en V.63, où le repère demandait 37 % de l'image en
+// croyant en demander 55.
+const XX_GUIDE_H = 0.62;
+const XX_COULEURS = { attente:'#e0553f', lecture:'#e0a12a', ok:'#3ba55d' };
+
+function xxProjection(){
   const cv = $('xx-overlay'), v = $('xx-video');
-  if(!cv || !v) return;
+  if(!cv || !v) return null;
   const l = cv.clientWidth, h = cv.clientHeight;
-  if(!l || !h) return;
-  if(cv.width !== l || cv.height !== h){ cv.width = l; cv.height = h; }
-  const g = cv.getContext('2d');
-  g.clearRect(0, 0, cv.width, cv.height);
-  if(!coins) return;
-  // Le banc dessine sur le rectangle de l'élément. En « contain » l'image n'occupe pas tout,
-  // donc on cale le tracé sur le champ réellement analysé — sinon le cadre serait décalé.
+  if(!l || !h) return null;
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if(cv.width !== Math.round(l*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(l*dpr); cv.height = Math.round(h*dpr);
+  }
   const vw = v.videoWidth || l, vh = v.videoHeight || h;
-  const ech = Math.min(l/vw, h/vh), iw = vw*ech, ih = vh*ech;
-  const ix = (l-iw)/2, iy = (h-ih)/2;
-  const p = c => [ix + c[0]*iw, iy + c[1]*ih];
-  const [a, b, c2, d] = [p(coins.tl), p(coins.tr), p(coins.br), p(coins.bl)];
-  g.strokeStyle = couleur; g.lineWidth = 3; g.lineJoin = 'round';
-  g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]);
-  g.lineTo(c2[0],c2[1]); g.lineTo(d[0],d[1]); g.closePath(); g.stroke();
+  // « cover » en plein écran, « contain » sinon : une seule ligne d'écart.
+  const plein = document.body.classList.contains('xx-plein');
+  const ech = plein ? Math.max(l/vw, h/vh) : Math.min(l/vw, h/vh);
+  const iw = vw*ech, ih = vh*ech;
+  return { l, h, dpr, iw, ih, ix:(l-iw)/2, iy:(h-ih)/2 };
+}
+
+function xxDessinerCadre(coins, etat){
+  const cv = $('xx-overlay');
+  const T = xxProjection();
+  if(!cv || !T) return;
+  const g = cv.getContext('2d');
+  g.setTransform(T.dpr, 0, 0, T.dpr, 0, 0);
+  g.clearRect(0, 0, T.l, T.h);
+
+  // Le repère, en fraction d'image puis projeté. Ramené dans l'écran s'il déborde : un
+  // repère qu'on ne voit pas ne sert à rien.
+  let gh = T.ih * XX_GUIDE_H, gw = gh / CARD_RATIO;
+  if(gw > T.l*0.94){ gw = T.l*0.94; gh = gw * CARD_RATIO; }
+  if(gh > T.h*0.86){ gh = T.h*0.86; gw = gh / CARD_RATIO; }
+  const R = { x:(T.l-gw)/2, y:(T.h-gh)/2, w:gw, h:gh };
+  const radius = Math.min(R.w, R.h) * 0.055;
+  const couleur = XX_COULEURS[etat] || XX_COULEURS.attente;
+
+  // Voile assombri autour du repère, comme au scanner principal.
+  g.save();
+  g.fillStyle = 'rgba(0,0,0,.46)';
+  g.beginPath();
+  g.rect(0, 0, T.l, T.h);
+  rectCartePath(g, R, radius);
+  g.fill('evenodd');
+  g.restore();
+
+  // Le quadrilatère détecté : trait fin, deux fois plus fin que les équerres.
+  if(coins){
+    const p = c => [T.ix + c[0]*T.iw, T.iy + c[1]*T.ih];
+    const [a, b, c2, d] = [p(coins.tl), p(coins.tr), p(coins.br), p(coins.bl)];
+    g.save();
+    g.globalAlpha = 0.85; g.strokeStyle = couleur;
+    g.lineWidth = Math.max(1.6, T.l*0.0032); g.lineJoin = 'round';
+    g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]);
+    g.lineTo(c2[0],c2[1]); g.lineTo(d[0],d[1]); g.closePath(); g.stroke();
+    g.restore();
+  }
+
+  // Les quatre équerres.
+  g.save();
+  g.strokeStyle = couleur; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.lineWidth = Math.max(3, T.l*0.0072);
+  dessinerCoins(g, R, radius);
+  g.restore();
 }
 
 function xxEcartCoins(a, b){
@@ -14648,43 +14716,98 @@ async function xxRedresserVideo(v){
   return rot;
 }
 
+// ── LA CAPTURE, EN DEUX TEMPS ──────────────────────────────────────────────────────────
+// Demande de Nikos : la vignette part vers le cadre du bas, une PREMIÈRE analyse s'affiche,
+// puis l'analyse complète quelques instants plus tard.
+// Ce découpage n'est pas décoratif : l'image découpée existe dès la capture, alors que
+// l'identification demande sept cents millisecondes et la cote un aller-retour réseau. Tout
+// afficher à la fin laissait une seconde entière sans le moindre retour — c'est le défaut de
+// fluidité que Nikos décrit depuis le début.
 async function xxCapturer(){
   if(XX.occupe) return;
   XX.occupe = true;
   xxEtat('identification…');
   try{
     const v = $('xx-video');
+    const coins = XX.dernierCoins;
     const cv = await xxRedresserVideo(v);
     if(!cv){ xxEtat('carte non cadrée — recommence'); return; }
-    const res = await SCAN_V2.identifierV2(cv, {});
+    const photo = cv.toDataURL('image/jpeg', 0.7);
     if(navigator.vibrate) { try{ navigator.vibrate(30); }catch(e){} }
-    const e = { carte: res && res.pick ? res.pick : null,
-                categorie: res ? res.categorie : 'rebut',
-                fiabilite: res ? res.fiabilite : 0,
-                inliers: res ? res.inliers : 0,
-                ms: res ? res.ms : 0,
-                photo: cv.toDataURL('image/jpeg', 0.7) };
+
+    // ─── PREMIER TEMPS : la carte est prise. On le montre tout de suite.
+    const e = { carte:null, categorie:null, fiabilite:0, inliers:0, ms:0, photo, prix:null };
     XX.pile.push(e);
-    XX.retiree = false; XX.coinsCapture = XX.dernierCoins;
+    XX.retiree = false; XX.coinsCapture = coins;
+    xxVoler(photo, coins);
     xxRendreResultat(e);
     xxRendrePile();
-    xxAjouterValeur(e);
+
+    // ─── DEUXIÈME TEMPS : le verdict.
+    const res = await SCAN_V2.identifierV2(cv, {});
+    e.carte = res && res.pick ? res.pick : null;
+    e.categorie = res ? res.categorie : 'rebut';
+    e.fiabilite = res ? res.fiabilite : 0;
+    e.inliers = res ? res.inliers : 0;
+    e.ms = res ? res.ms : 0;
+    xxRendreResultat(e);
     xxEtat(e.carte ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
                    : '✕ non reconnue — carte suivante');
+
+    // ─── TROISIÈME TEMPS : la cote, qui vient du réseau et ne retient personne.
+    xxAjouterValeur(e);
   }catch(err){ xxEtat('capture : ' + err.message); }
   finally{ XX.occupe = false; }
+}
+
+// La vignette descend de la carte vers le cadre du bas. Sans ce trajet, le cadre change de
+// contenu sans qu'on sache d'où il vient : on voit un résultat apparaître, pas une carte
+// être lue.
+function xxVoler(photo, coins){
+  const cible = $('xx-photo'), el = $('xx-vol'), cv = $('xx-overlay');
+  const T = xxProjection();
+  if(!cible || !el || !cv || !T || !coins) return;
+  if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const r = cv.getBoundingClientRect();
+  const cl = ['tl','tr','br','bl'];
+  const xs = cl.map(k => r.left + T.ix + coins[k][0]*T.iw);
+  const ys = cl.map(k => r.top  + T.iy + coins[k][1]*T.ih);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+  const d = cible.getBoundingClientRect();
+  if(!w || !h || !d.width) return;
+  el.hidden = false;
+  el.style.backgroundImage = 'url(' + photo + ')';
+  el.style.left = x0 + 'px'; el.style.top = y0 + 'px';
+  el.style.width = w + 'px'; el.style.height = h + 'px';
+  const dx = d.left + d.width/2 - (x0 + w/2);
+  const dy = d.top + d.height/2 - (y0 + h/2);
+  const ech = Math.min(d.width/w, d.height/h);
+  const anim = el.animate([
+    { transform:'translate(0,0) scale(1)', opacity:1 },
+    { transform:'translate(' + dx + 'px,' + dy + 'px) scale(' + ech + ')', opacity:.25 },
+  ], { duration:420, easing:'cubic-bezier(.45,0,.2,1)' });
+  anim.onfinish = () => {
+    el.hidden = true; el.style.backgroundImage = '';
+    cible.classList.remove('pose'); void cible.offsetWidth; cible.classList.add('pose');
+  };
 }
 
 function xxRendreResultat(e){
   const z = $('xx-resultat'); if(!z) return;
   z.hidden = false;
   $('xx-photo').src = e.photo;
+  // categorie null = premier temps, l'identification n'a pas encore répondu.
+  const enCours = e.categorie === null;
   const sure = e.categorie === 'sure' && e.carte;
   z.classList.toggle('sure', !!sure);
-  z.classList.toggle('rebut', !e.carte);
-  $('xx-nom').textContent = e.carte ? (e.carte.name || e.carte.cle) : 'Non reconnue';
-  $('xx-detail').textContent = [e.carte && e.carte.localId ? '#' + e.carte.localId : null,
-    e.fiabilite + ' %', e.inliers + ' inliers', e.ms + ' ms'].filter(Boolean).join(' · ');
+  z.classList.toggle('rebut', e.categorie !== null && !e.carte);
+  $('xx-nom').textContent = enCours ? 'analyse…'
+    : (e.carte ? (e.carte.name || e.carte.cle) : 'Non reconnue');
+  $('xx-detail').textContent = enCours ? 'carte prise'
+    : [e.carte && e.carte.localId ? '#' + e.carte.localId : null,
+       e.fiabilite + ' %', e.inliers + ' inliers', e.ms + ' ms',
+       e.prix != null ? e.prix.toFixed(2) + ' €' : null].filter(Boolean).join(' · ');
 }
 
 function xxRendrePile(){
@@ -14702,7 +14825,12 @@ async function xxAjouterValeur(e){
     const carte = await getCardDetailCached(e.carte.cle);
     if(!carte) return;
     const px = getBestPrice(carte);
-    if(px && px.market){ XX.valeur += px.market; xxRendrePile(); }
+    if(px && px.market){
+      XX.valeur += px.market; e.prix = px.market;
+      xxRendrePile();
+      // Troisième temps : la cote rejoint la ligne du bas, si la carte y est encore.
+      if(XX.pile[XX.pile.length-1] === e) xxRendreResultat(e);
+    }
   }catch(err){ /* pas de cote : le décompte reste juste, seul le total est incomplet */ }
 }
 
@@ -14742,7 +14870,7 @@ async function xxTourner(){
 
         if(bouge < seuilBouge) XX.streak++; else XX.streak = 0;
         const stable = XX.streak >= 1;
-        xxDessinerCadre(d.corners, stable ? '#3fb950' : '#d29922');
+        xxDessinerCadre(d.corners, !XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
 
         if(XX.retiree && d.score >= seuilScore && stable){
           XX.streak = 0; XX.presentDepuis = 0;
