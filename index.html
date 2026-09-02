@@ -6136,7 +6136,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 77;
+const VERSION_APP = 78;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13618,8 +13618,43 @@ const ST = {
   journal:[],
 };
 // Mêmes valeurs que le banc, délibérément : c'est la configuration qui tournait à 1304 ms.
-const ST_SCORE = 0.35, ST_SCORE_STRICT = 0.5, ST_BOUGE = 0.030;
-const ST_DOUCE = 1200, ST_FRANCHE = 2500;
+// ── LES SEUILS QUI DÉCIDENT DU DÉCLENCHEMENT ───────────────────────────────────────────
+// Rassemblés dans un objet MODIFIABLE, et non plus en constantes éparses : c'est ce qui
+// permet à banc-declenchement.js de les balayer sur le vrai code au lieu d'en mesurer une
+// copie. Les valeurs par défaut sont celles retenues après balayage ; le détail du choix
+// est consigné au-dessus de chacune.
+const ST_SEUILS = {
+  score: 0.35,         // au-delà, le détecteur a trouvé une carte
+  scoreStrict: 0.5,    // exigé pendant les premières `douce` ms
+  bouge: 0.030,        // écart maximal entre deux détections pour dire « stable »
+                       // 0,045 donnait 39 déclenchements sur 40 au lieu de 35 — puis, une
+                       // fois le banc corrigé de son défaut de capture d'images, 26 sur 30
+                       // contre 29. Les deux mesures se contredisent, donc on ne touche à
+                       // rien : desserrer la stabilité se paierait en capture plus floue, et
+                       // rien ne prouve qu'on y gagnerait quoi que ce soit.
+  streak: 1,           // détections stables consécutives exigées
+  douce: 1200,         // détente du seuil de mouvement (×3) et du score
+  franche: 2500,       // au-delà, on accepte n'importe quel mouvement
+  sommeil: 30,         // pause entre deux tours de boucle, en ms
+                       // C'est le levier principal, et le plus bête : la détection prend
+                       // 52 ms ici, la pause en ajoutait 60. Médiane 355 → 292 ms, neuvième
+                       // décile 525 → 463. Sur téléphone la détection domine davantage, donc
+                       // le gain sera moindre — et la dépense de batterie aussi.
+  // ── Le garde-fou contre les coins faux ─────────────────────────────────────────────
+  // Mesuré sur 91 détections réussies, cartes réelles : quand la carte déborde du cadre, le
+  // détecteur ne échoue pas — il rend des coins FAUX avec un score de 1,00. Taux de coins
+  // faux selon la hauteur occupée : 0 % à 0,55 · 11 % à 0,62 · 6 % à 0,75 · 24 % à 0,86 ·
+  // 64 % à 0,94 · 100 % à 1,02. C'est le mécanisme du « ça ne capture que le bas de la
+  // carte » signalé en V.44, enfin chiffré.
+  // Deux signaux le trahissent. Le format : les bons coins tiennent dans 1,377-1,411 pour
+  // une carte à 1,397, les faux s'étalent de 0,818 à 1,488. Et le contact avec le bord de
+  // l'image. Ensemble, ils écartent 61 % des coins faux pour 3 % de bons refusés — et un
+  // bon refusé ne coûte qu'un « recule un peu » d'une seconde, là où un coin faux coûte un
+  // découpage à côté, une identification perdue et un nouvel essai.
+  prop: 0.20,          // écart relatif toléré au format d'une carte (1,397)
+  bord: 0.03,          // distance minimale d'un coin au bord de l'image
+};
+const ST_SCORE = ST_SEUILS.score;   // seul le rattrapage à distance s'en sert, hors boucle
 // Part centrale reprise quand le premier passage ne trouve rien. 0,55 : sur ce recadrage la
 // même carte occupe près du double, et redevient une forme que le modèle sait reconnaître.
 // ⚠️ UN SEUL PALIER — le second, à 0,35, a été retiré aussitôt qu'essayé (V.62).
@@ -14021,6 +14056,13 @@ function stAire(c){
 // interdisait justement de simplement « agrandir un peu » l'ancien repère.
 // Le plancher en pointillés reste à 0,26 : tout ce qui est entre les deux fonctionne, et les
 // équerres montrent seulement où l'on est le plus à l'aise.
+// J'ai essayé 0,62, au motif qu'un repère à 0,75 inviterait à dépasser 0,90 où les coins
+// deviennent faux. Cet argument portait sur le comportement de l'utilisateur, que je n'ai
+// pas mesuré — et la mesure directe le contredit : à 0,75, trente déclenchements sur trente
+// et 849 ms de médiane ; à 0,62, vingt-quatre sur vingt-neuf et 982 ms. La détection est par
+// ailleurs plate de 0,55 à 0,86 (84-88 %), donc rien ne justifiait de viser plus petit.
+// C'est le garde-fou de forme qui protège du débordement, précisément quand il survient et
+// en disant quoi faire — pas un repère défensif qui ferait viser plus petit tout le monde.
 const ST_GUIDE_H = 0.75;
 // Bornes de la plage utile, tirées du banc de cadrage : au-delà de 0,60 de hauteur on est
 // trop près et la réussite retombe (87 % à douze centimètres) ; en deçà de 0,26 le détecteur
@@ -14383,20 +14425,42 @@ async function stTourner(){
         if(!ST.presentDepuis) ST.presentDepuis = Date.now();
         const attente = Date.now() - ST.presentDepuis;
         // Déplacement franc depuis la dernière capture = autre carte, même sans champ vide.
-        if(!ST.retiree && ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_BOUGE * 3) ST.retiree = true;
+        if(!ST.retiree && ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_SEUILS.bouge*3) ST.retiree = true;
         const bouge = ST.dernierCoins ? stEcart(ST.dernierCoins, d.corners) : Infinity;
         ST.dernierCoins = d.corners;
-        const seuilBouge = attente >= ST_FRANCHE ? Infinity : attente >= ST_DOUCE ? ST_BOUGE*3 : ST_BOUGE;
-        const seuilScore = attente >= ST_DOUCE ? ST_SCORE : ST_SCORE_STRICT;
+        const seuilBouge = attente >= ST_SEUILS.franche ? Infinity
+                         : attente >= ST_SEUILS.douce ? ST_SEUILS.bouge*3 : ST_SEUILS.bouge;
+        const seuilScore = attente >= ST_SEUILS.douce ? ST_SEUILS.score : ST_SEUILS.scoreStrict;
         if(bouge < seuilBouge) ST.streak++; else ST.streak = 0;
-        const stable = ST.streak >= 1;
+        const stable = ST.streak >= ST_SEUILS.streak;
         // ── UN SEUL ENDROIT DÉCIDE DE CE QUE L'UTILISATEUR VOIT ─────────────────────────
         // L'ordre compte : on nomme le premier obstacle, pas le dernier. Annoncer « stabilise »
         // à quelqu'un dont la carte est trop loin l'enverrait corriger la mauvaise chose.
         const aireVue = stAire(d.corners);
+        // Le quadrilatère ressemble-t-il seulement à une carte ? Un score élevé ne le dit
+        // pas : sur une carte qui déborde, le détecteur reste sûr de lui et se trompe.
+        const prop = proportionQuad(d.corners, v.videoWidth, v.videoHeight);
+        let bord = 1;
+        for(const q of [d.corners.tl, d.corners.tr, d.corners.br, d.corners.bl])
+          bord = Math.min(bord, q[0], 1-q[0], q[1], 1-q[1]);
         let etat = 'pret', etiquette = null;
         if(!ST.retiree){ etat = 'ko'; etiquette = 'déjà lue — retire-la'; }
         else if(aireVue < ST_AIRE_LOIN){ etat = 'ko'; etiquette = 'trop loin'; }
+        // ── DEUX CAUSES, DEUX MESSAGES ───────────────────────────────────────────────
+        // Je les avais d'abord réunies sous « recule un peu », et c'était faux pour la
+        // moitié des cas. Un coin qui touche le bord veut bien dire que la carte déborde :
+        // reculer est le geste juste, et c'est le cas où CENT pour cent des coins rendus
+        // sont faux. Un format qui s'écarte de 63×88 sans toucher le bord veut dire tout
+        // autre chose — le quadrilatère n'a pas encore la forme d'une carte, ce qui arrive
+        // pendant que la main bouge. Envoyer reculer quelqu'un dont la carte est bien
+        // placée, c'est le faire corriger ce qui allait déjà.
+        else if(bord < ST_SEUILS.bord){ etat = 'ko'; etiquette = 'recule un peu'; }
+        // Et le format se relâche après `franche`, comme le mouvement : sans cela, un
+        // détecteur qui s'obstine à rendre un quadrilatère de travers laisserait
+        // l'utilisateur sur un « stabilise » sans issue. Le débordement, lui, ne se relâche
+        // jamais : il a un geste de sortie, et le message le nomme.
+        else if(attente < ST_SEUILS.franche && prop > ST_SEUILS.prop){
+          etat = 'presque'; etiquette = 'stabilise'; }
         else if(d.score < seuilScore){ etat = 'presque'; etiquette = 'je cherche…'; }
         else if(!stable){ etat = 'presque'; etiquette = 'stabilise'; }
         // Tant que la carte est là, on retient la plus nette. Rien n'est rejeté : quand le
@@ -14423,7 +14487,7 @@ async function stTourner(){
         }
       }
     }catch(e){ /* une image ratée ne casse pas la boucle */ }
-    await new Promise(r => setTimeout(r, 60));
+    await new Promise(r => setTimeout(r, ST_SEUILS.sommeil));
   }
 }
 
