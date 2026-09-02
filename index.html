@@ -5967,7 +5967,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 53;
+const VERSION_APP = 54;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13112,6 +13112,11 @@ document.addEventListener('visibilitychange', ()=>{
   if(document.visibilityState === 'visible'){
     dernierTourBoucle = Date.now();
     readInFlightDepuis = 0;
+  }else{
+    // Page quittée sans fermer la caméra : on finit le travail en attente plutôt que de le
+    // laisser dormir jusqu'à la prochaine ouverture — voire le perdre à la fermeture
+    // de l'onglet.
+    viderTravauxDiffères();
   }
 });
 
@@ -13346,6 +13351,59 @@ function capturerSansLecture(canvas, raison, redressee){
 // est parti avec lui (voir REPRISE.md, « unification sur la logique du banc »). La V2 a
 // le sien, propre à elle : gererScanV2 appelle déjà capturerSansLecture ci-dessus après
 // trois « rebut » consécutifs (v2RebutsConsecutifs).
+
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// UNE FOIS LA CARTE ACQUISE, ON S'ARRÊTE — le reste attend la fermeture (V.54).
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Nikos : « il ne faut absolument plus qu'il y ait de calcul après la pré-détection et la
+// validation de la carte […] il faut garder des ressources pour notre scanner au maximum ».
+// C'est la bonne règle, et le scanner ne la respectait pas du tout. Une fois la vignette
+// affichée — donc une fois le travail utile FINI du point de vue de l'utilisateur — chaque
+// capture enchaînait encore, caméra ouverte et détection en cours :
+//   • un encodage PNG de la carte redressée, format sans perte et sans intérêt ici ;
+//   • une requête réseau pour la fiche complète (prix, rareté), attendue ;
+//   • la validation automatique, qui ajoute au lot, recalcule les totaux et redessine des
+//     listes dont le coût grandit avec la session — d'où le ralentissement « au bout de
+//     quelques cartes » ;
+//   • une écriture d'empreinte photo en base.
+// Rien de tout cela n'est urgent. La carte est identifiée, elle est dans la pile, elle ne
+// peut plus se perdre : le reste se fera très bien quand l'objectif sera éteint et que la
+// machine n'aura plus que ça à faire.
+const travauxDiffères = [];
+let travauxEnCours = false;
+
+function differerApresCamera(tache){ travauxDiffères.push(tache); majBadgeDiffere(); }
+
+function majBadgeDiffere(){
+  // On le DIT, sinon l'utilisateur croit que ses cartes ne sont pas traitées. Le compteur
+  // vit dans le panneau de résultat, là où il regarde déjà.
+  const el = $('live-result-note');
+  if(el && travauxDiffères.length) el.textContent = travauxDiffères.length + ' carte(s) à finaliser à la fermeture';
+}
+
+// Vidées à la fermeture de la caméra, une par une, en rendant la main au navigateur entre
+// chaque : rien ici ne justifie de figer l'interface, et l'utilisateur vient justement de
+// revenir à ses listes.
+async function viderTravauxDiffères(){
+  if(travauxEnCours || !travauxDiffères.length) return;
+  travauxEnCours = true;
+  const total = travauxDiffères.length;
+  diagPush('err', {msg:'finalisation de ' + total + ' carte(s) après fermeture de la caméra'});
+  try{
+    let fait = 0;
+    while(travauxDiffères.length){
+      const t = travauxDiffères.shift();
+      try{ await t(); }catch(e){ diagPush('err', {msg:'finalisation : ' + e.message}); }
+      fait++;
+      updateCaptureProgress?.();
+      await new Promise(r => setTimeout(r, 0));
+    }
+    renderQueueOverview?.(); renderBatch?.(); updateQueueBadges?.();
+  } finally {
+    travauxEnCours = false;
+  }
+}
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
@@ -13840,30 +13898,37 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     v: VERSION_APP
   });
 
-  // 2) EN ARRIÈRE-PLAN : file d'attente + fiche complète + validation auto.
-  cv.toBlob(async b => {
+  // 2) LA CARTE EST ACQUISE : dans la pile, et on s'arrête là.
+  // JPEG et non plus PNG : ce blob ne sert qu'à une relecture OCR différée, où le sans-perte
+  // n'apporte rien, alors que son encodage coûte cher sur une image de 640×894 — et il tombe
+  // à chaque capture, caméra ouverte.
+  cv.toBlob(b => {
     const item = pushToQueue(dataUrl, b, 'caméra-v2');
     item._analysis = {
       status: confiance === 'high' ? 'ok' : 'uncertain', card: carteMin,
       note: `V2 · illustration · ${res.fiabilite}%${res.ocrLance ? ' · OCR ' + (res.ocrOk ? '✓' : '?') : ''}`,
       rawText: res.ocrTxt || '', number: carteMin.number, denominator: ''
     };
-    if(liveHash != null){ registerSessionCardHash(carteMin, liveHash); enregistrerHashPhoto(carteMin, liveHash, confiance); }
+    // Gardé en direct : c'est une insertion en mémoire, et c'est elle qui empêche de
+    // compter deux fois la même carte dans la session. La différer ferait des doublons.
+    if(liveHash != null) registerSessionCardHash(carteMin, liveHash);
 
-    const carte = await getCardDetailCached(res.pick.cle).catch(()=> null);
-    const cardComplete = carte || carteMin;
-    item._analysis.card = cardComplete;
-    // La fiche complète met à jour prix/rareté si la carte est toujours à l'écran. On
-    // repasse `res.fiabilite` : sans elle, l'arrivée de la fiche effacerait le chiffre
-    // affiché une seconde plus tôt, alors que l'identification n'a pas changé.
-    if(carte && mySeq === liveResultSeq) showLiveResultDone(cardComplete, confiance, res.fiabilite);
-    if(validationAuto && confiance === 'high' && pendingQueue.includes(item)){
-      const rr = validerAutomatiquement(cardComplete, item, 'v2');
-      if(mySeq === liveResultSeq) setAimHint(rr.fusionnee
-        ? `🔁 ${cardComplete.name} — 2e exemplaire (V2 ${res.fiabilite}%)`
-        : `✅ ${cardComplete.name} — V2 ${res.fiabilite}%`);
-    }
-  }, 'image/png');
+    // ── TOUT LE RESTE ATTEND LA FERMETURE ──────────────────────────────────────────────
+    // La vignette du bas porte déjà le bon Pokémon (showLiveResultDone plus haut) : du point
+    // de vue de l'utilisateur, cette carte est FAITE. Ce qui suit — une requête réseau pour
+    // la fiche, l'écriture d'une empreinte, l'ajout au lot avec ses totaux et ses listes
+    // redessinées — ne lui apprend rien de plus maintenant, et prend au scanner des
+    // ressources dont il a besoin pour la carte suivante.
+    differerApresCamera(async () => {
+      if(liveHash != null) await enregistrerHashPhoto(carteMin, liveHash, confiance).catch(()=>{});
+      const carte = await getCardDetailCached(res.pick.cle).catch(()=> null);
+      const cardComplete = carte || carteMin;
+      item._analysis.card = cardComplete;
+      if(validationAuto && confiance === 'high' && pendingQueue.includes(item)){
+        validerAutomatiquement(cardComplete, item, 'v2');
+      }
+    });
+  }, 'image/jpeg', 0.9);
 
   return 'traite';
 }
@@ -14066,6 +14131,10 @@ function startAimLoop(){
 
 function stopAimLoop(){
   arreterQualite();
+  // L'objectif s'éteint : la machine n'a plus qu'à finir le travail mis de côté pendant que
+  // Nikos scannait. Sans await — cette fonction est appelée depuis des chemins synchrones,
+  // et la finalisation rend la main entre chaque carte de toute façon.
+  viderTravauxDiffères();
   // La bande refermée : sans ça, elle rouvrirait d'elle-même au démarrage caméra suivant
   // et reprendrait la place qu'on vient justement de rendre à la visée.
   const bande = $('bande-recents');
