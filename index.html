@@ -802,119 +802,194 @@
     background:rgba(255,255,255,.07); color:#e6edf3; border:1px solid rgba(255,255,255,.16);
     font-size:12px;
   }
-  .st-objectif{ display:flex; align-items:center; justify-content:center; gap:8px;
-    flex-wrap:nowrap; margin:0 auto 14px; font-family:ui-monospace,monospace;
-    font-size:12px; color:#9fb0c0; padding:0 8px; }
-  #st-zoom-txt{ white-space:nowrap; min-width:34px; text-align:center; }
-  .st-objectif[hidden]{ display:none; }
-  #st-objectif-liste{ background:rgba(13,17,23,.8); color:#e6edf3; font-size:11px;
-    border:1px solid rgba(255,255,255,.2); border-radius:8px; padding:5px 6px;
-    max-width:120px; flex:0 1 auto; }
-  #st-objectif-note{ font-size:10.5px; color:#7d8b99; max-width:180px; line-height:1.25; }
-  .st-objectif button{ width:34px; height:34px; border-radius:9px; cursor:pointer; font-size:16px;
-    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
-  /* ── Plein écran : l'aperçu prend tout, le verdict se pose par-dessus ────────────────── */
   body.st-plein{ overflow:hidden; }
   body.st-plein .navbar{ display:none; }
+  /* ═══════════════════════════════════════════════════════════════════════════════════
+     SCANNER TEST — l'apparence
+     ═══════════════════════════════════════════════════════════════════════════════════
+     Le cadre ne prend que la moitié de la hauteur hors plein écran : tout l'intérêt de
+     cette page est de voir la carte identifiée JUSTE EN DESSOUS, sans faire défiler. */
+  .st-cadre{ position:relative; width:100%; max-width:520px; margin:0 auto; background:#000;
+    border-radius:16px; overflow:hidden; aspect-ratio:3/4; max-height:46vh;
+    box-shadow:0 8px 30px rgba(0,0,0,.42); }
+  #section-scantest{ padding-bottom:96px; }
+  #section-scantest h2{ font-size:17px; margin:2px 0 3px; }
+  #section-scantest > .hint{ font-size:11px; line-height:1.3; margin:0 0 8px;
+    max-height:2.6em; overflow:hidden; }
+  /* contain et non cover : en « cover », l'aperçu rogne les bords et l'on ne voit qu'une
+     partie de ce que le détecteur analyse — le repère devenait alors menteur. Les bandes
+     noires sur les côtés sont le prix, et elles disent la vérité. */
+  #st-video{ position:relative; z-index:1; width:100%; height:100%; object-fit:contain;
+    display:block; background:transparent; }
+  #st-fond{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    filter:blur(26px) brightness(.42) saturate(.7); transform:scale(1.12);
+    pointer-events:none; z-index:0; }
+  /* z-index 2 : la vidéo est passée à 1 pour dominer le fond flouté, et sans cette ligne
+     le canevas de tracé se retrouvait DERRIÈRE elle — le voile et le repère disparaissaient
+     purement et simplement. */
+  #st-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none;
+    z-index:2; }
+  .st-etat{ text-align:center; color:#9fb0c0; font-size:13px; margin:10px 0; min-height:18px;
+    transition:color .18s ease; }
+  /* La couleur de l'état suit le verdict : vert, orange, rouge. Demandé par Nikos, et juste —
+     le mot seul demande d'être lu, la couleur se voit du coin de l'œil. */
+  .st-etat.ok{ color:#5ed36e; }
+  .st-etat.doute{ color:#e6a93c; }
+  .st-etat.nok{ color:#f0705c; }
+  .st-actions{ display:flex; gap:10px; justify-content:center; margin:12px 0 14px; }
+  .st-actions button, #st-envoyer{ padding:10px 18px; border-radius:10px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; font-size:14px; }
+  #st-envoyer{ display:block; margin:0 auto 20px; }
+  #st-envoyer[hidden]{ display:none; }
+
+  /* ── LE CADRE DU BAS, REPRIS DE LA V1 ──────────────────────────────────────────────
+     Translucide et flouté plutôt qu'opaque : en plein écran il se pose sur l'image sans la
+     masquer, et l'on garde le contact avec ce que la caméra voit pendant qu'on lit le
+     verdict. La couleur de la bordure porte le verdict à elle seule. */
+  #st-resultat{ display:flex; gap:11px; align-items:center; max-width:520px; margin:0 auto 12px;
+    padding:9px 11px; border-radius:14px; position:relative;
+    border:1px solid rgba(255,255,255,.14); background:rgba(22,27,34,.72);
+    -webkit-backdrop-filter:blur(12px) saturate(1.2); backdrop-filter:blur(12px) saturate(1.2);
+    box-shadow:0 6px 22px rgba(0,0,0,.4);
+    transition:border-color .22s ease, box-shadow .22s ease; }
+  #st-resultat::before{ content:''; position:absolute; inset:0; border-radius:14px;
+    pointer-events:none; opacity:.16; transition:background .22s ease; }
+  #st-resultat.ok{ border-color:rgba(63,185,80,.5); }
+  #st-resultat.ok::before{ background:linear-gradient(120deg,#3fb950,transparent 60%); }
+  #st-resultat.doute{ border-color:rgba(230,169,60,.55); }
+  #st-resultat.doute::before{ background:linear-gradient(120deg,#e6a93c,transparent 60%); }
+  #st-resultat.nok{ border-color:rgba(240,112,92,.6); }
+  #st-resultat.nok::before{ background:linear-gradient(120deg,#f0705c,transparent 60%); }
+  #st-resultat[hidden]{ display:none; }
+  #st-photo{ width:52px; height:73px; object-fit:cover; border-radius:7px; flex:none;
+    background:#0a0a0a; box-shadow:0 2px 8px rgba(0,0,0,.5); position:relative; z-index:1; }
+  /* La vignette « atterrit » : elle grossit un instant quand la carte volante la rejoint. */
+  #st-photo.pose{ animation:st-pose .34s cubic-bezier(.2,1.6,.4,1); }
+  @keyframes st-pose{ 0%{ transform:scale(.86); } 60%{ transform:scale(1.07); } 100%{ transform:scale(1); } }
+  .st-infos{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; position:relative; z-index:1; }
+  .st-infos b{ font-size:15px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #st-resultat.ok .st-infos b{ color:#8ce89b; }
+  #st-resultat.doute .st-infos b{ color:#f2c579; }
+  #st-resultat.nok .st-infos b{ color:#ff9d8b; }
+  .st-infos span{ color:#9fb0c0; font-size:11.5px; font-family:ui-monospace,monospace; }
+  .st-verdict{ display:flex; flex-direction:column; gap:6px; flex:none; position:relative; z-index:1; }
+  .st-verdict button{ padding:7px 12px; border-radius:9px; font-size:13px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
+
+  /* ── LA MINIATURE QUI DESCEND ──────────────────────────────────────────────────────
+     Elle relie la capture à son résultat. Sans elle, la vignette du bas change sans qu'on
+     sache d'où elle vient : le geste raconte le trajet, et c'est ce qui manquait. */
+  #st-vol{ position:fixed; z-index:340; pointer-events:none; border-radius:7px;
+    background-size:cover; background-position:center;
+    box-shadow:0 10px 30px rgba(0,0,0,.55); }
+  #st-vol[hidden]{ display:none; }
+
+  /* ── LE BOUTON PILE ────────────────────────────────────────────────────────────────── */
+  #st-pile{ position:absolute; top:10px; right:10px; z-index:14;
+    display:flex; align-items:center; gap:7px; padding:6px 11px 6px 8px;
+    border-radius:999px; cursor:pointer; font-size:13px; color:#e6edf3;
+    border:1px solid rgba(255,255,255,.2); background:rgba(13,17,23,.66);
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+    transition:transform .2s cubic-bezier(.2,1.5,.4,1), border-color .2s ease; }
+  #st-pile[hidden]{ display:none; }
+  #st-pile .st-pile-ico{ display:flex; width:17px; height:17px; color:#e6c25c; }
+  #st-pile .st-pile-ico svg{ width:100%; height:100%; }
+  #st-pile b{ font-variant-numeric:tabular-nums; font-size:14px; }
+  #st-pile em{ font-style:normal; color:#8fe0a0; font-size:12px; font-variant-numeric:tabular-nums; }
+  #st-pile em:empty{ display:none; }
+  /* Un à-coup bref à chaque ajout : le compteur qui change tout seul se rate, celui qui
+     bouge se remarque sans qu'on ait à le fixer. */
+  #st-pile.bond{ animation:st-bond .42s cubic-bezier(.2,1.5,.4,1); border-color:rgba(63,185,80,.6); }
+  @keyframes st-bond{ 0%{ transform:scale(1);} 35%{ transform:scale(1.16);} 100%{ transform:scale(1);} }
+
+  #st-pile-vue{ max-width:520px; margin:0 auto 12px; padding:10px 12px; border-radius:14px;
+    border:1px solid rgba(255,255,255,.14); background:rgba(22,27,34,.86);
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px); }
+  #st-pile-vue[hidden]{ display:none; }
+  .st-pile-tete{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .st-pile-tete b{ color:#e6c25c; font-size:13px; }
+  .st-pile-tete button{ border:none; background:none; color:#9fb0c0; cursor:pointer; font-size:15px; }
+  #st-pile-liste{ display:flex; flex-wrap:wrap; gap:7px; max-height:34vh; overflow-y:auto; }
+  #st-pile-liste figure{ margin:0; width:52px; }
+  #st-pile-liste img{ width:52px; height:73px; object-fit:cover; border-radius:6px; display:block;
+    border:1px solid rgba(255,255,255,.14); }
+  #st-pile-liste figure.doute img{ border-color:rgba(230,169,60,.6); }
+  #st-pile-liste figure.nok img{ border-color:rgba(240,112,92,.6); }
+  #st-pile-liste figcaption{ font-size:9.5px; color:#9fb0c0; text-align:center; margin-top:2px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* ── L'ALERTE FRANCHE ──────────────────────────────────────────────────────────────── */
+  #st-alerte{ position:absolute; inset:0; z-index:30; display:flex; align-items:center;
+    justify-content:center; padding:18px; background:rgba(60,10,6,.5);
+    -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
+    animation:st-fondu .2s ease; }
+  #st-alerte[hidden]{ display:none; }
+  @keyframes st-fondu{ from{ opacity:0; } to{ opacity:1; } }
+  .st-alerte-carte{ max-width:300px; width:100%; text-align:center; padding:16px 16px 14px;
+    border-radius:16px; border:1px solid rgba(240,112,92,.55);
+    background:linear-gradient(165deg, rgba(52,18,14,.97), rgba(28,14,12,.97));
+    box-shadow:0 14px 40px rgba(0,0,0,.6); animation:st-monte .26s cubic-bezier(.2,1.3,.4,1); }
+  @keyframes st-monte{ from{ transform:translateY(14px) scale(.96); opacity:0; } to{ transform:none; opacity:1; } }
+  .st-alerte-ico{ display:inline-flex; align-items:center; justify-content:center;
+    width:38px; height:38px; border-radius:50%; margin-bottom:9px; font-size:21px; font-weight:700;
+    color:#ffd9d2; background:rgba(240,112,92,.2); border:1px solid rgba(240,112,92,.5); }
+  .st-alerte-carte b{ display:block; color:#ffb8a8; font-size:15px; margin-bottom:5px; }
+  .st-alerte-carte p{ margin:0 0 13px; font-size:12.5px; line-height:1.45; color:#e8c9c2; }
+  .st-alerte-btns{ display:flex; gap:8px; justify-content:center; }
+  .st-alerte-btns button{ flex:1; padding:9px 12px; border-radius:10px; cursor:pointer; font-size:13px;
+    border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08); color:#e6edf3; }
+  .st-alerte-btns .st-primaire{ background:#c0392b; border-color:#d4503f; color:#fff; font-weight:600; }
+
+  /* ── LA COMMANDE DE ZOOM ───────────────────────────────────────────────────────────── */
+  .st-objectif{ display:flex; align-items:center; justify-content:center; gap:8px;
+    margin:0 0 12px; font-size:12.5px; color:#9fb0c0; }
+  .st-objectif[hidden]{ display:none; }
+  .st-objectif button{ width:32px; height:32px; border-radius:50%; cursor:pointer; font-size:15px;
+    border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.07); color:#e6edf3;
+    display:flex; align-items:center; justify-content:center; }
+  .st-objectif #st-zoom-txt{ min-width:44px; text-align:center; font-variant-numeric:tabular-nums; }
+  .st-objectif select{ background:rgba(255,255,255,.07); color:#e6edf3; border-radius:8px;
+    border:1px solid rgba(255,255,255,.2); padding:5px 7px; font-size:12px; }
+
+  /* ── PLEIN ÉCRAN ───────────────────────────────────────────────────────────────────── */
   body.st-plein .st-cadre{
-    position:fixed; inset:0; z-index:300; width:100vw; max-width:none; height:100vh;
-    max-height:none; aspect-ratio:auto; border-radius:0; margin:0;
+    position:fixed; inset:0; z-index:300; max-width:none; max-height:none;
+    width:100vw; height:100vh; height:100dvh; margin:0; border-radius:0; aspect-ratio:auto;
   }
-  /* La vidéo est ancrée aux quatre bords plutôt que dimensionnée en pourcentage : sur un
-     élément sans flux, ou pendant le premier instant qui suit l'ouverture, la hauteur en
-     pourcentage se résout parfois sur le rapport intrinsèque et laisse une bande noire.
-     L'ancrage ne dépend d'aucune dimension intrinsèque. Le canevas de tracé suit le même
-     ancrage, sinon le repère se dessinerait ailleurs que l'image. */
-  /* Les quatre bords ancres, et AUCUNE dimension declaree : une largeur ou une hauteur
-     explicite reprend la main sur l ancrage et laisse l element se dimensionner sur son
-     rapport intrinseque — c est ce qui laissait une bande noire sous l apercu. Sans elles,
-     la boite ne peut faire autrement que remplir son conteneur. */
-  /* Unites de fenetre, et non des pourcentages : sur un element remplace comme <video>, une
-     hauteur en pourcentage peut se resoudre sur le rapport intrinseque du media et laisser
-     une bande noire, tandis que width:auto le fait carrement collapser a 300 sur 150. Les
-     deux cas ont ete observes en essayant. 100vw et 100vh ne dependent de rien d autre que
-     la fenetre, qui est exactement ce que le plein ecran occupe. */
-  /* Ceinture ET bretelles, parce que je n ai pas pu trancher depuis mon poste : dans le
-     volet d apercu, 100vh se resout differemment pour le conteneur et pour la video alors
-     que les deux portent la meme regle — un artefact de l emulation, pas du code. On pose
-     donc les trois mecanismes qui, chacun separement, suffisent a remplir : ancrage aux
-     quatre bords, unites de fenetre, et pourcentages. Le plus fort l emporte, et aucun ne
-     peut donner une boite plus petite que le conteneur.
-     A verifier sur l appareil : c est la seule chose de cette version que mon environnement
-     ne sait pas confirmer. */
-  body.st-plein #st-video,
-  body.st-plein #st-overlay{
+  body.st-plein #st-fond,
+  body.st-plein #st-video, body.st-plein #st-overlay{
     position:absolute; inset:0; width:100%; height:100%;
     min-width:100vw; min-height:100vh;
   }
   body.st-plein #st-etat{
-    position:fixed; top:calc(10px + env(safe-area-inset-top)); left:0; right:0; z-index:302;
-    color:#e6edf3; text-shadow:0 1px 5px rgba(0,0,0,.8); pointer-events:none;
+    position:fixed; top:calc(12px + env(safe-area-inset-top)); left:64px; right:64px; z-index:302;
+    color:#e6edf3; text-shadow:0 1px 6px rgba(0,0,0,.9); pointer-events:none; margin:0;
+    font-size:14px; font-weight:500;
   }
+  body.st-plein #st-pile{ top:calc(10px + env(safe-area-inset-top)); z-index:305; }
   body.st-plein #st-resultat{
     position:fixed; left:8px; right:8px; bottom:calc(12px + env(safe-area-inset-bottom));
-    z-index:302; max-width:520px; margin:0 auto; background:rgba(13,17,23,.94);
-    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+    z-index:302; max-width:520px; margin:0 auto;
+  }
+  body.st-plein #st-pile-vue{
+    position:fixed; left:8px; right:8px; bottom:calc(96px + env(safe-area-inset-bottom));
+    z-index:304; max-width:520px; margin:0 auto;
   }
   body.st-plein .st-objectif{
-    position:fixed; left:0; right:0; bottom:calc(72px + env(safe-area-inset-bottom));
+    position:fixed; left:0; right:0; bottom:calc(96px + env(safe-area-inset-bottom));
     z-index:302; color:#e6edf3; text-shadow:0 1px 4px rgba(0,0,0,.8);
   }
   body.st-plein #st-quitter{ display:flex; }
   #st-quitter{
-    position:fixed; top:calc(8px + env(safe-area-inset-top)); right:10px; z-index:303;
-    display:none; width:40px; height:40px; border-radius:50%; cursor:pointer;
-    align-items:center; justify-content:center; font-size:17px;
-    border:1px solid rgba(255,255,255,.25); background:rgba(13,17,23,.66); color:#e6edf3;
+    position:fixed; top:calc(10px + env(safe-area-inset-top)); left:10px; z-index:306;
+    display:none; width:38px; height:38px; border-radius:50%; cursor:pointer;
+    align-items:center; justify-content:center; font-size:16px;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.66); color:#e6edf3;
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
   }
-  /* ── Scanner test : volontairement sommaire, on juge la capture, pas la mise en page ── */
-  /* Le cadre ne prend que la moitié de la hauteur : tout l'intérêt de cette page est de
-     voir la carte identifiée JUSTE EN DESSOUS, sans faire défiler. Un aperçu plein écran
-     repousserait le verdict hors de vue, ce qui est précisément ce qu'on veut éviter. */
-  .st-cadre{ position:relative; width:100%; max-width:520px; margin:0 auto; background:#000;
-    border-radius:12px; overflow:hidden; aspect-ratio:3/4; max-height:46vh; }
-  /* Le titre et l'explication ne servent qu'une fois : sur téléphone ils volaient au verdict
-     la place qui lui revient. Ils restent lisibles, simplement discrets. */
-  /* La barre du bas déborde sur la page, et son bouton central plus encore : sans cette
-     réserve, la dernière ligne se lit à moitié derrière lui. */
-  #section-scantest{ padding-bottom:96px; }
-  #section-scantest h2{ font-size:17px; margin:2px 0 3px; }
-  /* Repliée par défaut : elle explique le principe une fois, puis vole la place au
-     verdict, qui lui doit rester visible à chaque carte. */
-  #section-scantest > .hint{ font-size:11px; line-height:1.3; margin:0 0 8px;
-    max-height:2.6em; overflow:hidden; }
-  .st-etat{ margin:8px 0; }
-  .st-actions{ margin-bottom:10px; }
-  /* contain et non cover : en « cover », l'aperçu rogne les bords de l'image et l'on ne
-     voit qu'une partie de ce que le détecteur analyse. Le repère devenait alors menteur —
-     avec une vidéo 1080×1440 dans un cadre de 343×276, seuls 60 % de la hauteur réelle
-     étaient visibles, si bien qu'une carte remplissant le repère n'occupait que 37 % de
-     l'image quand le détecteur en exige 55. C'est mot pour mot ce que Nikos décrit : il
-     faut rapprocher la carte bien plus que le cadre ne le suggère.
-     En « contain » on voit exactement le champ analysé. Les bandes noires sur les côtés
-     sont le prix, et elles disent la vérité. */
-  #st-video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
-  #st-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
-  .st-etat{ text-align:center; color:#9fb0c0; font-size:13px; margin:10px 0; min-height:18px; }
-  .st-actions{ display:flex; gap:10px; justify-content:center; margin-bottom:14px; }
-  .st-actions button, #st-envoyer{ padding:10px 18px; border-radius:10px; cursor:pointer;
-    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; font-size:14px; }
-  #st-envoyer{ display:block; margin:0 auto 20px; }
-  /* La regle display:block l emporte sur le display:none que le navigateur applique a
-     [hidden] : sans cette ligne, le bouton restait visible alors qu il n y a rien a
-     envoyer. Un bouton qui ment sur ce qu il fera est pire qu un bouton absent. */
-  #st-envoyer[hidden]{ display:none; }
-  #st-resultat{ display:flex; gap:12px; align-items:center; max-width:520px; margin:0 auto 12px;
-    padding:12px; border-radius:12px; border:1px solid rgba(63,185,80,.4); background:rgba(63,185,80,.08); }
-  #st-resultat.rebut{ border-color:rgba(224,85,63,.45); background:rgba(224,85,63,.08); }
-  #st-resultat[hidden]{ display:none; }
-  #st-photo{ width:64px; height:89px; object-fit:cover; border-radius:6px; flex:none; }
-  .st-infos{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
-  .st-infos b{ color:#e6edf3; font-size:15px; }
-  .st-infos span{ color:#9fb0c0; font-size:12px; font-family:ui-monospace,monospace; }
-  .st-verdict{ display:flex; flex-direction:column; gap:6px; flex:none; }
-  .st-verdict button{ padding:7px 12px; border-radius:8px; font-size:13px; cursor:pointer;
-    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
+  @media (prefers-reduced-motion: reduce){
+    #st-pile.bond, #st-photo.pose, .st-alerte-carte, #st-alerte{ animation:none; }
+  }
   /* ── Bandeau des seuils, toujours visible en plein écran caméra ────────────────────
      Posé SOUS la rangée de boutons (roue dentée à gauche, croix à droite) et au-dessus du
      cadre de visée, qui est centré : la carte n'est jamais recouverte. */
@@ -4720,22 +4795,68 @@
     <p class="hint">Reprise à zéro sur la boucle du banc. Rien d'autre : ni file, ni validation
        automatique, ni fiche complète. On remettra les pièces une par une, en mesurant.</p>
     <div class="st-cadre">
+      <!-- Fond flouté sous l'aperçu. L'aperçu est en « contain » — obligatoire, sinon le
+           repère mentirait sur ce que le détecteur analyse — et cela laisse jusqu'à 45 %
+           d'écran noir sur un téléphone allongé. Le même flux, recadré et flouté, occupe
+           ces bandes : rien n'est ajouté à ce qu'on voit, et l'écran cesse de paraître
+           cassé. Aucune conséquence sur la détection, qui lit #st-video. -->
+      <video id="st-fond" autoplay playsinline muted aria-hidden="true"></video>
       <video id="st-video" autoplay playsinline muted></video>
       <canvas id="st-overlay"></canvas>
+
+      <!-- ── LA PILE, TOUJOURS VISIBLE ─────────────────────────────────────────────────
+           Reprise du principe de la V1 : le décompte et la valeur montent à chaque carte.
+           C'est le seul retour qui dise « ça avance » pendant qu'on dépouille un paquet, et
+           il vaut mieux qu'une ligne de texte sous le cadre, qu'on ne regarde jamais parce
+           qu'on regarde la carte. Le prix se charge après coup, sans retenir le scan. -->
+      <button id="st-pile" type="button" hidden aria-label="Voir la pile">
+        <span class="st-pile-ico" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+               stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3.5" y="6.5" width="12" height="15" rx="2"/>
+            <path d="M8 3.5h10a2 2 0 0 1 2 2v12"/>
+          </svg>
+        </span>
+        <b id="st-pile-n">0</b>
+        <em id="st-pile-prix"></em>
+      </button>
+
+      <!-- ── ALERTE FRANCHE ────────────────────────────────────────────────────────────
+           Uniquement quand l'identification échoue vraiment — moins de dix inliers, le cas
+           que la V.78 a montré parfaitement séparé du reste. Une carte simplement douteuse
+           ne la déclenche pas : elle part dans « à confirmer » et le scan enchaîne. -->
+      <div id="st-alerte" hidden role="alertdialog" aria-labelledby="st-alerte-titre">
+        <div class="st-alerte-carte">
+          <span class="st-alerte-ico" aria-hidden="true">!</span>
+          <b id="st-alerte-titre">Carte non reconnue</b>
+          <p id="st-alerte-txt">Reprends la photo : rapproche la carte, pose-la à plat et
+             évite les reflets.</p>
+          <div class="st-alerte-btns">
+            <button id="st-alerte-reprendre" type="button" class="st-primaire">Reprendre</button>
+            <button id="st-alerte-passer" type="button">Passer</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vole vers le cadre du bas à chaque capture. Créée à la volée, détruite après. -->
+      <div id="st-vol" hidden></div>
     </div>
+
     <p id="st-etat" class="st-etat">caméra fermée</p>
     <div class="st-actions">
       <button class="btn-gold" id="st-ouvrir">Ouvrir la caméra</button>
       <button id="st-fermer" hidden>Fermer</button>
     </div>
-    <!-- Commande d'objectif. Je ne peux pas vérifier depuis mon poste quelle valeur bascule
-         sur l'objectif principal du Samsung de Nikos : la relation entre le zoom annoncé par
-         le navigateur et l'objectif physique n'est pas normalisée. Plutôt que de continuer à
-         deviner, on affiche ce que l'appareil déclare et on lui donne la commande. -->
+
+    <!-- Commande de zoom. Un seul objectif est exposé sur l'appareil de Nikos : l'épinglage
+         est impossible, le zoom reste le seul levier, et le relevé de la V.79 a montré qu'une
+         valeur mémorisée de 1,0 — la plus large, donc l'ultra grand-angle — écrasait la
+         valeur déduite. D'où le bouton de remise à zéro, qui manquait. -->
     <div class="st-objectif" id="st-objectif" hidden>
       <button id="st-zoom-moins" type="button">−</button>
       <span id="st-zoom-txt">objectif —</span>
       <button id="st-zoom-plus" type="button">+</button>
+      <button id="st-zoom-raz" type="button" title="Oublier le zoom mémorisé">⟲</button>
       <select id="st-objectif-liste" hidden></select>
       <span id="st-objectif-note" hidden></span>
     </div>
@@ -4753,6 +4874,15 @@
       <div class="st-verdict">
         <button id="st-retirer">Retirer</button>
       </div>
+    </div>
+
+    <!-- Contenu de la pile, ouvert par le bouton du même nom. -->
+    <div id="st-pile-vue" hidden>
+      <div class="st-pile-tete">
+        <b>Pile de la session</b>
+        <button id="st-pile-fermer" type="button" aria-label="Fermer">✕</button>
+      </div>
+      <div id="st-pile-liste"></div>
     </div>
 
     <p id="st-liste" class="st-etat"></p>
@@ -6136,7 +6266,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 79;
+const VERSION_APP = 80;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13914,6 +14044,7 @@ function stFermerFlux(){
   try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
   ST.flux = null; ST.piste = null;
   const v = $('st-video'); if(v) v.srcObject = null;
+  const fd = $('st-fond'); if(fd) fd.srcObject = null;
 }
 
 async function stOuvrir(){
@@ -13923,6 +14054,8 @@ async function stOuvrir(){
   const v = $('st-video');
   v.srcObject = ST.flux;
   await v.play().catch(()=>{});
+  const fd = $('st-fond');
+  if(fd){ fd.srcObject = ST.flux; fd.play().catch(()=>{}); }
   ST.piste = ST.flux.getVideoTracks()[0];
   // Objectif principal plutôt que l'ultra grand-angle, quand les capacités trahissent
   // plusieurs objectifs. Même raisonnement qu'au scanner principal, et même réserve : le
@@ -13955,6 +14088,9 @@ async function stOuvrir(){
   // OCR coupé pour la durée du scan : voir ST_OCR_NORMAL.
   try{ SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: 99999, OCR_ORB_MS_MAX: 0 }); }catch(e){}
   ST.boucle = true;
+  stAlerteEnCours = false;
+  const al = $('st-alerte'); if(al) al.hidden = true;
+  stEtatTeinte(null);
   stRenduDemarrer();
   stBilanSeconde = null;
   ST.retiree = true; ST.coinsCapture = null; ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
@@ -14145,7 +14281,8 @@ const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
 const STV = { coins:null, etat:'presque', texte:null, analyse:null, analyseDepuis:0 };
 
 // Ce qui est affiché à l'instant : interpolé vers STV, jamais posé brutalement.
-const STA = { coins:null, trait:[210,153,34], repere:1, voile:0, etiquette:0, texte:null };
+const STA = { coins:null, trait:[210,153,34], repere:1, voile:0, etiquette:0, texte:null,
+              vu:0, verrou:0 };   // vu : une carte est là · verrou : tout est réuni
 
 const ST_TEINTES = {
   ko:      { trait:[224, 85, 63], voile:0, texte:'#ffd9d2' },
@@ -14250,7 +14387,11 @@ function stRendre(t){
   const teinte = ST_TEINTES[STV.analyse ? 'pret' : STV.etat] || ST_TEINTES.presque;
   for(let i = 0; i < 3; i++) STA.trait[i] = stVers(STA.trait[i], teinte.trait[i], kT);
   STA.voile  = stVers(STA.voile, STV.analyse ? 0 : teinte.voile, kF);
-  STA.repere = stVers(STA.repere, STA.coins ? 0.34 : 1, kF);
+  STA.vu     = stVers(STA.vu, STA.coins ? 1 : 0, kF);
+  // Le repère s'efface presque entièrement dès qu'une carte est tenue : il a renseigné,
+  // et le voile qui aidait à viser gênerait pour juger la carte elle-même.
+  STA.repere = stVers(STA.repere, STA.coins ? 0.12 : 1, kF);
+  STA.verrou = stVers(STA.verrou, (STV.analyse || STV.etat === 'pret') ? 1 : 0, kF);
   const veutTexte = !!(STV.texte && !STV.analyse);
   if(veutTexte) STA.texte = STV.texte;
   STA.etiquette = stVers(STA.etiquette, veutTexte ? 1 : 0, kF);
@@ -14258,39 +14399,75 @@ function stRendre(t){
   const g = $('st-overlay').getContext('2d');
   g.setTransform(T.dpr, 0, 0, T.dpr, 0, 0);
   g.clearRect(0, 0, T.l, T.h);
-  stPeindreRepere(g, T);
+  stPeindreRepere(g, T, t);
   if(STA.coins){
-    stPeindreCadre(g, T);
+    stPeindreCadre(g, T, t);
     if(STV.analyse) stPeindreBalayage(g, T, t);
     else if(STA.etiquette > 0.01) stPeindreEtiquette(g, T);
   }
 }
 
-// ── LE REPÈRE : UN PLANCHER, PAS UNE CIBLE ───────────────────────────────────────────────
-// Une seule borne, la petite : « au moins cette taille ». Tout ce qui est plus grand convient,
-// y compris une carte qui remplit l'écran. Les équerres marquent la distance la plus
-// confortable sans rien interdire au-dessus. Il s'efface en fondu quand une carte est tenue :
-// il a renseigné, il n'a plus à encombrer.
-function stPeindreRepere(g, T){
+// ── LE REPÈRE : UNE FENÊTRE CLAIRE DANS UN VOILE SOMBRE ──────────────────────────────────
+// Quatre équerres posées sur l'image entière laissaient l'œil libre d'aller partout : rien
+// ne disait où viser, seulement où s'arrêter. On assombrit donc tout ce qui n'est pas la
+// zone de visée. Le regard tombe au centre sans qu'on ait à l'y inviter, et le détecteur
+// travaille précisément là.
+// Une seule borne demeure, la petite : « au moins cette taille ». Tout ce qui est plus grand
+// convient, y compris une carte qui remplit l'écran — c'est le garde-fou de forme, pas le
+// repère, qui refuse le débordement.
+function stRectArrondi(g, x, y, w, h, r){
+  r = Math.min(r, w/2, h/2);
+  g.moveTo(x+r, y);
+  g.arcTo(x+w, y,   x+w, y+h, r);
+  g.arcTo(x+w, y+h, x,   y+h, r);
+  g.arcTo(x,   y+h, x,   y,   r);
+  g.arcTo(x,   y,   x+w, y,   r);
+  g.closePath();
+}
+
+function stPeindreRepere(g, T, t){
   if(STA.repere < 0.02) return;
   const rect = f => { const h = T.ih*f, w = h/CARD_RATIO;
     return {x: T.ix + (T.iw-w)/2, y: T.iy + (T.ih-h)/2, w, h}; };
+  // Respiration lente, uniquement quand aucune carte n'est tenue : elle signale que l'outil
+  // est vivant et en attente. Dès qu'une carte arrive, elle s'arrête — à ce moment-là ce
+  // n'est plus le repère qu'on regarde.
+  const souffle = ST_SOBRE ? 0 : (1 - STA.vu) * 0.012 * Math.sin(t/820);
+  const m = rect(ST_GUIDE_H * (1 + souffle));
+  const rc = Math.min(m.w, m.h) * 0.075;
+
   g.save();
   g.globalAlpha = STA.repere;
-  const plancher = rect(ST_TROP_LOIN);
-  g.setLineDash([7, 6]);
-  g.strokeStyle = 'rgba(255,255,255,.34)'; g.lineWidth = 2;
-  g.strokeRect(plancher.x, plancher.y, plancher.w, plancher.h);
-  g.setLineDash([]);
-  const mid = rect(ST_GUIDE_H);
-  const eq = Math.min(mid.w, mid.h) * 0.14;
-  g.strokeStyle = 'rgba(255,255,255,.58)'; g.lineWidth = 3; g.lineCap = 'round';
-  for(const [x, y, dx, dy] of [[mid.x,mid.y,1,1],[mid.x+mid.w,mid.y,-1,1],
-                               [mid.x+mid.w,mid.y+mid.h,-1,-1],[mid.x,mid.y+mid.h,1,-1]]){
+
+  // Le voile, en règle pair-impair : un rectangle plein moins la fenêtre de visée.
+  g.beginPath();
+  g.rect(T.ix, T.iy, T.iw, T.ih);
+  stRectArrondi(g, m.x, m.y, m.w, m.h, rc);
+  g.fillStyle = 'rgba(0,0,0,.55)';
+  g.fill('evenodd');
+  // Les bandes hors image restent noires : elles ne font pas partie du champ analysé.
+  g.fillStyle = 'rgba(0,0,0,.55)';
+  if(T.ix > 0){ g.fillRect(0, 0, T.ix, T.h); g.fillRect(T.ix+T.iw, 0, T.ix+1, T.h); }
+  if(T.iy > 0){ g.fillRect(0, 0, T.l, T.iy); g.fillRect(0, T.iy+T.ih, T.l, T.iy+1); }
+
+  // Un liseré très discret sur la fenêtre : il donne un bord net au voile, sans dessiner
+  // un cadre qu'on prendrait pour une cible à remplir exactement.
+  g.beginPath(); stRectArrondi(g, m.x, m.y, m.w, m.h, rc);
+  g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 1; g.stroke();
+
+  // Les équerres, aux quatre coins de la fenêtre.
+  const eq = Math.min(m.w, m.h) * 0.16;
+  g.strokeStyle = 'rgba(255,255,255,.82)'; g.lineWidth = 2.5; g.lineCap = 'round';
+  for(const [x, y, dx, dy] of [[m.x,m.y,1,1],[m.x+m.w,m.y,-1,1],
+                               [m.x+m.w,m.y+m.h,-1,-1],[m.x,m.y+m.h,1,-1]]){
     g.beginPath();
-    g.moveTo(x, y + dy*eq); g.lineTo(x, y); g.lineTo(x + dx*eq, y);
+    g.moveTo(x, y + dy*(eq+rc*0.4));
+    g.lineTo(x, y + dy*rc*0.5);
+    g.moveTo(x + dx*rc*0.5, y);
+    g.lineTo(x + dx*(eq+rc*0.4), y);
     g.stroke();
   }
+
   g.restore();
 }
 
@@ -14303,30 +14480,60 @@ function stChemin(g, T){
   return [a,b,c,d];
 }
 
-function stPeindreCadre(g, T){
+// ── LE CADRE DE LA CARTE ─────────────────────────────────────────────────────────────────
+// L'ancienne version peignait le même trait vert quel que soit l'état, et l'utilisateur
+// devait lire l'étiquette pour savoir où il en était. Le tracé porte maintenant l'étape :
+//   tant que ça bloque   → trait pointillé qui défile, comme une analyse en cours
+//   dès que c'est prêt   → les pointillés se referment en trait plein et les coins se posent
+// Le passage de l'un à l'autre est continu — c'est le même trait qui se solidifie — donc on
+// lit une progression au lieu d'un clignotement.
+function stPeindreCadre(g, T, t){
   const [a,b,c,d] = stChemin(g, T);
   const r = Math.round(STA.trait[0]), v = Math.round(STA.trait[1]), bu = Math.round(STA.trait[2]);
+  const col = (al) => 'rgba('+r+','+v+','+bu+','+al+')';
+  const cote = Math.hypot(b[0]-a[0], b[1]-a[1]) || 1;
 
-  // Voile dégradé quand tout est réuni : c'est le seul instant où l'utilisateur peut savoir
-  // qu'il n'a plus rien à corriger. Il part du haut et s'estompe vers le bas — un aplat
-  // uniforme masquerait l'illustration au moment précis où l'on vérifie la carte.
   if(STA.voile > 0.01){
     g.save(); g.clip();
     const grd = g.createLinearGradient(a[0], a[1], d[0], d[1]);
-    grd.addColorStop(0, 'rgba('+r+','+v+','+bu+',' + (0.16*STA.voile).toFixed(3) + ')');
-    grd.addColorStop(1, 'rgba('+r+','+v+','+bu+',' + (0.02*STA.voile).toFixed(3) + ')');
+    grd.addColorStop(0, col((0.15*STA.voile).toFixed(3)));
+    grd.addColorStop(1, col((0.02*STA.voile).toFixed(3)));
     g.fillStyle = grd; g.fillRect(T.ix, T.iy, T.iw, T.ih);
     g.restore();
   }
 
-  // La lueur en DEUX PASSES plutôt qu'en shadowBlur. Le flou de canevas est recalculé à
-  // chaque image et se paie cher sur un GPU de téléphone ; deux traits concentriques donnent
-  // le même halo pour le prix d'un tracé.
-  g.lineJoin = 'round'; g.lineCap = 'round';
+  g.save();
+  g.lineJoin = 'round'; g.lineCap = 'butt';
+  // Halo en deux passes plutôt qu'un shadowBlur : le flou de canevas est recalculé à chaque
+  // image et se paie cher sur un GPU de téléphone.
   stChemin(g, T);
-  g.strokeStyle = 'rgba('+r+','+v+','+bu+',.22)'; g.lineWidth = 9; g.stroke();
+  g.strokeStyle = col(0.20 * (0.4 + 0.6*STA.verrou)); g.lineWidth = 10; g.stroke();
+
+  // Le pointillé se referme à mesure que STA.verrou monte vers 1.
+  const vide = (1 - STA.verrou) * cote * 0.055;
+  const plein = cote * 0.055 + STA.verrou * cote * 0.055;
+  if(vide > 0.4){
+    g.setLineDash([plein, vide]);
+    g.lineDashOffset = ST_SOBRE ? 0 : -(t/28) % (plein + vide);
+  }
   stChemin(g, T);
-  g.strokeStyle = 'rgb('+r+','+v+','+bu+')'; g.lineWidth = 3; g.stroke();
+  g.strokeStyle = col(0.95); g.lineWidth = 3; g.stroke();
+  g.setLineDash([]);
+
+  // Les quatre coins se posent quand tout est réuni : un accent bref, qui dit « verrouillé »
+  // sans ajouter de mot à lire.
+  if(STA.verrou > 0.02){
+    const L = cote * 0.16 * STA.verrou;
+    g.strokeStyle = col(0.95); g.lineWidth = 4.5; g.lineCap = 'round';
+    const paires = [[a,b,d],[b,a,c],[c,d,b],[d,c,a]];
+    for(const [o, h1, h2] of paires){
+      const u = (p,q,l) => { const dx=q[0]-p[0], dy=q[1]-p[1], n=Math.hypot(dx,dy)||1;
+        return [p[0]+dx/n*l, p[1]+dy/n*l]; };
+      const e1 = u(o, h1, L), e2 = u(o, h2, L);
+      g.beginPath(); g.moveTo(e1[0],e1[1]); g.lineTo(o[0],o[1]); g.lineTo(e2[0],e2[1]); g.stroke();
+    }
+  }
+  g.restore();
 }
 
 // ── L'ÉTIQUETTE, COLLÉE À LA CARTE ───────────────────────────────────────────────────────
@@ -14341,50 +14548,74 @@ function stPeindreEtiquette(g, T){
   g.globalAlpha = STA.etiquette;
   g.font = '600 13px system-ui, -apple-system, sans-serif';
   g.textAlign = 'center'; g.textBaseline = 'middle';
-  const larg = g.measureText(STA.texte).width + 18, haut = 24;
+  const larg = g.measureText(STA.texte).width + 20, haut = 26;
   const bx = Math.max(T.ix+4, Math.min(T.ix+T.iw-larg-4, mx - larg/2));
   // Elle monte de quelques pixels en apparaissant : le mouvement dit « ceci vient de changer »
   // sans qu'il faille le lire pour le remarquer.
-  const by = Math.min(T.iy+T.ih-haut-4, my + 12 + (1-STA.etiquette)*6);
-  g.fillStyle = 'rgba(13,17,23,.82)';
-  if(g.roundRect){ g.beginPath(); g.roundRect(bx, by, larg, haut, 7); g.fill(); }
+  const by = Math.min(T.iy+T.ih-haut-4, my + 13 + (1-STA.etiquette)*7);
+  const t = ST_TEINTES[STV.etat] || ST_TEINTES.presque;
+  g.fillStyle = 'rgba(10,13,18,.86)';
+  if(g.roundRect){ g.beginPath(); g.roundRect(bx, by, larg, haut, 13); g.fill(); }
   else g.fillRect(bx, by, larg, haut);
-  g.fillStyle = (ST_TEINTES[STV.etat] || ST_TEINTES.presque).texte;
+  g.strokeStyle = 'rgba('+t.trait.join(',')+',.5)'; g.lineWidth = 1;
+  if(g.roundRect){ g.beginPath(); g.roundRect(bx, by, larg, haut, 13); g.stroke(); }
+  g.fillStyle = t.texte;
   g.fillText(STA.texte, bx + larg/2, by + haut/2 + 0.5);
   g.restore();
 }
 
-// ── BALAYAGE D'ANALYSE ───────────────────────────────────────────────────────────────────
-// Pendant l'identification, une ligne parcourt la carte. Elle ne mesure rien : elle dit que
-// la machine travaille, sur le seul moment où l'utilisateur n'a aucun retour — entre le
-// déclic et le verdict, une seconde environ. Sans elle, ce temps se lit comme un blocage.
-// Elle interpole entre les DEUX BORDS de la carte, donc suit la perspective au lieu d'être
-// une barre verticale posée par-dessus : c'est ce détail qui la fait appartenir à la scène.
+// ── ANALYSE : UN POINT QUI FAIT LE TOUR DE LA CARTE ──────────────────────────────────────
+// Le balayage gauche-droite disait « la machine travaille », mais il disait aussi, sans le
+// vouloir, « je lis ligne par ligne » — ce qui n'est pas ce que fait la chaîne. Un segment
+// lumineux qui parcourt le PÉRIMÈTRE dit la même chose et appartient vraiment à la carte :
+// il en épouse la forme, la perspective comprise, et un tour complet marque le temps sans
+// jamais sauter puisqu'il revient sur lui-même.
+// Une nappe douce continue de balayer l'intérieur, en retrait, pour que le centre ne soit
+// pas mort pendant la seconde d'attente.
 function stPeindreBalayage(g, T, t){
   const [a,b,c,d] = stChemin(g, T);
-  const T_MS = 1100;                                   // un aller-retour par identification
-  const u = ((t - STV.analyseDepuis) % T_MS) / T_MS;
-  // Aller-retour adouci aux extrémités plutôt qu'un saut au bord gauche une fois par seconde.
-  // C'était le plus visible des défauts, précisément parce qu'il revenait sans cesse.
-  const p = u < 0.5 ? u*2 : (1-u)*2;
-  const k = p*p*(3 - 2*p);
-  const h = (m,n,q) => [m[0]+(n[0]-m[0])*q, m[1]+(n[1]-m[1])*q];
-  const haut = h(a, b, k), bas = h(d, c, k);
-  const larg = Math.hypot(b[0]-a[0], b[1]-a[1]) * 0.18;
-  const dir = [b[0]-a[0], b[1]-a[1]];
-  const norme = Math.hypot(dir[0], dir[1]) || 1;
-  // La traînée suit le sens de marche : elle reste derrière la ligne, aller comme retour.
-  const sens = u < 0.5 ? 1 : -1;
-  const ux = dir[0]/norme*sens, uy = dir[1]/norme*sens;
+  const pts = [a,b,c,d];
+  const seg = [0,1,2,3].map(i => {
+    const p = pts[i], q = pts[(i+1)%4];
+    return { p, q, l: Math.hypot(q[0]-p[0], q[1]-p[1]) };
+  });
+  const peri = seg.reduce((s,x)=> s+x.l, 0) || 1;
+  const T_TOUR = 1400;
+  const u = ((t - STV.analyseDepuis) % T_TOUR) / T_TOUR;
+  const arc = peri * 0.30;                       // longueur du segment lumineux
 
   g.save();
+  // La nappe intérieure : un dégradé qui tourne, très discret.
   stChemin(g, T); g.clip();
-  const grd = g.createLinearGradient(haut[0]-ux*larg, haut[1]-uy*larg, haut[0], haut[1]);
-  grd.addColorStop(0, 'rgba(63,185,80,0)');
-  grd.addColorStop(1, 'rgba(63,185,80,.28)');
-  g.fillStyle = grd; g.fillRect(T.ix, T.iy, T.iw, T.ih);
-  g.strokeStyle = 'rgba(140,255,160,.85)'; g.lineWidth = 2;
-  g.beginPath(); g.moveTo(haut[0], haut[1]); g.lineTo(bas[0], bas[1]); g.stroke();
+  const cx = (a[0]+c[0])/2, cy = (a[1]+c[1])/2;
+  const ang = u * Math.PI * 2;
+  const rr = Math.max(T.iw, T.ih);
+  const nap = g.createLinearGradient(cx - Math.cos(ang)*rr, cy - Math.sin(ang)*rr, cx, cy);
+  nap.addColorStop(0, 'rgba(63,185,80,0)');
+  nap.addColorStop(1, 'rgba(63,185,80,.13)');
+  g.fillStyle = nap; g.fillRect(T.ix, T.iy, T.iw, T.ih);
+  g.restore();
+
+  // Le segment lumineux, tracé point par point le long du périmètre. Son opacité décroît
+  // vers la queue : la tête est nette, la traîne s'efface.
+  g.save();
+  g.lineCap = 'round'; g.lineWidth = 3.5;
+  const pos = (s) => {
+    let reste = ((s % peri) + peri) % peri;
+    for(const e of seg){
+      if(reste <= e.l){ const k = e.l ? reste/e.l : 0;
+        return [e.p[0] + (e.q[0]-e.p[0])*k, e.p[1] + (e.q[1]-e.p[1])*k]; }
+      reste -= e.l;
+    }
+    return seg[0].p;
+  };
+  const tete = u * peri;
+  const N = 16;
+  for(let i = 0; i < N; i++){
+    const p1 = pos(tete - arc*(i/N)), p2 = pos(tete - arc*((i+1)/N));
+    g.strokeStyle = 'rgba(140,255,160,' + (0.9*(1 - i/N)).toFixed(3) + ')';
+    g.beginPath(); g.moveTo(p1[0],p1[1]); g.lineTo(p2[0],p2[1]); g.stroke();
+  }
   g.restore();
 }
 
@@ -14393,7 +14624,8 @@ function stPeindreBalayage(g, T, t){
 async function stTourner(){
   while(ST.boucle){
     const v = $('st-video');
-    if(!v || !v.videoWidth || ST.occupe){ await new Promise(r => setTimeout(r, 120)); continue; }
+    if(!v || !v.videoWidth || ST.occupe || stAlerteEnCours){
+      await new Promise(r => setTimeout(r, 120)); continue; }
     try{
       const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
       const bmp = await createImageBitmap(v, {
@@ -14545,9 +14777,18 @@ async function stCapturer(coins, v, attendu){
     // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
     const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee,
                        attendu || 0, ST.verrous || {});
-    stEtat(e.categorie === 'sure'
-      ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
-      : '⚠ doute — mise de côté, carte suivante');
+    const teinte = stCouleur(e);
+    stEtatTeinte(teinte);
+    stEtat(teinte === 'ok' ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
+         : teinte === 'nok' ? '✕ non reconnue'
+         : '~ doute — mise de côté, carte suivante');
+    // Le trajet part des coins RÉELLEMENT capturés, pas du tracé lissé : la miniature doit
+    // sortir de là où la carte était, sinon le geste ment sur ce qui vient d'être lu.
+    stVoler(e.photo, coins);
+    stBondPile();
+    if(teinte === 'ok') stAjouterValeur(e);
+    // L'alerte franche ne se déclenche que sur un échec net, jamais sur un doute.
+    if(teinte === 'nok') stAlerter(e);
   }catch(e){ stEtat('identification : ' + e.message); }
   finally{ stFinAnalyse(); ST.occupe = false; }
 }
@@ -14611,29 +14852,176 @@ function stRanger(res, photo, ms, nettete, attendu, verrous){
   return entree;
 }
 
+// ── TROIS COULEURS, UN SEUL ENDROIT QUI DÉCIDE ───────────────────────────────────────────
+// Demande de Nikos : vert si c'est bon, orange si l'on doute, rouge si ça a raté. Le mot
+// seul demande d'être lu ; la couleur se voit du coin de l'œil, sans quitter la carte des
+// yeux — ce qui est très exactement la situation pendant qu'on dépouille un paquet.
+function stCouleur(e){
+  if(!e) return null;
+  if(e.categorie === 'sure' && e.carte) return 'ok';
+  if(e.categorie === 'rebut' && e.inliers < ST_INLIERS_FRANCS) return 'nok';
+  return 'doute';
+}
+// Sous ce nombre d'inliers, l'identification n'a rien trouvé du tout — ce n'est pas un
+// doute, c'est un échec. La V.78 l'a montré nettement : les réussites vont de 54 à 157
+// inliers, les échecs de 0 à 9. Il n'y a rien entre les deux, donc le seuil peut être franc.
+const ST_INLIERS_FRANCS = 15;
+
 function stRendreDernier(){
   const z = $('st-resultat'); if(!z) return;
   const a = ST.dernier;
   if(!a){ z.hidden = true; return; }
   z.hidden = false;
   $('st-photo').src = a.photo;
-  const sur = a.categorie === 'sure' && a.carte;
-  $('st-nom').textContent = a.carte ? (a.carte.name || a.carte.cle) : 'Non reconnue';
-  $('st-detail').textContent = (sur ? '' : '⚠ à confirmer · ')
-    + [a.carte && a.carte.localId ? '#' + a.carte.localId : null,
+  const c = stCouleur(a);
+  z.classList.toggle('ok',    c === 'ok');
+  z.classList.toggle('doute', c === 'doute');
+  z.classList.toggle('nok',   c === 'nok');
+  $('st-nom').textContent = a.carte ? (a.carte.name || a.carte.cle)
+                          : (c === 'nok' ? 'Non reconnue' : 'À confirmer');
+  $('st-detail').textContent = [a.carte && a.carte.localId ? '#' + a.carte.localId : null,
        a.fiabilite + ' %', a.inliers + ' inliers', a.ms + ' ms'].filter(Boolean).join(' · ');
-  z.classList.toggle('rebut', !sur);
 }
 
+// L'état écrit sous le cadre prend la même couleur, pour que le verdict soit lisible même
+// quand le panneau du bas est hors de vue.
+function stEtatTeinte(c){
+  const el = $('st-etat'); if(!el) return;
+  el.classList.remove('ok','doute','nok');
+  if(c) el.classList.add(c);
+}
+
+// ── LA PILE : UN DÉCOMPTE ET UNE VALEUR QUI MONTENT ──────────────────────────────────────
+// Repris du principe de la V1. C'est le seul retour qui dise « ça avance » pendant qu'on
+// enchaîne les cartes, et il vaut mieux qu'une ligne de texte sous le cadre — qu'on ne
+// regarde jamais, puisqu'on regarde la carte.
+// Le prix arrive après coup : la fiche complète se charge sur le réseau, et il n'est pas
+// question de retenir le scan pour l'attendre. Le total se met à jour quand elle arrive.
+let stPileValeur = 0;
+
 function stRendreCompteurs(){
-  const el = $('st-liste'); if(!el) return;
   const n = ST.pile.length, c = ST.aConfirmer.length;
-  el.textContent = (n + c)
+  const el = $('st-liste');
+  if(el) el.textContent = (n + c)
     ? n + ' scannée(s)' + (c ? ' · ' + c + ' à confirmer' : '')
-      + (ST.pile.length ? ' · médiane ' + stMediane() + ' ms' : '')
+      + (n ? ' · médiane ' + stMediane() + ' ms' : '')
     : '';
   const b = $('st-envoyer');
   if(b) b.hidden = !(n + c);
+  const p = $('st-pile');
+  if(p){
+    p.hidden = !(n + c);
+    $('st-pile-n').textContent = String(n + c);
+    $('st-pile-prix').textContent = stPileValeur > 0
+      ? stPileValeur.toFixed(stPileValeur >= 100 ? 0 : 2) + ' €' : '';
+  }
+  if(!$('st-pile-vue').hidden) stRendrePileVue();
+}
+
+function stBondPile(){
+  const p = $('st-pile'); if(!p || ST_SOBRE) return;
+  p.classList.remove('bond'); void p.offsetWidth; p.classList.add('bond');
+}
+
+// La cote de la carte, cherchée sans bloquer quoi que ce soit. Un échec ne coûte rien : le
+// total reste ce qu'il était et le bouton n'affiche simplement pas de prix.
+async function stAjouterValeur(entree){
+  if(!entree || !entree.carte || !entree.carte.cle) return;
+  try{
+    const carte = await getCardDetailCached(entree.carte.cle);
+    if(!carte) return;
+    const p = getBestPrice(carte);
+    if(p && p.market){ stPileValeur += p.market; stRendreCompteurs(); }
+  }catch(e){ /* pas de cote : le décompte reste juste, seul le total est incomplet */ }
+}
+
+function stRendrePileVue(){
+  const l = $('st-pile-liste'); if(!l) return;
+  l.innerHTML = '';
+  const tout = [...ST.pile, ...ST.aConfirmer].slice().reverse();
+  for(const e of tout){
+    const f = document.createElement('figure');
+    const c = stCouleur(e);
+    if(c && c !== 'ok') f.className = c;
+    const i = document.createElement('img'); i.src = e.photo; i.alt = '';
+    const cap = document.createElement('figcaption');
+    cap.textContent = e.carte ? (e.carte.name || e.carte.cle) : '?';
+    f.appendChild(i); f.appendChild(cap); l.appendChild(f);
+  }
+  if(!tout.length) l.innerHTML = '<span class="st-etat">pile vide</span>';
+}
+
+// ── LA MINIATURE DESCEND VERS SON VERDICT ────────────────────────────────────────────────
+// Sans ce trajet, la vignette du bas change sans qu'on sache d'où elle vient : on voit un
+// résultat apparaître, pas une carte être lue. Le geste raconte le lien, et il dure moins
+// d'une demi-seconde — assez pour être suivi, trop peu pour retenir.
+function stVoler(photo, coins){
+  const cv = $('st-overlay'), cible = $('st-photo');
+  if(!cv || !cible || !stTaille || !coins || ST_SOBRE) return;
+  const el = $('st-vol'); if(!el) return;
+  const T = stTaille, r = cv.getBoundingClientRect();
+  const cle = ['tl','tr','br','bl'];
+  const xs = cle.map(k => r.left + T.ix + coins[k][0]*T.iw);
+  const ys = cle.map(k => r.top  + T.iy + coins[k][1]*T.ih);
+  const x0 = Math.min(...xs), y0 = Math.min(...ys);
+  const w = Math.max(...xs) - x0, h = Math.max(...ys) - y0;
+  const d = cible.getBoundingClientRect();
+  if(!w || !h || !d.width) return;
+
+  el.hidden = false;
+  el.style.backgroundImage = 'url(' + photo + ')';
+  el.style.left = x0 + 'px'; el.style.top = y0 + 'px';
+  el.style.width = w + 'px'; el.style.height = h + 'px';
+  const dx = d.left + d.width/2 - (x0 + w/2);
+  const dy = d.top + d.height/2 - (y0 + h/2);
+  const ech = Math.min(d.width/w, d.height/h);
+  const anim = el.animate([
+    { transform:'translate(0,0) scale(1)', opacity:1, borderRadius:'7px' },
+    { transform:'translate(' + dx*0.5 + 'px,' + dy*0.42 + 'px) scale(' + (0.5+ech*0.5) + ')',
+      opacity:.95, offset:.55 },
+    { transform:'translate(' + dx + 'px,' + dy + 'px) scale(' + ech + ')', opacity:.25 },
+  ], { duration: 460, easing:'cubic-bezier(.45,0,.2,1)' });
+  anim.onfinish = () => {
+    el.hidden = true; el.style.backgroundImage = '';
+    cible.classList.remove('pose'); void cible.offsetWidth; cible.classList.add('pose');
+  };
+}
+
+// ── L'ALERTE FRANCHE ─────────────────────────────────────────────────────────────────────
+// Uniquement quand l'identification n'a rien trouvé — moins de quinze inliers. Une carte
+// simplement douteuse ne la déclenche pas : elle part dans « à confirmer » et le scan
+// enchaîne, ce qui est tout l'intérêt de la file. Ici au contraire, continuer sans rien dire
+// laisserait accumuler des cartes illisibles qu'il faudrait toutes reprendre à la fin.
+// Le scan est suspendu tant qu'elle est là : sinon la même carte, toujours devant
+// l'objectif, redéclencherait aussitôt et l'alerte reviendrait en boucle.
+let stAlerteEnCours = false;
+function stAlerter(entree){
+  const a = $('st-alerte'); if(!a) return;
+  stAlerteEnCours = true;
+  ST.boucle = false;
+  $('st-alerte-txt').textContent = entree && entree.nettete < 300
+    ? 'Image trop floue. Reprends la photo : tiens la carte immobile un instant.'
+    : 'Reprends la photo : rapproche la carte, pose-la à plat et évite les reflets.';
+  a.hidden = false;
+}
+function stFermerAlerte(reprendre){
+  const a = $('st-alerte'); if(a) a.hidden = true;
+  stAlerteEnCours = false;
+  // « Reprendre » retire la carte ratée de la pile : c'est la même qu'on va rescanner, et
+  // la garder ferait un doublon dont personne ne veut.
+  if(reprendre && ST.dernier){
+    const i = ST.aConfirmer.indexOf(ST.dernier);
+    if(i >= 0) ST.aConfirmer.splice(i, 1);
+    ST.dernier = null;
+    stRendreDernier(); stRendreCompteurs();
+  }
+  // Le verrou est rouvert d'office : la carte est restée devant l'objectif pendant qu'on
+  // lisait, donc rien n'a pu signaler son retrait.
+  ST.retiree = true; ST.coinsCapture = null;
+  ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
+  if(ST.flux && !ST.boucle){ ST.boucle = true; stTourner(); }
+  stEtat(reprendre ? 'présente à nouveau la carte' : 'carte suivante');
+  stEtatTeinte(null);
 }
 
 // ── Seconde analyse, une fois l'objectif éteint ──────────────────────────────────────────
@@ -14731,7 +15119,8 @@ function stEnvoyerAuLot(){
   for(const c of [...ST.pile, ...ST.aConfirmer]){
     try{ pushToQueue(c.photo, null, 'scanner-test'); n++; }catch(e){}
   }
-  ST.pile = []; ST.aConfirmer = []; ST.dernier = null;
+  ST.pile = []; ST.aConfirmer = []; ST.dernier = null; stPileValeur = 0;
+  const vue = $('st-pile-vue'); if(vue) vue.hidden = true;
   stRendreDernier(); stRendreCompteurs();
   stEnvoyerBilan();
   stEtat(n + ' carte(s) envoyée(s) dans « À vérifier »');
@@ -14776,6 +15165,28 @@ $('st-quitter')?.addEventListener('click', stFermer);
 $('st-zoom-moins')?.addEventListener('click', ()=> stZoomer(-1));
 $('st-zoom-plus')?.addEventListener('click', ()=> stZoomer(1));
 $('st-objectif-liste')?.addEventListener('change', function(){ stChoisirObjectif(this.value); });
+$('st-zoom-raz')?.addEventListener('click', async function(){
+  try{ localStorage.removeItem('pokescanZoomTest'); }catch(e){}
+  if(!ST.piste || !stZoomCaps){ stEtat('zoom oublié — rouvre la caméra'); return; }
+  const cible = stZoomCaps.max / Math.max(stZoomCaps.min, 1e-4) >= 5
+    ? Math.min(stZoomCaps.max, stZoomCaps.min * 1.7) : stZoomCaps.min;
+  try{
+    await ST.piste.applyConstraints({advanced:[{zoom: cible}]});
+    stZoomDemande = cible; stZoomOrigine = 'déduit';
+    stMajZoom(); stReleverProfil();
+    stEtat('zoom remis à ×' + cible.toFixed(1));
+  }catch(e){ stEtat('zoom refusé : ' + e.message); }
+});
+
+// ── La pile, l'alerte ───────────────────────────────────────────────────────────────────
+$('st-pile')?.addEventListener('click', function(){
+  const v = $('st-pile-vue'); if(!v) return;
+  v.hidden = !v.hidden;
+  if(!v.hidden) stRendrePileVue();
+});
+$('st-pile-fermer')?.addEventListener('click', ()=>{ $('st-pile-vue').hidden = true; });
+$('st-alerte-reprendre')?.addEventListener('click', ()=> stFermerAlerte(true));
+$('st-alerte-passer')?.addEventListener('click', ()=> stFermerAlerte(false));
 
 // Filet : attendre la seconde analyse avant d'envoyer le bilan le rend plus juste, mais
 // ouvre une fenêtre de quelques secondes où quitter l'application perdrait la salve entière.
