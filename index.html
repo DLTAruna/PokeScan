@@ -6042,7 +6042,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 57;
+const VERSION_APP = 58;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13560,6 +13560,7 @@ async function stOuvrir(){
 
 function stFermer(){
   ST.boucle = false;
+  stEnvoyerBilan();   // fin de session : c'est ici qu'on sait ce qu'elle a valu
   try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
   ST.flux = null; ST.piste = null;
   const v = $('st-video'); if(v) v.srcObject = null;
@@ -13708,27 +13709,33 @@ function stEnvoyerAuLot(){
   for(const c of ST.cartes){
     try{ pushToQueue(c.photo, null, 'scanner-test'); n++; }catch(e){}
   }
-  // Un seul envoi, après coup, avec le bilan de la session entière. Le scanner principal
-  // faisait une requête PAR CARTE, caméra ouverte — c'est précisément ce qu'on ne refait pas.
-  try{
-    const j = ST.journal;
-    if(j.length && window.SCAN_V2 && SCAN_V2.relayV2){
-      const t = j.map(x => x.ms).sort((p,q)=>p-q);
-      SCAN_V2.relayV2({ fichier:'scanner-test', categorie:'session', conf:'session',
-        predit:'', fiabilite:0, inliers:0, marge:0, ocrLance:false, T:{}, v:VERSION_APP,
-        moteur:(SCAN_V2.moteurV2 && SCAN_V2.moteurV2()) || '?',
-        ms: t[t.length>>1],
-        nCartes: j.length,
-        gardees: j.filter(x=>x.garde).length,
-        rebuts: j.filter(x=>x.categorie==='rebut').length,
-        msMin: t[0], msMax: t[t.length-1],
-        detail: j.slice(0, 40) });
-    }
-  }catch(e){}
-  ST.journal = [];
+  stEnvoyerBilan();
   ST.cartes = [];
   stRendreListe();
   stEtat(n + ' carte(s) envoyée(s) dans « À vérifier »');
+}
+
+// ⚠️ LE BILAN NE DOIT PAS DÉPENDRE D'UN BOUTON. Première version : il ne partait qu'en
+// pressant « Envoyer », que Nikos n'a aucune raison de presser s'il ne veut pas verser ses
+// cartes au lot. Résultat, sa salve de test n'a rien laissé et je me retrouve sans le
+// chiffre que j'avais justement demandé. Il part maintenant à la fermeture de la caméra,
+// qui est la vraie fin d'une session — et l'envoi vide le journal, donc jamais de doublon.
+function stEnvoyerBilan(){
+  try{
+    const j = ST.journal;
+    if(!j.length || !window.SCAN_V2 || !SCAN_V2.relayV2) return;
+    const t = j.map(x => x.ms).sort((p,q)=>p-q);
+    SCAN_V2.relayV2({ fichier:'scanner-test', categorie:'session', conf:'session',
+      predit:'', fiabilite:0, inliers:0, marge:0, ocrLance:false, T:{}, v:VERSION_APP,
+      moteur:(SCAN_V2.moteurV2 && SCAN_V2.moteurV2()) || '?',
+      ms: t[t.length>>1],
+      nCartes: j.length,
+      gardees: j.filter(x=>x.garde).length,
+      rebuts: j.filter(x=>x.categorie==='rebut').length,
+      msMin: t[0], msMax: t[t.length-1],
+      detail: j.slice(0, 40) });
+  }catch(e){}
+  ST.journal = [];
 }
 
 
