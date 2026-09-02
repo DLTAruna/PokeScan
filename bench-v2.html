@@ -1650,6 +1650,18 @@ const GESTES = {
 
   'de loin': n => Array.from({length:n}, () => ({taille:0.42, rot:3, dx:0.03, dy:0, flou:0.6, incl:10, pitch:7})),
 
+  // ⚠️ LE CAS QUE LE BANC NE COUVRAIT PAS. « de loin » est à 42 % de hauteur d'image, or le
+  // rattrapage central visait des cartes à 22-30 % — j'ai donc jugé son rendement (une
+  // présentation sur quarante-deux) sur des scènes qui ne le sollicitaient jamais, et je
+  // l'ai écrit à l'époque sans en tirer la conséquence. Nikos décrit précisément ce cas :
+  // « vise une carte » affiché plusieurs secondes, c'est-à-dire le détecteur qui ne voit
+  // rien parce que la carte est trop petite dans le cadre.
+  'de très loin': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.28 + 0.02*Math.sin(i/2), rot: 4, dx: 0.04, dy: 0.02, flou: 0.7, incl: 9, pitch: 6 })),
+
+  'bras tendu': n => Array.from({length:n}, (_,i) => ({
+    taille: 0.22, rot: 6, dx: 0.06*Math.sin(i/3), dy: 0.03, flou: 0.9, incl: 12, pitch: 8 })),
+
   // ── Les conditions hostiles, celles qui font qu'un outil marche « sauf quand ».
   'sous pochette': n => Array.from({length:n}, (_,i) => ({
     taille:0.66, rot:6, dx:0.02, dy:0.01, flou:0.5, incl:14, pitch:9,
