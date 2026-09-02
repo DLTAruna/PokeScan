@@ -4740,9 +4740,10 @@
         <b id="st-nom"></b>
         <span id="st-detail"></span>
       </div>
+      <!-- Plus de « Garder / Ignorer » : la carte est rangée d'office et le scan enchaîne.
+           Ne reste qu'une sortie de secours, pour la carte scannée par erreur. -->
       <div class="st-verdict">
-        <button class="btn-gold" id="st-garder">Garder</button>
-        <button id="st-jeter">Ignorer</button>
+        <button id="st-retirer">Retirer</button>
       </div>
     </div>
 
@@ -6127,7 +6128,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 70;
+const VERSION_APP = 71;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13598,13 +13599,15 @@ const ST = {
   flux:null, piste:null, boucle:false, occupe:false,
   presentDepuis:0, streak:0, dernierCoins:null, absence:0,
   retiree:true, coinsCapture:null,
-  cartes:[],            // ce que la session a identifié, en mémoire et nulle part ailleurs
+  pile:[],              // cartes identifiées sans doute
+  aConfirmer:[],        // cartes douteuses, reprises à la fermeture de la caméra
+  dernier:null,         // la dernière rangée, affichée sous l'aperçu
+  cartes:[],            // conservé : c'est lui que lit l'envoi vers « À vérifier »
   // Trace de CHAQUE identification, gardée ou non. Elle ne part qu'au moment de l'envoi,
   // jamais pendant qu'on scanne : c'est ce qui la rend acceptable ici. Sans elle je suis
   // aveugle, et les décisions qui suivent — quelle pièce remettre, à quel prix — se
   // reprendraient au juger.
   journal:[],
-  enAttente:null,       // carte identifiée, en attente du verdict de l'utilisateur
 };
 // Mêmes valeurs que le banc, délibérément : c'est la configuration qui tournait à 1304 ms.
 const ST_SCORE = 0.35, ST_SCORE_STRICT = 0.5, ST_BOUGE = 0.030;
@@ -13621,6 +13624,10 @@ const ST_DOUCE = 1200, ST_FRANCHE = 2500;
 // 67 % sur le geste bras tendu) sans jamais réduire la vue au point qu'un fragment y passe
 // pour un tout.
 const ST_RECADRES = [0.55];
+// L'OCR de départage coûte jusqu'à trois secondes et ne sert qu'à trancher une égalité. Or
+// une égalité EST un doute : pendant le scan on ne tranche pas, on range dans « à confirmer »
+// et on enchaîne. Il retrouve sa fonction à la seconde analyse, quand plus rien ne presse.
+const ST_OCR_NORMAL = 25, ST_OCR_MS_NORMAL = 1800;
 
 
 // ── OBJECTIF : montrer ce que l'appareil déclare, et laisser la main ──────────────────────
@@ -13708,6 +13715,8 @@ async function stOuvrir(){
     stEtat('préparation du moteur d’identification…');
     try{ window.relancerInitV2 && window.relancerInitV2(); }catch(e){}
   }
+  // OCR coupé pour la durée du scan : voir ST_OCR_NORMAL.
+  try{ SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: 99999, OCR_ORB_MS_MAX: 0 }); }catch(e){}
   ST.boucle = true;
   ST.retiree = true; ST.coinsCapture = null; ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
   stOublierMeilleure();
@@ -13718,7 +13727,10 @@ async function stOuvrir(){
 function stFermer(){
   ST.boucle = false;
   stOublierMeilleure();
+  stArreterBalayage();
   stPlein(false);
+  // L'objectif est éteint : la machine n'a plus qu'à reprendre les cartes douteuses.
+  stSecondeAnalyse();
   stEnvoyerBilan();   // fin de session : c'est ici qu'on sait ce qu'elle a valu
   try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
   ST.flux = null; ST.piste = null;
@@ -13840,6 +13852,101 @@ const ST_GUIDE_H = 0.45;
 // entre 89 et 94 %.
 const ST_TROP_PRES = 0.60, ST_TROP_LOIN = 0.26;
 
+
+// ── LE CADRE SUIT LA CARTE AU LIEU DE SAUTER ─────────────────────────────────────────────
+// Le tracé était reposé brutalement à chaque détection, soit dix à seize fois par seconde,
+// et les coins du détecteur bougent toujours un peu même sur une carte immobile — d'où un
+// cadre qui vibre. On interpole vers la cible : le tracé rejoint la détection en quelques
+// images au lieu d'y sauter. Purement visuel, aucune conséquence sur ce qui est capturé —
+// c'est `d.corners` qui sert à la capture, jamais le tracé.
+let stCoinsAffiches = null;
+const ST_SUIVI = 0.35;   // part du chemin parcourue par image : 0,35 rejoint en ~5 images
+
+function stLisserCoins(cible){
+  if(!cible){ stCoinsAffiches = null; return null; }
+  if(!stCoinsAffiches){ stCoinsAffiches = JSON.parse(JSON.stringify(cible)); return stCoinsAffiches; }
+  // Un saut franc — autre carte, ou détection qui a accroché ailleurs — ne se lisse pas :
+  // suivre doucement donnerait un cadre qui traverse l'écran en glissant, ce qui se lit
+  // comme un bug. Au-delà d'un cinquième d'image, on repose directement.
+  let saut = 0;
+  for(const k of ['tl','tr','br','bl'])
+    saut = Math.max(saut, Math.hypot(cible[k][0]-stCoinsAffiches[k][0], cible[k][1]-stCoinsAffiches[k][1]));
+  if(saut > 0.2){ stCoinsAffiches = JSON.parse(JSON.stringify(cible)); return stCoinsAffiches; }
+  for(const k of ['tl','tr','br','bl'])
+    for(let i = 0; i < 2; i++)
+      stCoinsAffiches[k][i] += (cible[k][i] - stCoinsAffiches[k][i]) * ST_SUIVI;
+  return stCoinsAffiches;
+}
+
+// ── BALAYAGE D'ANALYSE ───────────────────────────────────────────────────────────────────
+// Pendant l'identification, une ligne verte parcourt la carte de gauche à droite. Elle ne
+// mesure rien : elle dit que la machine travaille, sur le seul moment où l'utilisateur n'a
+// aucun retour — entre le déclic et le verdict, une seconde environ. Sans elle, ce temps se
+// lit comme un blocage, ce que Nikos a signalé plusieurs fois sur le scanner principal.
+let stBalayageDepuis = 0, stBalayageQuad = null, stBalayageRAF = 0;
+
+function stDemarrerBalayage(coins){
+  stBalayageQuad = coins ? JSON.parse(JSON.stringify(coins)) : null;
+  stBalayageDepuis = performance.now();
+  if(!stBalayageRAF) stBalayageRAF = requestAnimationFrame(stPeindreBalayage);
+}
+function stArreterBalayage(){
+  stBalayageQuad = null;
+  if(stBalayageRAF){ cancelAnimationFrame(stBalayageRAF); stBalayageRAF = 0; }
+}
+
+function stPeindreBalayage(){
+  stBalayageRAF = 0;
+  const cv = $('st-overlay'), v = $('st-video');
+  if(!stBalayageQuad || !cv || !v) return;
+  const g = cv.getContext('2d');
+  const vw = v.videoWidth || cv.width, vh = v.videoHeight || cv.height;
+  const ech = Math.min(cv.width / vw, cv.height / vh);
+  const iw = vw*ech, ih = vh*ech, ix = (cv.width-iw)/2, iy = (cv.height-ih)/2;
+  const P = k => [ix + stBalayageQuad[k][0]*iw, iy + stBalayageQuad[k][1]*ih];
+  const tl = P('tl'), tr = P('tr'), br = P('br'), bl = P('bl');
+
+  g.clearRect(0, 0, cv.width, cv.height);
+
+  // Le contour reste, en vert : c'est lui qui rattache le balayage à la carte.
+  g.strokeStyle = 'rgba(63,185,80,.9)'; g.lineWidth = 3; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(tl[0],tl[1]); g.lineTo(tr[0],tr[1]);
+  g.lineTo(br[0],br[1]); g.lineTo(bl[0],bl[1]); g.closePath(); g.stroke();
+
+  // La ligne balaie de gauche à droite en interpolant entre les DEUX BORDS de la carte :
+  // elle suit donc la perspective et l'inclinaison, au lieu d'être une barre verticale
+  // posée par-dessus. C'est ce détail qui la fait appartenir à la scène.
+  const T = 1100;   // un aller par seconde environ, la durée d'une identification
+  const t = ((performance.now() - stBalayageDepuis) % T) / T;
+  const h = (a,b,k) => [a[0]+(b[0]-a[0])*k, a[1]+(b[1]-a[1])*k];
+  const haut = h(tl, tr, t), bas = h(bl, br, t);
+
+  g.save();
+  // Traînée : un dégradé perpendiculaire au balayage, qui s'estompe derrière la ligne.
+  const larg = Math.hypot(tr[0]-tl[0], tr[1]-tl[1]) * 0.16;
+  const dir = [(tr[0]-tl[0]), (tr[1]-tl[1])];
+  const norme = Math.hypot(dir[0], dir[1]) || 1;
+  const ux = dir[0]/norme, uy = dir[1]/norme;
+  const grd = g.createLinearGradient(haut[0]-ux*larg, haut[1]-uy*larg, haut[0], haut[1]);
+  grd.addColorStop(0, 'rgba(63,185,80,0)');
+  grd.addColorStop(1, 'rgba(63,185,80,.30)');
+  g.beginPath();
+  g.moveTo(haut[0]-ux*larg, haut[1]-uy*larg); g.lineTo(haut[0], haut[1]);
+  g.lineTo(bas[0], bas[1]); g.lineTo(bas[0]-ux*larg, bas[1]-uy*larg);
+  g.closePath();
+  g.clip();
+  g.fillStyle = grd;
+  g.fillRect(0, 0, cv.width, cv.height);
+  g.restore();
+
+  g.strokeStyle = 'rgba(140,255,160,.95)'; g.lineWidth = 2.5;
+  g.shadowColor = 'rgba(63,185,80,.9)'; g.shadowBlur = 12;
+  g.beginPath(); g.moveTo(haut[0], haut[1]); g.lineTo(bas[0], bas[1]); g.stroke();
+  g.shadowBlur = 0;
+
+  stBalayageRAF = requestAnimationFrame(stPeindreBalayage);
+}
+
 function stDessiner(coins, couleur){
   const cv = $('st-overlay'), v = $('st-video');
   if(!cv || !v) return;
@@ -13913,6 +14020,7 @@ function stDessiner(coins, couleur){
     g.stroke();
   }
 
+  coins = stLisserCoins(coins);
   if(!coins) return;
   g.strokeStyle = couleur; g.lineWidth = 3; g.lineJoin = 'round';
   g.beginPath();
@@ -13977,7 +14085,7 @@ async function stTourner(){
         stDessiner(null);
         ST.streak = 0; ST.presentDepuis = 0; ST.dernierCoins = null;
         if(++ST.absence >= 2){ ST.retiree = true; stOublierMeilleure(); }
-        stEtat(ST.enAttente ? 'valide la carte ci-dessous' : 'vise une carte');
+        stEtat('vise une carte');
       }else{
         ST.absence = 0;
         if(!ST.presentDepuis) ST.presentDepuis = Date.now();
@@ -13996,7 +14104,7 @@ async function stTourner(){
         // plus puisqu'elle est déjà en mémoire.
         stRetenirSiPlusNette(v, d.corners);
         stDessiner(d.corners, stable ? '#3fb950' : '#d29922');
-        if(!ST.enAttente && ST.retiree && d.score >= seuilScore && stable){
+        if(ST.retiree && d.score >= seuilScore && stable){
           ST.streak = 0; ST.presentDepuis = 0;
           await stCapturer(d.corners, v);
         }else{
@@ -14011,8 +14119,7 @@ async function stTourner(){
           // exactement ce qui a fait tirer le dernier recours dans le vide. D'où le repère
           // visuel, qui lui n'a pas besoin qu'on ait détecté quoi que ce soit pour renseigner.
           const aire = stAire(d.corners);
-          stEtat(ST.enAttente ? 'valide la carte ci-dessous'
-               : !ST.retiree ? 'carte déjà lue — retire-la ou déplace-la'
+          stEtat(!ST.retiree ? 'carte déjà lue — retire-la ou déplace-la'
                : aire < 0.0484 ? 'trop loin — rapproche la carte'
                : aire > 0.258 ? 'trop près — éloigne un peu'
                : stable ? 'prêt' : 'stabilise…');
@@ -14026,6 +14133,7 @@ async function stTourner(){
 async function stCapturer(coins, v){
   ST.occupe = true;
   stEtat('identification…');
+  stDemarrerBalayage(coins);
   const t0 = performance.now();
   try{
     // ── ON IDENTIFIE LA PLUS NETTE, PAS CELLE DE L'INSTANT ────────────────────────────
@@ -14046,65 +14154,156 @@ async function stCapturer(coins, v){
     const ms = Math.round(performance.now() - t0);
     if(navigator.vibrate) navigator.vibrate(35);
     ST.retiree = false; ST.coinsCapture = coins;
-    if(res && res.pick){
-      ST.enAttente = { carte: res.pick, fiabilite: res.fiabilite, categorie: res.categorie,
-                       inliers: res.inliers, ms, nettete: netteteUtilisee,
-                       photo: cv.toDataURL('image/jpeg', 0.7) };
-    }else{
-      ST.enAttente = { carte: null, fiabilite: 0, categorie: 'rebut', inliers: res ? res.inliers : 0,
-                       ms, photo: cv.toDataURL('image/jpeg', 0.7) };
-    }
-    stRendreAttente();
+    // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
+    const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee);
+    stEtat(e.categorie === 'sure'
+      ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
+      : '⚠ doute — mise de côté, carte suivante');
   }catch(e){ stEtat('identification : ' + e.message); }
-  finally{ ST.occupe = false; }
+  finally{ stArreterBalayage(); ST.occupe = false; }
 }
 
-function stRendreAttente(){
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// DEUX PILES, ET ON NE S'ARRÊTE JAMAIS
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Jusqu'ici chaque carte attendait un « Garder » ou un « Ignorer » : le scan s'interrompait
+// à chaque fois, et le geste naturel — faire défiler un paquet — était impossible. Nikos
+// demande l'inverse, et il a raison : un premier diagnostic rapide, la vignette, et on
+// enchaîne.
+//   • résultat sûr   → pile « scannées », rien à faire
+//   • doute          → on le DIT, on ARRÊTE de chercher, et la carte part dans « à confirmer »
+// Le doute ne se creuse pas caméra ouverte. Une seconde analyse, plus patiente, reprend ces
+// cartes une fois l'objectif éteint — quand la machine n'a plus qu'elles à traiter.
+//
+// C'est aussi ce qui permet de couper l'OCR de départage pendant le scan : il coûte jusqu'à
+// trois secondes et ne sert qu'à trancher une égalité. Une égalité, précisément, c'est un
+// doute — donc quelque chose qu'on remet à plus tard.
+
+function stEstSur(res){
+  return !!(res && res.pick && res.categorie === 'sure');
+}
+
+// Rangement d'une carte identifiée. Rien n'attend l'utilisateur.
+function stRanger(res, photo, ms, nettete){
+  const entree = { carte: res && res.pick ? res.pick : null,
+                   fiabilite: res ? res.fiabilite : 0,
+                   categorie: res ? res.categorie : 'rebut',
+                   inliers: res ? res.inliers : 0,
+                   ms, nettete, photo, at: Date.now() };
+  if(stEstSur(res)) ST.pile.push(entree);
+  else ST.aConfirmer.push(entree);
+  // La trace de session se remplit ici : c'est le seul passage obligé depuis que la
+  // validation à la main a disparu du scan.
+  ST.journal.push({ms, fiabilite:entree.fiabilite, categorie:entree.categorie,
+                   inliers:entree.inliers, nettete, garde:stEstSur(res)});
+  ST.dernier = entree;
+  stRendreDernier();
+  stRendreCompteurs();
+  return entree;
+}
+
+function stRendreDernier(){
   const z = $('st-resultat'); if(!z) return;
-  const a = ST.enAttente;
+  const a = ST.dernier;
   if(!a){ z.hidden = true; return; }
   z.hidden = false;
   $('st-photo').src = a.photo;
+  const sur = a.categorie === 'sure' && a.carte;
   $('st-nom').textContent = a.carte ? (a.carte.name || a.carte.cle) : 'Non reconnue';
-  $('st-detail').textContent = a.carte
-    ? [a.carte.localId ? '#' + a.carte.localId : null, a.fiabilite + ' %',
-       a.inliers + ' inliers', a.ms + ' ms'].filter(Boolean).join(' · ')
-    : a.inliers + ' inliers · ' + a.ms + ' ms';
-  z.classList.toggle('rebut', !a.carte);
+  $('st-detail').textContent = (sur ? '' : '⚠ à confirmer · ')
+    + [a.carte && a.carte.localId ? '#' + a.carte.localId : null,
+       a.fiabilite + ' %', a.inliers + ' inliers', a.ms + ' ms'].filter(Boolean).join(' · ');
+  z.classList.toggle('rebut', !sur);
 }
 
-function stValider(garder){
-  const a = ST.enAttente;
-  if(a) ST.journal.push({ms:a.ms, fiabilite:a.fiabilite, categorie:a.categorie,
-                         inliers:a.inliers, nettete:a.nettete, garde:!!(garder && a.carte)});
-  if(a && garder && a.carte) ST.cartes.push(a);
-  ST.enAttente = null;
-  stRendreAttente();
-  stRendreListe();
-  stEtat('carte suivante');
-}
-
-function stRendreListe(){
+function stRendreCompteurs(){
   const el = $('st-liste'); if(!el) return;
-  el.textContent = ST.cartes.length
-    ? ST.cartes.length + ' carte(s) retenue(s) · médiane ' + stMediane() + ' ms'
+  const n = ST.pile.length, c = ST.aConfirmer.length;
+  el.textContent = (n + c)
+    ? n + ' scannée(s)' + (c ? ' · ' + c + ' à confirmer' : '')
+      + (ST.pile.length ? ' · médiane ' + stMediane() + ' ms' : '')
     : '';
-  $('st-envoyer').hidden = !ST.cartes.length;
+  const b = $('st-envoyer');
+  if(b) b.hidden = !(n + c);
 }
+
+// ── Seconde analyse, une fois l'objectif éteint ──────────────────────────────────────────
+// Elle reprend les cartes douteuses avec l'OCR de départage rendu à sa fonction, et sans
+// contrainte de temps réel puisque plus rien ne dispute la machine. Une carte par tour, en
+// rendant la main entre chaque : l'utilisateur vient de revenir à ses listes, l'interface ne
+// doit pas se figer.
+let stSecondeEnCours = false;
+async function stSecondeAnalyse(){
+  if(stSecondeEnCours || !ST.aConfirmer.length) return;
+  stSecondeEnCours = true;
+  const total = ST.aConfirmer.length;
+  stEtat('seconde analyse : ' + total + ' carte(s) à confirmer…');
+  try{
+    SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: ST_OCR_NORMAL, OCR_ORB_MS_MAX: ST_OCR_MS_NORMAL });
+    const restants = [];
+    for(let i = 0; i < ST.aConfirmer.length; i++){
+      const e = ST.aConfirmer[i];
+      stEtat('seconde analyse ' + (i+1) + '/' + total + '…');
+      try{
+        const img = await new Promise((res, rej) => {
+          const im = new Image(); im.onload = ()=>res(im); im.onerror = rej; im.src = e.photo; });
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        cv.getContext('2d').drawImage(img, 0, 0);
+        const res = await SCAN_V2.identifierV2(cv, {});
+        if(stEstSur(res)){
+          // Promue : elle rejoint les scannées avec son nouveau verdict.
+          ST.pile.push({...e, carte:res.pick, fiabilite:res.fiabilite,
+                        categorie:res.categorie, inliers:res.inliers, reprise:true});
+        }else{
+          // Toujours douteuse : on garde le MEILLEUR des deux verdicts plutôt que d'écraser
+          // le premier par un second qui ne vaut pas mieux.
+          restants.push(res && res.fiabilite > e.fiabilite
+            ? {...e, carte:res.pick||e.carte, fiabilite:res.fiabilite,
+               categorie:res.categorie, inliers:res.inliers, reprise:true}
+            : e);
+        }
+      }catch(err){ restants.push(e); }
+      await new Promise(r => setTimeout(r, 0));
+    }
+    const promues = ST.aConfirmer.length - restants.length;
+    ST.aConfirmer = restants;
+    stRendreCompteurs();
+    stEtat(promues
+      ? promues + ' carte(s) confirmée(s) à la seconde analyse · ' + restants.length + ' restante(s)'
+      : 'seconde analyse terminée · ' + restants.length + ' à confirmer à la main');
+  } finally { stSecondeEnCours = false; }
+}
+
+// Sortie de secours : la dernière rangée s'enlève de sa pile. Sans elle, une carte prise
+// par erreur — le dos d'une autre, un doublon — resterait sans recours.
+function stRetirerDernier(){
+  const a = ST.dernier;
+  if(!a) return;
+  for(const nom of ['pile','aConfirmer']){
+    const i = ST[nom].lastIndexOf(a);
+    if(i >= 0){ ST[nom].splice(i, 1); break; }
+  }
+  ST.dernier = null;
+  stRendreDernier(); stRendreCompteurs();
+  stEtat('carte retirée');
+}
+
 function stMediane(){
-  const t = ST.cartes.map(c => c.ms).sort((a,b)=>a-b);
+  const t = [...ST.pile, ...ST.aConfirmer].map(c => c.ms).sort((a,b)=>a-b);
   return t.length ? t[t.length>>1] : 0;
 }
 
 // Le seul pont vers l'application : à la demande, et jamais pendant qu'on scanne.
 function stEnvoyerAuLot(){
   let n = 0;
-  for(const c of ST.cartes){
+  for(const c of [...ST.pile, ...ST.aConfirmer]){
     try{ pushToQueue(c.photo, null, 'scanner-test'); n++; }catch(e){}
   }
+  ST.pile = []; ST.aConfirmer = []; ST.dernier = null;
+  stRendreDernier(); stRendreCompteurs();
   stEnvoyerBilan();
-  ST.cartes = [];
-  stRendreListe();
   stEtat(n + ' carte(s) envoyée(s) dans « À vérifier »');
 }
 
@@ -14135,8 +14334,7 @@ function stEnvoyerBilan(){
 // Branchements du scanner test. Isolés ici : rien de ce bloc ne doit toucher au reste.
 $('st-ouvrir')?.addEventListener('click', stOuvrir);
 $('st-fermer')?.addEventListener('click', stFermer);
-$('st-garder')?.addEventListener('click', ()=> stValider(true));
-$('st-jeter')?.addEventListener('click', ()=> stValider(false));
+$('st-retirer')?.addEventListener('click', stRetirerDernier);
 $('st-envoyer')?.addEventListener('click', stEnvoyerAuLot);
 $('st-quitter')?.addEventListener('click', stFermer);
 $('st-zoom-moins')?.addEventListener('click', ()=> stZoomer(-1));
