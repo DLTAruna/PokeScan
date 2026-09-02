@@ -802,9 +802,15 @@
     background:rgba(255,255,255,.07); color:#e6edf3; border:1px solid rgba(255,255,255,.16);
     font-size:12px;
   }
-  .st-objectif{ display:flex; align-items:center; justify-content:center; gap:10px;
-    margin:0 auto 14px; font-family:ui-monospace,monospace; font-size:12px; color:#9fb0c0; }
+  .st-objectif{ display:flex; align-items:center; justify-content:center; gap:8px;
+    flex-wrap:nowrap; margin:0 auto 14px; font-family:ui-monospace,monospace;
+    font-size:12px; color:#9fb0c0; padding:0 8px; }
+  #st-zoom-txt{ white-space:nowrap; min-width:34px; text-align:center; }
   .st-objectif[hidden]{ display:none; }
+  #st-objectif-liste{ background:rgba(13,17,23,.8); color:#e6edf3; font-size:11px;
+    border:1px solid rgba(255,255,255,.2); border-radius:8px; padding:5px 6px;
+    max-width:120px; flex:0 1 auto; }
+  #st-objectif-note{ font-size:10.5px; color:#7d8b99; max-width:180px; line-height:1.25; }
   .st-objectif button{ width:34px; height:34px; border-radius:9px; cursor:pointer; font-size:16px;
     border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
   /* ── Plein écran : l'aperçu prend tout, le verdict se pose par-dessus ────────────────── */
@@ -4730,6 +4736,8 @@
       <button id="st-zoom-moins" type="button">−</button>
       <span id="st-zoom-txt">objectif —</span>
       <button id="st-zoom-plus" type="button">+</button>
+      <select id="st-objectif-liste" hidden></select>
+      <span id="st-objectif-note" hidden></span>
     </div>
 
     <button id="st-quitter" type="button" aria-label="Quitter le plein écran">✕</button>
@@ -6128,7 +6136,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 73;
+const VERSION_APP = 74;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13648,8 +13656,9 @@ function stMajZoom(){
   bloc.hidden = false;
   let z = null;
   try{ z = ST.piste.getSettings ? ST.piste.getSettings().zoom : null; }catch(e){}
-  el.textContent = 'objectif ' + (z != null ? (+z).toFixed(2) : '?')
-    + '  (' + stZoomCaps.min + '–' + stZoomCaps.max + ')';
+  // Court : cette ligne partage sa place avec le sélecteur d'objectif, et un libellé qui
+  // passe à la ligne pousse le tout hors de l'écran sur un téléphone étroit.
+  el.textContent = '×' + (z != null ? (+z).toFixed(1) : '?');
 }
 
 async function stZoomer(sens){
@@ -13680,14 +13689,111 @@ function stPlein(actif){
 
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 
+
+// ── ÉPINGLER UN OBJECTIF ─────────────────────────────────────────────────────────────────
+// Nikos : « mon téléphone change sans cesse d'objectif ». C'est le comportement d'une caméra
+// LOGIQUE : le système en expose une seule, et décide lui-même de basculer entre grand-angle,
+// principal et macro selon la distance estimée et la lumière. Aucune API du navigateur ne
+// permet de le lui interdire — il n'existe pas de contrainte « ne change pas d'objectif ».
+//
+// Ce qui existe, en revanche : `enumerateDevices` liste parfois les objectifs PHYSIQUES
+// séparément, et demander explicitement l'un d'eux par son identifiant contourne la caméra
+// logique — donc ses bascules. Ça dépend de l'appareil et du navigateur : certains n'exposent
+// qu'une entrée arrière, auquel cas il n'y a rien à épingler et il faut le dire plutôt que de
+// laisser croire à un réglage inopérant.
+// D'où ce sélecteur : on montre ce que l'appareil déclare vraiment, on laisse choisir, et on
+// mémorise. Trente secondes sur le téléphone valent mieux qu'une supposition de plus.
+let stObjectifs = [], stObjectifChoisi = null;
+
+async function stListerObjectifs(){
+  try{
+    const tout = await navigator.mediaDevices.enumerateDevices();
+    // Les libellés ne sont renseignés qu'une fois l'autorisation accordée ; avant, tout est
+    // vide et le tri serait arbitraire.
+    stObjectifs = tout.filter(d => d.kind === 'videoinput'
+      && !/front|avant|user|selfie/i.test(d.label || ''));
+  }catch(e){ stObjectifs = []; }
+  return stObjectifs;
+}
+
+function stNomObjectif(d, i){
+  const l = (d.label || '').trim();
+  if(!l) return 'objectif ' + (i+1);
+  // Les libellés Android sont du genre « camera2 0, facing back ». On garde ce qui distingue.
+  return l.replace(/,?\s*facing (back|arrière)/i, '').replace(/^camera2?\s*/i, 'obj. ').slice(0, 22);
+}
+
+function stMajObjectifs(){
+  const sel = $('st-objectif-liste');
+  if(!sel) return;
+  if(stObjectifs.length < 2){
+    // Un seul objectif exposé : le dire franchement plutôt que d'afficher une liste à une
+    // entrée, qui laisserait croire qu'un choix est possible.
+    sel.hidden = true;
+    const n = $('st-objectif-note');
+    if(n){ n.hidden = false;
+      n.textContent = "un seul objectif exposé — les bascules sont pilotées par le système"; }
+    return;
+  }
+  const n = $('st-objectif-note'); if(n) n.hidden = true;
+  sel.hidden = false;
+  if(sel.dataset.rempli === String(stObjectifs.length)) return;
+  sel.dataset.rempli = String(stObjectifs.length);
+  sel.innerHTML = '';
+  stObjectifs.forEach((d, i) => {
+    const o = document.createElement('option');
+    o.value = d.deviceId; o.textContent = stNomObjectif(d, i);
+    sel.appendChild(o);
+  });
+  if(stObjectifChoisi) sel.value = stObjectifChoisi;
+}
+
+// Rouvrir la caméra sur l'objectif demandé. On ne peut pas changer d'objectif sur une piste
+// vivante : il faut refermer et redemander avec l'identifiant exact.
+async function stChoisirObjectif(deviceId){
+  stObjectifChoisi = deviceId;
+  try{ localStorage.setItem('pokescanObjectifTest', deviceId); }catch(e){}
+  if(!ST.flux) return;
+  const etaitPlein = document.body.classList.contains('st-plein');
+  stFermerFlux();
+  await stOuvrirFlux();
+  if(etaitPlein) stPlein(true);
+  stEtat('objectif changé');
+}
+
+// Ouverture du flux, isolée : changer d'objectif suppose de refermer et de redemander avec
+// l'identifiant exact — on ne bascule pas une piste vivante d'un objectif à l'autre.
+async function stOuvrirFlux(){
+  const memo = stObjectifChoisi || (()=>{ try{ return localStorage.getItem('pokescanObjectifTest'); }catch(e){ return null; } })();
+  const essais = memo
+    ? [{ deviceId:{exact:memo} }, { facingMode:{ideal:'environment'} }]   // l'épinglé d'abord, le générique en secours
+    : [{ facingMode:{ideal:'environment'} }];
+  for(const source of essais){
+    try{
+      ST.flux = await navigator.mediaDevices.getUserMedia({
+        video:{ ...source, width:{ideal:1920}, height:{ideal:1440},
+                advanced:[{focusMode:'continuous'}] }, audio:false });
+      stObjectifChoisi = memo || null;
+      // Les objectifs ne sont énumérables qu'une fois l'autorisation accordée : avant, les
+      // libellés sont vides et la liste inexploitable.
+      await stListerObjectifs(); stMajObjectifs();
+      return true;
+    }catch(e){ /* on retombe sur le générique */ }
+  }
+  stEtat('caméra refusée');
+  return false;
+}
+
+function stFermerFlux(){
+  try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
+  ST.flux = null; ST.piste = null;
+  const v = $('st-video'); if(v) v.srcObject = null;
+}
+
 async function stOuvrir(){
   if(ST.flux) return;
   stEtat('ouverture de la caméra…');
-  try{
-    ST.flux = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440},
-              advanced:[{focusMode:'continuous'}] }, audio:false });
-  }catch(e){ stEtat('caméra refusée : ' + e.message); return; }
+  if(!(await stOuvrirFlux())) return;
   const v = $('st-video');
   v.srcObject = ST.flux;
   await v.play().catch(()=>{});
@@ -13732,9 +13838,7 @@ function stFermer(){
   // L'objectif est éteint : la machine n'a plus qu'à reprendre les cartes douteuses.
   stSecondeAnalyse();
   stEnvoyerBilan();   // fin de session : c'est ici qu'on sait ce qu'elle a valu
-  try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
-  ST.flux = null; ST.piste = null;
-  const v = $('st-video'); if(v) v.srcObject = null;
+  stFermerFlux();
   stDessiner(null);
   stEtat('caméra fermée');
   $('st-ouvrir').hidden = false; $('st-fermer').hidden = true;
@@ -13824,28 +13928,18 @@ function stAire(c){
   return Math.abs(a)/2;
 }
 
-// ── HAUTEUR DU REPÈRE : 0,45, ET C'EST LE PLUS CONFORTABLE QUI GAGNE ────────────────────
-// Le 0,62 précédent venait d'un banc raisonnant en fractions d'image, où la réussite semblait
-// croître avec la taille de la carte. Le banc de cadrage, qui travaille en millimètres et en
-// distances réelles, dit tout autre chose. Sur trente cartes SPÉCIALES — full art, SAR, or,
-// c'est-à-dire celles sans bordure blanche, les plus dures pour un détecteur de contours :
-//
-//     10 cm (73 % de l'image)  détection 87 %   identification 87 %
-//     12 cm (61 %)                       77 %                  77 %   ← l'ancien repère
-//     14 cm (52 %)                       97 %                  97 %
-//     16 cm (46 %)                       90 %                  93 %
-//     18 cm (41 %)                       93 %                  97 %
-//     20 cm (37 %)                       97 %                  97 %
-//     30 cm (24 %)                       48 %                  93 % (rattrapage)
-//
-// La réussite ne croît PAS avec la proximité : elle plafonne entre 14 et 20 cm, et redescend
-// des deux côtés. Trop près, la carte touche presque les bords et le détecteur n'a plus de
-// fond où lire un contour — il cherche un document dans une scène, pas une texture plein
-// cadre. L'ancien repère pointait donc très exactement sur le creux de la courbe.
-// 0,45 place l'utilisateur vers seize à dix-huit centimètres : au milieu du plateau, à une
-// distance de bras naturelle, avec de la marge des deux côtés. Et le rattrapage tient
-// jusqu'à trente centimètres, donc dépasser le repère ne coûte rien.
-const ST_GUIDE_H = 0.45;
+// ── HAUTEUR DU REPÈRE : GÉNÉREUSE, PUISQUE PRÈS NE COÛTE PLUS RIEN ──────────────────────
+// Le repère était calé à 0,45 quand une borne haute interdisait encore d'approcher. Cette
+// borne est tombée en V.73, faute de preuve ; le repère n'a donc plus de raison d'être petit,
+// et Nikos le trouvait à juste titre riquiqui.
+// 0,75 correspond à une dizaine de centimètres, et la mesure y est bonne :
+//     73 % de l'image (10 cm)  94 %        52 % (14 cm)  94 %
+//     81 % ( 9 cm)             97 %        37 % (20 cm)  94 %
+// On évite en revanche la fourchette 0,61-0,67, seul creux relevé — 88 à 91 % — ce qui
+// interdisait justement de simplement « agrandir un peu » l'ancien repère.
+// Le plancher en pointillés reste à 0,26 : tout ce qui est entre les deux fonctionne, et les
+// équerres montrent seulement où l'on est le plus à l'aise.
+const ST_GUIDE_H = 0.75;
 // Bornes de la plage utile, tirées du banc de cadrage : au-delà de 0,60 de hauteur on est
 // trop près et la réussite retombe (87 % à douze centimètres) ; en deçà de 0,26 le détecteur
 // commence à ne plus rien voir. Entre les deux, de seize à trente centimètres, tout se tient
@@ -14403,6 +14497,7 @@ $('st-envoyer')?.addEventListener('click', stEnvoyerAuLot);
 $('st-quitter')?.addEventListener('click', stFermer);
 $('st-zoom-moins')?.addEventListener('click', ()=> stZoomer(-1));
 $('st-zoom-plus')?.addEventListener('click', ()=> stZoomer(1));
+$('st-objectif-liste')?.addEventListener('change', function(){ stChoisirObjectif(this.value); });
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
