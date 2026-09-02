@@ -805,6 +805,73 @@
   body.st-plein{ overflow:hidden; }
   body.st-plein .navbar{ display:none; }
   /* ═══════════════════════════════════════════════════════════════════════════════════
+     ONGLET XX — plein écran, et rien d'autre
+     ═══════════════════════════════════════════════════════════════════════════════════ */
+  .xx-cadre{ position:relative; width:100%; max-width:520px; margin:0 auto; background:#000;
+    border-radius:14px; overflow:hidden; aspect-ratio:3/4; max-height:56vh; }
+  /* « contain » comme au banc : on voit exactement le champ que le détecteur analyse. */
+  #xx-video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
+  #xx-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
+  .xx-etat{ text-align:center; color:#9fb0c0; font-size:13px; margin:10px 0; min-height:18px; }
+  .xx-actions{ display:flex; gap:10px; justify-content:center; margin:0 0 16px; }
+  .xx-actions button{ padding:10px 18px; border-radius:10px; cursor:pointer; font-size:14px;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
+  #section-xx{ padding-bottom:96px; }
+
+  /* La pile : décompte et valeur, qui montent à chaque carte. */
+  #xx-pile{ position:absolute; top:10px; right:10px; z-index:14;
+    display:flex; align-items:center; gap:8px; padding:6px 12px;
+    border-radius:999px; cursor:default; font-size:13px; color:#e6edf3;
+    border:1px solid rgba(255,255,255,.2); background:rgba(13,17,23,.85); }
+  #xx-pile[hidden]{ display:none; }
+  #xx-pile b{ font-variant-numeric:tabular-nums; font-size:14px; }
+  #xx-pile em{ font-style:normal; color:#8fe0a0; font-size:12px; font-variant-numeric:tabular-nums; }
+  #xx-pile em:empty{ display:none; }
+
+  /* L'identification, sous l'appareil photo. */
+  #xx-resultat{ position:absolute; left:8px; right:8px; bottom:8px; z-index:12;
+    display:flex; gap:11px; align-items:center; padding:9px 11px; border-radius:13px;
+    border:1px solid rgba(255,255,255,.14); background:rgba(19,24,31,.93);
+    box-shadow:0 6px 22px rgba(0,0,0,.45); }
+  #xx-resultat[hidden]{ display:none; }
+  #xx-photo{ width:48px; height:67px; object-fit:cover; border-radius:6px; flex:none;
+    background:#0a0a0a; }
+  .xx-infos{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+  .xx-infos b{ font-size:15px; color:#e6edf3;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .xx-infos span{ color:#9fb0c0; font-size:11.5px; font-family:ui-monospace,monospace; }
+  #xx-resultat.sure{ border-color:rgba(63,185,80,.5); }
+  #xx-resultat.sure .xx-infos b{ color:#8ce89b; }
+  #xx-resultat.rebut{ border-color:rgba(240,112,92,.55); }
+  #xx-resultat.rebut .xx-infos b{ color:#ff9d8b; }
+
+  #xx-quitter{ position:absolute; top:10px; left:10px; z-index:15;
+    width:36px; height:36px; border-radius:50%; cursor:pointer; display:none;
+    align-items:center; justify-content:center; font-size:16px;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#e6edf3; }
+
+  /* Plein écran dès que la caméra est ouverte. */
+  body.xx-plein{ overflow:hidden; }
+  body.xx-plein .navbar{ display:none; }
+  body.xx-plein .xx-cadre{
+    position:fixed; inset:0; z-index:300; width:100vw; max-width:none;
+    height:100vh; height:100dvh; max-height:none; aspect-ratio:auto; border-radius:0; margin:0;
+  }
+  body.xx-plein #xx-video, body.xx-plein #xx-overlay{
+    position:absolute; inset:0; width:100%; height:100%;
+    min-width:100vw; min-height:100vh;
+  }
+  body.xx-plein #xx-pile{ top:calc(10px + env(safe-area-inset-top)); }
+  body.xx-plein #xx-quitter{ display:flex; top:calc(10px + env(safe-area-inset-top)); }
+  body.xx-plein #xx-resultat{ bottom:calc(10px + env(safe-area-inset-bottom));
+    max-width:520px; margin:0 auto; }
+  body.xx-plein #xx-etat{
+    position:fixed; top:calc(14px + env(safe-area-inset-top)); left:60px; right:120px;
+    z-index:302; color:#e6edf3; text-shadow:0 1px 6px rgba(0,0,0,.9); margin:0;
+    pointer-events:none;
+  }
+
+  /* ═══════════════════════════════════════════════════════════════════════════════════
      SCANNER TEST — l'apparence
      ═══════════════════════════════════════════════════════════════════════════════════
      Le cadre ne prend que la moitié de la hauteur hors plein écran : tout l'intérêt de
@@ -4444,6 +4511,9 @@
   <button class="nav-item" data-tab="scantest">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.4" y="2.8" width="15.2" height="18.4" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="4.4" y="2.8" width="15.2" height="18.4" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M8.2 8.4h7.6M8.2 12h7.6M8.2 15.6h4.4" stroke="var(--t1)" stroke-width="1.7" opacity=".8"/></svg></span><span class="nav-lbl">Test</span>
   </button>
+  <button class="nav-item" data-tab="xx">
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.6" y="3.6" width="16.8" height="16.8" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.6" y="3.6" width="16.8" height="16.8" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M8.4 8.4l7.2 7.2M15.6 8.4l-7.2 7.2" stroke="var(--t1)" stroke-width="1.9"/></svg></span><span class="nav-lbl">XX</span>
+  </button>
   <button class="nav-item" data-mode="vendeur" data-tab="listes">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Listes</span>
   </button>
@@ -4786,6 +4856,43 @@
   <!-- ══ SCANNER TEST ══ Reprise à zéro : la boucle du banc, une extraction rapide, un
        cadre pour valider. Aucun état partagé avec le scanner principal — voir le bloc ST
        dans le script pour la raison chiffrée. -->
+  <!-- ═══════════════════════════════════════════════════════════════════════════════════
+       ONGLET XX — le scanner de bench-v2, porté tel quel
+       ═══════════════════════════════════════════════════════════════════════════════════
+       Demande de Nikos : reprendre le scanner du banc, SANS RIEN AJOUTER, sauf la pile avec
+       son prix et l'identification sous l'appareil photo. Caméra en plein écran.
+       Ce qui est repris à l'identique : la boucle et ses seuils, et surtout la capture —
+       nouvelle détection au moment du déclic, puis redressement projectif des quatre coins
+       par scanic, avec correction de rotation si la carte sort couchée.
+       Ce qui n'est PAS repris, parce que le banc ne l'a pas : mémoire de la plus nette,
+       garde-fou de forme, détecteur de reflet, verrou par signature, animations. C'est tout
+       l'intérêt de cet onglet — comparer sans mélanger. -->
+  <section class="section" id="section-xx">
+    <div class="xx-cadre">
+      <video id="xx-video" autoplay playsinline muted></video>
+      <canvas id="xx-overlay"></canvas>
+
+      <button id="xx-pile" type="button" hidden aria-label="Pile de la session">
+        <b id="xx-pile-n">0</b><em id="xx-pile-prix"></em>
+      </button>
+      <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
+
+      <div id="xx-resultat" hidden>
+        <img id="xx-photo" alt="">
+        <div class="xx-infos">
+          <b id="xx-nom"></b>
+          <span id="xx-detail"></span>
+        </div>
+      </div>
+    </div>
+
+    <p id="xx-etat" class="xx-etat">caméra fermée</p>
+    <div class="xx-actions">
+      <button class="btn-gold" id="xx-ouvrir">Ouvrir la caméra</button>
+      <button id="xx-fermer" hidden>Fermer</button>
+    </div>
+  </section>
+
   <section class="section" id="section-scantest">
     <h2>Scanner test</h2>
     <p class="hint">Reprise à zéro sur la boucle du banc. Rien d'autre : ni file, ni validation
@@ -6260,7 +6367,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 88;
+const VERSION_APP = 89;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -7091,6 +7198,9 @@ function activerOnglet(nom){
   // Le scanner test s'éteint dès qu'on le quitte : une caméra qui survit à sa page, c'est
   // exactement le genre de charge invisible qu'on cherche à supprimer.
   if(nom !== 'scantest' && typeof ST !== 'undefined' && ST.flux) stFermer();
+  // Même règle pour l'onglet XX : une caméra qui survit à sa page est exactement la charge
+  // invisible qu'on cherche à supprimer.
+  if(nom !== 'xx' && typeof XX !== 'undefined' && XX.flux) xxFermer();
   const jeu = JEU_DE_ONGLET[nom];
   if(jeu && jeu !== jeuOuvert) ouvrirJeu(jeu);
   synchroniserMode(nom);
@@ -14434,6 +14544,245 @@ const ST_TROP_LOIN = 0.26;
 // déjà fait une fois, chacun avec ses propres nombres.
 const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
 
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// ONGLET XX — le scanner de bench-v2, porté sans rien y ajouter
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Demande de Nikos : reprendre le scanner du banc tel quel, avec pour seuls ajouts la pile
+// et son prix, et l'identification sous l'appareil photo. Caméra en plein écran.
+//
+// Ce qui est repris À L'IDENTIQUE de bench-v2 : les seuils, la boucle, la patience — et
+// surtout la CAPTURE, qui diffère franchement de celle du scanner de test. Le banc refait
+// une détection au moment du déclic, puis redresse les quatre coins par homographie
+// (scanic.extractDocument) et corrige la rotation si la carte sort couchée. Le scanner de
+// test, lui, identifie une image mémorisée avec un rectangle aligné sur les axes.
+//
+// Ce qui n'est PAS repris, parce que le banc ne l'a pas : mémoire de la plus nette, garde-fou
+// de forme, détecteur de reflet, verrou par signature, empreinte prise d'avance, animations.
+// C'est tout l'intérêt de cet onglet — comparer sans mélanger.
+const XX_MIN_SCORE = 0.35;
+const XX_BOUGE_BASE = 0.030;
+const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
+const XX_ABSENCE = 2;
+
+const XX = { flux:null, piste:null, boucle:false, occupe:false,
+             presentDepuis:0, streak:0, dernierCoins:null, absence:0,
+             retiree:true, coinsCapture:null, pile:[], valeur:0 };
+
+function xxEtat(t){ const e = $('xx-etat'); if(e) e.textContent = t; }
+
+function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
+
+// ── Le cadre, tel que le banc le dessine : un trait, rien de plus ───────────────────────
+function xxDessinerCadre(coins, couleur){
+  const cv = $('xx-overlay'), v = $('xx-video');
+  if(!cv || !v) return;
+  const l = cv.clientWidth, h = cv.clientHeight;
+  if(!l || !h) return;
+  if(cv.width !== l || cv.height !== h){ cv.width = l; cv.height = h; }
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height);
+  if(!coins) return;
+  // Le banc dessine sur le rectangle de l'élément. En « contain » l'image n'occupe pas tout,
+  // donc on cale le tracé sur le champ réellement analysé — sinon le cadre serait décalé.
+  const vw = v.videoWidth || l, vh = v.videoHeight || h;
+  const ech = Math.min(l/vw, h/vh), iw = vw*ech, ih = vh*ech;
+  const ix = (l-iw)/2, iy = (h-ih)/2;
+  const p = c => [ix + c[0]*iw, iy + c[1]*ih];
+  const [a, b, c2, d] = [p(coins.tl), p(coins.tr), p(coins.br), p(coins.bl)];
+  g.strokeStyle = couleur; g.lineWidth = 3; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]);
+  g.lineTo(c2[0],c2[1]); g.lineTo(d[0],d[1]); g.closePath(); g.stroke();
+}
+
+function xxEcartCoins(a, b){
+  let m = 0;
+  for(const k of ['tl','tr','br','bl']) m = Math.max(m, Math.hypot(a[k][0]-b[k][0], a[k][1]-b[k][1]));
+  return m;
+}
+
+// ── La capture du banc : nouvelle détection, puis redressement projectif ────────────────
+async function xxRedresserVideo(v){
+  const long = Math.max(v.videoWidth, v.videoHeight);
+  const e0 = Math.min(1, DETECT_LONG_EDGE / long);
+  const bmp = await createImageBitmap(v, {resizeWidth: Math.round(v.videoWidth*e0),
+    resizeHeight: Math.round(v.videoHeight*e0), resizeQuality:'medium'});
+  const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+  if(!d || !d.corners || d.score == null || d.score < XX_MIN_SCORE) return null;
+
+  const sc = await getScanic();
+  const ech = Math.min(1, EXTRACT_LONG_EDGE / long);
+  const vw = Math.round(v.videoWidth*ech), vh = Math.round(v.videoHeight*ech);
+  const frame = document.createElement('canvas');
+  frame.width = vw; frame.height = vh;
+  frame.getContext('2d').drawImage(v, 0, 0, vw, vh);
+  const c = d.corners;
+  const cx = (c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4, cy = (c.tl[1]+c.tr[1]+c.br[1]+c.bl[1])/4;
+  // Marge de 4 % : le détecteur cadre le visuel de la carte plutôt que son bord physique.
+  const M = 0.04, p = (q)=>({x:(cx+(q[0]-cx)*(1+M))*vw, y:(cy+(q[1]-cy)*(1+M))*vh});
+  const r = await sc.extractDocument(frame, {topLeft:p(c.tl), topRight:p(c.tr),
+    bottomRight:p(c.br), bottomLeft:p(c.bl)}, {output:'canvas'});
+  if(!r || !r.success || !r.output) return null;
+  const out = r.output, ratio = out.height/out.width;
+  if(Math.abs(ratio-CARD_RATIO)/CARD_RATIO <= 0.25) return out;
+  if(Math.abs(ratio-1/CARD_RATIO)*CARD_RATIO > 0.25) return null;
+  // Sortie couchée : on la remet debout plutôt que de la jeter.
+  const rot = document.createElement('canvas');
+  rot.width = out.height; rot.height = out.width;
+  const g = rot.getContext('2d');
+  g.translate(rot.width/2, rot.height/2); g.rotate(-Math.PI/2);
+  g.drawImage(out, -out.width/2, -out.height/2);
+  return rot;
+}
+
+async function xxCapturer(){
+  if(XX.occupe) return;
+  XX.occupe = true;
+  xxEtat('identification…');
+  try{
+    const v = $('xx-video');
+    const cv = await xxRedresserVideo(v);
+    if(!cv){ xxEtat('carte non cadrée — recommence'); return; }
+    const res = await SCAN_V2.identifierV2(cv, {});
+    if(navigator.vibrate) { try{ navigator.vibrate(30); }catch(e){} }
+    const e = { carte: res && res.pick ? res.pick : null,
+                categorie: res ? res.categorie : 'rebut',
+                fiabilite: res ? res.fiabilite : 0,
+                inliers: res ? res.inliers : 0,
+                ms: res ? res.ms : 0,
+                photo: cv.toDataURL('image/jpeg', 0.7) };
+    XX.pile.push(e);
+    XX.retiree = false; XX.coinsCapture = XX.dernierCoins;
+    xxRendreResultat(e);
+    xxRendrePile();
+    xxAjouterValeur(e);
+    xxEtat(e.carte ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
+                   : '✕ non reconnue — carte suivante');
+  }catch(err){ xxEtat('capture : ' + err.message); }
+  finally{ XX.occupe = false; }
+}
+
+function xxRendreResultat(e){
+  const z = $('xx-resultat'); if(!z) return;
+  z.hidden = false;
+  $('xx-photo').src = e.photo;
+  const sure = e.categorie === 'sure' && e.carte;
+  z.classList.toggle('sure', !!sure);
+  z.classList.toggle('rebut', !e.carte);
+  $('xx-nom').textContent = e.carte ? (e.carte.name || e.carte.cle) : 'Non reconnue';
+  $('xx-detail').textContent = [e.carte && e.carte.localId ? '#' + e.carte.localId : null,
+    e.fiabilite + ' %', e.inliers + ' inliers', e.ms + ' ms'].filter(Boolean).join(' · ');
+}
+
+function xxRendrePile(){
+  const p = $('xx-pile'); if(!p) return;
+  p.hidden = !XX.pile.length;
+  $('xx-pile-n').textContent = String(XX.pile.length);
+  $('xx-pile-prix').textContent = XX.valeur > 0
+    ? XX.valeur.toFixed(XX.valeur >= 100 ? 0 : 2) + ' €' : '';
+}
+
+// La cote arrive après coup : elle passe par le réseau et ne doit jamais retenir le scan.
+async function xxAjouterValeur(e){
+  if(!e || !e.carte || !e.carte.cle) return;
+  try{
+    const carte = await getCardDetailCached(e.carte.cle);
+    if(!carte) return;
+    const px = getBestPrice(carte);
+    if(px && px.market){ XX.valeur += px.market; xxRendrePile(); }
+  }catch(err){ /* pas de cote : le décompte reste juste, seul le total est incomplet */ }
+}
+
+// ── La boucle du banc, verbatim ─────────────────────────────────────────────────────────
+async function xxTourner(){
+  while(XX.boucle){
+    const v = $('xx-video');
+    if(!v || !v.videoWidth || XX.occupe){ await new Promise(r => setTimeout(r, 120)); continue; }
+    try{
+      const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
+      const bmp = await createImageBitmap(v, {
+        resizeWidth: Math.round(v.videoWidth*e0), resizeHeight: Math.round(v.videoHeight*e0),
+        resizeQuality:'medium' });
+      const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+      const bon = !!(d && d.corners && d.score != null && d.score >= XX_MIN_SCORE);
+
+      if(!bon){
+        xxDessinerCadre(null);
+        XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null;
+        if(++XX.absence >= XX_ABSENCE) XX.retiree = true;
+        xxEtat('vise la carte');
+      }else{
+        XX.absence = 0;
+        if(!XX.presentDepuis) XX.presentDepuis = Date.now();
+        const attente = Date.now() - XX.presentDepuis;
+        // Déplacement franc depuis la dernière capture = autre carte, même sans champ vide.
+        if(!XX.retiree && XX.coinsCapture
+           && xxEcartCoins(XX.coinsCapture, d.corners) > XX_BOUGE_BASE * 3) XX.retiree = true;
+
+        const bouge = XX.dernierCoins ? xxEcartCoins(XX.dernierCoins, d.corners) : Infinity;
+        XX.dernierCoins = d.corners;
+
+        const seuilBouge = attente >= XX_PATIENCE.franche ? Infinity
+                         : attente >= XX_PATIENCE.douce
+                           ? XX_BOUGE_BASE * XX_PATIENCE.facteurBouge : XX_BOUGE_BASE;
+        const seuilScore = attente >= XX_PATIENCE.douce ? XX_MIN_SCORE : 0.5;
+
+        if(bouge < seuilBouge) XX.streak++; else XX.streak = 0;
+        const stable = XX.streak >= 1;
+        xxDessinerCadre(d.corners, stable ? '#3fb950' : '#d29922');
+
+        if(XX.retiree && d.score >= seuilScore && stable){
+          XX.streak = 0; XX.presentDepuis = 0;
+          await xxCapturer();
+        }else{
+          xxEtat(!XX.retiree ? 'lue — retire la carte ou déplace-la'
+               : stable ? 'prêt'
+               : attente >= XX_PATIENCE.douce ? 'tiens encore un instant…' : 'stabilise…');
+        }
+      }
+    }catch(e){ /* une image ratée ne casse pas la boucle */ }
+    await new Promise(r => setTimeout(r, 60));
+  }
+}
+
+async function xxOuvrir(){
+  if(XX.flux) return;
+  xxEtat('ouverture de la caméra…');
+  try{
+    XX.flux = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440},
+              advanced:[{focusMode:'continuous'}] }, audio:false });
+  }catch(e){ xxEtat('caméra refusée : ' + e.message); return; }
+  const v = $('xx-video');
+  v.srcObject = XX.flux;
+  await v.play().catch(()=>{});
+  XX.piste = XX.flux.getVideoTracks()[0];
+  xxPlein(true);
+  if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
+    xxEtat('préparation du moteur d’identification…');
+    try{ window.relancerInitV2 && window.relancerInitV2(); }catch(e){}
+  }
+  XX.boucle = true;
+  XX.retiree = true; XX.coinsCapture = null; XX.presentDepuis = 0;
+  XX.streak = 0; XX.dernierCoins = null; XX.absence = XX_ABSENCE;
+  xxTourner();
+  $('xx-ouvrir').hidden = true; $('xx-fermer').hidden = false;
+}
+
+function xxFermer(){
+  XX.boucle = false;
+  xxPlein(false);
+  try{ if(XX.flux) XX.flux.getTracks().forEach(t => t.stop()); }catch(e){}
+  XX.flux = null; XX.piste = null;
+  const v = $('xx-video'); if(v) v.srcObject = null;
+  xxDessinerCadre(null);
+  xxEtat('caméra fermée');
+  $('xx-ouvrir').hidden = false; $('xx-fermer').hidden = true;
+}
+
+$('xx-ouvrir')?.addEventListener('click', xxOuvrir);
+$('xx-fermer')?.addEventListener('click', xxFermer);
+$('xx-quitter')?.addEventListener('click', xxFermer);
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
 // LE RENDU : À LA DEMANDE, PLUS EN CONTINU
