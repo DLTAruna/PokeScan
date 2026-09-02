@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 86;
+const VERSION_APP = 87;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14143,6 +14143,32 @@ async function stFermer(){
 // chargé. On ne s'en sert donc QUE pour comparer des images d'une même présence de carte,
 // même contenu, seule la netteté variant. C'est le seul cas où elle est fiable, et c'est
 // pourquoi il n'y a aucun seuil ici : jamais de rejet, seulement un choix.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// EMPREINTE PRISE D'AVANCE
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// L'empreinte vaut 39 % du temps d'identification (288 ms sur 736, mesuré) et ne dépend que
+// de l'image. Pendant que la boucle attend que la main se stabilise — 629 ms en médiane sur
+// le téléphone — le GPU est presque libre. On la calcule donc AVANT le déclenchement.
+// Une seule fois, et pas à chaque image : mesuré, une identification qui tourne en parallèle
+// fait passer la détection de 43 à 68 ms. Trois empreintes empilées coûteraient au détecteur
+// plus qu'elles ne rapporteraient. On spécule donc au tour où tout passe SAUF la stabilité,
+// c'est-à-dire juste avant que ça parte.
+// Le pré-calcul est lié à l'IDENTITÉ de l'image retenue. Si la mémoire change de meilleure
+// image entre la spéculation et la capture, on jette et on reprend le chemin normal : aucune
+// régression possible, seulement un gain manqué.
+let stPrePromesse = null;    // la promesse d'empreinte en vol
+let stPreJeton = -1;         // quelle image elle décrit
+let stJetonMeilleure = 0;    // incrémenté à chaque nouvelle meilleure image
+
+function stLancerEmpreinte(){
+  if(stPrePromesse || !stMeilleure || !stMeilleursCoins || !SCAN_V2.preparerV2) return;
+  const cv = extraireCarteCentree(stMeilleure, stMeilleursCoins, stMeilleure.width, stMeilleure.height);
+  if(!cv) return;
+  stPreJeton = stJetonMeilleure;
+  stPrePromesse = SCAN_V2.preparerV2(cv).catch(()=> null);
+}
+function stOublierEmpreinte(){ stPrePromesse = null; stPreJeton = -1; }
+
 let stMeilleure = null;      // canvas de la meilleure vue depuis que cette carte est là
 let stMeilleureNet = -1;
 let stMeilleureScore = -1;   // netteté pénalisée par la brûlure : c'est elle qui décide
@@ -14153,7 +14179,7 @@ let stScratch = null;
 
 function stOublierMeilleure(){
   stMeilleureNet = -1; stMeilleureScore = -1; stMeilleureBrulure = 0; stPireBrulure = 0;
-  stMeilleursCoins = null;
+  stMeilleursCoins = null; stOublierEmpreinte();
 }
 
 // 140×196 : ce calcul tombe à chaque tour, derrière une détection qui coûte déjà ~50 ms.
@@ -14295,6 +14321,7 @@ function stRetenirSiPlusNette(video, coins){
   if(stMeilleure.width !== vw || stMeilleure.height !== vh){ stMeilleure.width = vw; stMeilleure.height = vh; }
   stMeilleure.getContext('2d').drawImage(video, 0, 0, vw, vh);
   stMeilleureNet = net; stMeilleureScore = score; stMeilleureBrulure = stDerniereBrulure;
+  stJetonMeilleure++;   // cette image n'est plus celle qu'une empreinte en vol décrivait
   // La pire vue de la présence, pour savoir a posteriori si l'attente a servi à quelque
   // chose : sans elle, un scan propre ne dirait pas s'il l'a été d'emblée ou après patience.
   if(stDerniereBrulure > stPireBrulure) stPireBrulure = stDerniereBrulure;
@@ -14691,10 +14718,16 @@ async function stTourner(){
           const bougeFranc = ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_SEUILS.bouge*3;
           const autreCarte = ST.signature && stDerniereSignature
                           && stDistanceSig(ST.signature, stDerniereSignature) > ST_SIG_AUTRE;
-          // Filet : un verrou sans issue est pire qu'un doublon, qui lui se voit dans la
-          // pile et s'enlève d'un bouton. Au-delà de cette durée de présence continue, on
-          // réarme quoi qu'il arrive.
-          const tropLongtemps = ST.presentDepuis && (Date.now() - ST.presentDepuis) > ST_VERROU_MAX;
+          // Filet, mais SEULEMENT quand la comparaison de contenu est impossible — pas de
+          // signature mémorisée, ou pas de vignette courante. Première version : il tirait
+          // au bout de quatre secondes quoi qu'il arrive, et le banc l'a immédiatement pris
+          // en défaut — une carte laissée devant l'objectif était recapturée toutes les
+          // quatre secondes, neuf fois de suite, avec les mêmes 237 inliers. Or une carte
+          // immobile et identique est très exactement le cas où le verrou a RAISON.
+          // Le filet ne doit couvrir que la panne du mécanisme, jamais son bon fonctionnement.
+          const aveugle = !ST.signature || !stDerniereSignature;
+          const tropLongtemps = aveugle && ST.presentDepuis
+                             && (Date.now() - ST.presentDepuis) > ST_VERROU_MAX;
           if(bougeFranc || autreCarte || tropLongtemps) ST.retiree = true;
         }
         const bouge = ST.dernierCoins ? stEcart(ST.dernierCoins, d.corners) : Infinity;
@@ -14759,6 +14792,9 @@ async function stTourner(){
         // que la capture avait pris 1,3 s sans jamais dire à cause de quoi — et c'est
         // précisément ce que le banc mesure, donc la seule grandeur qui les rende comparables.
         if(etiquette) ST.verrous[etiquette] = (ST.verrous[etiquette] || 0) + 1;
+        // Tout passe sauf la stabilité : la capture est imminente et l'image qui partira est
+        // déjà en mémoire. C'est le seul moment où spéculer a un sens.
+        if(etat === 'presque' && etiquette === 'stabilise') stLancerEmpreinte();
         stViser(d.corners, etat, etiquette);
         if(etat === 'pret'){
           const attendu = ST.presentDepuis ? Date.now() - ST.presentDepuis : 0;
@@ -14798,6 +14834,9 @@ async function stCapturer(coins, v, attendu){
     const srcW = src === stMeilleure ? stMeilleure.width : v.videoWidth;
     const srcH = src === stMeilleure ? stMeilleure.height : v.videoHeight;
     const netteteUtilisee = Math.round(stMeilleureNet);
+    // Saisi AVANT stOublierMeilleure, qui remet la mémoire — et l'empreinte prise d'avance —
+    // à zéro. L'ordre compte : deux lignes plus bas, la promesse n'existerait déjà plus.
+    const preEnVol = (stPrePromesse && stPreJeton === stJetonMeilleure) ? stPrePromesse : null;
     // La mémoire est CONSOMMÉE : la carte suivante doit repartir de zéro, sinon elle
     // hériterait de la netteté de la précédente et ne retiendrait plus jamais rien.
     stOublierMeilleure();
@@ -14806,7 +14845,9 @@ async function stCapturer(coins, v, attendu){
     // Sur l'image RÉELLEMENT identifiée, pas sur une approximation de visée.
     const brulure = stBrulure(cv);
     const pireBrulure = stPireBrulure;
-    const res = await SCAN_V2.identifierV2(cv, {});
+    // Le pré-calcul ne sert que s'il décrit l'image qu'on identifie vraiment.
+    const pre = preEnVol ? await preEnVol : null;
+    const res = await SCAN_V2.identifierV2(cv, pre ? {pre} : {});
     const ms = Math.round(performance.now() - t0);
     if(navigator.vibrate) navigator.vibrate(35);
     ST.retiree = false; ST.coinsCapture = coins;
@@ -14815,7 +14856,7 @@ async function stCapturer(coins, v, attendu){
     ST.signature = stDerniereSignature ? Float32Array.from(stDerniereSignature) : null;
     // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
     const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee,
-                       attendu || 0, ST.verrous || {}, brulure, pireBrulure);
+                       attendu || 0, ST.verrous || {}, brulure, pireBrulure, !!pre);
     const teinte = stCouleur(e);
     stEtatTeinte(teinte);
     stEtat(teinte === 'ok' ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
@@ -14865,7 +14906,7 @@ function stEstSur(res){
 }
 
 // Rangement d'une carte identifiée. Rien n'attend l'utilisateur.
-function stRanger(res, photo, ms, nettete, attendu, verrous, brulure, pireBrulure){
+function stRanger(res, photo, ms, nettete, attendu, verrous, brulure, pireBrulure, avance){
   const entree = { carte: res && res.pick ? res.pick : null,
                    fiabilite: res ? res.fiabilite : 0,
                    categorie: res ? res.categorie : 'rebut',
@@ -14881,7 +14922,8 @@ function stRanger(res, photo, ms, nettete, attendu, verrous, brulure, pireBrulur
                    predit: res && res.pick ? res.pick.cle : null,
                    attendu: attendu || 0, verrous: verrous || {},
                    brulure: Math.round((brulure || 0) * 1000) / 1000,
-                   brulurePire: Math.round((pireBrulure || 0) * 1000) / 1000 };
+                   brulurePire: Math.round((pireBrulure || 0) * 1000) / 1000,
+                   avance: !!avance };
   // ── QUI MÉRITE UNE SECONDE ANALYSE ────────────────────────────────────────────────
   // Mesuré sur la V.78 : neuf cartes reprises, douze secondes dépensées, ZÉRO promue. La
   // cause n'est pas le réglage mais la population. La seule arme supplémentaire de la
@@ -14898,7 +14940,8 @@ function stRanger(res, photo, ms, nettete, attendu, verrous, brulure, pireBrulur
                    inliers:entree.inliers, nettete, garde:stEstSur(res),
                    embTop:entree.embTop, embPremier:entree.embPremier, predit:entree.predit,
                    attendu:entree.attendu, verrous:entree.verrous, reprise:entree.reprendre,
-                   brulure:entree.brulure, brulurePire:entree.brulurePire});
+                   brulure:entree.brulure, brulurePire:entree.brulurePire,
+                   avance:entree.avance});
   ST.dernier = entree;
   stRendreDernier();
   stRendreCompteurs();
@@ -24112,7 +24155,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=27';
+import * as V2 from './scan-v2.js?v=29';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);

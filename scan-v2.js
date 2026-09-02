@@ -32,6 +32,7 @@ const R = {
   OCR_DOM_MAX: 0.6,    // …mais un 2e candidat au coude à coude. Voir l'étape 4.
   OCR_MARGE_MAX: 35,   // …et un coude-à-coude EN ABSOLU, pas seulement en proportion.
   OCR_ORB_MS_MAX: 1800, // session chaude (dernier ORB au-delà) → on ne lance pas l'OCR
+  ORB_PREMIER: 6,      // candidats appariés au premier passage (voir l'ORB en deux temps)
   GEO_INLIERS: 20,     // géométrie franche → « sûre » même si la sigmoïde reste basse
   GEO_DOM: 0.6,
   MAX_CARTES_ORB: 900, // descripteurs gardés en mémoire du worker (LRU, ~23 Mo)
@@ -168,7 +169,21 @@ function demarrerEmb() {
       }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); } };
   `, 'module');
 }
-const embed = dataUrl => emb.call({ dataUrl });
+// ⚠️ SÉRIALISÉ. La session ONNX n'accepte pas deux inférences à la fois : elle rend
+// « Session already started » puis « Session mismatch », et l'appel resté en vol ne se
+// résout jamais — le scanner se fige sur « identification… », occupe à vrai.
+// Le cas est apparu en introduisant l'empreinte prise d'avance : la spéculation pouvait
+// encore tourner quand la capture lançait la sienne. Le banc l'a attrapé au premier essai.
+// Une file d'un élément suffit, et ne coûte rien dans l'usage prévu — on ne veut jamais
+// deux empreintes en parallèle, seulement une empreinte en parallèle de la DÉTECTION, qui
+// est un autre modèle et une autre session.
+let fileEmb = Promise.resolve();
+const embed = (dataUrl) => {
+  const suite = fileEmb.then(() => emb.call({ dataUrl }));
+  // La file ne doit pas mourir sur un échec : on la relance quoi qu'il arrive.
+  fileEmb = suite.then(() => {}, () => {});
+  return suite;
+};
 
 function demarrerOrb() {
   orb = faireWorker(`
@@ -731,23 +746,52 @@ export async function initV2(opts = {}) {
 // L'avis est PROVISOIRE : c'est exactement le candidat que l'OCR est en train de contester.
 // Le résultat renvoyé par la promesse reste la seule vérité, et c'est lui qui décide de tout
 // ce qui s'enregistre — la file, le classeur, le stock, le journal.
-export async function identifierV2(carte, opts = {}) {
-  if (!pret) throw new Error('V2 pas prête');
-  const T = {};
-  const chrono = async (k, p) => { const t = performance.now(); const r = await p; T[k] = Math.round(performance.now() - t); return r; };
-
-  // 1. embedding → shortlist
-  const petit = document.createElement('canvas'); petit.width = 320; petit.height = Math.round(320 * CARD_RATIO);
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// L'EMPREINTE, SÉPARABLE DU RESTE
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Elle vaut 39 % du temps d'identification (288 ms sur 736, mesuré) et ne dépend que de
+// l'image. Rien n'oblige à la calculer APRÈS le déclenchement : pendant que la boucle attend
+// que la main se stabilise — six cent trente millisecondes en médiane sur le téléphone — le
+// GPU ne fait presque rien.
+// Coût mesuré de la faire tourner en parallèle de la détection : celle-ci passe de 43 à
+// 68 ms, soit vingt-cinq millisecondes par tour. Une seule spéculation, au tour où tout
+// passe sauf la stabilité, rend donc quatre cents millisecondes nettes.
+// Si l'image change entre la spéculation et la capture, le calcul est perdu et on reprend le
+// chemin normal : aucune régression possible, seulement un gain manqué.
+async function empreinte(carte) {
+  const petit = document.createElement('canvas');
+  petit.width = 320; petit.height = Math.round(320 * CARD_RATIO);
   petit.getContext('2d').drawImage(carte, 0, 0, petit.width, petit.height);
-  const e = await chrono('emb', embed(versDataUrl(petit, ZONE_ILLUSTRATION)));
+  const e = await embed(versDataUrl(petit, ZONE_ILLUSTRATION));
   const ev = e.v, q8 = EMB_Q8, D = EMB_DIM;
   const parEmb = BASE.map(c => {
     let s = 0; const o = c.off;
     for (let j = 0; j < D; j++) s += q8[o + j] * ev[j];
     return { cle: c.cle, s: s * c.inv };
   }).sort((a, b) => b.s - a.s);
-  const embTop = parEmb[0].s;
-  const court = parEmb.slice(0, R.SHORT).map(x => x.cle);
+  return { embTop: parEmb[0].s, court: parEmb.slice(0, R.SHORT).map(x => x.cle) };
+}
+
+// À passer ensuite à identifierV2 dans `opts.pre`. Rend null plutôt que de jeter : un
+// pré-calcul raté ne doit jamais empêcher le scan qui suit.
+export async function preparerV2(carte) {
+  if (!pret) return null;
+  try {
+    const t0 = performance.now();
+    const r = await empreinte(carte);
+    return { ...r, T: { emb: Math.round(performance.now() - t0) } };
+  } catch (e) { return null; }
+}
+
+export async function identifierV2(carte, opts = {}) {
+  if (!pret) throw new Error('V2 pas prête');
+  const T = {};
+  const chrono = async (k, p) => { const t = performance.now(); const r = await p; T[k] = Math.round(performance.now() - t); return r; };
+
+  // 1. embedding → shortlist. Peut avoir été calculé D'AVANCE (voir preparerV2).
+  const pre = opts.pre && opts.pre.court ? opts.pre : null;
+  const { embTop, court } = pre || await chrono('emb', empreinte(carte));
+  if (pre && pre.T && pre.T.emb != null) T.embAvance = pre.T.emb;
   // Ce que l'embedding SEUL proposait, avant que l'ORB ne reclasse. Sans cette trace, on ne
   // peut pas savoir ce qu'on jette quand l'ORB devient aveugle (image floue ET réduite :
   // zéro inlier sur toute la shortlist) — or il reste peut-être une bonne réponse dedans.
@@ -766,13 +810,39 @@ export async function identifierV2(carte, opts = {}) {
   T.refsDetail = { ...detailRefs };
   onEtat('');
 
-  // 3. ORB reclasse la shortlist
+  // 3. ORB reclasse la shortlist — EN DEUX TEMPS.
+  // L'appariement coûte proportionnellement au nombre de candidats : mesuré, 324 ms pour 18,
+  // 128 ms pour 6. Mais on ne peut pas raccourcir la shortlist : un banc sur 7 591 cartes a
+  // montré que 12 laisse déjà la bonne carte dehors une fois sur huit, et vingt-quatre cartes
+  // ne renversent pas sept mille.
+  // On garde donc les DIX-HUIT, et on les regarde en deux fois. Si les six premiers donnent
+  // une géométrie franche — assez d'inliers ET un second candidat nettement derrière, les
+  // deux mêmes critères que `geoFranche` — la réponse ne changerait pas en regardant les
+  // douze autres. Sinon on les regarde. Le recall de dix-huit est conservé PAR CONSTRUCTION :
+  // rien n'est exclu, seulement différé.
   let ranked = court, orbScores = {};
-  try {
-    const bmp = await createImageBitmap(carte);
-    const rr = await chrono('orb', orb.call({ type: 'querySubset', bitmap: bmp, cles: court }, [bmp]));
-    ranked = rr.out.map(o => o.cle);
+  const fusionner = (rr) => {
     rr.out.forEach(o => (orbScores[o.cle] = o.score));
+    ranked = Object.keys(orbScores).sort((a, b) => (orbScores[b] || 0) - (orbScores[a] || 0));
+  };
+  const francs = (cles) => {
+    const tri = cles.slice().sort((a, b) => (orbScores[b] || 0) - (orbScores[a] || 0));
+    const p = orbScores[tri[0]] || 0, d = orbScores[tri[1]] || 0;
+    return p >= R.GEO_INLIERS && (p > 0 ? (p - d) / p : 0) >= R.GEO_DOM;
+  };
+  try {
+    const tete = court.slice(0, R.ORB_PREMIER);
+    const reste = court.slice(R.ORB_PREMIER);
+    const t0orb = performance.now();
+    const bmp1 = await createImageBitmap(carte);
+    fusionner(await orb.call({ type: 'querySubset', bitmap: bmp1, cles: tete }, [bmp1]));
+    T.orbTete = Math.round(performance.now() - t0orb);
+    if (reste.length && !francs(tete)) {
+      const bmp2 = await createImageBitmap(carte);
+      fusionner(await orb.call({ type: 'querySubset', bitmap: bmp2, cles: reste }, [bmp2]));
+      T.orbSuite = Math.round(performance.now() - t0orb) - T.orbTete;
+    }
+    T.orb = Math.round(performance.now() - t0orb);
   } catch (err) {}
   dernierOrbMs = T.orb || dernierOrbMs;
   // Après l'appariement, pas avant : les descripteurs de CE scan viennent d'être marqués
