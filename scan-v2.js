@@ -530,9 +530,38 @@ async function taillerOrb() {
   }
 }
 
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// LE RECYCLAGE NE DOIT PLUS SE PAYER PENDANT UN SCAN
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Il était appelé DANS identifierV2, donc l'utilisateur attendait le redémarrage du worker
+// au milieu d'une carte. Mesuré sur trente identifications d'affilée, compteur remis à zéro :
+//     régime            782 ms  (médiane, orb ~348, imp 5 à 12)
+//     scan n° 13       2098 ms
+//     scan n° 25       1631 ms
+// Soit 850 à 1300 ms une fois tous les douze scans — et INVISIBLE dans la ventilation T,
+// puisque le recyclage précède les étapes chronométrées. C'est très exactement pour cela
+// que le profil ne le trouvait pas : je cherchais dans les étapes une dépense qui était
+// avant elles.
+//
+// On ne le supprime pas : il protège d'une dérive réelle du tas WASM (voir plus haut, 300 ms
+// → 2 s+). On le déplace. `entretienOrbV2` est appelé quand le scanner n'a rien à faire —
+// entre deux cartes — et le filet en ligne ne se déclenche plus qu'au DOUBLE du compte, pour
+// les appelants qui n'ont pas d'instant creux à offrir (import d'un lot, file d'attente).
+let scansDepuisRecyclage = 0;
+
 async function recyclerOrbSiBesoin() {
-  if (!R.RECYCLE_ORB || scansV2 === 0 || scansV2 % R.RECYCLE_ORB !== 0) return;
+  // Filet de dernier recours seulement : deux fois le compte normal.
+  if (!R.RECYCLE_ORB || scansDepuisRecyclage < R.RECYCLE_ORB * 2) return;
   await recyclerOrb();
+  scansDepuisRecyclage = 0;
+}
+
+// À appeler quand rien n'attend : le coût est le même, le moment ne l'est pas.
+export async function entretienOrbV2() {
+  if (!R.RECYCLE_ORB || scansDepuisRecyclage < R.RECYCLE_ORB) return false;
+  await recyclerOrb();
+  scansDepuisRecyclage = 0;
+  return true;
 }
 async function recyclerOrb() {
   try { orb.terminate(); } catch (e) {}
@@ -548,7 +577,7 @@ async function recyclerOrb() {
 // coûterait 3 Mo à chaque essai sans rien apprendre.
 export async function viderCachesV2({ memoire = true, disque = false } = {}) {
   if (disque) await idbDelPrefixe('orbc:');
-  if (memoire || disque) { await recyclerOrb(); scansV2 = 0; dernierOrbMs = 0; }
+  if (memoire || disque) { await recyclerOrb(); scansV2 = 0; scansDepuisRecyclage = 0; dernierOrbMs = 0; }
   return { memoire: memoire || disque, disque };
 }
 
@@ -822,7 +851,7 @@ export async function identifierV2(carte, opts = {}) {
   else if (fiabilite >= 80 || ocrOk || geoFranche) categorie = 'sure';
   else categorie = 'douteuse';
 
-  scansV2++;   // (l'appel à noterPickV2 — mode « classeur » — est retiré, voir plus haut)
+  scansV2++; scansDepuisRecyclage++;   // (noterPickV2 — mode « classeur » — retiré, voir plus haut)
 
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,

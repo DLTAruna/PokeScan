@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 85;
+const VERSION_APP = 86;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14825,6 +14825,10 @@ async function stCapturer(coins, v, attendu){
     // sortir de là où la carte était, sinon le geste ment sur ce qui vient d'être lu.
     stVoler(e.photo, coins);
     stBondPile();
+    // Le verdict est affiché, l'utilisateur change de carte : c'est l'instant creux. Le
+    // recyclage du worker ORB coûte près d'une seconde et se payait jusqu'ici AU MILIEU
+    // d'un scan, une fois sur douze. Il se paie maintenant ici, où personne n'attend.
+    try{ SCAN_V2.entretienOrbV2 && SCAN_V2.entretienOrbV2(); }catch(err){}
     if(teinte === 'ok') stAjouterValeur(e);
     // ── PLUS DE POPUP ─────────────────────────────────────────────────────────────
     // Nikos le demande, et le banc a montré pourquoi il avait raison : stAlerter posait
@@ -24108,7 +24112,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=26';
+import * as V2 from './scan-v2.js?v=27';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);
