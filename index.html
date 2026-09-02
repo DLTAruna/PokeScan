@@ -802,6 +802,65 @@
     background:rgba(255,255,255,.07); color:#e6edf3; border:1px solid rgba(255,255,255,.16);
     font-size:12px;
   }
+  .st-objectif{ display:flex; align-items:center; justify-content:center; gap:10px;
+    margin:0 auto 14px; font-family:ui-monospace,monospace; font-size:12px; color:#9fb0c0; }
+  .st-objectif[hidden]{ display:none; }
+  .st-objectif button{ width:34px; height:34px; border-radius:9px; cursor:pointer; font-size:16px;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
+  /* ── Plein écran : l'aperçu prend tout, le verdict se pose par-dessus ────────────────── */
+  body.st-plein{ overflow:hidden; }
+  body.st-plein .navbar{ display:none; }
+  body.st-plein .st-cadre{
+    position:fixed; inset:0; z-index:300; width:100vw; max-width:none; height:100vh;
+    max-height:none; aspect-ratio:auto; border-radius:0; margin:0;
+  }
+  /* La vidéo est ancrée aux quatre bords plutôt que dimensionnée en pourcentage : sur un
+     élément sans flux, ou pendant le premier instant qui suit l'ouverture, la hauteur en
+     pourcentage se résout parfois sur le rapport intrinsèque et laisse une bande noire.
+     L'ancrage ne dépend d'aucune dimension intrinsèque. Le canevas de tracé suit le même
+     ancrage, sinon le repère se dessinerait ailleurs que l'image. */
+  /* Les quatre bords ancres, et AUCUNE dimension declaree : une largeur ou une hauteur
+     explicite reprend la main sur l ancrage et laisse l element se dimensionner sur son
+     rapport intrinseque — c est ce qui laissait une bande noire sous l apercu. Sans elles,
+     la boite ne peut faire autrement que remplir son conteneur. */
+  /* Unites de fenetre, et non des pourcentages : sur un element remplace comme <video>, une
+     hauteur en pourcentage peut se resoudre sur le rapport intrinseque du media et laisser
+     une bande noire, tandis que width:auto le fait carrement collapser a 300 sur 150. Les
+     deux cas ont ete observes en essayant. 100vw et 100vh ne dependent de rien d autre que
+     la fenetre, qui est exactement ce que le plein ecran occupe. */
+  /* Ceinture ET bretelles, parce que je n ai pas pu trancher depuis mon poste : dans le
+     volet d apercu, 100vh se resout differemment pour le conteneur et pour la video alors
+     que les deux portent la meme regle — un artefact de l emulation, pas du code. On pose
+     donc les trois mecanismes qui, chacun separement, suffisent a remplir : ancrage aux
+     quatre bords, unites de fenetre, et pourcentages. Le plus fort l emporte, et aucun ne
+     peut donner une boite plus petite que le conteneur.
+     A verifier sur l appareil : c est la seule chose de cette version que mon environnement
+     ne sait pas confirmer. */
+  body.st-plein #st-video,
+  body.st-plein #st-overlay{
+    position:absolute; inset:0; width:100%; height:100%;
+    min-width:100vw; min-height:100vh;
+  }
+  body.st-plein #st-etat{
+    position:fixed; top:calc(10px + env(safe-area-inset-top)); left:0; right:0; z-index:302;
+    color:#e6edf3; text-shadow:0 1px 5px rgba(0,0,0,.8); pointer-events:none;
+  }
+  body.st-plein #st-resultat{
+    position:fixed; left:8px; right:8px; bottom:calc(12px + env(safe-area-inset-bottom));
+    z-index:302; max-width:520px; margin:0 auto; background:rgba(13,17,23,.94);
+    -webkit-backdrop-filter:blur(8px); backdrop-filter:blur(8px);
+  }
+  body.st-plein .st-objectif{
+    position:fixed; left:0; right:0; bottom:calc(72px + env(safe-area-inset-bottom));
+    z-index:302; color:#e6edf3; text-shadow:0 1px 4px rgba(0,0,0,.8);
+  }
+  body.st-plein #st-quitter{ display:flex; }
+  #st-quitter{
+    position:fixed; top:calc(8px + env(safe-area-inset-top)); right:10px; z-index:303;
+    display:none; width:40px; height:40px; border-radius:50%; cursor:pointer;
+    align-items:center; justify-content:center; font-size:17px;
+    border:1px solid rgba(255,255,255,.25); background:rgba(13,17,23,.66); color:#e6edf3;
+  }
   /* ── Scanner test : volontairement sommaire, on juge la capture, pas la mise en page ── */
   /* Le cadre ne prend que la moitié de la hauteur : tout l'intérêt de cette page est de
      voir la carte identifiée JUSTE EN DESSOUS, sans faire défiler. Un aperçu plein écran
@@ -4663,6 +4722,17 @@
       <button class="btn-gold" id="st-ouvrir">Ouvrir la caméra</button>
       <button id="st-fermer" hidden>Fermer</button>
     </div>
+    <!-- Commande d'objectif. Je ne peux pas vérifier depuis mon poste quelle valeur bascule
+         sur l'objectif principal du Samsung de Nikos : la relation entre le zoom annoncé par
+         le navigateur et l'objectif physique n'est pas normalisée. Plutôt que de continuer à
+         deviner, on affiche ce que l'appareil déclare et on lui donne la commande. -->
+    <div class="st-objectif" id="st-objectif" hidden>
+      <button id="st-zoom-moins" type="button">−</button>
+      <span id="st-zoom-txt">objectif —</span>
+      <button id="st-zoom-plus" type="button">+</button>
+    </div>
+
+    <button id="st-quitter" type="button" aria-label="Quitter le plein écran">✕</button>
 
     <div id="st-resultat" hidden>
       <img id="st-photo" alt="">
@@ -6057,7 +6127,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 63;
+const VERSION_APP = 66;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13552,6 +13622,55 @@ const ST_DOUCE = 1200, ST_FRANCHE = 2500;
 // pour un tout.
 const ST_RECADRES = [0.55];
 
+
+// ── OBJECTIF : montrer ce que l'appareil déclare, et laisser la main ──────────────────────
+// Le zoom annoncé par le navigateur n'a aucune sémantique garantie. Sur le Samsung de Nikos
+// les capacités vont de 1 à 30, quand l'application caméra du téléphone affiche 0,6× à 30× :
+// le « 1 » du navigateur est donc l'ultra grand-angle. J'en avais déduit qu'un facteur 1,7
+// (soit 1/0,6) basculerait sur l'objectif principal — et Nikos rapporte que non, c'est encore
+// le grand-angle. Je ne peux pas trancher depuis mon poste : la correspondance entre valeur
+// de zoom et objectif physique dépend du pilote.
+// On affiche donc ce que la piste déclare vraiment, et on donne la commande. Trente secondes
+// sur l'appareil valent mieux qu'une troisième supposition de ma part.
+let stZoomCaps = null;
+
+function stMajZoom(){
+  const el = $('st-zoom-txt'), bloc = $('st-objectif');
+  if(!el || !bloc) return;
+  if(!ST.piste || !stZoomCaps){ bloc.hidden = true; return; }
+  bloc.hidden = false;
+  let z = null;
+  try{ z = ST.piste.getSettings ? ST.piste.getSettings().zoom : null; }catch(e){}
+  el.textContent = 'objectif ' + (z != null ? (+z).toFixed(2) : '?')
+    + '  (' + stZoomCaps.min + '–' + stZoomCaps.max + ')';
+}
+
+async function stZoomer(sens){
+  if(!ST.piste || !stZoomCaps) return;
+  try{
+    const pas = stZoomCaps.step && stZoomCaps.step > 0 ? Math.max(stZoomCaps.step, 0.1) : 0.1;
+    const actuel = (ST.piste.getSettings && ST.piste.getSettings().zoom) || stZoomCaps.min;
+    const cible = Math.max(stZoomCaps.min, Math.min(stZoomCaps.max, actuel + sens * pas * 2));
+    await ST.piste.applyConstraints({advanced:[{zoom: cible}]});
+    // La valeur retenue est mémorisée POUR CET APPAREIL : une fois que Nikos a trouvé
+    // celle qui bascule sur son objectif principal, il n'a pas à la refaire à chaque session.
+    try{ localStorage.setItem('pokescanZoomTest', String(cible)); }catch(e){}
+    stMajZoom();
+  }catch(e){ stEtat('zoom refusé : ' + e.message); }
+}
+
+// ── Plein écran ──────────────────────────────────────────────────────────────────────────
+// Pas d'API Fullscreen : elle échoue silencieusement selon le navigateur et le contexte, et
+// laisse alors une page à moitié transformée. Une classe sur le corps du document donne le
+// même résultat visuel et ne peut pas échouer. Le repère et le tracé des coins se calculent
+// déjà à partir du rectangle réellement occupé par l'image (V.63) : ils suivent tout seuls.
+function stPlein(actif){
+  document.body.classList.toggle('st-plein', !!actif);
+  // Le canevas se redimensionne au prochain tour de boucle ; on force un tracé pour que le
+  // repère ne reste pas figé à l'ancienne taille pendant une fraction de seconde.
+  requestAnimationFrame(()=> stDessiner(null));
+}
+
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 
 async function stOuvrir(){
@@ -13571,10 +13690,20 @@ async function stOuvrir(){
   // facteur 1,7 est une supposition tant que Nikos ne l'a pas comparé à 1,0.
   try{
     const caps = ST.piste.getCapabilities ? ST.piste.getCapabilities() : {};
-    if(caps.zoom && caps.zoom.max / Math.max(caps.zoom.min, 1e-4) >= 5){
-      await ST.piste.applyConstraints({advanced:[{zoom: Math.min(caps.zoom.max, caps.zoom.min * 1.7)}]});
+    stZoomCaps = caps.zoom || null;
+    if(stZoomCaps){
+      // La valeur que Nikos a lui-même trouvée l'emporte sur ma supposition : elle vient de
+      // SON appareil, la mienne d'un raisonnement sur des capacités qui ne disent pas tout.
+      const memo = parseFloat(localStorage.getItem('pokescanZoomTest'));
+      const cible = Number.isFinite(memo)
+        ? Math.max(stZoomCaps.min, Math.min(stZoomCaps.max, memo))
+        : (stZoomCaps.max / Math.max(stZoomCaps.min, 1e-4) >= 5
+            ? Math.min(stZoomCaps.max, stZoomCaps.min * 1.7) : null);
+      if(cible != null) await ST.piste.applyConstraints({advanced:[{zoom: cible}]});
     }
   }catch(e){}
+  stMajZoom();
+  stPlein(true);
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     stEtat('préparation du moteur d’identification…');
     try{ window.relancerInitV2 && window.relancerInitV2(); }catch(e){}
@@ -13587,6 +13716,7 @@ async function stOuvrir(){
 
 function stFermer(){
   ST.boucle = false;
+  stPlein(false);
   stEnvoyerBilan();   // fin de session : c'est ici qu'on sait ce qu'elle a valu
   try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
   ST.flux = null; ST.piste = null;
@@ -13843,6 +13973,9 @@ $('st-fermer')?.addEventListener('click', stFermer);
 $('st-garder')?.addEventListener('click', ()=> stValider(true));
 $('st-jeter')?.addEventListener('click', ()=> stValider(false));
 $('st-envoyer')?.addEventListener('click', stEnvoyerAuLot);
+$('st-quitter')?.addEventListener('click', stFermer);
+$('st-zoom-moins')?.addEventListener('click', ()=> stZoomer(-1));
+$('st-zoom-plus')?.addEventListener('click', ()=> stZoomer(1));
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
