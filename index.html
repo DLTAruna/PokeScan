@@ -5967,7 +5967,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 52;
+const VERSION_APP = 53;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10614,7 +10614,7 @@ let v2DernierRecoursA = 0;      // dernier essai « sans détecteur » (voir REC
 let v2VuSansDeclencherA = 0;    // dernier signalement « carte vue, pas déclenchée » (V.40)
 let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli)
 let meilleursCoins = null;      // les coins DE CETTE image-là, pas ceux de l'instant
-let scratchNettete = null;      // canvas de mesure, réutilisé pour ne pas allouer à 10 Hz
+let scratchNettete = null, scratchEmpreinte = null;      // canvas de mesure, réutilisé pour ne pas allouer à 10 Hz
 
 function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; }
 
@@ -10710,6 +10710,79 @@ function proportionQuad(c, W, H){
   return Math.abs(haut/larg - CARD_RATIO) / CARD_RATIO;
 }
 
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// LE VERROU DOIT S'OUVRIR — trois portes au lieu d'une (V.53).
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Il n'avait qu'une clé fiable : deux images consécutives SANS AUCUNE détection. Or on ne
+// montre pas un champ vide à la caméra entre deux cartes — on retire l'une et on pose
+// l'autre, et le détecteur voit une carte du début à la fin. Le verrou ne s'ouvrait alors
+// jamais. Relevé sur le téléphone de Nikos, V.52 :
+//
+//     10:03:13  capture réussie
+//     10:03:16  verrou — tenue  1,6 s   carte visible, aire 0,185
+//     10:03:20  verrou — tenue  5,7 s
+//     10:03:25  verrou — tenue 10,4 s
+//     10:03:29  verrou — tenue 14,8 s
+//     10:03:37  enfin
+//
+// Quinze secondes de refus, carte sous les yeux. Sept des quinze non-déclenchements de la
+// salve venaient de là : première cause, et de loin.
+//
+// La seconde clé — « les coins ont franchement bougé » — était réglée à V2_BOUGE_BASE × 3,
+// c'est-à-dire au CURSEUR D'IMMOBILITÉ depuis que l'atelier existe. Deux choses sans rapport
+// commandées par un même bouton : monter la tolérance au tremblement pour déclencher plus
+// facilement resserrait du même geste la sortie du verrou. Le journal en porte la trace, un
+// seuil d'ouverture à 0,450 — presque la moitié du cadre. Découplé.
+const VERROU_ECART = 0.09;        // déplacement franc depuis la capture : c'est une autre carte
+let VERROU_MS_MAX = 3500;         // au-delà, une carte tenue si longtemps EST une autre carte
+let empreinteCapture = null;      // à quoi ressemblait la carte capturée (voir empreinteDepuisScratch)
+let v2EmpreinteCourante = null;   // empreinte du tour de boucle en cours
+// ⚠️ L'EMPREINTE EST UN INDICE, PAS UNE PREUVE — mesuré, pas supposé.
+// Sur quatorze cartes de synthèse, même carte réexposée et bruitée contre carte différente :
+//     même carte     médiane  8, p90 15, max 16
+//     autre carte    minimum  4, médiane 13
+// Les deux populations se RECOUVRENT ; aucun seuil ne les sépare proprement.
+//     seuil  8 → 87 % des cartes neuves vues, mais 43 % de faux déverrouillages
+//     seuil 14 → 37 %                                11 %
+//     seuil 16 → 20 %                                 0 %
+// On choisit 14, et le choix s'assume : un faux déverrouillage fait rescanner la même carte,
+// ce que le garde-fou des doublons rattrape ; un verrou coincé empêche de scanner tout court,
+// et c'est de cela que Nikos se plaint. À coût asymétrique, on penche du côté qui ouvre.
+// Ce n'est donc PAS la clé principale — c'est le délai de sûreté qui l'est. L'empreinte ne
+// fait qu'ouvrir plus tôt quand elle est sûre d'elle.
+let VERROU_EMPREINTE = 14;
+
+// Empreinte de contenu : une vignette 8×8 en niveaux de gris, réduite à ses variations
+// horizontales (dHash). Deux cartes différentes en diffèrent largement ; la même carte, même
+// bougée ou réexposée, reste proche. C'est la seule clé qui marche quand l'utilisateur pose
+// la carte suivante EXACTEMENT là où était la précédente — le cas que rien ne rattrapait.
+// Elle ne coûte presque rien : on réutilise la vignette déjà dessinée pour la netteté.
+function empreinteDepuisScratch(){
+  try{
+    const w = 9, h = 8;
+    if(!scratchEmpreinte){ scratchEmpreinte = document.createElement('canvas'); scratchEmpreinte.width = w; scratchEmpreinte.height = h; }
+    const c = scratchEmpreinte.getContext('2d', {willReadFrequently:true});
+    c.drawImage(scratchNettete, 0, 0, w, h);
+    const d = c.getImageData(0, 0, w, h).data;
+    const bits = [];
+    for(let y = 0; y < h; y++){
+      for(let x = 0; x < w - 1; x++){
+        const i = (y*w + x)*4, j = (y*w + x + 1)*4;
+        const g1 = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+        const g2 = d[j]*0.3 + d[j+1]*0.59 + d[j+2]*0.11;
+        bits.push(g1 > g2 ? 1 : 0);
+      }
+    }
+    return bits;
+  }catch(e){ return null; }
+}
+function ecartEmpreinte(a, b){
+  if(!a || !b || a.length !== b.length) return 99;
+  let n = 0; for(let i = 0; i < a.length; i++) if(a[i] !== b[i]) n++;
+  return n;
+}
+
 function symetrieQuad(c){
   const P = [c.tl, c.tr, c.br, c.bl];
   const L = (a,b)=>Math.hypot(P[b][0]-P[a][0], P[b][1]-P[a][1]);
@@ -10760,8 +10833,10 @@ function netteteVisee(video, coins){
 // Retient l'image courante si elle est la plus nette depuis que la carte est là. On la garde
 // déjà réduite à EXTRACT_LONG_EDGE : c'est exactement ce que le redressement utilisera, donc
 // aucune perte, et une seule image en mémoire plutôt qu'une fenêtre entière.
-function retenirSiPlusNette(video, coins){
-  const net = netteteVisee(video, coins);
+function retenirSiPlusNette(video, coins, netDeja){
+  // La vignette est dessinée une seule fois par tour : la netteté ET l'empreinte du verrou
+  // en sortent. La recalculer ici doublerait un coût qui tombe à chaque image.
+  const net = (typeof netDeja === 'number') ? netDeja : netteteVisee(video, coins);
   if(net < 0 || net <= meilleureNettete) return;
   const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
   const vw = Math.max(1, Math.round(video.videoWidth * ech));
@@ -12455,7 +12530,12 @@ async function detectLoop(gen){
         v2SymCourante = symetrieQuad(d.corners);
         v2PropCourante = proportionQuad(d.corners, video.videoWidth, video.videoHeight);
         const formeOk = v2SymCourante <= SYM_MAX && v2PropCourante <= PROP_MAX;
-        if(formeOk) retenirSiPlusNette(video, d.corners);
+        // Une seule vignette pour les deux usages : la netteté qui choisit l'image à
+        // identifier, et l'empreinte qui dit au verrou si la carte a changé.
+        const netCourante = netteteVisee(video, d.corners);
+        const empCourante = empreinteDepuisScratch();
+        v2EmpreinteCourante = empCourante;   // relue par les chemins de capture, plus bas
+        if(formeOk) retenirSiPlusNette(video, d.corners, netCourante);
 
         // Carte déjà lue et toujours là : ne PAS relancer l'identif. Le verrou saute dès
         // que la carte a été retirée (v2AbsenceStreak) OU qu'elle a franchement bougé —
@@ -12469,9 +12549,26 @@ async function detectLoop(gen){
         // Le banc fait l'inverse et c'est ce qui le rend fluide : un écart franc depuis la
         // dernière capture (0,09) le déverrouille UNE FOIS, et il le laisse ouvert jusqu'à la
         // capture suivante. On aligne, seuil compris.
-        if(!v2CarteRetiree && lastCaptureCorners
-           && maxCornerShift(lastCaptureCorners, d.corners) > V2_BOUGE_BASE * 3){
-          v2CarteRetiree = true;
+        // ── LES TROIS PORTES DU VERROU (V.53) ────────────────────────────────────────
+        // Il n'en avait qu'une qui marche — l'absence soutenue — et on ne montre pas un
+        // champ vide entre deux cartes. D'où quinze secondes de refus relevées sur le
+        // terrain, carte sous les yeux. On en ouvre trois, et il suffit d'une.
+        if(!v2CarteRetiree && lastCaptureCorners){
+          // a) déplacement franc depuis la capture. Seuil PROPRE, et non plus adossé au
+          //    curseur d'immobilité : ce sont deux questions différentes.
+          const aBouge = maxCornerShift(lastCaptureCorners, d.corners) > VERROU_ECART;
+          // b) le contenu a changé : la seule clé qui marche quand la carte suivante est
+          //    posée exactement là où était la précédente.
+          const aChange = empreinteCapture && empCourante
+                       && ecartEmpreinte(empreinteCapture, empCourante) > VERROU_EMPREINTE;
+          // c) filet de sécurité : personne ne tient la même carte immobile pendant plus de
+          //    trois secondes et demie APRÈS l'avoir scannée. Si les deux autres portes se
+          //    trompent, celle-ci rend la main à l'utilisateur au lieu de le laisser bloqué.
+          const tropLongtemps = lastCaptureAt && (now - lastCaptureAt) > VERROU_MS_MAX;
+          if(aBouge || aChange || tropLongtemps){
+            v2CarteRetiree = true;
+            diagPush('err', {msg:'verrou ouvert — ' + (aBouge ? 'déplacement' : aChange ? 'contenu différent' : 'délai')});
+          }
         }
         const dejaLue = !v2CarteRetiree && !!lastCaptureCorners;
         // Plus aucun message de cadrage (V.13) : c'est la COULEUR DU CADRE qui renseigne,
@@ -12603,6 +12700,7 @@ function reinitialiserEtatScanV2(){
   // Sans ça, la caméra rouverte comparerait la première carte à la netteté de la dernière
   // carte de la session précédente, et ne retiendrait jamais rien.
   oublierMeilleureFrame();
+  empreinteCapture = null;
 }
 function reprendreApresBlocage(){
   reinitialiserEtatScanV2();
@@ -12706,6 +12804,12 @@ const ATELIER_REGLAGES = [
   {n:'RECADRE_APRES', l:'Rattrapage après N images', min:0, max:30, pas:1,
    a:'Images sans détection avant de retenter sur un recadrage central. Bas = rattrape les cartes lointaines, mais coûte une détection.',
    get:()=>RECADRE_APRES, set:v=>RECADRE_APRES=v},
+  {n:'VERROU_MS_MAX', l:'Verrou : délai de sûreté (ms)', min:800, max:10000, pas:100,
+   a:'Après ce temps de présence continue depuis la dernière capture, le verrou s’ouvre quoi qu’il arrive. C’est le filet qui empêche de rester bloqué sur une carte déjà scannée.',
+   get:()=>VERROU_MS_MAX, set:v=>VERROU_MS_MAX=v},
+  {n:'VERROU_EMPREINTE', l:'Verrou : écart de contenu', min:2, max:32, pas:1,
+   a:'Nombre de points de différence entre la carte scannée et celle vue maintenant, au-delà duquel on considère que ce n’est plus la même. Bas = change d’avis facilement.',
+   get:()=>VERROU_EMPREINTE, set:v=>VERROU_EMPREINTE=v},
   {n:'AIRE_LIMITE_V2', l:'Aire minimale de la carte', min:0.01, max:0.5, pas:0.01,
    a:'En dessous, le cadre passe au rouge (« rapproche-toi »). Ne bloque plus la capture depuis la V.40, c’est un repère.',
    get:()=>AIRE_LIMITE_V2, set:v=>AIRE_LIMITE_V2=v},
@@ -12827,7 +12931,7 @@ function majJaugesAtelier(d){
     puce('format', d.prop.toFixed(3), PROP_MAX.toFixed(2), d.prop <= PROP_MAX, 'PROP_MAX');
     puce('cadre',  Math.round(d.aire * 100) + '%', null, d.aire >= AIRE_LIMITE_V2, 'AIRE_LIMITE_V2');
     puce('tenue',  (d.tenue / 1000).toFixed(1) + 's', null, null, 'V2_PATIENCE_DOUCE');
-    puce('verrou', d.dejaLue ? 'fermé' : 'ouvert', null, !d.dejaLue);
+    puce('verrou', d.dejaLue ? 'fermé' : 'ouvert', null, !d.dejaLue, 'VERROU_MS_MAX');
   }
 
   if(hud){
@@ -13624,6 +13728,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
       capturerSansLecture(cvR, 'V2 non reconnue', true);
       setAimHint('🤔 V2 : non reconnue — envoyée dans « À vérifier »');
       lastCaptureCorners = corners; cardConfirmedAbsentSinceCapture = false; v2DerniereCle = null;
+      empreinteCapture = v2EmpreinteCourante;   // ce à quoi la carte scannée ressemblait
       v2CarteRetiree = false;
       return 'rebut';
     }
@@ -13679,6 +13784,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
   v2DerniereCle = res.pick.cle;
   v2DerniereCat = res.categorie;
   lastCaptureCorners = corners; lastCaptureAt = Date.now(); lastCaptureCardId = carteMin.id;
+  empreinteCapture = v2EmpreinteCourante;   // voir les trois portes du verrou
   lastCaptureNumber = {number: stripLeadingZero(String(carteMin.number)), denominator: ''};
   lastCaptureHash = liveHash;
   cardConfirmedAbsentSinceCapture = false;
