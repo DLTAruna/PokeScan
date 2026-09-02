@@ -6367,7 +6367,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 89;
+const VERSION_APP = 90;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14244,7 +14244,17 @@ async function stOuvrir(){
     try{ window.relancerInitV2 && window.relancerInitV2(); }catch(e){}
   }
   // OCR coupé pour la durée du scan : voir ST_OCR_NORMAL.
-  try{ SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: 99999, OCR_ORB_MS_MAX: 0 }); }catch(e){}
+  // ⚠️ reglagesV2 écrit dans le module PARTAGÉ par les trois scanners. Sans mémoriser
+  // l'état d'avant, l'onglet Test laissait l'OCR coupé pour tout le monde en sortant —
+  // et seulement quand la seconde analyse avait quelque chose à reprendre, sinon elle
+  // sortait tôt sans rien rétablir. Autrement dit : une session sans aucun doute
+  // désactivait l'OCR du scanner principal et de l'onglet XX, en silence, jusqu'au
+  // rechargement de la page. Toute comparaison entre les trois s'en trouvait faussée.
+  try{
+    const r = SCAN_V2.reglagesV2();
+    stOcrAvant = { OCR_INLIERS_MIN: r.OCR_INLIERS_MIN, OCR_ORB_MS_MAX: r.OCR_ORB_MS_MAX };
+    SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: 99999, OCR_ORB_MS_MAX: 0 });
+  }catch(e){}
   ST.boucle = true;
   stAlerteEnCours = false;
   const al = $('st-alerte'); if(al) al.hidden = true;
@@ -14274,6 +14284,9 @@ async function stFermer(){
   // dont j'avais justement retiré l'OCR de départage. Le chiffre a chuté, et je l'ai
   // d'abord lu comme une régression alors que la mesure avait changé de sens.
   await stSecondeAnalyse();
+  // On rend le module dans l'état où on l'a trouvé. La seconde analyse le fait déjà quand
+  // elle a du travail ; ici c'est inconditionnel, et c'est le seul endroit qui le garantit.
+  try{ if(stOcrAvant){ SCAN_V2.reglagesV2(stOcrAvant); stOcrAvant = null; } }catch(e){}
   stEnvoyerBilan();   // fin de session : c'est ici, et seulement ici, qu'on sait ce qu'elle a valu
 }
 
@@ -15533,6 +15546,9 @@ function stFermerAlerte(reprendre){
 // contrainte de temps réel puisque plus rien ne dispute la machine. Une carte par tour, en
 // rendant la main entre chaque : l'utilisateur vient de revenir à ses listes, l'interface ne
 // doit pas se figer.
+// L'état de l'OCR avant que l'onglet Test ne le coupe. Rendu à la fermeture, quoi qu'il
+// arrive — c'est un réglage du module partagé, pas le nôtre.
+let stOcrAvant = null;
 let stSecondeEnCours = false;
 // Ce que la seconde analyse a changé, gardé pour le bilan. Sans cette trace, couper l'OCR
 // pendant le scan est un pari qu'on ne peut ni confirmer ni infirmer : on voit le coût
