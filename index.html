@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 87;
+const VERSION_APP = 88;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10912,7 +10912,37 @@ let v2ImageRetenue = '?';       // 'memoire' (la plus nette) ou 'instant' (repli
 let meilleursCoins = null;      // les coins DE CETTE image-là, pas ceux de l'instant
 let scratchNettete = null, scratchEmpreinte = null;      // canvas de mesure, réutilisé pour ne pas allouer à 10 Hz
 
-function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; }
+function oublierMeilleureFrame(){
+  meilleureNettete = -1; meilleursCoins = null; oublierEmpreinteV1();
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// EMPREINTE PRISE D'AVANCE — même mécanique que le scanner de test (V.87)
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// L'empreinte vaut 39 % du temps d'identification et ne dépend que de l'image. Pendant que
+// la boucle attend la stabilité, le GPU est presque libre. On la calcule au tour où tout
+// passe SAUF « stable » : la capture est imminente et l'image qui partira est déjà retenue.
+// Mesuré au scanner de test : 463 → 146 ms isolé, 1411 → 1106 en situation.
+//
+// Deux précautions propres au scanner principal, qui n'existaient pas dans le test :
+//   • la spéculation reprend EXACTEMENT le découpage du premier essai (STRATEGIES_ESSAI[0],
+//     échelle 1). Les essais suivants recadrent autrement, donc l'empreinte ne leur vaudrait
+//     rien — et elle n'est offerte qu'à l'essai zéro.
+//   • le dernier recours travaille sur l'image en direct, pas sur la mémoire : il n'a pas de
+//     pré-calcul à consommer, et le jeton le lui refuse tout seul.
+let preV1Promesse = null, preV1Jeton = -1, jetonMeilleureV1 = 0;
+
+function lancerEmpreinteV1(){
+  if(preV1Promesse || !meilleureFrame || !meilleursCoins || !SCAN_V2.preparerV2) return;
+  const strat = STRATEGIES_ESSAI[0];
+  const coinsEssai = strat.fixe ? null : retrecirCoins(meilleursCoins, strat.echelle);
+  if(!coinsEssai) return;
+  const cv = extraireCarteCentree(meilleureFrame, coinsEssai, meilleureFrame.width, meilleureFrame.height);
+  if(!cv) return;
+  preV1Jeton = jetonMeilleureV1;
+  preV1Promesse = SCAN_V2.preparerV2(cv).catch(()=> null);
+}
+function oublierEmpreinteV1(){ preV1Promesse = null; preV1Jeton = -1; }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
 // FORME DU QUADRILATÈRE — le score du détecteur ne dit rien de la justesse des coins.
@@ -11142,6 +11172,7 @@ function retenirSiPlusNette(video, coins, netDeja){
   meilleureFrame.getContext('2d').drawImage(video, 0, 0, vw, vh);
   meilleureNettete = net;
   meilleursCoins = { tl:[...coins.tl], tr:[...coins.tr], br:[...coins.br], bl:[...coins.bl] };
+  jetonMeilleureV1++;   // l'empreinte en vol ne décrit plus l'image qui partira
 }
 
 // Retrait de carte, version V2. Le verrou « déjà lue » se relâchait sur
@@ -12882,6 +12913,11 @@ async function detectLoop(gen){
         if(tropLoin) etatCadre = 'attente';
         majJaugesAtelier({vue:true, score:d.score, seuilScore, bouge:moved, seuilBouge,
           stable, sym:v2SymCourante, prop:v2PropCourante, aire:aireVue, tenue, dejaLue});
+        // Tout est réuni sauf la stabilité : la capture est pour le tour suivant, et l'image
+        // qui partira est déjà en mémoire. C'est le seul moment où spéculer a un sens — le
+        // faire à chaque image empilerait des calculs GPU qui ralentiraient le détecteur
+        // (mesuré : +25 ms par tour quand une identification tourne en parallèle).
+        if(!dejaLue && d.score >= seuilScore && !stable && formeOk) lancerEmpreinteV1();
         if(!dejaLue && d.score >= seuilScore && stable && formeOk){
           etatCadre = 'ok';
           v2PresentDepuis = 0;
@@ -13536,6 +13572,12 @@ async function attemptReadV2(corners, score, opts){
     // tant que `readInFlight` tient.
     v2NetteteRetenue = Math.round(meilleureNettete);
     v2ImageRetenue = source === meilleureFrame ? 'memoire' : 'instant';
+    // Saisi AVANT oublierMeilleureFrame, qui remet la mémoire — et l'empreinte prise
+    // d'avance — à zéro. Et réservé au premier essai sur l'image mémorisée : les recadrages
+    // des essais suivants, comme le dernier recours, ne décrivent pas la même image.
+    const preEnVolV1 = (preV1Promesse && preV1Jeton === jetonMeilleureV1
+                        && v2EssaiCadre === 0 && source === meilleureFrame && !recours)
+                     ? preV1Promesse : null;
     oublierMeilleureFrame();
     // Stratégie de cet essai : voir STRATEGIES_ESSAI. Le premier essai emprunte toujours les
     // coins détectés — c'est le meilleur cas et de loin le plus fréquent.
@@ -13592,7 +13634,7 @@ async function attemptReadV2(corners, score, opts){
       res();
     }, gardeMs); });
     await Promise.race([
-      gererScanV2(sourceForRead, coinsEssai, score, t0, true,
+      gererScanV2(sourceForRead, coinsEssai, score, t0, true, preEnVolV1,
                   {cv: cvPrise, dataUrl: dataUrlPrise, jeton: jetonLecture})
         .then(r => {
           // « reessai » = pas d'identification exploitable et la carte est toujours là.
@@ -15620,7 +15662,7 @@ let derniereCarteAffichee = null;
 // `dejaAcquitte` : la prise manuelle a déjà rendu l'éclair et la vibration au moment de
 // l'appui (voir captureFrameInterne). Les rejouer ici ferait un second flash une seconde
 // et demie plus tard, sur une carte déjà acquittée.
-async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, prise){
+async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, preEnVol, prise){
   // `onProvisoire` (V.20) : quand l'ORB hésite entre deux cartes, il passe la main à l'OCR
   // du numéro pour trancher — 0,3 à 3,2 s pendant lesquelles le cadre du bas ne montrait
   // rien. Or l'ORB a déjà un favori à cet instant ; il est seulement trop serré pour qu'on
@@ -15628,7 +15670,11 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
   // la vérification vient le confirmer ou le corriger.
   // ⚠️ Cet avis ne sert QU'À L'AFFICHAGE. Rien ne s'enregistre à partir de lui : la file, le
   // classeur, le stock et le journal attendent tous `res`, la seule vérité.
+  // Le pré-calcul ne sert que s'il décrit l'image qu'on identifie vraiment ; sinon il est
+  // simplement ignoré et l'on reprend le chemin normal. Aucune régression possible.
+  const pre = preEnVol ? await preEnVol : null;
   const res = await SCAN_V2.identifierV2(sourceForRead, {
+    pre,
     onProvisoire: avis => {
       try{
         // On ne touche PAS à la vignette : celle de la prise est déjà affichée (accusé de
@@ -16363,7 +16409,7 @@ async function captureFrameInterne(video){
     if(navigator.vibrate) navigator.vibrate(40);
     setAimHint('🔎 Identification…');
     acquitte = true;
-    const rV2 = await gererScanV2(source, overlayTargetCorners || null, 1, performance.now(), true)
+    const rV2 = await gererScanV2(source, overlayTargetCorners || null, 1, performance.now(), true, null)
       .catch(e => { console.warn('V2 manuel', e); return null; });
     if(rV2 === 'traite' || rV2 === 'rebut' || rV2 === 'rejet-doublon') return;
     // 'reessai' ou null : la V2 n'a rien donné, mais un appui manuel doit TOUJOURS
