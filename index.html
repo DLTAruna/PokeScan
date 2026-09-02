@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 48;
+const VERSION_APP = 49;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10934,6 +10934,30 @@ async function viserMiseAuPoint(corners){
 // Instant du démarrage caméra, pour dater chaque tentative DANS la session plutôt qu'en
 // absolu — voir camSessionInstrumentation ci-dessous.
 let camStartedAt = 0;
+// ─── ÉTAT DE L'APPAREIL, JOINT À CHAQUE SCAN ───────────────────────────────────────────
+// Les sessions du 2 septembre montrent des durées deux à trois fois supérieures à celles de
+// la veille, MOTEUR IDENTIQUE (webgpu/fp16) : warm1 passe de 866 à 3512 ms et warm2 de 208 à
+// 922, alors que ce sont des calculs FIXES qu'aucun de mes changements ne touche. La lenteur
+// vient donc de l'appareil, pas du code — reste à savoir de quoi exactement, et pour ça il
+// faut la mesure au moment du scan.
+// La batterie n'était écrite que dans les traces d'incident : une session sans incident
+// n'en disait rien, ce qui est précisément le cas de celle qu'il fallait comprendre.
+let etatAppareil = { batterie: null, charge: null, zoom: null, videoW: null };
+function majEtatAppareil(){
+  try{
+    const v = $('video');
+    etatAppareil.videoW = v && v.videoWidth ? v.videoWidth : null;
+    const t = cameraStream && cameraStream.getVideoTracks ? cameraStream.getVideoTracks()[0] : null;
+    etatAppareil.zoom = (t && t.getSettings) ? (t.getSettings().zoom ?? null) : null;
+  }catch(e){}
+  try{
+    if(navigator.getBattery) navigator.getBattery().then(b=>{
+      etatAppareil.batterie = Math.round((b.level ?? 0) * 100);
+      etatAppareil.charge = !!b.charging;
+    }).catch(()=>{});
+  }catch(e){}
+}
+setInterval(majEtatAppareil, 15000);
 
 // Mémoire JS utilisée, en Mo. `performance.memory` est non standard et propre à Chrome
 // (exactement le navigateur des relevés terrain) ; ailleurs on renvoie null plutôt que
@@ -13195,6 +13219,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
         ocrLance:(res&&res.ocrLance)||false, ms:(res&&res.ms)||0, T:(res&&res.T)||{}, moteur:(res&&res.moteur)||'?',
         diag:(SCAN_V2.diagV2&&SCAN_V2.diagV2())||null, score:+Number(score).toFixed(2), v:VERSION_APP,
         sets:(res&&res.setsCharges)||(SCAN_V2.setV2&&SCAN_V2.setV2())||null,
+        appareil:{...etatAppareil},
         embTop:(res&&typeof res.embTop==='number')?+res.embTop.toFixed(4):null,
         embPremier:(res&&res.embPremier)||null,
         embEtaitBon:(res&&res.pick&&res.embPremier)?(res.pick.cle===res.embPremier):null,
@@ -13296,6 +13321,7 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, pris
     packTelecharge: !!res.packTelecharge,
     ms: res.ms, T: res.T, moteur: res.moteur, diag: (SCAN_V2.diagV2 && SCAN_V2.diagV2()) || null,
     sets: res.setsCharges || SCAN_V2.setV2(), score: +Number(score).toFixed(2),
+    appareil: {...etatAppareil},
     // ── Ce qui manquait pour comprendre les rebuts (V.36) ──────────────────────────────
     // Les échecs sont bimodaux : l'ORB verrouille à 20-190 inliers, ou ne voit rien (0-8).
     // Rien entre les deux. Avec les seuls inliers on ne peut pas savoir POURQUOI il ne voit
@@ -13480,6 +13506,7 @@ function startAimLoop(){
   overlayCurrentCorners = overlayTargetCorners = null;
   sessionCardHashes = []; // nouvelle session caméra -> le raccourci visuel repart de zéro
   camStartedAt = Date.now(); // origine de temps pour l'instrumentation session (voir diagPush)
+  majEtatAppareil();   // sans attendre le premier passage périodique : le 1er scan compte aussi
   setAimHint('Préparation de la lecture…');
 
   // Pas de dessin immédiat ici : au moment où startAimLoop est appelée, srcObject vient
