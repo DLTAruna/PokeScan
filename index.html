@@ -769,6 +769,44 @@
      demandant si ça marche encore. On n'anime donc QUE `transform` et `opacity`, les deux
      propriétés que le compositeur traite sur son propre fil, sans le fil principal.
      La barre de progression suit la même règle : `scaleX`, jamais `width`. */
+  /* ── Atelier de réglage : visible en plein écran caméra, discret le reste du temps ── */
+  #atelier-bouton{
+    position:absolute; top:10px; left:10px; z-index:21;
+    width:38px; height:38px; border-radius:50%; border:1px solid rgba(255,255,255,.28);
+    background:rgba(13,17,23,.62); color:#e6c25c; font-size:17px; line-height:1;
+    display:none; align-items:center; justify-content:center; cursor:pointer;
+    -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  }
+  #cam-fullscreen-area.fs #atelier-bouton{ display:flex; }
+  #atelier{
+    position:absolute; top:56px; left:8px; right:8px; z-index:22;
+    max-height:62vh; overflow-y:auto; padding:10px 12px 12px;
+    border-radius:12px; border:1px solid rgba(255,255,255,.16);
+    background:rgba(13,17,23,.93); color:#e6edf3;
+    -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+    font-size:12px; box-shadow:0 10px 34px rgba(0,0,0,.5);
+  }
+  #atelier[hidden]{ display:none; }
+  .at-tete{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .at-tete b{ color:#e6c25c; font-size:12.5px; }
+  .at-tete button{
+    background:rgba(255,255,255,.08); color:#e6edf3; border:1px solid rgba(255,255,255,.18);
+    border-radius:7px; padding:3px 9px; font-size:11px; margin-left:6px; cursor:pointer;
+  }
+  /* Les jauges : police à chasse fixe, sinon les chiffres dansent à chaque rafraîchissement
+     et deviennent illisibles à 10 Hz. */
+  #atelier-jauges{
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10.5px; line-height:1.55;
+    white-space:pre-wrap; color:#9fb0c0; background:rgba(0,0,0,.32);
+    border-radius:8px; padding:7px 8px; margin-bottom:9px;
+  }
+  #atelier-jauges .ok{ color:#3fb950; } #atelier-jauges .ko{ color:#e0553f; }
+  .at-ligne{ margin:9px 0 0; }
+  .at-ligne label{ display:flex; justify-content:space-between; gap:8px; margin-bottom:3px; }
+  .at-ligne label span:last-child{ color:#e6c25c; font-family:ui-monospace,monospace; }
+  .at-ligne input[type=range]{ width:100%; accent-color:#e6c25c; }
+  .at-ligne small{ color:#7d8b99; font-size:10px; display:block; margin-top:1px; }
+  .at-bascule{ display:flex; align-items:center; gap:8px; margin:10px 0 0; }
   .scan-loader{
     position:absolute; inset:0; z-index:15;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0;
@@ -4851,6 +4889,24 @@
       <div class="video-wrap" id="video-wrap">
         <video id="video" autoplay playsinline muted></video>
         <canvas class="aim-overlay" id="aim-overlay"></canvas>
+        <!-- ── ATELIER DE RÉGLAGE (V.50) ────────────────────────────────────────────────
+             Les seuils se règlent ici, sur l'appareil, carte en main. Aucun de mes bancs ne
+             peut faire ça : ils simulent une caméra, pas la tienne, et ils ont eu tort deux
+             fois pour cette raison — scènes dessinées à plat, puis sans une seule scène vide.
+             La ligne de jauges dit en direct POURQUOI ça ne part pas ; c'est ce que le banc
+             affichait et qui manquait ici depuis toujours. -->
+        <button id="atelier-bouton" type="button" title="Réglages en direct">⚙</button>
+        <div id="atelier" hidden>
+          <div class="at-tete">
+            <b>Réglages en direct</b>
+            <span>
+              <button id="atelier-defaut" type="button">Défauts</button>
+              <button id="atelier-fermer" type="button">✕</button>
+            </span>
+          </div>
+          <div id="atelier-jauges">en attente d'image…</div>
+          <div id="atelier-curseurs"></div>
+        </div>
         <!-- Écran de chargement du scanner. Posé SOUS la croix de sortie (z-index 15 contre
              20) : même pendant le chargement, on doit pouvoir refermer la caméra. Il ne
              couvre pas non plus le panneau du bas, qui vit dans le parent. -->
@@ -5839,7 +5895,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 49;
+const VERSION_APP = 50;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10024,7 +10080,7 @@ async function reglerPisteSansBloquer(track){
   // trente entre min et max ne s'obtient pas avec un capteur unique. Sur un téléphone à
   // objectif unique, ce même geste ne serait qu'un recadrage numérique — on perdrait des
   // pixels pour rien. D'où le garde-fou sur le rapport, et non une valeur imposée à tous.
-  const FACTEUR_PRINCIPAL = 1.7;   // 1/0,6 : l'écart entre ultra grand-angle et objectif principal
+
   try{
     const caps = track.getCapabilities ? track.getCapabilities() : {};
     const reglage = track.getSettings ? track.getSettings() : {};
@@ -10409,7 +10465,9 @@ const AIM_COOLDOWN_MS = 400;      // délai mini entre deux captures (abaissé d
 const MIN_READ_INTERVAL_MS = 100; // délai mini entre deux TENTATIVES de lecture (abaissé de 150)
 const DETECT_MIN_DELAY_MS = 60;   // pause plancher entre deux détections (protège le CPU si le worker répond très vite)
 const CARD_RATIO = 88/63;         // hauteur/largeur d'une carte Pokémon
-const MIN_SCORE = 0.35;           // confiance mini du détecteur pour tenter la lecture (abaissé de 0.5)
+let FACTEUR_PRINCIPAL = 1.7;   // 1/0,6 supposé : à vérifier sur l'appareil, d'où la jauge
+let MIN_SCORE = 0.35;
+let SCORE_STRICT = 0.5;   // exigence pendant la première seconde (voir la patience)           // confiance mini du détecteur pour tenter la lecture (abaissé de 0.5)
 
 // Résolution à laquelle l'image est envoyée AU DÉTECTEUR (grand côté, en pixels). Le
 // modèle redimensionne son entrée en interne de toute façon : lui envoyer la pleine
@@ -10545,7 +10603,7 @@ function oublierMeilleureFrame(){ meilleureNettete = -1; meilleursCoins = null; 
 // Ce que ça coûte, honnêtement : le geste « approche » passe de 67 % à 33 % d'identifications
 // justes — desserrer laisse partir quelques captures prises trop tôt. Le solde reste très
 // favorable, et le rebut rattrape ces cas-là.
-const SYM_MAX = 0.45;
+let SYM_MAX = 0.45;
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
 // PROPORTIONS — une bande de carte est un rectangle PARFAIT, et passait tous les contrôles.
@@ -10566,7 +10624,7 @@ const SYM_MAX = 0.45;
 // d'identification suppose de toute façon une carte debout (ZONE_ILLUSTRATION). Si une carte
 // franchement couchée devait redevenir capturable, ce serait par un autre chemin que le
 // rapport — la présenter droite reste la solution la moins coûteuse.
-const PROP_MAX = 0.25;   // écart relatif toléré au format d'une carte debout (1,397)
+let PROP_MAX = 0.25;   // écart relatif toléré au format d'une carte debout (1,397)
 
 function proportionQuad(c, W, H){
   // En PIXELS : les coins sont en fractions d'image, et un cadre 16:9 déforme un rapport
@@ -10666,12 +10724,12 @@ const V2_ABSENCE_STREAK = 2;
 // Une carte tenue en cadre deux secondes est une intention, pas un hasard : les seuils se
 // desserrent donc avec la durée de présence. Le verrou « déjà lue », lui, ne bouge pas —
 // le desserrer ferait relire en boucle la carte qu'on tient encore.
-const V2_PATIENCE_DOUCE = 1200;    // au-delà : tolérance au mouvement ×3, score au minimum
-const V2_PATIENCE_FRANCHE = 2500;  // au-delà : on ne regarde plus le bougé du tout
+let V2_PATIENCE_DOUCE = 1200;    // au-delà : tolérance au mouvement ×3, score au minimum
+let V2_PATIENCE_FRANCHE = 2500;  // au-delà : on ne regarde plus le bougé du tout
 // Immobilité exigée d'une image à l'autre. Resserré de 0,049 à 0,030 en même temps qu'on
 // passait de deux images concordantes à une seule : c'est ce seuil, désormais, qui
 // distingue une carte posée d'une carte encore en transit (voir la boucle de détection).
-const V2_BOUGE_BASE = MAX_CORNER_SHIFT * 0.86;   // ≈ 0,030
+let V2_BOUGE_BASE = MAX_CORNER_SHIFT * 0.86;   // ≈ 0,030
 let v2PresentDepuis = 0;
 
 // TAILLE DE LA CARTE DANS LE CADRE — le facteur dominant, et de très loin.
@@ -11134,7 +11192,7 @@ async function copyDiagReport(){
 // ---------------- CADRE DE VISÉE ----------------
 // Placeholder affiché tant qu'aucune carte n'est détectée (et utilisé par la capture
 // manuelle 📸, qui n'a pas besoin d'attendre une détection).
-const GUIDE_H = 0.62;   // hauteur du cadre, en fraction de la hauteur de l'image
+let GUIDE_H = 0.62;   // hauteur du cadre, en fraction de la hauteur de l'image
 
 // Part de l'image réellement à l'écran. Vaut 1 x 1 en `contain` (tout est visible) et se
 // réduit sur un axe en `cover`, où l'image déborde du cadre. Mise en cache et non
@@ -12022,7 +12080,7 @@ const RECADRE_DETECTION = 0.55;
 // Images consécutives sans rien voir avant de payer le second passage. 5 ≈ 0,5 s : assez court
 // pour que la carte lointaine finisse par être trouvée, assez long pour ne rien coûter quand
 // la détection fonctionne.
-const RECADRE_APRES = 5;
+let RECADRE_APRES = 5;
 // Dernier recours : images consécutives sans aucune détection avant de tenter une capture du
 // cadre de visée SANS le détecteur. 15 ≈ 1,5 s — assez pour que ce ne soit pas un simple
 // clignotement, assez court pour que l'utilisateur ne renonce pas. Repos entre deux essais :
@@ -12058,7 +12116,7 @@ const RECOURS_APRES = 15, RECOURS_REPOS_MS = 3000;
 // La marche à suivre : un banc avec des SCÈNES VIDES (table nue, main sans carte, dos de
 // carte), mesurer le taux de faux positifs autant que celui de sauvetage, puis n'afficher un
 // recours qu'au-dessus d'un seuil d'`embTop` calé là-dessus.
-const RECOURS_ACTIF = false;
+let RECOURS_ACTIF = false;
 async function detecterRecadre(video){
   const vw = video.videoWidth, vh = video.videoHeight;
   if(!vw || !vh) return null;
@@ -12227,6 +12285,7 @@ async function detectLoop(gen){
       // ce journal pour ne pas le laisser raconter des choses fausses.
       v2SymCourante = -1;
       v2PropCourante = -1;
+      majJaugesAtelier({vue:false, score:(d && d.score != null) ? d.score : null});
       // Absence SOUTENUE exigée (deux images sans détection, ~300 ms) : un seul
       // décrochage isolé (reflet, main qui repositionne la carte) ne prouve rien.
       // ═══════════════════════════════════════════════════════════════════════════════════
@@ -12309,7 +12368,7 @@ async function detectLoop(gen){
         const seuilBouge = tenue >= V2_PATIENCE_FRANCHE ? Infinity
                          : tenue >= V2_PATIENCE_DOUCE   ? V2_BOUGE_BASE * 3
                          : V2_BOUGE_BASE;
-        const seuilScore = tenue >= V2_PATIENCE_DOUCE ? MIN_SCORE : 0.5;
+        const seuilScore = tenue >= V2_PATIENCE_DOUCE ? MIN_SCORE : SCORE_STRICT;
 
         if(moved < seuilBouge) v2StableStreak++;
         else v2StableStreak = 0;
@@ -12356,6 +12415,8 @@ async function detectLoop(gen){
         // partage que fait le banc : renseigner sans interdire. Si la capture part quand même
         // et réussit, tant mieux ; si elle rate, l'utilisateur savait déjà quoi corriger.
         if(tropLoin) etatCadre = 'attente';
+        majJaugesAtelier({vue:true, score:d.score, seuilScore, bouge:moved, seuilBouge,
+          stable, sym:v2SymCourante, prop:v2PropCourante, aire:aireVue, tenue, dejaLue});
         if(!dejaLue && d.score >= seuilScore && stable && formeOk){
           etatCadre = 'ok';
           v2PresentDepuis = 0;
@@ -12535,6 +12596,161 @@ function signalerBlocageScan(cause, score){
 //     bat alors normalement, et un chien de garde qui ne surveillerait que le battement ne
 //     verrait RIEN. C'est pourtant le cas décrit par Nikos : cadre figé sur sa dernière
 //     position, plus aucune détection.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// ATELIER DE RÉGLAGE — les seuils se règlent sur l'appareil, carte en main.
+// ═══════════════════════════════════════════════════════════════════════════════════════════
+// Idée de Nikos, et elle corrige un défaut de méthode plus qu'un défaut de code. Mes bancs
+// simulent une caméra ; ils se sont trompés deux fois pour cette raison — d'abord des scènes
+// dessinées à plat, incapables de produire l'asymétrie qu'elles servaient à régler, puis pas
+// une seule scène vide, ce qui a laissé passer un dernier recours qui tirait dans le vide.
+// Un curseur sur le vrai téléphone tranche en trente secondes ce que je mets deux versions à
+// supposer.
+// La ligne de jauges est l'autre moitié : elle dit POURQUOI ça ne part pas, à l'instant même.
+// Le banc l'avait, le scanner ne l'a jamais eue, et c'est faute de la voir que « il faut être
+// pile dans le cadre » est resté dix versions sans explication.
+const ATELIER_CLE = 'pokescanAtelier';
+const ATELIER_REGLAGES = [
+  {n:'SYM_MAX', l:'Symétrie max', min:0.05, max:1, pas:0.01,
+   a:'Au-delà, le quadrilatère est jugé déformé. Plus haut = accepte les cartes vues de biais.',
+   get:()=>SYM_MAX, set:v=>SYM_MAX=v},
+  {n:'PROP_MAX', l:'Écart de format max', min:0.05, max:0.9, pas:0.01,
+   a:"Écart toléré au format d'une carte. Trop bas, une carte de biais est refusée ; trop haut, une bande de carte passe.",
+   get:()=>PROP_MAX, set:v=>PROP_MAX=v},
+  {n:'SCORE_STRICT', l:'Score exigé (1re seconde)', min:0.1, max:1, pas:0.05,
+   a:'Confiance du détecteur exigée avant que la patience ne desserre.',
+   get:()=>SCORE_STRICT, set:v=>SCORE_STRICT=v},
+  {n:'MIN_SCORE', l:'Score exigé (ensuite)', min:0.05, max:0.9, pas:0.05,
+   a:'Plancher absolu : en dessous, la carte est comptée comme non vue.',
+   get:()=>MIN_SCORE, set:v=>MIN_SCORE=v},
+  {n:'V2_BOUGE_BASE', l:'Immobilité exigée', min:0.005, max:0.15, pas:0.005,
+   a:'Déplacement toléré entre deux images. Plus haut = déclenche sur une main moins sûre.',
+   get:()=>V2_BOUGE_BASE, set:v=>V2_BOUGE_BASE=v},
+  {n:'V2_PATIENCE_DOUCE', l:'Palier doux (ms)', min:200, max:4000, pas:100,
+   a:'Après ce délai, exigences abaissées et tolérance au bougé triplée.',
+   get:()=>V2_PATIENCE_DOUCE, set:v=>V2_PATIENCE_DOUCE=v},
+  {n:'V2_PATIENCE_FRANCHE', l:'Palier franc (ms)', min:500, max:8000, pas:100,
+   a:'Après ce délai, le bougé cesse totalement d’être regardé.',
+   get:()=>V2_PATIENCE_FRANCHE, set:v=>V2_PATIENCE_FRANCHE=v},
+  {n:'RECADRE_APRES', l:'Rattrapage après N images', min:0, max:30, pas:1,
+   a:'Images sans détection avant de retenter sur un recadrage central. Bas = rattrape les cartes lointaines, mais coûte une détection.',
+   get:()=>RECADRE_APRES, set:v=>RECADRE_APRES=v},
+  {n:'GUIDE_H', l:'Hauteur du cadre de visée', min:0.3, max:0.95, pas:0.01,
+   a:'Repère visuel seulement. Le détecteur veut une carte à plus de 55 % de la hauteur.',
+   get:()=>GUIDE_H, set:v=>GUIDE_H=v},
+  {n:'FACTEUR_PRINCIPAL', l:'Zoom objectif principal', min:1, max:3, pas:0.05,
+   a:"1,0 = l'objectif le plus large de l'appareil. 1,7 vise l'objectif principal, mais c'est une supposition : si l'image paraît recadrée sans gagner en netteté, redescends à 1,0.",
+   get:()=>FACTEUR_PRINCIPAL, set:v=>{ FACTEUR_PRINCIPAL=v; appliquerZoomAtelier(v); }},
+];
+
+async function appliquerZoomAtelier(f){
+  try{
+    const t = cameraStream && cameraStream.getVideoTracks ? cameraStream.getVideoTracks()[0] : null;
+    if(!t || !t.getCapabilities) return;
+    const caps = t.getCapabilities();
+    if(!caps.zoom) return;
+    const cible = Math.max(caps.zoom.min, Math.min(caps.zoom.max, caps.zoom.min * f));
+    await t.applyConstraints({advanced:[{zoom: cible}]});
+    majEtatAppareil();
+  }catch(e){}
+}
+
+function atelierCharger(){
+  try{
+    const o = JSON.parse(localStorage.getItem(ATELIER_CLE) || '{}');
+    for(const r of ATELIER_REGLAGES) if(typeof o[r.n] === 'number') r.set(o[r.n]);
+  }catch(e){}
+}
+function atelierEnregistrer(){
+  try{
+    const o = {}; for(const r of ATELIER_REGLAGES) o[r.n] = r.get();
+    localStorage.setItem(ATELIER_CLE, JSON.stringify(o));
+  }catch(e){}
+}
+
+// Le pas dicte le nombre de décimales : sans ça, 0,0301 s'affiche
+// « 0.030100000000000002 » — la virgule flottante, et un réglage illisible.
+function atelierFormat(v, pas){
+  const dec = (String(pas).split('.')[1] || '').length;
+  return dec ? v.toFixed(dec) : String(Math.round(v));
+}
+const ATELIER_DEFAUTS = {};
+function atelierConstruire(){
+  const hote = $('atelier-curseurs'); if(!hote || hote.dataset.pret) return;
+  hote.dataset.pret = '1';
+  for(const r of ATELIER_REGLAGES){
+    if(ATELIER_DEFAUTS[r.n] === undefined) ATELIER_DEFAUTS[r.n] = r.get();
+    const d = document.createElement('div'); d.className = 'at-ligne';
+    const lab = document.createElement('label');
+    const g = document.createElement('span'); g.textContent = r.l;
+    const val = document.createElement('span'); val.textContent = atelierFormat(r.get(), r.pas);
+    lab.append(g, val);
+    const c = document.createElement('input');
+    c.type='range'; c.min=r.min; c.max=r.max; c.step=r.pas; c.value=r.get();
+    c.addEventListener('input', ()=>{
+      const v = parseFloat(c.value);
+      r.set(v); val.textContent = atelierFormat(v, r.pas); atelierEnregistrer();
+    });
+    const aide = document.createElement('small'); aide.textContent = r.a;
+    d.append(lab, c, aide); hote.appendChild(d);
+    r._curseur = c; r._val = val;
+  }
+  // Le dernier recours a sa bascule : il est coupé par défaut depuis qu'il tirait dans le vide.
+  const b = document.createElement('div'); b.className = 'at-bascule';
+  const cb = document.createElement('input'); cb.type='checkbox'; cb.id='at-recours'; cb.checked = RECOURS_ACTIF;
+  const lb = document.createElement('label'); lb.htmlFor='at-recours';
+  lb.textContent = 'Dernier recours (capturer sans détecteur)';
+  cb.addEventListener('change', ()=>{ RECOURS_ACTIF = cb.checked; });
+  b.append(cb, lb); hote.appendChild(b);
+}
+
+function atelierRafraichir(){
+  for(const r of ATELIER_REGLAGES){
+    if(!r._curseur) continue;
+    r._curseur.value = r.get(); r._val.textContent = atelierFormat(r.get(), r.pas);
+  }
+  const cb = $('at-recours'); if(cb) cb.checked = RECOURS_ACTIF;
+}
+
+// Jauges : appelées à chaque tour de boucle. Elles disent l'état de CHAQUE condition, pour
+// qu'un non-déclenchement cesse d'être un mystère.
+let atelierDernierRendu = 0;
+function majJaugesAtelier(d){
+  const el = $('atelier-jauges'), pan = $('atelier');
+  if(!el || !pan || pan.hidden) return;
+  const now = performance.now();
+  if(now - atelierDernierRendu < 120) return;   // 8 Hz : lisible, et sans coût
+  atelierDernierRendu = now;
+  if(!d || !d.vue){
+    el.innerHTML = '<span class="ko">aucune carte vue</span>  score '
+      + (d && d.score != null ? d.score.toFixed(2) : '—') + '/' + MIN_SCORE.toFixed(2)
+      + '\nabsence ' + v2AbsenceStreak + ' images';
+    return;
+  }
+  const oui = (b) => '<span class="' + (b ? 'ok' : 'ko') + '">' + (b ? 'ok' : 'non') + '</span>';
+  el.innerHTML =
+      'score  ' + d.score.toFixed(2) + ' / ' + d.seuilScore.toFixed(2) + '   ' + oui(d.score >= d.seuilScore)
+    + '\nbouge  ' + (d.bouge === Infinity ? '   inf' : d.bouge.toFixed(3)) + ' / ' + (d.seuilBouge === Infinity ? 'inf' : d.seuilBouge.toFixed(3)) + '   ' + oui(d.stable)
+    + '\nsym    ' + d.sym.toFixed(3) + ' / ' + SYM_MAX.toFixed(2) + '   ' + oui(d.sym <= SYM_MAX)
+    + '\nformat ' + d.prop.toFixed(3) + ' / ' + PROP_MAX.toFixed(2) + '   ' + oui(d.prop <= PROP_MAX)
+    + '\ncadre  ' + Math.round(d.aire * 100) + ' %' + (d.aire < AIRE_LIMITE_V2 ? '  (trop petite)' : '')
+    + '\ntenue  ' + (d.tenue / 1000).toFixed(1) + ' s    verrou ' + oui(!d.dejaLue);
+}
+
+function atelierBrancher(){
+  const bt = $('atelier-bouton'), pan = $('atelier');
+  if(!bt || !pan || bt.dataset.pret) return;
+  bt.dataset.pret = '1';
+  bt.addEventListener('click', ()=>{
+    atelierConstruire(); atelierRafraichir();
+    pan.hidden = !pan.hidden;
+  });
+  $('atelier-fermer')?.addEventListener('click', ()=>{ pan.hidden = true; });
+  $('atelier-defaut')?.addEventListener('click', ()=>{
+    for(const r of ATELIER_REGLAGES) if(ATELIER_DEFAUTS[r.n] !== undefined) r.set(ATELIER_DEFAUTS[r.n]);
+    atelierRafraichir(); atelierEnregistrer();
+  });
+}
+
 let dernierTourBoucle = 0, readInFlightDepuis = 0, rechercheOrphelineDepuis = 0;
 let generationBoucle = 0;   // voir detectLoop : garantit une seule chaîne vivante
 setInterval(()=>{
@@ -13507,6 +13723,7 @@ function startAimLoop(){
   sessionCardHashes = []; // nouvelle session caméra -> le raccourci visuel repart de zéro
   camStartedAt = Date.now(); // origine de temps pour l'instrumentation session (voir diagPush)
   majEtatAppareil();   // sans attendre le premier passage périodique : le 1er scan compte aussi
+  atelierBrancher();   // le panneau n'existe qu'en plein écran caméra
   setAimHint('Préparation de la lecture…');
 
   // Pas de dessin immédiat ici : au moment où startAimLoop est appelée, srcObject vient
@@ -21569,6 +21786,7 @@ renderQueueStrip();
 // Restaure la session laissée par le précédent chargement (voir sauvegarderSession).
 // Placé au démarrage : si l'utilisateur rouvre l'app pour continuer un scan, il doit
 // retrouver son lot immédiatement, pas après le préchauffage des workers.
+atelierCharger();   // seuils réglés à la main lors d'une session précédente
 restaurerSession();
 chargerHashesPhotos().then(majCompteurHashes);
 remplirTypesScelle();
