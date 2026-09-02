@@ -6127,7 +6127,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 69;
+const VERSION_APP = 70;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13834,6 +13834,11 @@ function stAire(c){
 // distance de bras naturelle, avec de la marge des deux côtés. Et le rattrapage tient
 // jusqu'à trente centimètres, donc dépasser le repère ne coûte rien.
 const ST_GUIDE_H = 0.45;
+// Bornes de la plage utile, tirées du banc de cadrage : au-delà de 0,60 de hauteur on est
+// trop près et la réussite retombe (87 % à douze centimètres) ; en deçà de 0,26 le détecteur
+// commence à ne plus rien voir. Entre les deux, de seize à trente centimètres, tout se tient
+// entre 89 et 94 %.
+const ST_TROP_PRES = 0.60, ST_TROP_LOIN = 0.26;
 
 function stDessiner(coins, couleur){
   const cv = $('st-overlay'), v = $('st-video');
@@ -13859,12 +13864,50 @@ function stDessiner(coins, couleur){
   const ech = Math.min(cv.width / vw, cv.height / vh);
   const iw = vw * ech, ih = vh * ech;
   const ix = (cv.width - iw)/2, iy = (cv.height - ih)/2;
-  const gh = ih * ST_GUIDE_H, gw = gh / CARD_RATIO;
-  const gx = ix + (iw - gw)/2, gy = iy + (ih - gh)/2;
-  const eq = Math.min(gw, gh) * 0.16;   // longueur des équerres
-  g.strokeStyle = coins ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.45)';
-  g.lineWidth = 3; g.lineCap = 'round';
-  for(const [x, y, dx, dy] of [[gx,gy,1,1],[gx+gw,gy,-1,1],[gx+gw,gy+gh,-1,-1],[gx,gy+gh,1,-1]]){
+  // ── LE REPÈRE EST UNE ZONE, PAS UNE CIBLE ───────────────────────────────────────────
+  // Idée de Nikos, et le banc lui donne raison : entre seize et trente centimètres,
+  // l'identification reste plate entre 89 et 94 %. Il n'y a pas de taille à viser, il y a
+  // une plage large. Un cadre unique sur-spécifie une contrainte qui n'existe pas — et
+  // c'est très exactement ce qui l'a fait rapprocher la carte à l'excès pendant plusieurs
+  // versions, jusqu'à travailler au creux de la courbe.
+  // On dessine donc les deux bornes MESURÉES : au-delà de la grande on est trop près, en
+  // deçà de la petite on est trop loin. Tout ce qui tombe entre les deux convient, et le
+  // voile discret entre elles le dit sans avoir à l'écrire.
+  const bornes = [
+    [ST_TROP_PRES, 'rgba(255,255,255,.34)'],   // au-delà : trop près
+    [ST_TROP_LOIN, 'rgba(255,255,255,.34)'],   // en deçà : trop loin
+  ];
+  const rect = f => { const h = ih*f, w = h/CARD_RATIO;
+    return {x: ix + (iw-w)/2, y: iy + (ih-h)/2, w, h}; };
+  const grand = rect(ST_TROP_PRES), petit = rect(ST_TROP_LOIN);
+
+  // Le voile : peint sur le grand rectangle puis découpé du petit, il ne subsiste que la
+  // bande. C'est elle qui porte le message — « amène le bord de ta carte là-dedans ».
+  g.save();
+  g.globalAlpha = coins ? 0.05 : 0.11;
+  g.fillStyle = '#fff';
+  g.beginPath();
+  g.rect(grand.x, grand.y, grand.w, grand.h);
+  g.rect(petit.x, petit.y, petit.w, petit.h);
+  g.fill('evenodd');
+  g.restore();
+
+  g.lineWidth = 2; g.lineCap = 'round'; g.setLineDash([]);
+  for(const [f, couleur] of bornes){
+    const r = rect(f);
+    g.strokeStyle = coins ? 'rgba(255,255,255,.18)' : couleur;
+    g.strokeRect(r.x, r.y, r.w, r.h);
+  }
+
+  // Les équerres marquent le milieu de la plage, là où la mesure est la meilleure — 94 % à
+  // seize centimètres. C'est une indication, pas une consigne : rien n'oblige à s'y tenir,
+  // et le reste de la bande marche presque aussi bien.
+  const mid = rect(ST_GUIDE_H);
+  const eq = Math.min(mid.w, mid.h) * 0.14;
+  g.strokeStyle = coins ? 'rgba(255,255,255,.26)' : 'rgba(255,255,255,.62)';
+  g.lineWidth = 3;
+  for(const [x, y, dx, dy] of [[mid.x,mid.y,1,1],[mid.x+mid.w,mid.y,-1,1],
+                               [mid.x+mid.w,mid.y+mid.h,-1,-1],[mid.x,mid.y+mid.h,1,-1]]){
     g.beginPath();
     g.moveTo(x, y + dy*eq); g.lineTo(x, y); g.lineTo(x + dx*eq, y);
     g.stroke();
@@ -13970,8 +14013,8 @@ async function stTourner(){
           const aire = stAire(d.corners);
           stEtat(ST.enAttente ? 'valide la carte ci-dessous'
                : !ST.retiree ? 'carte déjà lue — retire-la ou déplace-la'
-               : aire < 0.041 ? 'trop loin — rapproche la carte'
-               : aire > 0.34 ? 'trop près — éloigne un peu'
+               : aire < 0.0484 ? 'trop loin — rapproche la carte'
+               : aire > 0.258 ? 'trop près — éloigne un peu'
                : stable ? 'prêt' : 'stabilise…');
         }
       }
