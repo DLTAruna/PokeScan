@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 81;
+const VERSION_APP = 82;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14142,16 +14142,48 @@ async function stFermer(){
 // chargé. On ne s'en sert donc QUE pour comparer des images d'une même présence de carte,
 // même contenu, seule la netteté variant. C'est le seul cas où elle est fiable, et c'est
 // pourquoi il n'y a aucun seuil ici : jamais de rejet, seulement un choix.
-let stMeilleure = null;      // canvas de la plus nette vue depuis que cette carte est là
+let stMeilleure = null;      // canvas de la meilleure vue depuis que cette carte est là
 let stMeilleureNet = -1;
+let stMeilleureScore = -1;   // netteté pénalisée par la brûlure : c'est elle qui décide
+let stMeilleureBrulure = 0;
 let stMeilleursCoins = null;
 let stScratch = null;
 
-function stOublierMeilleure(){ stMeilleureNet = -1; stMeilleursCoins = null; }
+function stOublierMeilleure(){
+  stMeilleureNet = -1; stMeilleureScore = -1; stMeilleureBrulure = 0; stMeilleursCoins = null;
+}
 
 // 140×196 : ce calcul tombe à chaque tour, derrière une détection qui coûte déjà ~50 ms.
 // Mesuré côté scanner principal — 200×280 : 2,4 ms ; 140×196 : 1,2 ms — pour un pouvoir de
 // discrimination qui reste de plusieurs centaines entre net et flou.
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// LE REFLET, MESURÉ
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Nikos a mis le doigt dessus : les cartes sont souvent sous sleeve ou toploader, et le
+// plastique renvoie la lumière. Le banc a confirmé que c'est LA cause, et qu'elle n'a rien
+// à voir avec le foil — sous un reflet à bords francs et saturé, 57 % des cartes MATES
+// tombent aussi sous dix inliers, contre 43 % des brillantes. Ce n'est pas un problème de
+// carte brillante, c'est un problème de réflexion spéculaire.
+//
+// Ce qu'on ne peut pas faire : la corriger. L'OCR de secours lit le numéro ZÉRO fois sur
+// vingt-huit dans cette condition, pour 1,1 s de plus — le reflet qui efface la texture
+// efface aussi le chiffre. Et le minimum pixel à pixel sur quatre images ne rend rien non
+// plus (inliers médians 7 → 8), alors même que je décalais le reflet bien plus qu'une main
+// ne tremble.
+//
+// Ce qu'on peut faire : le VOIR, et le dire. Mesuré sur 28 cartes — part de pixels quasi
+// saturés dans la carte découpée :
+//     image propre     0 à 9,8 %   (médiane 3,7)
+//     sous toploader  38,7 à 43,8 % (médiane 40,7)
+// À 15 %, cent pour cent détectés et aucun faux positif. Le geste qui règle le problème —
+// incliner la carte — appartient à l'utilisateur ; notre travail est de le lui demander au
+// bon moment plutôt que de lui rendre « non reconnue » sans raison.
+const ST_BRULURE_SEUIL = 0.15;
+// Exposant de la pénalité appliquée à la netteté. Le reflet GONFLE la variance du laplacien
+// — ses bords francs sont du contraste — si bien que la mémoire de la plus nette choisissait
+// volontiers l'image la plus éblouie, exactement celle qu'il ne fallait pas garder.
+const ST_BRULURE_POIDS = 3;
+
 function stNettete(video, coins){
   try{
     if(!stScratch){ stScratch = document.createElement('canvas'); stScratch.width = 140; stScratch.height = 196; }
@@ -14177,8 +14209,32 @@ function stNettete(video, coins){
       sum += L; sq += L*L; n++;
     }
     const m = sum/n;
+    // La brûlure se compte dans la même passe : les pixels sont déjà lus et convertis en
+    // luminance, l'ajout ne coûte qu'une comparaison par point.
+    let brules = 0;
+    for(let p = 0; p < g.length; p++) if(g[p] >= 242) brules++;
+    stDerniereBrulure = brules / g.length;
     return sq/n - m*m;
   }catch(e){ return -1; }
+}
+// Brûlure de la dernière image mesurée. Écrite par stNettete, lue par la mémoire.
+let stDerniereBrulure = 0;
+
+// La même mesure, sur une image déjà découpée — celle qui part à l'identification.
+// Sous-échantillonnée d'un point sur seize : la part de pixels saturés est une grandeur
+// globale, la mesurer au pixel près ne changerait pas la troisième décimale.
+function stBrulure(cv){
+  try{
+    const W = cv.width, H = cv.height;
+    if(!W || !H) return 0;
+    const d = cv.getContext('2d', {willReadFrequently:true}).getImageData(0, 0, W, H).data;
+    let n = 0, tot = 0;
+    for(let y = 0; y < H; y += 4) for(let x = 0; x < W; x += 4){
+      const i = (y*W + x)*4; tot++;
+      if(0.299*d[i] + 0.587*d[i+1] + 0.114*d[i+2] >= 242) n++;
+    }
+    return tot ? n/tot : 0;
+  }catch(e){ return 0; }
 }
 
 // Retient l'image courante si elle est la plus nette depuis que la carte est là. Gardée
@@ -14186,14 +14242,19 @@ function stNettete(video, coins){
 // perte, et une seule image en mémoire plutôt qu'une fenêtre entière.
 function stRetenirSiPlusNette(video, coins){
   const net = stNettete(video, coins);
-  if(net < 0 || net <= stMeilleureNet) return;
+  if(net < 0) return;
+  // Netteté pénalisée par la brûlure. À 40 % de pixels saturés il ne reste qu'un cinquième
+  // du score, à 5 % on en garde neuf dixièmes : la netteté décide entre images comparables,
+  // le reflet tranche quand elles ne le sont pas.
+  const score = net * Math.pow(1 - Math.min(1, stDerniereBrulure), ST_BRULURE_POIDS);
+  if(score <= stMeilleureScore) return;
   const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
   const vw = Math.max(1, Math.round(video.videoWidth * ech));
   const vh = Math.max(1, Math.round(video.videoHeight * ech));
   if(!stMeilleure) stMeilleure = document.createElement('canvas');
   if(stMeilleure.width !== vw || stMeilleure.height !== vh){ stMeilleure.width = vw; stMeilleure.height = vh; }
   stMeilleure.getContext('2d').drawImage(video, 0, 0, vw, vh);
-  stMeilleureNet = net;
+  stMeilleureNet = net; stMeilleureScore = score; stMeilleureBrulure = stDerniereBrulure;
   stMeilleursCoins = { tl:[...coins.tl], tr:[...coins.tr], br:[...coins.br], bl:[...coins.bl] };
 }
 
@@ -14665,13 +14726,15 @@ async function stCapturer(coins, v, attendu){
     stOublierMeilleure();
     const cv = extraireCarteCentree(src, srcCoins, srcW, srcH);
     if(!cv){ stEtat('cadrage impossible'); return; }
+    // Sur l'image RÉELLEMENT identifiée, pas sur une approximation de visée.
+    const brulure = stBrulure(cv);
     const res = await SCAN_V2.identifierV2(cv, {});
     const ms = Math.round(performance.now() - t0);
     if(navigator.vibrate) navigator.vibrate(35);
     ST.retiree = false; ST.coinsCapture = coins;
     // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
     const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee,
-                       attendu || 0, ST.verrous || {});
+                       attendu || 0, ST.verrous || {}, brulure);
     const teinte = stCouleur(e);
     stEtatTeinte(teinte);
     stEtat(teinte === 'ok' ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
@@ -14710,7 +14773,7 @@ function stEstSur(res){
 }
 
 // Rangement d'une carte identifiée. Rien n'attend l'utilisateur.
-function stRanger(res, photo, ms, nettete, attendu, verrous){
+function stRanger(res, photo, ms, nettete, attendu, verrous, brulure){
   const entree = { carte: res && res.pick ? res.pick : null,
                    fiabilite: res ? res.fiabilite : 0,
                    categorie: res ? res.categorie : 'rebut',
@@ -14724,7 +14787,8 @@ function stRanger(res, photo, ms, nettete, attendu, verrous){
                    embTop: res && res.embTop != null ? +(+res.embTop).toFixed(3) : null,
                    embPremier: res ? (res.embPremier || null) : null,
                    predit: res && res.pick ? res.pick.cle : null,
-                   attendu: attendu || 0, verrous: verrous || {} };
+                   attendu: attendu || 0, verrous: verrous || {},
+                   brulure: Math.round((brulure || 0) * 1000) / 1000 };
   // ── QUI MÉRITE UNE SECONDE ANALYSE ────────────────────────────────────────────────
   // Mesuré sur la V.78 : neuf cartes reprises, douze secondes dépensées, ZÉRO promue. La
   // cause n'est pas le réglage mais la population. La seule arme supplémentaire de la
@@ -14740,7 +14804,8 @@ function stRanger(res, photo, ms, nettete, attendu, verrous){
   ST.journal.push({ms, fiabilite:entree.fiabilite, categorie:entree.categorie,
                    inliers:entree.inliers, nettete, garde:stEstSur(res),
                    embTop:entree.embTop, embPremier:entree.embPremier, predit:entree.predit,
-                   attendu:entree.attendu, verrous:entree.verrous, reprise:entree.reprendre});
+                   attendu:entree.attendu, verrous:entree.verrous, reprise:entree.reprendre,
+                   brulure:entree.brulure});
   ST.dernier = entree;
   stRendreDernier();
   stRendreCompteurs();
@@ -14894,9 +14959,17 @@ function stAlerter(entree){
   const a = $('st-alerte'); if(!a) return;
   stAlerteEnCours = true;
   ST.boucle = false;
-  $('st-alerte-txt').textContent = entree && entree.nettete < 300
-    ? 'Image trop floue. Reprends la photo : tiens la carte immobile un instant.'
-    : 'Reprends la photo : rapproche la carte, pose-la à plat et évite les reflets.';
+  // L'ordre suit ce que la mesure a montré : le reflet est la cause dominante, et c'est la
+  // seule dont le remède est un geste précis. Dire « rapproche la carte » à quelqu'un dont
+  // le toploader renvoie le plafonnier l'enverrait corriger ce qui allait déjà.
+  const b = entree ? entree.brulure : 0;
+  $('st-alerte-titre').textContent = b >= ST_BRULURE_SEUIL ? 'Reflet sur la carte' : 'Carte non reconnue';
+  $('st-alerte-txt').textContent = b >= ST_BRULURE_SEUIL
+    ? 'Le plastique renvoie la lumière et efface l\'image. Incline la carte, ou tourne-toi '
+      + 'pour que la lampe ne soit plus dans l\'axe.'
+    : (entree && entree.nettete < 300
+       ? 'Image trop floue. Reprends la photo : tiens la carte immobile un instant.'
+       : 'Reprends la photo : rapproche la carte et pose-la à plat.');
   a.hidden = false;
 }
 function stFermerAlerte(reprendre){
