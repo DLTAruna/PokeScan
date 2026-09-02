@@ -5839,7 +5839,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 47;
+const VERSION_APP = 48;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -12060,13 +12060,20 @@ async function detecterRecadre(video){
     br: ramener(d.corners.br), bl: ramener(d.corners.bl) } };
 }
 
-async function detectLoop(){
-  if(!detectRunning) return;
+// ⚠️ JETON DE GÉNÉRATION — il ne doit JAMAIS y avoir deux chaînes vivantes.
+// La boucle se réarme par `setTimeout`, donc relancer sans invalider l'ancienne chaîne en
+// ferait tourner deux, qui se disputeraient le détecteur et doubleraient la consommation —
+// exactement ce qu'il ne faut pas sur un téléphone déjà en économie d'énergie. Chaque tour
+// vérifie qu'il appartient à la génération courante ; le chien de garde incrémente avant de
+// relancer, ce qui congédie proprement une chaîne zombie.
+async function detectLoop(gen){
+  if(gen === undefined) gen = generationBoucle;
+  if(!detectRunning || gen !== generationBoucle) return;
   dernierTourBoucle = Date.now();   // battement lu par le chien de garde (voir plus haut)
   const video = $('video');
 
   if(!cameraStream || !video || !video.videoWidth || !detecteurPret){
-    setTimeout(detectLoop, 150);
+    setTimeout(()=>detectLoop(gen), 150);
     return;
   }
 
@@ -12089,7 +12096,7 @@ async function detectLoop(){
   // exactement comme le banc. Le cadre reste vert et la vignette est déjà affichée
   // (accusé de réception, V.15) : l'utilisateur sait que ça travaille.
   if(readInFlight){
-    setTimeout(detectLoop, 120);
+    setTimeout(()=>detectLoop(gen), 120);
     return;
   }
   // La bascule auto/manuel a disparu avec le reste du décor (V.13) : il n'y a plus de mode
@@ -12118,7 +12125,7 @@ async function detectLoop(){
       dernierMotV2 = Date.now();
       toast('⚠️ Reconnaissance visuelle absente — recharge la page.');
     }
-    setTimeout(detectLoop, 300);
+    setTimeout(()=>detectLoop(gen), 300);
     return;
   }
 
@@ -12368,7 +12375,7 @@ async function detectLoop(){
   }
 
   const elapsed = performance.now() - t0;
-  setTimeout(detectLoop, Math.max(0, DETECT_MIN_DELAY_MS - elapsed));
+  setTimeout(()=>detectLoop(gen), Math.max(0, DETECT_MIN_DELAY_MS - elapsed));
 }
 
 // Redressement (fil principal) puis identification V2, sur une détection prometteuse.
@@ -12505,6 +12512,7 @@ function signalerBlocageScan(cause, score){
 //     verrait RIEN. C'est pourtant le cas décrit par Nikos : cadre figé sur sa dernière
 //     position, plus aucune détection.
 let dernierTourBoucle = 0, readInFlightDepuis = 0, rechercheOrphelineDepuis = 0;
+let generationBoucle = 0;   // voir detectLoop : garantit une seule chaîne vivante
 setInterval(()=>{
   // `detectRunning` volontairement PAS exigé : s'il était retombé à faux sans que la caméra
   // soit fermée, ce serait justement une panne à signaler, et l'exiger nous rendrait aveugle
@@ -12519,7 +12527,14 @@ setInterval(()=>{
   if(!video0 || !video0.videoWidth) return;
   if(camStartedAt && Date.now() - camStartedAt < 10000) return;   // temps de s'installer
   if(!detectRunning){
-    signalerBlocageScan('boucle arrêtée alors que la caméra est ouverte', null);
+    // Même raisonnement que plus bas : on ne se contente plus de le dire. La caméra est
+    // ouverte, l'utilisateur attend de pouvoir scanner ; un drapeau retombé sans que
+    // personne ne ferme la caméra est une panne, et elle est réparable ici même.
+    signalerBlocageScan('boucle arrêtée alors que la caméra est ouverte — relancée', null);
+    detectRunning = true;
+    dernierTourBoucle = Date.now();
+    generationBoucle++;
+    detectLoop(generationBoucle);
     return;
   }
   if(readInFlight){
@@ -12548,7 +12563,26 @@ setInterval(()=>{
   if(!dernierTourBoucle) return;
   const mort = Date.now() - dernierTourBoucle;
   // 8 s sans un seul tour : même une inférence lente et un téléphone bridé restent loin.
-  if(mort > 8000) signalerBlocageScan('boucle sans tour depuis ' + mort + ' ms', null);
+  if(mort > 8000){
+    // ─── CONSTATER NE SUFFIT PAS : ON RELANCE (V.48) ───
+    // Ce garde écrivait dans le journal et n'y faisait rien. Or une boucle morte ne
+    // ressuscite pas toute seule : elle se réarme par `setTimeout`, et si ce minuteur est
+    // perdu — l'écran s'éteint, le système suspend les minuteurs, l'économie d'énergie
+    // s'active — la chaîne est rompue DÉFINITIVEMENT. L'utilisateur voit un cadre figé,
+    // ferme, rouvre, et rien ne change, parce que rien ne relance jamais.
+    // Nikos, sur la V.46 : « à 15 % d'économie d'énergie, plus moyen de scanner ». Et le
+    // relevé de la V.47 montre quatre-vingt-quinze minutes sans un tour de boucle avec TOUS
+    // les verrous ouverts, la caméra saine et le détecteur prêt : rien n'était cassé, la
+    // boucle était simplement arrêtée et personne ne la rallumait.
+    // On ne cherche pas à deviner la cause — il y en a trop, et elles dépendent du système.
+    // On répare ce qui est réparable : incrémenter la génération congédie la chaîne morte
+    // (ou zombie), et on en repart une. Le battement est remis à l'heure d'abord, sinon le
+    // garde se redéclencherait à chaque passage tant que le premier tour n'a pas eu lieu.
+    signalerBlocageScan('boucle sans tour depuis ' + mort + ' ms — relancée', null);
+    dernierTourBoucle = Date.now();
+    generationBoucle++;
+    detectLoop(generationBoucle);
+  }
 }, 4000);
 
 // ⚠️ CRIER AU LOUP (corrigé en V.31).
@@ -13478,6 +13512,15 @@ function startAimLoop(){
       // réseau ou du moteur d'inférence. Les champs propres à l'OCR ont disparu avec
       // l'attente du worker OCR — ils décrivaient un moteur qu'on ne démarre plus ici.
       const nav = navigator;
+      // La batterie est demandée sans await : l'API n'existe pas partout, et une ligne de
+      // diagnostic ne doit jamais retarder l'ouverture de la caméra. Nikos rapporte que le
+      // scan devient impossible « à 15 % d'économie d'énergie » — sans cette mesure, on ne
+      // pourra ni confirmer ni infirmer, et on en sera réduit à supposer une fois de plus.
+      try{
+        if(nav.getBattery) nav.getBattery().then(b => diagPush('err', {msg:
+          'batterie : ' + Math.round((b.level ?? 0) * 100) + '%' + (b.charging ? ' (en charge)' : '')}))
+          .catch(()=>{});
+      }catch(e){}
       diagPush('err', {msg:'environnement : cœurs=' + (nav.hardwareConcurrency ?? '?') +
         ' mémoire=' + (nav.deviceMemory != null ? nav.deviceMemory+'Go' : '?') +
         ' isolationCrossOrigin=' + self.crossOriginIsolated +
@@ -13497,7 +13540,8 @@ function startAimLoop(){
     });
 
   detectRunning = true;
-  detectLoop();
+  generationBoucle++;
+  detectLoop(generationBoucle);
 }
 
 function stopAimLoop(){
