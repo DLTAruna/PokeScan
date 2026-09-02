@@ -824,6 +824,10 @@
   .st-actions button, #st-envoyer{ padding:10px 18px; border-radius:10px; cursor:pointer;
     border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; font-size:14px; }
   #st-envoyer{ display:block; margin:0 auto 20px; }
+  /* La regle display:block l emporte sur le display:none que le navigateur applique a
+     [hidden] : sans cette ligne, le bouton restait visible alors qu il n y a rien a
+     envoyer. Un bouton qui ment sur ce qu il fera est pire qu un bouton absent. */
+  #st-envoyer[hidden]{ display:none; }
   #st-resultat{ display:flex; gap:12px; align-items:center; max-width:520px; margin:0 auto 12px;
     padding:12px; border-radius:12px; border:1px solid rgba(63,185,80,.4); background:rgba(63,185,80,.08); }
   #st-resultat.rebut{ border-color:rgba(224,85,63,.45); background:rgba(224,85,63,.08); }
@@ -6042,7 +6046,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 59;
+const VERSION_APP = 61;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13526,7 +13530,7 @@ const ST_SCORE = 0.35, ST_SCORE_STRICT = 0.5, ST_BOUGE = 0.030;
 const ST_DOUCE = 1200, ST_FRANCHE = 2500;
 // Part centrale reprise quand le premier passage ne trouve rien. 0,55 : sur ce recadrage la
 // même carte occupe près du double, et redevient une forme que le modèle sait reconnaître.
-const ST_RECADRE = 0.55;
+const ST_RECADRES = [0.55, 0.35];
 
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 
@@ -13583,6 +13587,12 @@ function stAire(c){
   return Math.abs(a)/2;
 }
 
+// Hauteur du repère, en fraction de l'aperçu. 0,62 n'est pas arbitraire : le banc de
+// détection mesure 87 % de réussite quand la carte occupe 55 % de la hauteur, 53 % à 40 %,
+// et zéro à 30 %. Le cadre demande donc un peu plus que le minimum viable — c'est ce qu'il
+// doit faire, montrer la taille CONFORTABLE et non la taille limite.
+const ST_GUIDE_H = 0.62;
+
 function stDessiner(coins, couleur){
   const cv = $('st-overlay'), v = $('st-video');
   if(!cv || !v) return;
@@ -13592,6 +13602,25 @@ function stDessiner(coins, couleur){
   }
   const g = cv.getContext('2d');
   g.clearRect(0, 0, cv.width, cv.height);
+
+  // ── LE REPÈRE DE VISÉE, TOUJOURS VISIBLE ────────────────────────────────────────────
+  // Il manquait, et Nikos l'a senti sans pouvoir le nommer : « aucun visuel sur notre
+  // appareil photo […] il faut fortement coller la carte au téléphone ». Sans repère, on
+  // ne sait pas quelle taille l'outil attend, donc on approche jusqu'à ce que ça marche —
+  // ce qui revient à découvrir le seuil à tâtons, à chaque carte.
+  // Quatre équerres plutôt qu'un rectangle plein : elles disent le cadrage sans masquer la
+  // carte ni se confondre avec le quadrilatère détecté, qui lui est un trait continu.
+  const gh = cv.height * ST_GUIDE_H, gw = gh / CARD_RATIO;
+  const gx = (cv.width - gw)/2, gy = (cv.height - gh)/2;
+  const eq = Math.min(gw, gh) * 0.16;   // longueur des équerres
+  g.strokeStyle = coins ? 'rgba(255,255,255,.22)' : 'rgba(255,255,255,.45)';
+  g.lineWidth = 3; g.lineCap = 'round';
+  for(const [x, y, dx, dy] of [[gx,gy,1,1],[gx+gw,gy,-1,1],[gx+gw,gy+gh,-1,-1],[gx,gy+gh,1,-1]]){
+    g.beginPath();
+    g.moveTo(x, y + dy*eq); g.lineTo(x, y); g.lineTo(x + dx*eq, y);
+    g.stroke();
+  }
+
   if(!coins) return;
   g.strokeStyle = couleur; g.lineWidth = 3; g.lineJoin = 'round';
   g.beginPath();
@@ -13624,9 +13653,14 @@ async function stTourner(){
       // C'est exactement le « vise une carte » qui reste affiché plusieurs secondes.
       // Il ne coûte une seconde inférence QUE lorsque la première n'a rien trouvé, donc au
       // moment précis où la boucle n'avait rien d'autre à faire de son tour.
-      if(!(d && d.corners && d.score != null && d.score >= ST_SCORE) && ST.absence >= 1){
+      // Deux paliers plutôt qu'un : à 55 % du cadre on récupère la carte tenue un peu loin,
+      // à 35 % celle qui l'est franchement. Chaque palier ne s'essaie que si le précédent
+      // n'a rien donné, donc le cas courant — carte proche, trouvée du premier coup — ne
+      // paie jamais rien.
+      for(const P of ST.absence >= 1 ? ST_RECADRES : []){
+        if(d && d.corners && d.score != null && d.score >= ST_SCORE) break;
         try{
-          const m = (1 - ST_RECADRE) / 2, P = ST_RECADRE;
+          const m = (1 - P) / 2;
           const sub = document.createElement('canvas');
           sub.width = Math.round(v.videoWidth * P); sub.height = Math.round(v.videoHeight * P);
           sub.getContext('2d').drawImage(v, Math.round(v.videoWidth*m), Math.round(v.videoHeight*m),
