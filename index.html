@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 84;
+const VERSION_APP = 85;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13728,6 +13728,7 @@ async function viderTravauxDiffères(){
 // archivage, sauvegarde de session, journal distant. Rien de tout cela n'est condamné — mais
 // chaque pièce devra prouver son prix avant de revenir.
 const ST = {
+  signature: null,   // vignette de la dernière carte lue (voir le verrou)
   flux:null, piste:null, boucle:false, occupe:false,
   presentDepuis:0, streak:0, dernierCoins:null, absence:0,
   retiree:true, coinsCapture:null,
@@ -14192,6 +14193,11 @@ const ST_BRULURE_SEUIL = 0.30;
 // — ses bords francs sont du contraste — si bien que la mémoire de la plus nette choisissait
 // volontiers l'image la plus éblouie, exactement celle qu'il ne fallait pas garder.
 const ST_BRULURE_POIDS = 3;
+// Au-delà de cette distance de vignette, ce n'est plus la même carte. Valeur mesurée au
+// banc : même carte qui tremble, 0,01 à 0,03 ; deux cartes différentes, 0,10 à 0,30.
+const ST_SIG_AUTRE = 0.06;
+// Et le filet, en millisecondes de présence continue verrou fermé.
+const ST_VERROU_MAX = 4000;
 
 function stNettete(video, coins){
   try{
@@ -14223,11 +14229,36 @@ function stNettete(video, coins){
     let brules = 0;
     for(let p = 0; p < g.length; p++) if(g[p] >= 242) brules++;
     stDerniereBrulure = brules / g.length;
+    // ── ET LA SIGNATURE, DANS LA MÊME PASSE ──────────────────────────────────────────
+    // Une vignette 8×11 de la carte, moyennée par blocs. C'est ce qui permet de savoir
+    // qu'on regarde une AUTRE carte — la seule question qui compte pour rouvrir le verrou,
+    // et à laquelle « le champ s'est-il vidé ? » ne répond que par accident.
+    const SW = 8, SH = 11, bw = w/SW, bh = h/SH;
+    const sig = new Float32Array(SW*SH);
+    for(let by = 0; by < SH; by++) for(let bx = 0; bx < SW; bx++){
+      let acc = 0, cnt = 0;
+      const x0 = Math.floor(bx*bw), x1 = Math.floor((bx+1)*bw);
+      const y0 = Math.floor(by*bh), y1 = Math.floor((by+1)*bh);
+      for(let y = y0; y < y1; y++) for(let x = x0; x < x1; x++){ acc += g[y*w + x]; cnt++; }
+      sig[by*SW + bx] = cnt ? acc/cnt : 0;
+    }
+    stDerniereSignature = sig;
     return sq/n - m*m;
   }catch(e){ return -1; }
 }
 // Brûlure de la dernière image mesurée. Écrite par stNettete, lue par la mémoire.
 let stDerniereBrulure = 0;
+// Vignette de la dernière image mesurée, et celle de la carte qu'on vient de lire.
+let stDerniereSignature = null;
+
+// Distance entre deux vignettes, ramenée à 0-1. Une même carte qui tremble reste très
+// basse ; deux cartes différentes montent franchement. Le seuil est mesuré, pas choisi.
+function stDistanceSig(a, b){
+  if(!a || !b || a.length !== b.length) return 1;
+  let d = 0;
+  for(let i = 0; i < a.length; i++) d += Math.abs(a[i] - b[i]);
+  return d / (a.length * 255);
+}
 
 // La même mesure, sur une image déjà découpée — celle qui part à l'identification.
 // Sous-échantillonnée d'un point sur seize : la part de pixels saturés est une grandeur
@@ -14645,8 +14676,27 @@ async function stTourner(){
         ST.absence = 0;
         if(!ST.presentDepuis){ ST.presentDepuis = Date.now(); ST.verrous = {}; }
         const attente = Date.now() - ST.presentDepuis;
-        // Déplacement franc depuis la dernière capture = autre carte, même sans champ vide.
-        if(!ST.retiree && ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_SEUILS.bouge*3) ST.retiree = true;
+        // ── ROUVRIR LE VERROU : TROIS PORTES, DONT UNE QUI RÉPOND À LA BONNE QUESTION ──
+        // L'ancienne version attendait DEUX images sans aucune détection, ou un déplacement
+        // franc des coins. Or on ne montre pas un champ vide entre deux cartes : on fait
+        // glisser l'une et on pose l'autre, souvent au même endroit. Les deux portes
+        // restaient donc fermées, et le scanner répondait « déjà lue » indéfiniment.
+        // Mesuré au banc : avec 600 ms de vide entre deux cartes, vingt et un échecs sur
+        // cinquante, par séries de quinze d'affilée ; il fallait 1500 ms pour qu'il se
+        // rouvre à tous les coups.
+        // La porte qui manquait interroge le CONTENU : la vignette de la carte vue
+        // ressemble-t-elle encore à celle qu'on vient de lire ? C'est la seule formulation
+        // qui corresponde à ce qu'on veut savoir.
+        if(!ST.retiree){
+          const bougeFranc = ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_SEUILS.bouge*3;
+          const autreCarte = ST.signature && stDerniereSignature
+                          && stDistanceSig(ST.signature, stDerniereSignature) > ST_SIG_AUTRE;
+          // Filet : un verrou sans issue est pire qu'un doublon, qui lui se voit dans la
+          // pile et s'enlève d'un bouton. Au-delà de cette durée de présence continue, on
+          // réarme quoi qu'il arrive.
+          const tropLongtemps = ST.presentDepuis && (Date.now() - ST.presentDepuis) > ST_VERROU_MAX;
+          if(bougeFranc || autreCarte || tropLongtemps) ST.retiree = true;
+        }
         const bouge = ST.dernierCoins ? stEcart(ST.dernierCoins, d.corners) : Infinity;
         ST.dernierCoins = d.corners;
         const seuilBouge = attente >= ST_SEUILS.franche ? Infinity
@@ -14760,6 +14810,9 @@ async function stCapturer(coins, v, attendu){
     const ms = Math.round(performance.now() - t0);
     if(navigator.vibrate) navigator.vibrate(35);
     ST.retiree = false; ST.coinsCapture = coins;
+    // La vignette de CE qu'on vient de lire : c'est à elle que les images suivantes seront
+    // comparées pour savoir si la carte a changé.
+    ST.signature = stDerniereSignature ? Float32Array.from(stDerniereSignature) : null;
     // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
     const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee,
                        attendu || 0, ST.verrous || {}, brulure, pireBrulure);
