@@ -6136,7 +6136,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 76;
+const VERSION_APP = 77;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13684,7 +13684,7 @@ function stPlein(actif){
   document.body.classList.toggle('st-plein', !!actif);
   // Le canevas se redimensionne au prochain tour de boucle ; on force un tracé pour que le
   // repère ne reste pas figé à l'ancienne taille pendant une fraction de seconde.
-  requestAnimationFrame(()=> stDessiner(null));
+  stTaille = null;   // le plein écran change la taille : on force une remesure
 }
 
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
@@ -13898,6 +13898,7 @@ async function stOuvrir(){
   // OCR coupé pour la durée du scan : voir ST_OCR_NORMAL.
   try{ SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: 99999, OCR_ORB_MS_MAX: 0 }); }catch(e){}
   ST.boucle = true;
+  stRenduDemarrer();
   stBilanSeconde = null;
   ST.retiree = true; ST.coinsCapture = null; ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
   stOublierMeilleure();
@@ -13908,13 +13909,12 @@ async function stOuvrir(){
 async function stFermer(){
   ST.boucle = false;
   stOublierMeilleure();
-  stArreterBalayage();
   stPlein(false);
   // On éteint AVANT de reprendre les douteuses : le commentaire disait « l'objectif est
   // éteint » alors que la fermeture venait après. Elle venait après sans conséquence tant
   // que la seconde analyse n'était pas attendue ; maintenant qu'elle l'est, l'ordre compte.
   stFermerFlux();
-  stDessiner(null);
+  stRenduArreter();
   $('st-ouvrir').hidden = false; $('st-fermer').hidden = true;
   stEtat('caméra fermée');
 
@@ -14057,214 +14057,271 @@ const ST_TROP_LOIN = 0.26;
 const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
 
 
-// ── LE CADRE SUIT LA CARTE AU LIEU DE SAUTER ─────────────────────────────────────────────
-// Le tracé était reposé brutalement à chaque détection, soit dix à seize fois par seconde,
-// et les coins du détecteur bougent toujours un peu même sur une carte immobile — d'où un
-// cadre qui vibre. On interpole vers la cible : le tracé rejoint la détection en quelques
-// images au lieu d'y sauter. Purement visuel, aucune conséquence sur ce qui est capturé —
-// c'est `d.corners` qui sert à la capture, jamais le tracé.
-let stCoinsAffiches = null;
-const ST_SUIVI = 0.35;   // part du chemin parcourue par image : 0,35 rejoint en ~5 images
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// LE RENDU : UNE SEULE BOUCLE, CADENCÉE PAR L'ÉCRAN
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Nikos : « les animations sont mauvaises et pas pro, ça lag beaucoup ». Trois défauts se
+// cumulaient, et aucun n'était une question de goût.
+//
+//   1. Le tracé était peint depuis la boucle de DÉTECTION — six à dix fois par seconde — et
+//      l'interpolation avançait d'un pas par détection. Un lissage cadencé par autre chose
+//      que l'écran ne peut pas être fluide : il produit un escalier, et sa vitesse dépend de
+//      la charge de la machine. C'est très exactement le « lag » ressenti.
+//   2. Le canevas était dimensionné en pixels CSS. Sur un téléphone à 3×, chaque trait était
+//      ré-échantillonné : l'aspect mou ne venait pas du dessin mais de la résolution.
+//   3. Deux peintres se disputaient le même canevas en l'effaçant chacun leur tour, donc le
+//      repère disparaissait dès que le balayage démarrait.
+//
+// On sépare donc ce qui DÉCIDE de ce qui MONTRE. La détection publie un état ; une unique
+// boucle d'affichage l'interpole et le peint. Le lissage devient fonction du temps écoulé,
+// donc identique à 30 comme à 120 images par seconde, et la détection ne paie plus une seule
+// milliseconde de dessin.
 
-function stLisserCoins(cible){
-  if(!cible){ stCoinsAffiches = null; return null; }
-  if(!stCoinsAffiches){ stCoinsAffiches = JSON.parse(JSON.stringify(cible)); return stCoinsAffiches; }
-  // Un saut franc — autre carte, ou détection qui a accroché ailleurs — ne se lisse pas :
-  // suivre doucement donnerait un cadre qui traverse l'écran en glissant, ce qui se lit
-  // comme un bug. Au-delà d'un cinquième d'image, on repose directement.
-  let saut = 0;
-  for(const k of ['tl','tr','br','bl'])
-    saut = Math.max(saut, Math.hypot(cible[k][0]-stCoinsAffiches[k][0], cible[k][1]-stCoinsAffiches[k][1]));
-  if(saut > 0.2){ stCoinsAffiches = JSON.parse(JSON.stringify(cible)); return stCoinsAffiches; }
-  for(const k of ['tl','tr','br','bl'])
-    for(let i = 0; i < 2; i++)
-      stCoinsAffiches[k][i] += (cible[k][i] - stCoinsAffiches[k][i]) * ST_SUIVI;
-  return stCoinsAffiches;
-}
+// Ce que le rendu doit montrer. La détection écrit ici, et rien d'autre.
+const STV = { coins:null, etat:'presque', texte:null, analyse:null, analyseDepuis:0 };
 
-// ── BALAYAGE D'ANALYSE ───────────────────────────────────────────────────────────────────
-// Pendant l'identification, une ligne verte parcourt la carte de gauche à droite. Elle ne
-// mesure rien : elle dit que la machine travaille, sur le seul moment où l'utilisateur n'a
-// aucun retour — entre le déclic et le verdict, une seconde environ. Sans elle, ce temps se
-// lit comme un blocage, ce que Nikos a signalé plusieurs fois sur le scanner principal.
-let stBalayageDepuis = 0, stBalayageQuad = null, stBalayageRAF = 0;
+// Ce qui est affiché à l'instant : interpolé vers STV, jamais posé brutalement.
+const STA = { coins:null, trait:[210,153,34], repere:1, voile:0, etiquette:0, texte:null };
 
-function stDemarrerBalayage(coins){
-  stBalayageQuad = coins ? JSON.parse(JSON.stringify(coins)) : null;
-  stBalayageDepuis = performance.now();
-  if(!stBalayageRAF) stBalayageRAF = requestAnimationFrame(stPeindreBalayage);
-}
-function stArreterBalayage(){
-  stBalayageQuad = null;
-  if(stBalayageRAF){ cancelAnimationFrame(stBalayageRAF); stBalayageRAF = 0; }
-}
-
-function stPeindreBalayage(){
-  stBalayageRAF = 0;
-  const cv = $('st-overlay'), v = $('st-video');
-  if(!stBalayageQuad || !cv || !v) return;
-  const g = cv.getContext('2d');
-  const vw = v.videoWidth || cv.width, vh = v.videoHeight || cv.height;
-  const ech = Math.min(cv.width / vw, cv.height / vh);
-  const iw = vw*ech, ih = vh*ech, ix = (cv.width-iw)/2, iy = (cv.height-ih)/2;
-  const P = k => [ix + stBalayageQuad[k][0]*iw, iy + stBalayageQuad[k][1]*ih];
-  const tl = P('tl'), tr = P('tr'), br = P('br'), bl = P('bl');
-
-  g.clearRect(0, 0, cv.width, cv.height);
-
-  // Le contour reste, en vert : c'est lui qui rattache le balayage à la carte.
-  g.strokeStyle = 'rgba(63,185,80,.9)'; g.lineWidth = 3; g.lineJoin = 'round';
-  g.beginPath(); g.moveTo(tl[0],tl[1]); g.lineTo(tr[0],tr[1]);
-  g.lineTo(br[0],br[1]); g.lineTo(bl[0],bl[1]); g.closePath(); g.stroke();
-
-  // La ligne balaie de gauche à droite en interpolant entre les DEUX BORDS de la carte :
-  // elle suit donc la perspective et l'inclinaison, au lieu d'être une barre verticale
-  // posée par-dessus. C'est ce détail qui la fait appartenir à la scène.
-  const T = 1100;   // un aller par seconde environ, la durée d'une identification
-  const t = ((performance.now() - stBalayageDepuis) % T) / T;
-  const h = (a,b,k) => [a[0]+(b[0]-a[0])*k, a[1]+(b[1]-a[1])*k];
-  const haut = h(tl, tr, t), bas = h(bl, br, t);
-
-  g.save();
-  // Traînée : un dégradé perpendiculaire au balayage, qui s'estompe derrière la ligne.
-  const larg = Math.hypot(tr[0]-tl[0], tr[1]-tl[1]) * 0.16;
-  const dir = [(tr[0]-tl[0]), (tr[1]-tl[1])];
-  const norme = Math.hypot(dir[0], dir[1]) || 1;
-  const ux = dir[0]/norme, uy = dir[1]/norme;
-  const grd = g.createLinearGradient(haut[0]-ux*larg, haut[1]-uy*larg, haut[0], haut[1]);
-  grd.addColorStop(0, 'rgba(63,185,80,0)');
-  grd.addColorStop(1, 'rgba(63,185,80,.30)');
-  g.beginPath();
-  g.moveTo(haut[0]-ux*larg, haut[1]-uy*larg); g.lineTo(haut[0], haut[1]);
-  g.lineTo(bas[0], bas[1]); g.lineTo(bas[0]-ux*larg, bas[1]-uy*larg);
-  g.closePath();
-  g.clip();
-  g.fillStyle = grd;
-  g.fillRect(0, 0, cv.width, cv.height);
-  g.restore();
-
-  g.strokeStyle = 'rgba(140,255,160,.95)'; g.lineWidth = 2.5;
-  g.shadowColor = 'rgba(63,185,80,.9)'; g.shadowBlur = 12;
-  g.beginPath(); g.moveTo(haut[0], haut[1]); g.lineTo(bas[0], bas[1]); g.stroke();
-  g.shadowBlur = 0;
-
-  stBalayageRAF = requestAnimationFrame(stPeindreBalayage);
-}
-
-
-// ── QUATRE ÉTATS, LISIBLES SUR LA CARTE ELLE-MÊME ────────────────────────────────────────
-// Le message vivait en haut de l'écran, à l'opposé de là où l'œil se trouve — sur la carte
-// qu'on tient. On rapproche donc le verdict de son objet : la couleur du contour dit l'état,
-// et l'étiquette collée au cadre dit ce qui manque.
-//   rien vu     → seul le repère de zone, aucun contour
-//   ça bloque   → contour ambre ou rouge + étiquette : trop loin, stabilise, déjà lue…
-//   prêt        → contour vert et voile vert : toutes les conditions sont réunies
-//   analyse     → le balayage
-// Le voile vert n'est pas décoratif : c'est le seul instant où l'utilisateur peut savoir
-// qu'il n'a plus rien à corriger, et jusqu'ici rien ne le lui disait.
 const ST_TEINTES = {
-  ko:     { trait:'#e0553f', voile:null,                  texte:'#ffd9d2' },
-  presque:{ trait:'#d29922', voile:null,                  texte:'#ffe9c2' },
-  pret:   { trait:'#3fb950', voile:'rgba(63,185,80,.16)', texte:'#c9f5cf' },
+  ko:      { trait:[224, 85, 63], voile:0, texte:'#ffd9d2' },
+  presque: { trait:[210,153, 34], voile:0, texte:'#ffe9c2' },
+  pret:    { trait:[ 63,185, 80], voile:1, texte:'#c9f5cf' },
 };
 
-function stPeindreEtat(g, coins, ix, iy, iw, ih, etat, texte){
-  const t = ST_TEINTES[etat] || ST_TEINTES.presque;
-  const p = k => [ix + coins[k][0]*iw, iy + coins[k][1]*ih];
-  const a = p('tl'), b = p('tr'), c = p('br'), d = p('bl');
+// Constantes de temps, en secondes. Un lissage exponentiel atteint 95 % de sa cible en 3 τ :
+// 0,07 s pour le cadre donne environ deux dixièmes, assez pour absorber le frémissement du
+// détecteur sans donner l'impression que le tracé traîne derrière la carte.
+const ST_TAU_COINS = 0.07, ST_TAU_TEINTE = 0.12, ST_TAU_FONDU = 0.16;
+const ST_SAUT = 0.2;        // au-delà, c'est une autre carte : on repose au lieu de glisser
+const ST_SOBRE = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-  g.beginPath();
-  g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]); g.closePath();
+let stRAF = 0, stDernierT = 0, stTaille = null, stObsTaille = null;
 
-  // Voile dégradé, uniquement quand tout est réuni. Il part du haut de la carte et s'estompe
-  // vers le bas : un aplat uniforme masquerait l'illustration, ce qu'on ne veut pas au moment
-  // précis où l'utilisateur vérifie qu'il tient la bonne carte.
-  if(t.voile){
-    g.save(); g.clip();
-    const grd = g.createLinearGradient(a[0], a[1], d[0], d[1]);
-    grd.addColorStop(0, t.voile);
-    grd.addColorStop(1, 'rgba(63,185,80,.02)');
-    g.fillStyle = grd; g.fillRect(ix, iy, iw, ih);
-    g.restore();
-    g.beginPath();
-    g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]); g.closePath();
+function stRenduDemarrer(){
+  if(stRAF) return;
+  stDernierT = 0;
+  // La taille se mesure sur événement, pas à chaque image : lire getBoundingClientRect dans
+  // une boucle d'affichage force un calcul de mise en page à chaque tour, ce que faisait
+  // l'ancien code soixante fois par seconde.
+  const cv = $('st-overlay');
+  if(cv && !stObsTaille && window.ResizeObserver){
+    stObsTaille = new ResizeObserver(()=>{ stTaille = null; });
+    stObsTaille.observe(cv);
   }
-
-  g.strokeStyle = t.trait;
-  g.lineWidth = etat === 'pret' ? 3.5 : 3;
-  g.lineJoin = 'round';
-  if(etat === 'pret'){ g.shadowColor = 'rgba(63,185,80,.75)'; g.shadowBlur = 14; }
-  g.stroke();
-  g.shadowBlur = 0;
-
-  // L'étiquette se pose SOUS le bord bas de la carte, centrée, jamais par-dessus
-  // l'illustration. Rien à lire ailleurs qu'à l'endroit où l'on regarde déjà.
-  if(!texte) return;
-  const mx = (c[0]+d[0])/2, my = (c[1]+d[1])/2;
-  g.font = '600 13px system-ui, -apple-system, sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  const larg = g.measureText(texte).width + 18, haut = 24;
-  const bx = Math.max(ix+4, Math.min(ix+iw-larg-4, mx - larg/2));
-  const by = Math.min(iy+ih-haut-4, my + 12);
-  g.fillStyle = 'rgba(13,17,23,.82)';
-  if(g.roundRect){ g.beginPath(); g.roundRect(bx, by, larg, haut, 7); g.fill(); }
-  else g.fillRect(bx, by, larg, haut);
-  g.fillStyle = t.texte;
-  g.fillText(texte, bx + larg/2, by + haut/2 + 0.5);
+  stTaille = null;
+  stRAF = requestAnimationFrame(stRendre);
 }
 
-function stDessiner(coins, etat, texte){
-  const cv = $('st-overlay'), v = $('st-video');
-  if(!cv || !v) return;
-  const r = v.getBoundingClientRect();
-  if(cv.width !== Math.round(r.width) || cv.height !== Math.round(r.height)){
-    cv.width = Math.round(r.width); cv.height = Math.round(r.height);
-  }
-  const g = cv.getContext('2d');
-  g.clearRect(0, 0, cv.width, cv.height);
+function stRenduArreter(){
+  if(stRAF){ cancelAnimationFrame(stRAF); stRAF = 0; }
+  const cv = $('st-overlay');
+  if(cv && cv.width) cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+  STV.coins = null; STV.analyse = null; STA.coins = null;
+}
 
-  // ── LE REPÈRE DE VISÉE, TOUJOURS VISIBLE ────────────────────────────────────────────
-  // Il manquait, et Nikos l'a senti sans pouvoir le nommer : « aucun visuel sur notre
-  // appareil photo […] il faut fortement coller la carte au téléphone ». Sans repère, on
-  // ne sait pas quelle taille l'outil attend, donc on approche jusqu'à ce que ça marche —
-  // ce qui revient à découvrir le seuil à tâtons, à chaque carte.
-  // Quatre équerres plutôt qu'un rectangle plein : elles disent le cadrage sans masquer la
-  // carte ni se confondre avec le quadrilatère détecté, qui lui est un trait continu.
-  // Où l'image se pose réellement dans l'élément. Même en « contain » elle ne remplit pas
-  // le cadre : sans ce calcul, le repère se dimensionnerait sur l'élément et non sur ce que
-  // le détecteur analyse — c'est très exactement l'erreur qu'on corrige ici.
-  const vw = v.videoWidth || cv.width, vh = v.videoHeight || cv.height;
-  const ech = Math.min(cv.width / vw, cv.height / vh);
-  const iw = vw * ech, ih = vh * ech;
-  const ix = (cv.width - iw)/2, iy = (cv.height - ih)/2;
-  // ── LE REPÈRE DIT UN MINIMUM, PAS UNE CIBLE ─────────────────────────────────────────
-  // Une seule borne, la petite : « au moins cette taille ». Tout ce qui est plus grand
-  // convient, y compris une carte qui remplit l'écran. Le rectangle est donc un plancher, et
-  // les équerres marquent la taille la plus confortable — 94 % à seize centimètres — sans
-  // rien interdire au-dessus.
-  const rect = f => { const h = ih*f, w = h/CARD_RATIO;
-    return {x: ix + (iw-w)/2, y: iy + (ih-h)/2, w, h}; };
+// La détection PUBLIE. Elle ne dessine plus rien, et ne bloque donc plus sur le rendu.
+function stViser(coins, etat, texte){
+  STV.coins = coins || null;
+  STV.etat = etat || 'presque';
+  STV.texte = coins ? (texte || null) : null;
+}
+function stAnalyser(coins){
+  STV.analyse = coins ? JSON.parse(JSON.stringify(coins)) : null;
+  STV.analyseDepuis = performance.now();
+}
+function stFinAnalyse(){ STV.analyse = null; }
+
+// Où l'image se pose réellement dans l'élément. En « contain » elle ne remplit pas le cadre :
+// sans ce calcul le repère se dimensionnerait sur l'élément et non sur ce que le détecteur
+// analyse. On dessine en pixels CSS ; la mise à l'échelle écran est portée par la matrice.
+function stMesurer(){
+  const cv = $('st-overlay'), v = $('st-video');
+  if(!cv || !v) return null;
+  if(stTaille) return stTaille;
+  const l = cv.clientWidth, h = cv.clientHeight;
+  if(!l || !h) return null;
+  // Plafonné à 2 : au-delà, le coût de remplissage triple sans qu'un trait de trois pixels
+  // y gagne quoi que ce soit.
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  if(cv.width !== Math.round(l*dpr) || cv.height !== Math.round(h*dpr)){
+    cv.width = Math.round(l*dpr); cv.height = Math.round(h*dpr);
+  }
+  const vw = v.videoWidth || l, vh = v.videoHeight || h;
+  const ech = Math.min(l/vw, h/vh);
+  const iw = vw*ech, ih = vh*ech;
+  stTaille = { l, h, dpr, iw, ih, ix:(l-iw)/2, iy:(h-ih)/2 };
+  return stTaille;
+}
+
+const stVers = (a, b, k) => a + (b - a)*k;
+
+function stRendre(t){
+  stRAF = requestAnimationFrame(stRendre);
+  const T = stMesurer();
+  if(!T) return;
+  const dt = stDernierT ? Math.min(0.1, (t - stDernierT)/1000) : 0.016;
+  stDernierT = t;
+
+  // Lissage exponentiel : la part parcourue dépend du TEMPS, pas du nombre d'images. À 30
+  // comme à 120 par seconde, le cadre met la même durée à rejoindre la carte.
+  const kC = ST_SOBRE ? 1 : 1 - Math.exp(-dt/ST_TAU_COINS);
+  const kT = ST_SOBRE ? 1 : 1 - Math.exp(-dt/ST_TAU_TEINTE);
+  const kF = ST_SOBRE ? 1 : 1 - Math.exp(-dt/ST_TAU_FONDU);
+
+  const quad = STV.analyse || STV.coins;
+  if(!quad) STA.coins = null;
+  else if(!STA.coins) STA.coins = JSON.parse(JSON.stringify(quad));
+  else{
+    let saut = 0;
+    for(const k of ['tl','tr','br','bl'])
+      saut = Math.max(saut, Math.hypot(quad[k][0]-STA.coins[k][0], quad[k][1]-STA.coins[k][1]));
+    // Un saut franc — autre carte, ou détection accrochée ailleurs — ne se lisse pas :
+    // suivre doucement donnerait un cadre qui traverse l'écran, ce qui se lit comme un bug.
+    if(saut > ST_SAUT) STA.coins = JSON.parse(JSON.stringify(quad));
+    else for(const k of ['tl','tr','br','bl'])
+      for(let i = 0; i < 2; i++) STA.coins[k][i] = stVers(STA.coins[k][i], quad[k][i], kC);
+  }
+
+  const teinte = ST_TEINTES[STV.analyse ? 'pret' : STV.etat] || ST_TEINTES.presque;
+  for(let i = 0; i < 3; i++) STA.trait[i] = stVers(STA.trait[i], teinte.trait[i], kT);
+  STA.voile  = stVers(STA.voile, STV.analyse ? 0 : teinte.voile, kF);
+  STA.repere = stVers(STA.repere, STA.coins ? 0.34 : 1, kF);
+  const veutTexte = !!(STV.texte && !STV.analyse);
+  if(veutTexte) STA.texte = STV.texte;
+  STA.etiquette = stVers(STA.etiquette, veutTexte ? 1 : 0, kF);
+
+  const g = $('st-overlay').getContext('2d');
+  g.setTransform(T.dpr, 0, 0, T.dpr, 0, 0);
+  g.clearRect(0, 0, T.l, T.h);
+  stPeindreRepere(g, T);
+  if(STA.coins){
+    stPeindreCadre(g, T);
+    if(STV.analyse) stPeindreBalayage(g, T, t);
+    else if(STA.etiquette > 0.01) stPeindreEtiquette(g, T);
+  }
+}
+
+// ── LE REPÈRE : UN PLANCHER, PAS UNE CIBLE ───────────────────────────────────────────────
+// Une seule borne, la petite : « au moins cette taille ». Tout ce qui est plus grand convient,
+// y compris une carte qui remplit l'écran. Les équerres marquent la distance la plus
+// confortable sans rien interdire au-dessus. Il s'efface en fondu quand une carte est tenue :
+// il a renseigné, il n'a plus à encombrer.
+function stPeindreRepere(g, T){
+  if(STA.repere < 0.02) return;
+  const rect = f => { const h = T.ih*f, w = h/CARD_RATIO;
+    return {x: T.ix + (T.iw-w)/2, y: T.iy + (T.ih-h)/2, w, h}; };
+  g.save();
+  g.globalAlpha = STA.repere;
   const plancher = rect(ST_TROP_LOIN);
   g.setLineDash([7, 6]);
-  g.strokeStyle = coins ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.34)';
-  g.lineWidth = 2;
+  g.strokeStyle = 'rgba(255,255,255,.34)'; g.lineWidth = 2;
   g.strokeRect(plancher.x, plancher.y, plancher.w, plancher.h);
   g.setLineDash([]);
-
   const mid = rect(ST_GUIDE_H);
   const eq = Math.min(mid.w, mid.h) * 0.14;
-  g.strokeStyle = coins ? 'rgba(255,255,255,.24)' : 'rgba(255,255,255,.58)';
-  g.lineWidth = 3; g.lineCap = 'round';
+  g.strokeStyle = 'rgba(255,255,255,.58)'; g.lineWidth = 3; g.lineCap = 'round';
   for(const [x, y, dx, dy] of [[mid.x,mid.y,1,1],[mid.x+mid.w,mid.y,-1,1],
                                [mid.x+mid.w,mid.y+mid.h,-1,-1],[mid.x,mid.y+mid.h,1,-1]]){
     g.beginPath();
     g.moveTo(x, y + dy*eq); g.lineTo(x, y); g.lineTo(x + dx*eq, y);
     g.stroke();
   }
+  g.restore();
+}
 
-  coins = stLisserCoins(coins);
-  if(!coins) return;
-  stPeindreEtat(g, coins, ix, iy, iw, ih, etat || 'presque', texte);
+const stP = (T, k) => [T.ix + STA.coins[k][0]*T.iw, T.iy + STA.coins[k][1]*T.ih];
+function stChemin(g, T){
+  const a = stP(T,'tl'), b = stP(T,'tr'), c = stP(T,'br'), d = stP(T,'bl');
+  g.beginPath();
+  g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]);
+  g.closePath();
+  return [a,b,c,d];
+}
+
+function stPeindreCadre(g, T){
+  const [a,b,c,d] = stChemin(g, T);
+  const r = Math.round(STA.trait[0]), v = Math.round(STA.trait[1]), bu = Math.round(STA.trait[2]);
+
+  // Voile dégradé quand tout est réuni : c'est le seul instant où l'utilisateur peut savoir
+  // qu'il n'a plus rien à corriger. Il part du haut et s'estompe vers le bas — un aplat
+  // uniforme masquerait l'illustration au moment précis où l'on vérifie la carte.
+  if(STA.voile > 0.01){
+    g.save(); g.clip();
+    const grd = g.createLinearGradient(a[0], a[1], d[0], d[1]);
+    grd.addColorStop(0, 'rgba('+r+','+v+','+bu+',' + (0.16*STA.voile).toFixed(3) + ')');
+    grd.addColorStop(1, 'rgba('+r+','+v+','+bu+',' + (0.02*STA.voile).toFixed(3) + ')');
+    g.fillStyle = grd; g.fillRect(T.ix, T.iy, T.iw, T.ih);
+    g.restore();
+  }
+
+  // La lueur en DEUX PASSES plutôt qu'en shadowBlur. Le flou de canevas est recalculé à
+  // chaque image et se paie cher sur un GPU de téléphone ; deux traits concentriques donnent
+  // le même halo pour le prix d'un tracé.
+  g.lineJoin = 'round'; g.lineCap = 'round';
+  stChemin(g, T);
+  g.strokeStyle = 'rgba('+r+','+v+','+bu+',.22)'; g.lineWidth = 9; g.stroke();
+  stChemin(g, T);
+  g.strokeStyle = 'rgb('+r+','+v+','+bu+')'; g.lineWidth = 3; g.stroke();
+}
+
+// ── L'ÉTIQUETTE, COLLÉE À LA CARTE ───────────────────────────────────────────────────────
+// Le message vivait en haut de l'écran, à l'opposé de là où l'œil se trouve — sur la carte
+// qu'on tient. On rapproche le verdict de son objet, et on le fait apparaître en fondu :
+// une étiquette qui surgit d'un coup se lit comme une erreur.
+function stPeindreEtiquette(g, T){
+  if(!STA.texte) return;
+  const c = stP(T,'br'), d = stP(T,'bl');
+  const mx = (c[0]+d[0])/2, my = (c[1]+d[1])/2;
+  g.save();
+  g.globalAlpha = STA.etiquette;
+  g.font = '600 13px system-ui, -apple-system, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const larg = g.measureText(STA.texte).width + 18, haut = 24;
+  const bx = Math.max(T.ix+4, Math.min(T.ix+T.iw-larg-4, mx - larg/2));
+  // Elle monte de quelques pixels en apparaissant : le mouvement dit « ceci vient de changer »
+  // sans qu'il faille le lire pour le remarquer.
+  const by = Math.min(T.iy+T.ih-haut-4, my + 12 + (1-STA.etiquette)*6);
+  g.fillStyle = 'rgba(13,17,23,.82)';
+  if(g.roundRect){ g.beginPath(); g.roundRect(bx, by, larg, haut, 7); g.fill(); }
+  else g.fillRect(bx, by, larg, haut);
+  g.fillStyle = (ST_TEINTES[STV.etat] || ST_TEINTES.presque).texte;
+  g.fillText(STA.texte, bx + larg/2, by + haut/2 + 0.5);
+  g.restore();
+}
+
+// ── BALAYAGE D'ANALYSE ───────────────────────────────────────────────────────────────────
+// Pendant l'identification, une ligne parcourt la carte. Elle ne mesure rien : elle dit que
+// la machine travaille, sur le seul moment où l'utilisateur n'a aucun retour — entre le
+// déclic et le verdict, une seconde environ. Sans elle, ce temps se lit comme un blocage.
+// Elle interpole entre les DEUX BORDS de la carte, donc suit la perspective au lieu d'être
+// une barre verticale posée par-dessus : c'est ce détail qui la fait appartenir à la scène.
+function stPeindreBalayage(g, T, t){
+  const [a,b,c,d] = stChemin(g, T);
+  const T_MS = 1100;                                   // un aller-retour par identification
+  const u = ((t - STV.analyseDepuis) % T_MS) / T_MS;
+  // Aller-retour adouci aux extrémités plutôt qu'un saut au bord gauche une fois par seconde.
+  // C'était le plus visible des défauts, précisément parce qu'il revenait sans cesse.
+  const p = u < 0.5 ? u*2 : (1-u)*2;
+  const k = p*p*(3 - 2*p);
+  const h = (m,n,q) => [m[0]+(n[0]-m[0])*q, m[1]+(n[1]-m[1])*q];
+  const haut = h(a, b, k), bas = h(d, c, k);
+  const larg = Math.hypot(b[0]-a[0], b[1]-a[1]) * 0.18;
+  const dir = [b[0]-a[0], b[1]-a[1]];
+  const norme = Math.hypot(dir[0], dir[1]) || 1;
+  // La traînée suit le sens de marche : elle reste derrière la ligne, aller comme retour.
+  const sens = u < 0.5 ? 1 : -1;
+  const ux = dir[0]/norme*sens, uy = dir[1]/norme*sens;
+
+  g.save();
+  stChemin(g, T); g.clip();
+  const grd = g.createLinearGradient(haut[0]-ux*larg, haut[1]-uy*larg, haut[0], haut[1]);
+  grd.addColorStop(0, 'rgba(63,185,80,0)');
+  grd.addColorStop(1, 'rgba(63,185,80,.28)');
+  g.fillStyle = grd; g.fillRect(T.ix, T.iy, T.iw, T.ih);
+  g.strokeStyle = 'rgba(140,255,160,.85)'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(haut[0], haut[1]); g.lineTo(bas[0], bas[1]); g.stroke();
+  g.restore();
 }
 
 
@@ -14317,7 +14374,7 @@ async function stTourner(){
       const bon = !!(d && d.corners && d.score != null && d.score >= ST_SCORE);
 
       if(!bon){
-        stDessiner(null);
+        stViser(null);
         ST.streak = 0; ST.presentDepuis = 0; ST.dernierCoins = null;
         if(++ST.absence >= 2){ ST.retiree = true; stOublierMeilleure(); }
         stEtat('vise une carte');
@@ -14347,7 +14404,7 @@ async function stTourner(){
         // de la présence — et il prendra la meilleure, sans une milliseconde d'attente en
         // plus puisqu'elle est déjà en mémoire.
         stRetenirSiPlusNette(v, d.corners);
-        stDessiner(d.corners, etat, etiquette);
+        stViser(d.corners, etat, etiquette);
         if(etat === 'pret'){
           ST.streak = 0; ST.presentDepuis = 0;
           await stCapturer(d.corners, v);
@@ -14373,7 +14430,7 @@ async function stTourner(){
 async function stCapturer(coins, v){
   ST.occupe = true;
   stEtat('identification…');
-  stDemarrerBalayage(coins);
+  stAnalyser(coins);
   const t0 = performance.now();
   try{
     // ── ON IDENTIFIE LA PLUS NETTE, PAS CELLE DE L'INSTANT ────────────────────────────
@@ -14400,7 +14457,7 @@ async function stCapturer(coins, v){
       ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
       : '⚠ doute — mise de côté, carte suivante');
   }catch(e){ stEtat('identification : ' + e.message); }
-  finally{ stArreterBalayage(); ST.occupe = false; }
+  finally{ stFinAnalyse(); ST.occupe = false; }
 }
 
 
