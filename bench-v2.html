@@ -247,7 +247,7 @@ await BANC.viderScans()                // efface l'historique de cet appareil</p
 </div>
 
 <script type="module">
-import * as V2 from './scan-v2.js?v=24';
+import * as V2 from './scan-v2.js?v=29';
 window.SCAN_V2 = V2;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1397,6 +1397,9 @@ async function capturer(mode){
     rendreEnAttente();
     rendreCamera();
     $('c-indice').textContent = '✓ ' + (scan.nom || scan.trouve || '?') + ' — carte suivante';
+    // Même instant creux que l'application : le verdict est affiché, l'utilisateur change de
+    // carte. Sans cet appel le banc ne recyclerait plus qu'au double du compte.
+    try{ V2.entretienOrbV2 && V2.entretienOrbV2(); }catch(e){}
   }catch(e){ journal('capture : ' + e.message); }
   finally{ occupeCam = false; }
 }
