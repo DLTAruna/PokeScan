@@ -6042,7 +6042,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 56;
+const VERSION_APP = 57;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13514,6 +13514,11 @@ const ST = {
   presentDepuis:0, streak:0, dernierCoins:null, absence:0,
   retiree:true, coinsCapture:null,
   cartes:[],            // ce que la session a identifié, en mémoire et nulle part ailleurs
+  // Trace de CHAQUE identification, gardée ou non. Elle ne part qu'au moment de l'envoi,
+  // jamais pendant qu'on scanne : c'est ce qui la rend acceptable ici. Sans elle je suis
+  // aveugle, et les décisions qui suivent — quelle pièce remettre, à quel prix — se
+  // reprendraient au juger.
+  journal:[],
   enAttente:null,       // carte identifiée, en attente du verdict de l'utilisateur
 };
 // Mêmes valeurs que le banc, délibérément : c'est la configuration qui tournait à 1304 ms.
@@ -13676,6 +13681,8 @@ function stRendreAttente(){
 
 function stValider(garder){
   const a = ST.enAttente;
+  if(a) ST.journal.push({ms:a.ms, fiabilite:a.fiabilite, categorie:a.categorie,
+                         inliers:a.inliers, garde:!!(garder && a.carte)});
   if(a && garder && a.carte) ST.cartes.push(a);
   ST.enAttente = null;
   stRendreAttente();
@@ -13701,6 +13708,24 @@ function stEnvoyerAuLot(){
   for(const c of ST.cartes){
     try{ pushToQueue(c.photo, null, 'scanner-test'); n++; }catch(e){}
   }
+  // Un seul envoi, après coup, avec le bilan de la session entière. Le scanner principal
+  // faisait une requête PAR CARTE, caméra ouverte — c'est précisément ce qu'on ne refait pas.
+  try{
+    const j = ST.journal;
+    if(j.length && window.SCAN_V2 && SCAN_V2.relayV2){
+      const t = j.map(x => x.ms).sort((p,q)=>p-q);
+      SCAN_V2.relayV2({ fichier:'scanner-test', categorie:'session', conf:'session',
+        predit:'', fiabilite:0, inliers:0, marge:0, ocrLance:false, T:{}, v:VERSION_APP,
+        moteur:(SCAN_V2.moteurV2 && SCAN_V2.moteurV2()) || '?',
+        ms: t[t.length>>1],
+        nCartes: j.length,
+        gardees: j.filter(x=>x.garde).length,
+        rebuts: j.filter(x=>x.categorie==='rebut').length,
+        msMin: t[0], msMax: t[t.length-1],
+        detail: j.slice(0, 40) });
+    }
+  }catch(e){}
+  ST.journal = [];
   ST.cartes = [];
   stRendreListe();
   stEtat(n + ' carte(s) envoyée(s) dans « À vérifier »');
