@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 82;
+const VERSION_APP = 83;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14146,11 +14146,13 @@ let stMeilleure = null;      // canvas de la meilleure vue depuis que cette cart
 let stMeilleureNet = -1;
 let stMeilleureScore = -1;   // netteté pénalisée par la brûlure : c'est elle qui décide
 let stMeilleureBrulure = 0;
+let stPireBrulure = 0;       // la plus éblouie vue pendant la présence
 let stMeilleursCoins = null;
 let stScratch = null;
 
 function stOublierMeilleure(){
-  stMeilleureNet = -1; stMeilleureScore = -1; stMeilleureBrulure = 0; stMeilleursCoins = null;
+  stMeilleureNet = -1; stMeilleureScore = -1; stMeilleureBrulure = 0; stPireBrulure = 0;
+  stMeilleursCoins = null;
 }
 
 // 140×196 : ce calcul tombe à chaque tour, derrière une détection qui coûte déjà ~50 ms.
@@ -14175,10 +14177,17 @@ function stOublierMeilleure(){
 // saturés dans la carte découpée :
 //     image propre     0 à 9,8 %   (médiane 3,7)
 //     sous toploader  38,7 à 43,8 % (médiane 40,7)
-// À 15 %, cent pour cent détectés et aucun faux positif. Le geste qui règle le problème —
-// incliner la carte — appartient à l'utilisateur ; notre travail est de le lui demander au
-// bon moment plutôt que de lui rendre « non reconnue » sans raison.
-const ST_BRULURE_SEUIL = 0.15;
+// À 15 %, cent pour cent détectés et aucun faux positif — mais ce seuil-là répond à la
+// mauvaise question. Détecter un reflet n'a d'intérêt que s'il NUIT. Mesuré sur 130 essais,
+// identification juste en fonction de la brûlure :
+//     0-30 %   100 %   (inliers 175 à 272)
+//     30-34 %   80 %
+//     34-38 %   25 %
+//     au-delà   ~18 %
+// Le genou est franc et il est à trente pour cent, pas à quinze : à 15 % on aurait refusé
+// des captures parfaitement bonnes. Sous le seuil, cent pour cent de réussite ; au-dessus,
+// vingt-cinq. C'est donc là qu'on coupe.
+const ST_BRULURE_SEUIL = 0.30;
 // Exposant de la pénalité appliquée à la netteté. Le reflet GONFLE la variance du laplacien
 // — ses bords francs sont du contraste — si bien que la mémoire de la plus nette choisissait
 // volontiers l'image la plus éblouie, exactement celle qu'il ne fallait pas garder.
@@ -14255,6 +14264,9 @@ function stRetenirSiPlusNette(video, coins){
   if(stMeilleure.width !== vw || stMeilleure.height !== vh){ stMeilleure.width = vw; stMeilleure.height = vh; }
   stMeilleure.getContext('2d').drawImage(video, 0, 0, vw, vh);
   stMeilleureNet = net; stMeilleureScore = score; stMeilleureBrulure = stDerniereBrulure;
+  // La pire vue de la présence, pour savoir a posteriori si l'attente a servi à quelque
+  // chose : sans elle, un scan propre ne dirait pas s'il l'a été d'emblée ou après patience.
+  if(stDerniereBrulure > stPireBrulure) stPireBrulure = stDerniereBrulure;
   stMeilleursCoins = { tl:[...coins.tl], tr:[...coins.tr], br:[...coins.br], bl:[...coins.bl] };
 }
 
@@ -14653,6 +14665,9 @@ async function stTourner(){
         let bord = 1;
         for(const q of [d.corners.tl, d.corners.tr, d.corners.br, d.corners.bl])
           bord = Math.min(bord, q[0], 1-q[0], q[1], 1-q[1]);
+        // La mémoire est mise à jour AVANT la décision, et non après : c'est elle qui tient
+        // l'image réellement capturée, donc la seule dont la brûlure ait un sens ici.
+        stRetenirSiPlusNette(v, d.corners);
         let etat = 'pret', etiquette = null;
         if(!ST.retiree){ etat = 'ko'; etiquette = 'déjà lue — retire-la'; }
         else if(aireVue < ST_AIRE_LOIN){ etat = 'ko'; etiquette = 'trop loin'; }
@@ -14671,13 +14686,25 @@ async function stTourner(){
         // jamais : il a un geste de sortie, et le message le nomme.
         else if(attente < ST_SEUILS.franche && prop > ST_SEUILS.prop){
           etat = 'presque'; etiquette = 'stabilise'; }
+        // ── ON ATTEND L'ÉCLAIRCIE ──────────────────────────────────────────────────────
+        // Idée de Nikos, et elle vaut mieux que la mienne : plutôt que capturer sous le
+        // reflet puis se plaindre, on ne déclenche pas tant que l'image qu'on garderait est
+        // brûlée. Le test porte sur stMeilleureBrulure — la MEILLEURE vue depuis que la
+        // carte est là — donc un bon instant, même fugace, suffit : il est déjà en mémoire
+        // et le déclenchement part aussitôt. La main bouge toujours un peu, le reflet
+        // glisse, et il n'y a rien à faire d'autre qu'attendre ce moment.
+        // Comme les autres verrous, il se relâche après `franche` : si le reflet ne bouge
+        // pas — carte à plat sous un plafonnier fixe — on capture quand même, et l'alerte
+        // dira pourquoi ça a échoué. Un verrou sans issue serait pire que la mauvaise photo.
+        else if(attente < ST_SEUILS.franche && stMeilleureScore >= 0
+                && stMeilleureBrulure > ST_BRULURE_SEUIL){
+          etat = 'presque'; etiquette = 'reflet — incline la carte'; }
         else if(d.score < seuilScore){ etat = 'presque'; etiquette = 'je cherche…'; }
         else if(!stable){ etat = 'presque'; etiquette = 'stabilise'; }
         // Tant que la carte est là, on retient la plus nette. Rien n'est rejeté : quand le
         // déclenchement viendra, il aura le choix entre l'image de l'instant et la meilleure
         // de la présence — et il prendra la meilleure, sans une milliseconde d'attente en
         // plus puisqu'elle est déjà en mémoire.
-        stRetenirSiPlusNette(v, d.corners);
         // Combien de tours chaque verrou a-t-il retenus ? Sans ce comptage, le bilan disait
         // que la capture avait pris 1,3 s sans jamais dire à cause de quoi — et c'est
         // précisément ce que le banc mesure, donc la seule grandeur qui les rende comparables.
@@ -14728,13 +14755,14 @@ async function stCapturer(coins, v, attendu){
     if(!cv){ stEtat('cadrage impossible'); return; }
     // Sur l'image RÉELLEMENT identifiée, pas sur une approximation de visée.
     const brulure = stBrulure(cv);
+    const pireBrulure = stPireBrulure;
     const res = await SCAN_V2.identifierV2(cv, {});
     const ms = Math.round(performance.now() - t0);
     if(navigator.vibrate) navigator.vibrate(35);
     ST.retiree = false; ST.coinsCapture = coins;
     // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
     const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee,
-                       attendu || 0, ST.verrous || {}, brulure);
+                       attendu || 0, ST.verrous || {}, brulure, pireBrulure);
     const teinte = stCouleur(e);
     stEtatTeinte(teinte);
     stEtat(teinte === 'ok' ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
@@ -14773,7 +14801,7 @@ function stEstSur(res){
 }
 
 // Rangement d'une carte identifiée. Rien n'attend l'utilisateur.
-function stRanger(res, photo, ms, nettete, attendu, verrous, brulure){
+function stRanger(res, photo, ms, nettete, attendu, verrous, brulure, pireBrulure){
   const entree = { carte: res && res.pick ? res.pick : null,
                    fiabilite: res ? res.fiabilite : 0,
                    categorie: res ? res.categorie : 'rebut',
@@ -14788,7 +14816,8 @@ function stRanger(res, photo, ms, nettete, attendu, verrous, brulure){
                    embPremier: res ? (res.embPremier || null) : null,
                    predit: res && res.pick ? res.pick.cle : null,
                    attendu: attendu || 0, verrous: verrous || {},
-                   brulure: Math.round((brulure || 0) * 1000) / 1000 };
+                   brulure: Math.round((brulure || 0) * 1000) / 1000,
+                   brulurePire: Math.round((pireBrulure || 0) * 1000) / 1000 };
   // ── QUI MÉRITE UNE SECONDE ANALYSE ────────────────────────────────────────────────
   // Mesuré sur la V.78 : neuf cartes reprises, douze secondes dépensées, ZÉRO promue. La
   // cause n'est pas le réglage mais la population. La seule arme supplémentaire de la
@@ -14805,7 +14834,7 @@ function stRanger(res, photo, ms, nettete, attendu, verrous, brulure){
                    inliers:entree.inliers, nettete, garde:stEstSur(res),
                    embTop:entree.embTop, embPremier:entree.embPremier, predit:entree.predit,
                    attendu:entree.attendu, verrous:entree.verrous, reprise:entree.reprendre,
-                   brulure:entree.brulure});
+                   brulure:entree.brulure, brulurePire:entree.brulurePire});
   ST.dernier = entree;
   stRendreDernier();
   stRendreCompteurs();
