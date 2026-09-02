@@ -6127,7 +6127,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 66;
+const VERSION_APP = 67;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13737,11 +13737,28 @@ function stAire(c){
   return Math.abs(a)/2;
 }
 
-// Hauteur du repère, en fraction de l'aperçu. 0,62 n'est pas arbitraire : le banc de
-// détection mesure 87 % de réussite quand la carte occupe 55 % de la hauteur, 53 % à 40 %,
-// et zéro à 30 %. Le cadre demande donc un peu plus que le minimum viable — c'est ce qu'il
-// doit faire, montrer la taille CONFORTABLE et non la taille limite.
-const ST_GUIDE_H = 0.62;
+// ── HAUTEUR DU REPÈRE : 0,45, ET C'EST LE PLUS CONFORTABLE QUI GAGNE ────────────────────
+// Le 0,62 précédent venait d'un banc raisonnant en fractions d'image, où la réussite semblait
+// croître avec la taille de la carte. Le banc de cadrage, qui travaille en millimètres et en
+// distances réelles, dit tout autre chose. Sur trente cartes SPÉCIALES — full art, SAR, or,
+// c'est-à-dire celles sans bordure blanche, les plus dures pour un détecteur de contours :
+//
+//     10 cm (73 % de l'image)  détection 87 %   identification 87 %
+//     12 cm (61 %)                       77 %                  77 %   ← l'ancien repère
+//     14 cm (52 %)                       97 %                  97 %
+//     16 cm (46 %)                       90 %                  93 %
+//     18 cm (41 %)                       93 %                  97 %
+//     20 cm (37 %)                       97 %                  97 %
+//     30 cm (24 %)                       48 %                  93 % (rattrapage)
+//
+// La réussite ne croît PAS avec la proximité : elle plafonne entre 14 et 20 cm, et redescend
+// des deux côtés. Trop près, la carte touche presque les bords et le détecteur n'a plus de
+// fond où lire un contour — il cherche un document dans une scène, pas une texture plein
+// cadre. L'ancien repère pointait donc très exactement sur le creux de la courbe.
+// 0,45 place l'utilisateur vers seize à dix-huit centimètres : au milieu du plateau, à une
+// distance de bras naturelle, avec de la marge des deux côtés. Et le rattrapage tient
+// jusqu'à trente centimètres, donc dépasser le repère ne coûte rien.
+const ST_GUIDE_H = 0.45;
 
 function stDessiner(coins, couleur){
   const cv = $('st-overlay'), v = $('st-video');
