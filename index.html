@@ -6046,7 +6046,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 61;
+const VERSION_APP = 62;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13530,7 +13530,16 @@ const ST_SCORE = 0.35, ST_SCORE_STRICT = 0.5, ST_BOUGE = 0.030;
 const ST_DOUCE = 1200, ST_FRANCHE = 2500;
 // Part centrale reprise quand le premier passage ne trouve rien. 0,55 : sur ce recadrage la
 // même carte occupe près du double, et redevient une forme que le modèle sait reconnaître.
-const ST_RECADRES = [0.55, 0.35];
+// ⚠️ UN SEUL PALIER — le second, à 0,35, a été retiré aussitôt qu'essayé (V.62).
+// Nikos, après l'avoir testé : « bien moins bon, beaucoup de mauvaises détections ». Et le
+// mécanisme se comprend : sur un recadrage aussi serré, une PORTION de carte suffit à
+// remplir la vue, le détecteur y voit une carte entière, et les coins sont ensuite ramenés à
+// l'échelle du plein cadre. On fabrique donc soi-même le bug Sablaireau — un morceau de
+// carte pris pour la carte — au lieu de le subir.
+// Le palier à 0,55 reste : il double la réussite sur les cartes lointaines (mesuré, 0 % à
+// 67 % sur le geste bras tendu) sans jamais réduire la vue au point qu'un fragment y passe
+// pour un tout.
+const ST_RECADRES = [0.55];
 
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 
