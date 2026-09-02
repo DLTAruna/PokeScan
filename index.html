@@ -6260,7 +6260,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 83;
+const VERSION_APP = 84;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14773,8 +14773,15 @@ async function stCapturer(coins, v, attendu){
     stVoler(e.photo, coins);
     stBondPile();
     if(teinte === 'ok') stAjouterValeur(e);
-    // L'alerte franche ne se déclenche que sur un échec net, jamais sur un doute.
-    if(teinte === 'nok') stAlerter(e);
+    // ── PLUS DE POPUP ─────────────────────────────────────────────────────────────
+    // Nikos le demande, et le banc a montré pourquoi il avait raison : stAlerter posait
+    // ST.boucle = false et suspendait le scanner jusqu'à ce qu'on ferme la fenêtre. Sur
+    // un paquet, une seule carte illisible arrêtait donc tout — et sur mon banc, où
+    // personne ne clique, les échecs arrivaient par séries de quinze.
+    // Le message reste, mais dans la ligne d'état : il informe sans interrompre. Le scan
+    // enchaîne, la carte part dans « à confirmer », et c'est très exactement ce que la
+    // file de la V.71 était censée permettre.
+    if(teinte === 'nok') stEtat(stConseilEchec(e));
   }catch(e){ stEtat('identification : ' + e.message); }
   finally{ stFinAnalyse(); ST.occupe = false; }
 }
@@ -14983,6 +14990,15 @@ function stVoler(photo, coins){
 // laisserait accumuler des cartes illisibles qu'il faudrait toutes reprendre à la fin.
 // Le scan est suspendu tant qu'elle est là : sinon la même carte, toujours devant
 // l'objectif, redéclencherait aussitôt et l'alerte reviendrait en boucle.
+// Le conseil, en une ligne, à la place du popup. L'ordre suit ce que la mesure a montré :
+// le reflet est la cause dominante, et la seule dont le remède est un geste précis.
+function stConseilEchec(e){
+  const b = e ? e.brulure : 0;
+  if(b >= ST_BRULURE_SEUIL) return "✕ reflet — incline la carte ou sors la lampe de l'axe";
+  if(e && e.nettete < 300)  return '✕ trop floue — tiens la carte immobile un instant';
+  return '✕ non reconnue — reprends-la de plus près, bien à plat';
+}
+
 let stAlerteEnCours = false;
 function stAlerter(entree){
   const a = $('st-alerte'); if(!a) return;
