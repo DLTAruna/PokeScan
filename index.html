@@ -6128,7 +6128,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 71;
+const VERSION_APP = 72;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13851,6 +13851,11 @@ const ST_GUIDE_H = 0.45;
 // commence à ne plus rien voir. Entre les deux, de seize à trente centimètres, tout se tient
 // entre 89 et 94 %.
 const ST_TROP_PRES = 0.60, ST_TROP_LOIN = 0.26;
+// Les mêmes bornes, exprimées en aire : c'est ce que la boucle sait mesurer. Les dériver
+// plutôt que de les ressaisir évite que le dessin et le verdict divergent — ils l'avaient
+// déjà fait une fois, chacun avec ses propres nombres.
+const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
+const ST_AIRE_PRES = ST_TROP_PRES*ST_TROP_PRES/(88/63);
 
 
 // ── LE CADRE SUIT LA CARTE AU LIEU DE SAUTER ─────────────────────────────────────────────
@@ -13947,7 +13952,69 @@ function stPeindreBalayage(){
   stBalayageRAF = requestAnimationFrame(stPeindreBalayage);
 }
 
-function stDessiner(coins, couleur){
+
+// ── QUATRE ÉTATS, LISIBLES SUR LA CARTE ELLE-MÊME ────────────────────────────────────────
+// Le message vivait en haut de l'écran, à l'opposé de là où l'œil se trouve — sur la carte
+// qu'on tient. On rapproche donc le verdict de son objet : la couleur du contour dit l'état,
+// et l'étiquette collée au cadre dit ce qui manque.
+//   rien vu     → seul le repère de zone, aucun contour
+//   ça bloque   → contour ambre ou rouge + étiquette : trop loin, stabilise, déjà lue…
+//   prêt        → contour vert et voile vert : toutes les conditions sont réunies
+//   analyse     → le balayage
+// Le voile vert n'est pas décoratif : c'est le seul instant où l'utilisateur peut savoir
+// qu'il n'a plus rien à corriger, et jusqu'ici rien ne le lui disait.
+const ST_TEINTES = {
+  ko:     { trait:'#e0553f', voile:null,                  texte:'#ffd9d2' },
+  presque:{ trait:'#d29922', voile:null,                  texte:'#ffe9c2' },
+  pret:   { trait:'#3fb950', voile:'rgba(63,185,80,.16)', texte:'#c9f5cf' },
+};
+
+function stPeindreEtat(g, coins, ix, iy, iw, ih, etat, texte){
+  const t = ST_TEINTES[etat] || ST_TEINTES.presque;
+  const p = k => [ix + coins[k][0]*iw, iy + coins[k][1]*ih];
+  const a = p('tl'), b = p('tr'), c = p('br'), d = p('bl');
+
+  g.beginPath();
+  g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]); g.closePath();
+
+  // Voile dégradé, uniquement quand tout est réuni. Il part du haut de la carte et s'estompe
+  // vers le bas : un aplat uniforme masquerait l'illustration, ce qu'on ne veut pas au moment
+  // précis où l'utilisateur vérifie qu'il tient la bonne carte.
+  if(t.voile){
+    g.save(); g.clip();
+    const grd = g.createLinearGradient(a[0], a[1], d[0], d[1]);
+    grd.addColorStop(0, t.voile);
+    grd.addColorStop(1, 'rgba(63,185,80,.02)');
+    g.fillStyle = grd; g.fillRect(ix, iy, iw, ih);
+    g.restore();
+    g.beginPath();
+    g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]); g.closePath();
+  }
+
+  g.strokeStyle = t.trait;
+  g.lineWidth = etat === 'pret' ? 3.5 : 3;
+  g.lineJoin = 'round';
+  if(etat === 'pret'){ g.shadowColor = 'rgba(63,185,80,.75)'; g.shadowBlur = 14; }
+  g.stroke();
+  g.shadowBlur = 0;
+
+  // L'étiquette se pose SOUS le bord bas de la carte, centrée, jamais par-dessus
+  // l'illustration. Rien à lire ailleurs qu'à l'endroit où l'on regarde déjà.
+  if(!texte) return;
+  const mx = (c[0]+d[0])/2, my = (c[1]+d[1])/2;
+  g.font = '600 13px system-ui, -apple-system, sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  const larg = g.measureText(texte).width + 18, haut = 24;
+  const bx = Math.max(ix+4, Math.min(ix+iw-larg-4, mx - larg/2));
+  const by = Math.min(iy+ih-haut-4, my + 12);
+  g.fillStyle = 'rgba(13,17,23,.82)';
+  if(g.roundRect){ g.beginPath(); g.roundRect(bx, by, larg, haut, 7); g.fill(); }
+  else g.fillRect(bx, by, larg, haut);
+  g.fillStyle = t.texte;
+  g.fillText(texte, bx + larg/2, by + haut/2 + 0.5);
+}
+
+function stDessiner(coins, etat, texte){
   const cv = $('st-overlay'), v = $('st-video');
   if(!cv || !v) return;
   const r = v.getBoundingClientRect();
@@ -14022,16 +14089,9 @@ function stDessiner(coins, couleur){
 
   coins = stLisserCoins(coins);
   if(!coins) return;
-  g.strokeStyle = couleur; g.lineWidth = 3; g.lineJoin = 'round';
-  g.beginPath();
-  // Les coins arrivent en fractions de l'IMAGE. Les multiplier par la taille de l'élément
-  // les décalerait de toute la marge du « contain » — le tracé se poserait à côté de la
-  // carte, et l'on croirait le détecteur fautif alors que ce serait l'affichage.
-  const p = k => [ix + coins[k][0]*iw, iy + coins[k][1]*ih];
-  const a = p('tl'), b = p('tr'), c = p('br'), d = p('bl');
-  g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]); g.closePath();
-  g.stroke();
+  stPeindreEtat(g, coins, ix, iy, iw, ih, etat || 'presque', texte);
 }
+
 
 // La boucle du banc, à l'identique. Elle ne fait QUE décider s'il faut capturer.
 async function stTourner(){
@@ -14098,13 +14158,23 @@ async function stTourner(){
         const seuilScore = attente >= ST_DOUCE ? ST_SCORE : ST_SCORE_STRICT;
         if(bouge < seuilBouge) ST.streak++; else ST.streak = 0;
         const stable = ST.streak >= 1;
+        // ── UN SEUL ENDROIT DÉCIDE DE CE QUE L'UTILISATEUR VOIT ─────────────────────────
+        // L'ordre compte : on nomme le premier obstacle, pas le dernier. Annoncer « stabilise »
+        // à quelqu'un dont la carte est trop loin l'enverrait corriger la mauvaise chose.
+        const aireVue = stAire(d.corners);
+        let etat = 'pret', etiquette = null;
+        if(!ST.retiree){ etat = 'ko'; etiquette = 'déjà lue — retire-la'; }
+        else if(aireVue < ST_AIRE_LOIN){ etat = 'ko'; etiquette = 'trop loin'; }
+        else if(aireVue > ST_AIRE_PRES){ etat = 'ko'; etiquette = 'trop près'; }
+        else if(d.score < seuilScore){ etat = 'presque'; etiquette = 'je cherche…'; }
+        else if(!stable){ etat = 'presque'; etiquette = 'stabilise'; }
         // Tant que la carte est là, on retient la plus nette. Rien n'est rejeté : quand le
         // déclenchement viendra, il aura le choix entre l'image de l'instant et la meilleure
         // de la présence — et il prendra la meilleure, sans une milliseconde d'attente en
         // plus puisqu'elle est déjà en mémoire.
         stRetenirSiPlusNette(v, d.corners);
-        stDessiner(d.corners, stable ? '#3fb950' : '#d29922');
-        if(ST.retiree && d.score >= seuilScore && stable){
+        stDessiner(d.corners, etat, etiquette);
+        if(etat === 'pret'){
           ST.streak = 0; ST.presentDepuis = 0;
           await stCapturer(d.corners, v);
         }else{
@@ -14118,11 +14188,7 @@ async function stTourner(){
           // ne rend rien, on ne sait pas distinguer « trop loin » de « pas de carte » — c'est
           // exactement ce qui a fait tirer le dernier recours dans le vide. D'où le repère
           // visuel, qui lui n'a pas besoin qu'on ait détecté quoi que ce soit pour renseigner.
-          const aire = stAire(d.corners);
-          stEtat(!ST.retiree ? 'carte déjà lue — retire-la ou déplace-la'
-               : aire < 0.0484 ? 'trop loin — rapproche la carte'
-               : aire > 0.258 ? 'trop près — éloigne un peu'
-               : stable ? 'prêt' : 'stabilise…');
+          stEtat(etiquette || 'prêt');
         }
       }
     }catch(e){ /* une image ratée ne casse pas la boucle */ }
