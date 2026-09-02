@@ -6042,7 +6042,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 58;
+const VERSION_APP = 59;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13524,6 +13524,9 @@ const ST = {
 // Mêmes valeurs que le banc, délibérément : c'est la configuration qui tournait à 1304 ms.
 const ST_SCORE = 0.35, ST_SCORE_STRICT = 0.5, ST_BOUGE = 0.030;
 const ST_DOUCE = 1200, ST_FRANCHE = 2500;
+// Part centrale reprise quand le premier passage ne trouve rien. 0,55 : sur ce recadrage la
+// même carte occupe près du double, et redevient une forme que le modèle sait reconnaître.
+const ST_RECADRE = 0.55;
 
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 
@@ -13607,7 +13610,38 @@ async function stTourner(){
       const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
       const bmp = await createImageBitmap(v, {
         resizeWidth: Math.round(v.videoWidth*e0), resizeHeight: Math.round(v.videoHeight*e0), resizeQuality:'medium' });
-      const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+      let d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+      // ── RATTRAPAGE À DISTANCE ────────────────────────────────────────────────────────
+      // Le détecteur est entraîné à trouver un DOCUMENT, c'est-à-dire quelque chose qui
+      // occupe une bonne part de l'image. En dessous il ne reconnaît plus la forme — et
+      // aucune résolution supplémentaire n'y change rien, la parade est un cadre plus serré.
+      // Mesuré sur des gestes enfin représentatifs (le banc n'allait pas sous 42 % de
+      // hauteur, alors que le mécanisme vise 22 à 30) :
+      //     carte à 42 % de hauteur    67 % sans, 67 % avec
+      //     carte à 28 %               33 % sans, 67 % avec
+      //     bras tendu, 22 %            0 % sans, 67 % avec
+      //     de bout en bout            58 % sans, 67 % avec
+      // C'est exactement le « vise une carte » qui reste affiché plusieurs secondes.
+      // Il ne coûte une seconde inférence QUE lorsque la première n'a rien trouvé, donc au
+      // moment précis où la boucle n'avait rien d'autre à faire de son tour.
+      if(!(d && d.corners && d.score != null && d.score >= ST_SCORE) && ST.absence >= 1){
+        try{
+          const m = (1 - ST_RECADRE) / 2, P = ST_RECADRE;
+          const sub = document.createElement('canvas');
+          sub.width = Math.round(v.videoWidth * P); sub.height = Math.round(v.videoHeight * P);
+          sub.getContext('2d').drawImage(v, Math.round(v.videoWidth*m), Math.round(v.videoHeight*m),
+            sub.width, sub.height, 0, 0, sub.width, sub.height);
+          const e1 = Math.min(1, DETECT_LONG_EDGE / Math.max(sub.width, sub.height));
+          const b2 = await createImageBitmap(sub, {resizeWidth:Math.round(sub.width*e1),
+            resizeHeight:Math.round(sub.height*e1), resizeQuality:'medium'});
+          const d2 = await detectWorkerCall('detect', {bitmap:b2}, [b2]);
+          if(d2 && d2.corners && d2.score != null && d2.score >= ST_SCORE){
+            const ram = p => [m + p[0]*P, m + p[1]*P];
+            d = {...d2, corners:{tl:ram(d2.corners.tl), tr:ram(d2.corners.tr),
+                                 br:ram(d2.corners.br), bl:ram(d2.corners.bl)}};
+          }
+        }catch(e){}
+      }
       const bon = !!(d && d.corners && d.score != null && d.score >= ST_SCORE);
 
       if(!bon){
