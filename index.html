@@ -6136,7 +6136,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 74;
+const VERSION_APP = 75;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13690,6 +13690,76 @@ function stPlein(actif){
 function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 
 
+
+// ── PROFIL DE L'APPAREIL, JOINT AU BILAN ─────────────────────────────────────────────────
+// Demande de Nikos, et elle comble un vrai trou. Jusqu'ici le journal disait ce que la chaîne
+// avait fait, jamais avec quoi : ni le modèle de téléphone, ni l'objectif ouvert, ni le zoom
+// appliqué. J'ai donc passé plusieurs versions à raisonner sur « le Samsung de Nikos » sans
+// savoir lequel, et à supposer qu'un facteur de zoom de 1,7 basculait sur l'objectif principal
+// sans jamais pouvoir le vérifier. Trois champs auraient tranché.
+// Relevé à l'ouverture de la caméra, quand la piste est vivante et les libellés renseignés —
+// avant l'autorisation, enumerateDevices ne rend que des chaînes vides.
+let stProfil = null;
+
+async function stReleverProfil(){
+  const p = { at: new Date().toISOString() };
+
+  // Modèle : userAgentData le donne proprement sur Chromium, sinon on retombe sur la chaîne
+  // d'agent, qui contient le modèle Android entre le point-virgule et le « Build ».
+  try{
+    if(navigator.userAgentData && navigator.userAgentData.getHighEntropyValues){
+      const h = await navigator.userAgentData.getHighEntropyValues(['model','platform','platformVersion']);
+      p.modele = h.model || null;
+      p.plateforme = (h.platform || '') + ' ' + (h.platformVersion || '');
+    }
+  }catch(e){}
+  if(!p.modele){
+    const m = /Android[^;]*;\s*([^;)]+?)(?:\s+Build|\))/i.exec(navigator.userAgent);
+    p.modele = m ? m[1].trim() : null;
+  }
+  p.ua = (navigator.userAgent || '').slice(0, 180);
+  p.coeurs = navigator.hardwareConcurrency ?? null;
+  p.memoire = navigator.deviceMemory ?? null;
+
+  // L'objectif RÉELLEMENT ouvert : c'est la piste qui le dit, pas notre demande. Sur une
+  // caméra logique, l'identifiant rendu est celui de la caméra logique — et c'est
+  // précisément l'information qui manquait pour savoir si l'épinglage a pris.
+  try{
+    const t = ST.piste;
+    if(t){
+      const r = t.getSettings ? t.getSettings() : {};
+      p.objectif = { label: (t.label || '').slice(0, 60),
+                     deviceId: r.deviceId ? String(r.deviceId).slice(0, 12) : null,
+                     zoom: r.zoom ?? null, focus: r.focusMode ?? null,
+                     largeur: r.width ?? null, hauteur: r.height ?? null,
+                     ips: r.frameRate ? Math.round(r.frameRate) : null };
+      const c = t.getCapabilities ? t.getCapabilities() : {};
+      p.capacites = { zoom: c.zoom ? {min:c.zoom.min, max:c.zoom.max, pas:c.zoom.step ?? null} : null,
+                      focus: c.focusMode || null,
+                      torche: !!c.torch };
+    }
+  }catch(e){}
+
+  // La liste complète : savoir COMBIEN d'objectifs l'appareil expose décide à lui seul si
+  // l'épinglage est possible ou si le zoom reste le seul levier.
+  try{
+    p.objectifsDisponibles = (stObjectifs || []).map((d, i) => ({
+      i, label: (d.label || '').slice(0, 44), id: String(d.deviceId || '').slice(0, 12) }));
+  }catch(e){ p.objectifsDisponibles = []; }
+  p.objectifEpingle = stObjectifChoisi ? String(stObjectifChoisi).slice(0, 12) : null;
+
+  try{
+    if(navigator.getBattery){
+      const b = await navigator.getBattery();
+      p.batterie = Math.round((b.level ?? 0) * 100);
+      p.enCharge = !!b.charging;
+    }
+  }catch(e){}
+
+  stProfil = p;
+  return p;
+}
+
 // ── ÉPINGLER UN OBJECTIF ─────────────────────────────────────────────────────────────────
 // Nikos : « mon téléphone change sans cesse d'objectif ». C'est le comportement d'une caméra
 // LOGIQUE : le système en expose une seule, et décide lui-même de basculer entre grand-angle,
@@ -13758,6 +13828,7 @@ async function stChoisirObjectif(deviceId){
   stFermerFlux();
   await stOuvrirFlux();
   if(etaitPlein) stPlein(true);
+  await stReleverProfil();
   stEtat('objectif changé');
 }
 
@@ -13816,6 +13887,9 @@ async function stOuvrir(){
     }
   }catch(e){}
   stMajZoom();
+  // Après l'application du zoom : on veut consigner ce que la piste EST, pas ce qu'on lui a
+  // demandé — c'est toute la différence entre vérifier et supposer.
+  stReleverProfil();
   stPlein(true);
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     stEtat('préparation du moteur d’identification…');
@@ -14483,6 +14557,9 @@ function stEnvoyerBilan(){
       gardees: j.filter(x=>x.garde).length,
       rebuts: j.filter(x=>x.categorie==='rebut').length,
       msMin: t[0], msMax: t[t.length-1],
+      // Avec quoi ces chiffres ont-ils été obtenus : modèle, objectif ouvert, zoom appliqué,
+      // objectifs disponibles. Sans eux, une médiane ne se compare à rien.
+      appareil: stProfil,
       detail: j.slice(0, 40) });
   }catch(e){}
   ST.journal = [];
