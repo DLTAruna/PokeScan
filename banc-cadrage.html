@@ -281,7 +281,40 @@ function extraire(source, coins, W, H){
   const cx = P.reduce((s,p)=>s+p[0],0)/4 * W, cy = P.reduce((s,p)=>s+p[1],0)/4 * H;
   const aire = aireQuad(coins) * W * H;
   if(!(aire > 16)) return null;
-  const h = Math.sqrt(aire * CARD_RATIO) * 1.04, w = h / CARD_RATIO;
+  // ── TAILLE : LA PLUS GÉNÉREUSE DES ESTIMATIONS PLAUSIBLES ──────────────────────────
+  // Déduire la taille de l'AIRE seule est fragile : un doigt posé sur un coin, ou une forte
+  // inclinaison, rétrécit le quadrilatère détecté, donc l'aire, donc la boîte — et la carte
+  // se retrouve rognée. Mesuré au palier de quarante cartes : couverture tombée à 72 % avec
+  // des doigts et 82 % à trente degrés, contre 90 % ailleurs.
+  // On croise donc trois estimations de la hauteur, et on garde la plus grande :
+  //   • celle de l'aire, juste quand le quadrilatère est intact ;
+  //   • la plus longue arête, qui survit quand un seul coin est faussé ;
+  //   • la largeur multipliée par le rapport de la carte, qui prend le relais quand c'est un
+  //     côté long qui est mangé.
+  // ⚠️ ESSAYÉE ET ÉCARTÉE — laissée derrière son interrupteur pour mémoire (2026-09-02).
+  // Vingt-trois cartes par cellule, mêmes cartes pour les deux réglages :
+  //
+  //                        identifiée          couverture
+  //     à deux doigts      83 % → 83 %          72 % → 91 %
+  //     inclinée 30°       91 % → 78 %          82 % → 99 %
+  //     main qui bouge     59 % → 59 %          91 % → 96 %
+  //     ─────────────────  78 % → 74 %
+  //
+  // Elle fait exactement ce qu'on lui demandait : le cadrage devient presque parfait. Et
+  // l'identification, elle, RECULE — nettement sur la carte inclinée. Une boîte plus large
+  // capte du décor, qui dilue l'illustration dans l'entrée de l'embedding.
+  // La leçon vaut d'être écrite : la couverture n'est pas l'objectif, c'est un indicateur.
+  // Optimiser l'indicateur a dégradé le résultat. Sans l'essai comparatif, j'aurais déployé
+  // sur la seule amélioration de la couverture et fait empirer les choses en croyant les
+  // améliorer.
+  const P2 = [coins.tl, coins.tr, coins.br, coins.bl].map(p => [p[0]*W, p[1]*H]);
+  const arete = (i,j) => Math.hypot(P2[j][0]-P2[i][0], P2[j][1]-P2[i][1]);
+  const cotes = [arete(0,1), arete(1,2), arete(2,3), arete(3,0)].sort((x,y)=>y-x);
+  const hAire = Math.sqrt(aire * CARD_RATIO);
+  const h = (REGLAGES.tailleRobuste
+              ? Math.max(hAire, cotes[0], cotes[2] * CARD_RATIO)
+              : hAire) * (REGLAGES.marge || 1.04),
+        w = h / CARD_RATIO;
   const out = document.createElement('canvas');
   out.width = 320; out.height = Math.round(320 * CARD_RATIO);
   out.getContext('2d').drawImage(source, cx-w/2, cy-h/2, w, h, 0, 0, out.width, out.height);
@@ -308,7 +341,7 @@ function extraire(source, coins, W, H){
 // Autre chose apprise ici, sur la méthode : à quinze échantillons par cellule, douze
 // centimètres semblait un creux net — 70 % contre 100 % de part et d'autre. À trente-quatre,
 // il n'y a plus de creux. On ne corrige pas sur quinze.
-let REGLAGES = { zoom: 1.0, recadres: [0.55] };
+let REGLAGES = { zoom: 1.0, recadres: [0.55], tailleRobuste: false, marge: 1.04 };
 const SITUATIONS = [
   // Recentrées sur le repère de la V.67 : 0,45 de hauteur, soit seize à dix-huit centimètres.
   // Les extrêmes restent, parce qu'un utilisateur ne vise jamais juste et qu'il faut savoir
