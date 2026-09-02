@@ -6136,7 +6136,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 78;
+const VERSION_APP = 79;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13735,6 +13735,10 @@ function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
 // Relevé à l'ouverture de la caméra, quand la piste est vivante et les libellés renseignés —
 // avant l'autorisation, enumerateDevices ne rend que des chaînes vides.
 let stProfil = null;
+// Ce qu'on a DEMANDÉ au zoom, et d'où venait la demande. Le relevé disait « zoom 1,0 » sans
+// permettre de savoir si c'est parce qu'on avait demandé 1,0 ou parce que 1,7 avait été
+// refusé — deux causes opposées, deux corrections opposées.
+let stZoomDemande = null, stZoomOrigine = null;
 
 async function stReleverProfil(){
   const p = { at: new Date().toISOString() };
@@ -13752,6 +13756,17 @@ async function stReleverProfil(){
     const m = /Android[^;]*;\s*([^;)]+?)(?:\s+Build|\))/i.exec(navigator.userAgent);
     p.modele = m ? m[1].trim() : null;
   }
+  // Chrome gèle sa chaîne d'agent depuis la version 110 : « Android 10; K » quel que soit
+  // l'appareil. Mon extraction rendait donc « K », que j'ai failli lire comme un modèle.
+  // On le dit, au lieu de le laisser passer pour une information.
+  if(p.modele === 'K' || p.modele === 'Android'){
+    p.modele = null;
+    p.modeleMasque = "chaîne d'agent réduite par Chrome";
+  }
+  // Distinguer « pas demandé » de « demandé, rendu vide » : sans cela, un modèle absent ne
+  // dit pas s'il faut corriger l'appel ou accepter que l'appareil ne le publie pas.
+  if(!p.modele) p.modeleIndice = (navigator.userAgentData ? "userAgentData présent" : "pas d'API")
+    + (p.plateforme && p.plateforme.trim() ? ' · plateforme lue' : ' · plateforme vide');
   p.ua = (navigator.userAgent || '').slice(0, 180);
   p.coeurs = navigator.hardwareConcurrency ?? null;
   p.memoire = navigator.deviceMemory ?? null;
@@ -13782,6 +13797,11 @@ async function stReleverProfil(){
       i, label: (d.label || '').slice(0, 44), id: String(d.deviceId || '').slice(0, 12) }));
   }catch(e){ p.objectifsDisponibles = []; }
   p.objectifEpingle = stObjectifChoisi ? String(stObjectifChoisi).slice(0, 12) : null;
+  p.zoomDemande = stZoomDemande;
+  p.zoomOrigine = stZoomOrigine;
+  // Un seul objectif exposé = l'épinglage est impossible et le zoom reste le seul levier.
+  // C'est la question qui traînait depuis la V.74 ; autant que le bilan y réponde seul.
+  p.epinglagePossible = (p.objectifsDisponibles || []).length > 1;
 
   try{
     if(navigator.getBattery){
@@ -13918,6 +13938,8 @@ async function stOuvrir(){
         ? Math.max(stZoomCaps.min, Math.min(stZoomCaps.max, memo))
         : (stZoomCaps.max / Math.max(stZoomCaps.min, 1e-4) >= 5
             ? Math.min(stZoomCaps.max, stZoomCaps.min * 1.7) : null);
+      stZoomDemande = cible;
+      stZoomOrigine = Number.isFinite(memo) ? 'mémorisé' : (cible != null ? 'déduit' : 'aucun');
       if(cible != null) await ST.piste.applyConstraints({advanced:[{zoom: cible}]});
     }
   }catch(e){}
@@ -14422,7 +14444,7 @@ async function stTourner(){
         stEtat('vise une carte');
       }else{
         ST.absence = 0;
-        if(!ST.presentDepuis) ST.presentDepuis = Date.now();
+        if(!ST.presentDepuis){ ST.presentDepuis = Date.now(); ST.verrous = {}; }
         const attente = Date.now() - ST.presentDepuis;
         // Déplacement franc depuis la dernière capture = autre carte, même sans champ vide.
         if(!ST.retiree && ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_SEUILS.bouge*3) ST.retiree = true;
@@ -14468,10 +14490,15 @@ async function stTourner(){
         // de la présence — et il prendra la meilleure, sans une milliseconde d'attente en
         // plus puisqu'elle est déjà en mémoire.
         stRetenirSiPlusNette(v, d.corners);
+        // Combien de tours chaque verrou a-t-il retenus ? Sans ce comptage, le bilan disait
+        // que la capture avait pris 1,3 s sans jamais dire à cause de quoi — et c'est
+        // précisément ce que le banc mesure, donc la seule grandeur qui les rende comparables.
+        if(etiquette) ST.verrous[etiquette] = (ST.verrous[etiquette] || 0) + 1;
         stViser(d.corners, etat, etiquette);
         if(etat === 'pret'){
+          const attendu = ST.presentDepuis ? Date.now() - ST.presentDepuis : 0;
           ST.streak = 0; ST.presentDepuis = 0;
-          await stCapturer(d.corners, v);
+          await stCapturer(d.corners, v, attendu);
         }else{
           // ── DIRE « TROP LOIN » PLUTÔT QUE DE LAISSER DEVINER ────────────────────────
           // Le seuil vient du banc de cadrage, pas d'une intuition : l'identification tient
@@ -14491,7 +14518,7 @@ async function stTourner(){
   }
 }
 
-async function stCapturer(coins, v){
+async function stCapturer(coins, v, attendu){
   ST.occupe = true;
   stEtat('identification…');
   stAnalyser(coins);
@@ -14516,7 +14543,8 @@ async function stCapturer(coins, v){
     if(navigator.vibrate) navigator.vibrate(35);
     ST.retiree = false; ST.coinsCapture = coins;
     // On range et on enchaîne : plus rien n'attend un geste de l'utilisateur.
-    const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee);
+    const e = stRanger(res, cv.toDataURL('image/jpeg', 0.7), ms, netteteUtilisee,
+                       attendu || 0, ST.verrous || {});
     stEtat(e.categorie === 'sure'
       ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
       : '⚠ doute — mise de côté, carte suivante');
@@ -14546,18 +14574,37 @@ function stEstSur(res){
 }
 
 // Rangement d'une carte identifiée. Rien n'attend l'utilisateur.
-function stRanger(res, photo, ms, nettete){
+function stRanger(res, photo, ms, nettete, attendu, verrous){
   const entree = { carte: res && res.pick ? res.pick : null,
                    fiabilite: res ? res.fiabilite : 0,
                    categorie: res ? res.categorie : 'rebut',
                    inliers: res ? res.inliers : 0,
-                   ms, nettete, photo, at: Date.now() };
+                   ms, nettete, photo, at: Date.now(),
+                   // ── CE QUI MANQUAIT POUR SAVOIR OÙ ÇA CASSE ───────────────────────
+                   // Les inliers de la V.78 sont parfaitement binaires : 54 à 157 quand ça
+                   // marche, 0 à 9 quand ça rate. Aucun réglage d'ORB ne franchira ce
+                   // fossé. Reste à savoir si la bonne carte était seulement PRÉSENTE dans
+                   // la présélection visuelle — ce que dit embTop, et que le bilan taisait.
+                   embTop: res && res.embTop != null ? +(+res.embTop).toFixed(3) : null,
+                   embPremier: res ? (res.embPremier || null) : null,
+                   predit: res && res.pick ? res.pick.cle : null,
+                   attendu: attendu || 0, verrous: verrous || {} };
+  // ── QUI MÉRITE UNE SECONDE ANALYSE ────────────────────────────────────────────────
+  // Mesuré sur la V.78 : neuf cartes reprises, douze secondes dépensées, ZÉRO promue. La
+  // cause n'est pas le réglage mais la population. La seule arme supplémentaire de la
+  // seconde passe est l'OCR de départage, qui ne se déclenche qu'à partir de
+  // ST_OCR_NORMAL inliers — or huit des neuf cartes en avaient moins de dix. L'OCR n'a
+  // donc tourné qu'une fois. Reprendre les autres, c'est relancer la même chaîne sur la
+  // même image en espérant un autre résultat.
+  entree.reprendre = !!(res && res.inliers >= ST_OCR_NORMAL);
   if(stEstSur(res)) ST.pile.push(entree);
   else ST.aConfirmer.push(entree);
   // La trace de session se remplit ici : c'est le seul passage obligé depuis que la
   // validation à la main a disparu du scan.
   ST.journal.push({ms, fiabilite:entree.fiabilite, categorie:entree.categorie,
-                   inliers:entree.inliers, nettete, garde:stEstSur(res)});
+                   inliers:entree.inliers, nettete, garde:stEstSur(res),
+                   embTop:entree.embTop, embPremier:entree.embPremier, predit:entree.predit,
+                   attendu:entree.attendu, verrous:entree.verrous, reprise:entree.reprendre});
   ST.dernier = entree;
   stRendreDernier();
   stRendreCompteurs();
@@ -14602,16 +14649,26 @@ let stBilanSeconde = null;
 async function stSecondeAnalyse(){
   if(stSecondeEnCours || !ST.aConfirmer.length) return;
   stSecondeEnCours = true;
-  const total = ST.aConfirmer.length;
+  const total = ST.aConfirmer.filter(e => e.reprendre).length;
+  if(!total){
+    stEtat(ST.aConfirmer.length + ' carte(s) non reconnue(s) — à confirmer à la main');
+    stBilanSeconde = { n:0, promues:0, restantes:ST.aConfirmer.length, ms:0, reprises:[],
+                       ignorees:ST.aConfirmer.length };
+    stSecondeEnCours = false; return;
+  }
   const t0 = performance.now();
   const reprises = [];
   stEtat('seconde analyse : ' + total + ' carte(s) à confirmer…');
   try{
     SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: ST_OCR_NORMAL, OCR_ORB_MS_MAX: ST_OCR_MS_NORMAL });
     const restants = [];
+    let rang = 0;
     for(let i = 0; i < ST.aConfirmer.length; i++){
       const e = ST.aConfirmer[i];
-      stEtat('seconde analyse ' + (i+1) + '/' + total + '…');
+      // Trop peu d'inliers pour qu'il y ait une égalité à départager : la reprise n'aurait
+      // aucun moyen de faire mieux, et le dire tout de suite vaut mieux que douze secondes.
+      if(!e.reprendre){ restants.push(e); continue; }
+      stEtat('seconde analyse ' + (++rang) + '/' + total + '…');
       try{
         const img = await new Promise((res, rej) => {
           const im = new Image(); im.onload = ()=>res(im); im.onerror = rej; im.src = e.photo; });
@@ -14639,7 +14696,8 @@ async function stSecondeAnalyse(){
     }
     const promues = ST.aConfirmer.length - restants.length;
     stBilanSeconde = { n: total, promues, restantes: restants.length,
-                       ms: Math.round(performance.now() - t0), reprises };
+                       ms: Math.round(performance.now() - t0), reprises,
+                       ignorees: ST.aConfirmer.length - total };
     ST.aConfirmer = restants;
     stRendreCompteurs();
     stEtat(promues
