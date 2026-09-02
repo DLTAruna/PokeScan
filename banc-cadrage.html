@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Banc de cadrage — Pokéscan</title>
+<!--
+  ════════════════════════════════════════════════════════════════════════════════════════
+  BANC DE CADRAGE — à quelle distance, sous quel angle, la carte est-elle bien cadrée ?
+  ════════════════════════════════════════════════════════════════════════════════════════
+  Les bancs précédents raisonnaient en fractions d'image : « carte à 42 % de la hauteur ».
+  C'est mesurable mais ça ne se traduit pas en geste. Nikos ne tient pas sa carte à 42 %, il
+  la tient à vingt centimètres.
+
+  Ici tout part du RÉEL : une carte fait 63 sur 88 millimètres, et l'appareil couvre à la
+  distance d une hauteur de 2·d·tan(θ/2). On peut donc dire « à cette distance, ça cadre » —
+  et c'est la seule forme de résultat sur laquelle on puisse agir.
+
+  Ce que le banc mesure, dans l'ordre où ça compte :
+    1. le détecteur voit-il la carte ;
+    2. les coins qu'il rend correspondent-ils à la vraie carte (écart, recouvrement) ;
+    3. l'image extraite contient-elle la carte ENTIÈRE — c'est ça, le cadrage ;
+    4. la chaîne l'identifie-t-elle.
+  Un cadrage qui rogne un bord peut très bien passer les trois premiers tests et rater le
+  quatrième : c'est pourquoi ils sont tous là.
+
+  Tout est visible à l'écran, scène par scène : c'est une demande de Nikos et c'est la bonne.
+  Un banc dont on ne voit que les chiffres finit par mesurer autre chose que ce qu'on croit —
+  ça m'est arrivé deux fois, avec des cartes dessinées à plat puis sans aucune scène vide.
+-->
+<style>
+  :root{ --fond:#0d1117; --carte:#161b22; --bord:rgba(255,255,255,.14);
+         --texte:#e6edf3; --doux:#9fb0c0; --or:#e6c25c; --vert:#3fb950; --rouge:#e0553f; }
+  *{ box-sizing:border-box; }
+  body{ margin:0; background:var(--fond); color:var(--texte);
+        font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:16px; }
+  h1{ font-size:19px; margin:0 0 4px; color:var(--or); }
+  p.intro{ color:var(--doux); font-size:12.5px; margin:0 0 14px; max-width:78ch; }
+  .commandes{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
+  button{ padding:8px 14px; border-radius:9px; cursor:pointer; font-size:13px;
+          border:1px solid var(--bord); background:rgba(255,255,255,.07); color:var(--texte); }
+  button.principal{ background:var(--or); color:#1a1400; border-color:transparent; font-weight:600; }
+  button:disabled{ opacity:.45; cursor:default; }
+  label{ color:var(--doux); font-size:12px; }
+  input[type=number]{ width:70px; padding:6px 8px; border-radius:7px; background:#0b0f14;
+                      color:var(--texte); border:1px solid var(--bord); }
+  #etat{ color:var(--doux); font-size:12px; margin:0 0 10px; font-family:ui-monospace,monospace; }
+  .grille{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; }
+  .vignette{ background:var(--carte); border:1px solid var(--bord); border-radius:10px;
+             overflow:hidden; }
+  .vignette.ok{ border-color:rgba(63,185,80,.5); }
+  .vignette.ko{ border-color:rgba(224,85,63,.5); }
+  .vignette .paire{ display:flex; gap:0; background:#000; }
+  .vignette canvas{ display:block; width:100%; height:auto; }
+  .vignette .scene{ flex:2; min-width:0; }
+  .vignette .crop{ flex:1; min-width:0; border-left:1px solid var(--bord); }
+  .vignette .txt{ padding:6px 8px; font-size:11px; font-family:ui-monospace,monospace;
+                  color:var(--doux); line-height:1.45; }
+  .vignette .txt b{ color:var(--texte); }
+  .vignette .txt .ok{ color:var(--vert); } .vignette .txt .ko{ color:var(--rouge); }
+  table{ border-collapse:collapse; width:100%; margin:14px 0; font-size:12.5px; }
+  th,td{ text-align:left; padding:6px 9px; border-bottom:1px solid var(--bord);
+         font-variant-numeric:tabular-nums; }
+  th{ color:var(--or); font-weight:600; }
+  .bilan{ background:var(--carte); border:1px solid var(--bord); border-radius:10px;
+          padding:10px 14px; margin-bottom:14px; }
+  .bilan h2{ font-size:14px; margin:0 0 6px; color:var(--or); }
+  #journal{ font-family:ui-monospace,monospace; font-size:11.5px; color:var(--doux);
+            background:#0b0f14; border:1px solid var(--bord); border-radius:8px;
+            padding:8px 10px; max-height:180px; overflow-y:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+
+<h1>Banc de cadrage</h1>
+<p class="intro">
+  Une carte fait 63 × 88 mm. À la distance <i>d</i>, l'appareil couvre 2·<i>d</i>·tan(θ/2) de
+  hauteur : on peut donc dire à quelle distance réelle le cadrage tient, plutôt qu'à quelle
+  fraction d'image. Chaque scène montre à gauche ce que l'appareil verrait — avec les vrais
+  coins en blanc et les coins détectés en couleur — et à droite l'image que la chaîne
+  extrairait. Un cadrage juste contient la carte entière, sans rogner ni déborder.
+</p>
+
+<div class="commandes">
+  <button class="principal" id="lancer">Lancer</button>
+  <button id="stop" disabled>Arrêter</button>
+  <label>cartes <input type="number" id="n" value="200" min="10" max="1000" step="10"></label>
+  <label>correctifs tous les <input type="number" id="pas" value="10" min="5" max="50" step="5"></label>
+  <button id="vider">Vider l'affichage</button>
+</div>
+
+<p id="etat">prêt</p>
+<div class="bilan" id="bilan" hidden><h2>Bilan</h2><div id="bilan-corps"></div></div>
+<div id="journal"></div>
+<div class="grille" id="grille"></div>
+
+<script type="module">
+import * as V2 from './scan-v2.js?v=26';
+window.SCAN_V2 = V2;
+
+const $ = id => document.getElementById(id);
+const SCANIC = 'https://cdn.jsdelivr.net/npm/scanic@1.6.0/dist/scanic.js';
+const DETECT_LONG_EDGE = 512, MIN_SCORE = 0.35;
+const CARD_RATIO = 88 / 63;
+
+// ── Modèle physique ──────────────────────────────────────────────────────────────────────
+// Carte : 63 × 88 mm, mesuré sur une vraie. Champ vertical d'un objectif principal de
+// téléphone en cadrage portrait : environ 62°, ce qui donne à vingt centimètres une hauteur
+// couverte de 240 mm — la carte y occupe alors 37 % de l'image. C'est très exactement
+// pourquoi il faut « coller » la carte : le détecteur en veut 55.
+const CARTE_MM = { l:63, h:88 };
+const FOV_V = 62 * Math.PI / 180;
+const hauteurVueMm = (dCm, zoom) => 2 * (dCm*10) * Math.tan(FOV_V/2) / (zoom || 1);
+
+const SCENE_W = 1080, SCENE_H = 1440;   // portrait, comme un téléphone tenu droit
+
+// ── Détecteur, dans un worker (même code que le banc V2 et la production) ────────────────
+let detW = null;
+function detecteur(){
+  if(detW) return detW;
+  const src = `
+    let det=null,p=null;
+    async function ensure(){ if(det) return det;
+      if(!p) p=(async()=>{ const mod=await import(${JSON.stringify(SCANIC)});
+        const sc=new mod.Scanner({detector:'ml', mode:'detect', ml:{minScore:0.15}});
+        await sc.initialize(); det=sc; return sc; })();
+      return p; }
+    self.onmessage = async e => { const {id, bitmap}=e.data;
+      try{ const d=await ensure();
+        const c=new OffscreenCanvas(bitmap.width,bitmap.height);
+        const cx=c.getContext('2d',{willReadFrequently:true});
+        cx.drawImage(bitmap,0,0); bitmap.close();
+        const r=await d.scan(cx.getImageData(0,0,c.width,c.height),{mode:'detect',detector:'ml'});
+        let corners=null;
+        if(r && r.corners){ const q=r.corners,w=c.width,h=c.height;
+          corners={ tl:[q.topLeft.x/w,q.topLeft.y/h], tr:[q.topRight.x/w,q.topRight.y/h],
+                    br:[q.bottomRight.x/w,q.bottomRight.y/h], bl:[q.bottomLeft.x/w,q.bottomLeft.y/h] }; }
+        postMessage({id, ok:true, score:(r&&r.score!=null)?r.score:null, corners});
+      }catch(err){ postMessage({id, ok:false, err:String(err&&err.message||err)}); } };`;
+  const w = new Worker(URL.createObjectURL(new Blob([src],{type:'text/javascript'})), {type:'module'});
+  const att = new Map(); let seq = 0;
+  w.onmessage = e => { const r = att.get(e.data.id); if(r){ att.delete(e.data.id); r(e.data); } };
+  detW = { detecter: bmp => new Promise(res => { const id = ++seq; att.set(id, res); w.postMessage({id, bitmap:bmp},[bmp]); }) };
+  return detW;
+}
+
+// ── Composition d'une scène, en millimètres ──────────────────────────────────────────────
+// La carte est posée dans un plan à la distance voulue, inclinée, décentrée. Les coins
+// rendus sont la VÉRITÉ : c'est contre eux qu'on jugera le détecteur.
+function composer(img, o){
+  const cv = document.createElement('canvas');
+  cv.width = SCENE_W; cv.height = SCENE_H;
+  const g = cv.getContext('2d');
+
+  // Fond : bois, table sombre, ou encombré. Le détecteur cherche des contours, donc le fond
+  // n'est pas décoratif — il décide autant que la carte.
+  if(o.fond === 'sombre'){ g.fillStyle = '#15171c'; g.fillRect(0,0,SCENE_W,SCENE_H); }
+  else if(o.fond === 'clair'){ g.fillStyle = '#e9e6e0'; g.fillRect(0,0,SCENE_W,SCENE_H); }
+  else if(o.fond === 'encombré'){
+    g.fillStyle = '#3a3a41'; g.fillRect(0,0,SCENE_W,SCENE_H);
+    g.fillStyle = '#4d4d57';
+    for(let i=0;i<7;i++) g.fillRect((i*211)%SCENE_W, (i*331)%SCENE_H, 260, 360);
+  } else {
+    const d = g.createLinearGradient(0,0,SCENE_W,SCENE_H);
+    d.addColorStop(0,'#6b4a2f'); d.addColorStop(1,'#8a6340');
+    g.fillStyle = d; g.fillRect(0,0,SCENE_W,SCENE_H);
+    g.strokeStyle = 'rgba(0,0,0,.13)'; g.lineWidth = 2;
+    for(let y=0;y<SCENE_H;y+=19){ g.beginPath(); g.moveTo(0,y); g.lineTo(SCENE_W,y+7); g.stroke(); }
+  }
+
+  // Millimètres → pixels, à la distance demandée.
+  const hVue = hauteurVueMm(o.distance, o.zoom);
+  const pxParMm = SCENE_H / hVue;
+  const hc = CARTE_MM.h * pxParMm, wc = CARTE_MM.l * pxParMm;
+  const cx = SCENE_W/2 + (o.dx||0)*SCENE_W, cy = SCENE_H/2 + (o.dy||0)*SCENE_H;
+  const rad = (o.rot||0) * Math.PI/180;
+  const ky = Math.tan((o.incl||0)*Math.PI/180) * 0.55;
+  const kx = Math.tan((o.pitch||0)*Math.PI/180) * 0.55;
+  const sommet = (sx, sy) => {
+    const fx = 1/(1 + ky*sx), fy = 1/(1 + kx*sy);
+    const x = sx*wc/2*fy, y = sy*hc/2*fx;
+    return [cx + x*Math.cos(rad) - y*Math.sin(rad), cy + x*Math.sin(rad) + y*Math.cos(rad)];
+  };
+  const quad = [sommet(-1,-1), sommet(1,-1), sommet(1,1), sommet(-1,1)];
+
+  g.save();
+  if(o.lumiere && o.lumiere !== 1) g.filter = 'brightness(' + o.lumiere + ')';
+  if(o.flou) g.filter = (g.filter === 'none' ? '' : g.filter + ' ') + 'blur(' + o.flou + 'px)';
+  // Perspective par tranches : Canvas 2D n'a pas de transformation projective.
+  const N = 64, sh = img.height / N;
+  const lerp = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+  for(let i=0;i<N;i++){
+    const g0 = lerp(quad[0],quad[3],i/N), d0 = lerp(quad[1],quad[2],i/N);
+    const g1 = lerp(quad[0],quad[3],(i+1)/N), d1 = lerp(quad[1],quad[2],(i+1)/N);
+    const xg=(g0[0]+g1[0])/2, yg=(g0[1]+g1[1])/2, xd=(d0[0]+d1[0])/2, yd=(d0[1]+d1[1])/2;
+    const larg = Math.hypot(xd-xg, yd-yg), ang = Math.atan2(yd-yg, xd-xg);
+    const haut = Math.max(Math.hypot(g1[0]-g0[0], g1[1]-g0[1]), 1) + 1;
+    g.save(); g.translate(xg,yg); g.rotate(ang);
+    g.drawImage(img, 0, i*sh, img.width, sh, 0, 0, larg, haut);
+    g.restore();
+  }
+  g.restore();
+
+  const enFrac = p => [p[0]/SCENE_W, p[1]/SCENE_H];
+  return { canvas: cv, coins: { tl:enFrac(quad[0]), tr:enFrac(quad[1]),
+                                br:enFrac(quad[2]), bl:enFrac(quad[3]) },
+           partHauteur: hc / SCENE_H };
+}
+
+// ── Mesures de cadrage ───────────────────────────────────────────────────────────────────
+const aireQuad = c => { const p=[c.tl,c.tr,c.br,c.bl]; let a=0;
+  for(let i=0;i<4;i++){ const b=p[(i+1)%4]; a += p[i][0]*b[1]-b[0]*p[i][1]; } return Math.abs(a)/2; };
+
+// Écart moyen des coins, indépendant du nommage : scanic étiquette par position dans l'image,
+// notre vérité par position sur la carte. Dès que la carte tourne, comparer coin à coin
+// mesurerait ce désaccord de convention et non l'erreur du détecteur.
+function ecartCoins(a, b){
+  const A=[a.tl,a.tr,a.br,a.bl], B=[b.tl,b.tr,b.br,b.bl];
+  let best = Infinity;
+  for(const miroir of [false,true]){
+    for(let d=0; d<4; d++){
+      let s=0;
+      for(let i=0;i<4;i++){
+        const j = miroir ? (4 + d - i) % 4 : (i + d) % 4;
+        s += Math.hypot(A[i][0]-B[j][0], A[i][1]-B[j][1]);
+      }
+      best = Math.min(best, s/4);
+    }
+  }
+  return best;
+}
+
+// ── Couverture : ce que l'extraction contient VRAIMENT de la carte ──────────────────────
+// Première version : « combien des quatre coins tombent dans la boîte ». Deux défauts, vus
+// dès la première salve. Elle ne peut valoir que 0, 25, 50, 75 ou 100 — d'où des colonnes
+// entières à 25 % qui donnaient l'alerte alors que tout allait bien. Et surtout elle juge le
+// BORD PHYSIQUE, que le détecteur ne vise pas : il serre le visuel imprimé, si bien que la
+// boîte rogne un demi pour cent de liseré et que les quatre coins tombent dehors — pendant
+// que l'identification, elle, réussit.
+// On mesure donc deux choses distinctes, parce que ce sont deux questions distinctes :
+//   couv    — la part de l'AIRE de la carte qui tombe dans l'extraction, échantillonnée sur
+//             une grille. Continue, donc lisible ; c'est le cadrage au sens strict.
+//   couvIll — la part de la ZONE D'ILLUSTRATION qui y tombe. C'est elle que l'embedding
+//             consomme : si elle est entière, un liseré rogné n'a aucune importance.
+const ZONE_ILL = { x:0.07, y:0.11, w:0.86, h:0.43 };
+function pointDansQuad(q, u, v){
+  // Interpolation bilinéaire dans le quadrilatère : (u,v) en coordonnées de carte, 0 à 1.
+  const h = (a,b,t) => [a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+  return h(h(q.tl, q.tr, u), h(q.bl, q.br, u), v);
+}
+function couvertureZone(vrais, boite, zone){
+  const dedans = p => p[0] >= boite.x0 && p[0] <= boite.x1 && p[1] >= boite.y0 && p[1] <= boite.y1;
+  let n = 0, tot = 0;
+  const N = 12;
+  for(let i = 0; i <= N; i++) for(let j = 0; j <= N; j++){
+    const u = zone ? zone.x + zone.w * (i/N) : i/N;
+    const v = zone ? zone.y + zone.h * (j/N) : j/N;
+    tot++; if(dedans(pointDansQuad(vrais, u, v))) n++;
+  }
+  return n / tot;
+}
+const couverture = (vrais, boite) => couvertureZone(vrais, boite, null);
+const couvertureIllustration = (vrais, boite) => couvertureZone(vrais, boite, ZONE_ILL);
+
+// Extraction telle que le scanner test la fait : centre + format, sans homographie.
+function extraire(source, coins, W, H){
+  const P = [coins.tl, coins.tr, coins.br, coins.bl];
+  const cx = P.reduce((s,p)=>s+p[0],0)/4 * W, cy = P.reduce((s,p)=>s+p[1],0)/4 * H;
+  const aire = aireQuad(coins) * W * H;
+  if(!(aire > 16)) return null;
+  const h = Math.sqrt(aire * CARD_RATIO) * 1.04, w = h / CARD_RATIO;
+  const out = document.createElement('canvas');
+  out.width = 320; out.height = Math.round(320 * CARD_RATIO);
+  out.getContext('2d').drawImage(source, cx-w/2, cy-h/2, w, h, 0, 0, out.width, out.height);
+  return { canvas: out, boite: { x0:(cx-w/2)/W, x1:(cx+w/2)/W, y0:(cy-h/2)/H, y1:(cy+h/2)/H } };
+}
+
+// ── Les situations : distance d'abord, puis ce qui la complique ──────────────────────────
+let REGLAGES = { zoom: 1.0, recadres: [0.55] };
+const SITUATIONS = [
+  {nom:'15 cm, de face',      o:{distance:15, rot:0,  incl:5,  pitch:4}},
+  {nom:'20 cm, de face',      o:{distance:20, rot:0,  incl:5,  pitch:4}},
+  {nom:'25 cm, de face',      o:{distance:25, rot:0,  incl:6,  pitch:4}},
+  {nom:'30 cm, de face',      o:{distance:30, rot:0,  incl:6,  pitch:5}},
+  {nom:'20 cm, inclinée 15°', o:{distance:20, rot:8,  incl:16, pitch:10}},
+  {nom:'20 cm, inclinée 30°', o:{distance:20, rot:12, incl:30, pitch:16}},
+  {nom:'20 cm, décentrée',    o:{distance:20, rot:5,  incl:8,  pitch:5, dx:0.16, dy:0.09}},
+  {nom:'25 cm, pénombre',     o:{distance:25, rot:5,  incl:8,  pitch:5, lumiere:0.55}},
+  {nom:'20 cm, main qui bouge',o:{distance:20, rot:6, incl:10, pitch:7, flou:1.8}},
+  {nom:'20 cm, fond encombré',o:{distance:20, rot:6,  incl:9,  pitch:6, fond:'encombré'}},
+];
+
+// ── Boucle ───────────────────────────────────────────────────────────────────────────────
+let arret = false, resultats = [], correctifs = [];
+
+function journal(t){
+  const j = $('journal');
+  j.textContent += t + '\n';
+  j.scrollTop = j.scrollHeight;
+}
+
+function dessinerVignette(scene, vrais, detectes, extrait, info, ok){
+  const d = document.createElement('div');
+  d.className = 'vignette ' + (ok ? 'ok' : 'ko');
+  const paire = document.createElement('div'); paire.className = 'paire';
+
+  const cs = document.createElement('canvas'); cs.className = 'scene';
+  cs.width = 216; cs.height = 288;
+  const g = cs.getContext('2d');
+  g.drawImage(scene, 0, 0, cs.width, cs.height);
+  const trace = (c, couleur, ep) => {
+    g.strokeStyle = couleur; g.lineWidth = ep; g.beginPath();
+    const p = k => [c[k][0]*cs.width, c[k][1]*cs.height];
+    const a=p('tl'), b=p('tr'), q=p('br'), r=p('bl');
+    g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(q[0],q[1]); g.lineTo(r[0],r[1]);
+    g.closePath(); g.stroke();
+  };
+  trace(vrais, 'rgba(255,255,255,.85)', 1.5);
+  if(detectes) trace(detectes, ok ? '#3fb950' : '#e0553f', 2);
+  paire.appendChild(cs);
+
+  const cc = document.createElement('canvas'); cc.className = 'crop';
+  cc.width = 108; cc.height = 151;
+  if(extrait) cc.getContext('2d').drawImage(extrait, 0, 0, cc.width, cc.height);
+  else { const gc = cc.getContext('2d'); gc.fillStyle='#000'; gc.fillRect(0,0,cc.width,cc.height); }
+  paire.appendChild(cc);
+
+  const t = document.createElement('div'); t.className = 'txt'; t.innerHTML = info;
+  d.append(paire, t);
+  $('grille').prepend(d);
+  while($('grille').children.length > 60) $('grille').lastElementChild.remove();
+}
+
+async function passer(carte, img, situation){
+  const o = {fond:'bois', lumiere:1, flou:0, zoom:REGLAGES.zoom, ...situation.o};
+  const {canvas, coins:vrais, partHauteur} = composer(img, o);
+
+  const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(canvas.width, canvas.height));
+  const mk = async src => createImageBitmap(src, {resizeWidth:Math.round(src.width*e0),
+    resizeHeight:Math.round(src.height*e0), resizeQuality:'medium'});
+  let d = await detecteur().detecter(await mk(canvas));
+
+  // Rattrapage : mêmes paliers que le scanner test.
+  if(!(d && d.corners && d.score >= MIN_SCORE)){
+    for(const P of REGLAGES.recadres){
+      const m = (1-P)/2;
+      const sub = document.createElement('canvas');
+      sub.width = Math.round(canvas.width*P); sub.height = Math.round(canvas.height*P);
+      sub.getContext('2d').drawImage(canvas, Math.round(canvas.width*m), Math.round(canvas.height*m),
+        sub.width, sub.height, 0, 0, sub.width, sub.height);
+      const e1 = Math.min(1, DETECT_LONG_EDGE / Math.max(sub.width, sub.height));
+      const b2 = await createImageBitmap(sub, {resizeWidth:Math.round(sub.width*e1),
+        resizeHeight:Math.round(sub.height*e1), resizeQuality:'medium'});
+      const d2 = await detecteur().detecter(b2);
+      if(d2 && d2.corners && d2.score >= MIN_SCORE){
+        const ram = p => [m + p[0]*P, m + p[1]*P];
+        d = {...d2, corners:{tl:ram(d2.corners.tl), tr:ram(d2.corners.tr),
+                             br:ram(d2.corners.br), bl:ram(d2.corners.bl)}};
+        break;
+      }
+    }
+  }
+
+  const vu = !!(d && d.corners && d.score != null && d.score >= MIN_SCORE);
+  let ecart = null, couv = null, couvIll = null, juste = null, ex = null;
+  if(vu){
+    ecart = ecartCoins(vrais, d.corners);
+    ex = extraire(canvas, d.corners, canvas.width, canvas.height);
+    if(ex){
+      couv = couverture(vrais, ex.boite);
+      couvIll = couvertureIllustration(vrais, ex.boite);
+      try{
+        const res = await V2.identifierV2(ex.canvas, {});
+        juste = !!(res && res.pick && res.pick.cle === carte.cle);
+      }catch(e){ juste = false; }
+    }
+  }
+  const ok = !!(vu && juste);
+  const info = '<b>' + situation.nom + '</b><br>'
+    + 'carte ' + Math.round(partHauteur*100) + ' % de l\'image<br>'
+    + (vu ? 'écart ' + ecart.toFixed(3) + ' · carte ' + Math.round(couv*100)
+            + ' % · illus ' + Math.round(couvIll*100) + ' %'
+          : '<span class="ko">non détectée</span>') + '<br>'
+    + (juste === null ? '' : (juste ? '<span class="ok">identifiée</span>'
+                                    : '<span class="ko">non identifiée</span>'));
+  dessinerVignette(canvas, vrais, vu ? d.corners : null, ex && ex.canvas, info, ok);
+
+  return { carte:carte.cle, situation:situation.nom, distance:o.distance,
+           partHauteur, vu, ecart, couv, couvIll, juste, ok };
+}
+
+function bilan(){
+  const par = {};
+  for(const r of resultats){
+    const k = r.situation;
+    par[k] = par[k] || {n:0, vu:0, juste:0, ecart:[], couv:[], couvIll:[]};
+    par[k].n++; if(r.vu) par[k].vu++; if(r.juste) par[k].juste++;
+    if(r.ecart != null) par[k].ecart.push(r.ecart);
+    if(r.couv != null) par[k].couv.push(r.couv);
+    if(r.couvIll != null) par[k].couvIll.push(r.couvIll);
+  }
+  const med = a => { if(!a.length) return null; const b=[...a].sort((x,y)=>x-y); return b[b.length>>1]; };
+  let html = '<table><tr><th>situation</th><th>n</th><th>vue</th><th>identifiée</th>'
+           + '<th>écart méd.</th><th>carte</th><th>illustration</th></tr>';
+  for(const [k,v] of Object.entries(par)){
+    const e = med(v.ecart), c = med(v.couv), ci = med(v.couvIll);
+    html += '<tr><td>' + k + '</td><td>' + v.n + '</td>'
+      + '<td>' + Math.round(100*v.vu/v.n) + ' %</td>'
+      + '<td>' + Math.round(100*v.juste/v.n) + ' %</td>'
+      + '<td>' + (e == null ? '—' : e.toFixed(3)) + '</td>'
+      + '<td>' + (c == null ? '—' : Math.round(c*100) + ' %') + '</td>'
+      + '<td>' + (ci == null ? '—' : Math.round(ci*100) + ' %') + '</td></tr>';
+  }
+  html += '</table>';
+  const g = resultats.length;
+  html = '<p><b>' + g + '</b> scènes · vues ' + Math.round(100*resultats.filter(r=>r.vu).length/g)
+       + ' % · identifiées <b>' + Math.round(100*resultats.filter(r=>r.juste).length/g) + ' %</b></p>' + html;
+  if(correctifs.length) html += '<p style="color:var(--doux)">correctifs : ' + correctifs.join(' · ') + '</p>';
+  $('bilan-corps').innerHTML = html;
+  $('bilan').hidden = false;
+}
+
+async function lancer(){
+  arret = false; resultats = []; correctifs = [];
+  $('lancer').disabled = true; $('stop').disabled = false;
+  $('etat').textContent = 'chargement de l\'index V2…';
+  await V2.initV2({ onProgress:(p,m)=> { $('etat').textContent = m || ('chargement ' + Math.round(p*100) + ' %'); } })
+    .catch(e => { $('etat').textContent = 'index indisponible : ' + e.message; });
+
+  const cat = V2.catalogueV2().filter(c => c.image);
+  const nCartes = +$('n').value || 200, pas = +$('pas').value || 10;
+  journal('catalogue : ' + cat.length + ' cartes · ' + SITUATIONS.length + ' situations par carte');
+
+  let fait = 0;
+  for(let i = 0; i < nCartes && !arret; i++){
+    const carte = cat[Math.floor(Math.random()*cat.length)];
+    let img;
+    try{ img = await chargerIllustration(carte.image); }
+    catch(e){ journal('image indisponible : ' + carte.cle); continue; }
+
+    for(const s of SITUATIONS){
+      if(arret) break;
+      try{ resultats.push(await passer(carte, img, s)); }
+      catch(e){ journal('scène ratée (' + s.nom + ') : ' + e.message); }
+      fait++;
+      $('etat').textContent = fait + ' scènes · ' + (i+1) + '/' + nCartes + ' cartes · '
+        + Math.round(100*resultats.filter(r=>r.juste).length/Math.max(1,resultats.length)) + ' % identifiées';
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    if((i+1) % pas === 0){ bilan(); await examiner(i+1); }
+  }
+  bilan();
+  $('etat').textContent = 'terminé — ' + resultats.length + ' scènes';
+  $('lancer').disabled = false; $('stop').disabled = true;
+}
+
+// ── Le point d'inflexion : que corriger, au vu des derniers résultats ────────────────────
+// Volontairement conservateur. Un banc qui se règle lui-même trop vite finit par optimiser
+// son propre bruit — c'est ce qui m'est arrivé sur le seuil de symétrie, calé deux fois sur
+// des données qui ne pouvaient pas le trancher.
+async function examiner(nCartes){
+  const recents = resultats.slice(-SITUATIONS.length * 10);
+  const loin = recents.filter(r => r.partHauteur < 0.45);
+  const tauxLoin = loin.length ? loin.filter(r => r.vu).length / loin.length : 1;
+  journal('— après ' + nCartes + ' cartes : ' + Math.round(100*recents.filter(r=>r.juste).length/recents.length)
+    + ' % identifiées, dont ' + Math.round(100*tauxLoin) + ' % vues au-delà de 25 cm');
+}
+
+function chargerIllustration(base){
+  const url = /\.(webp|png|jpg|jpeg)$/i.test(base) ? base : base + '/high.webp';
+  return new Promise((res, rej) => {
+    const i = new Image(); i.crossOrigin = 'anonymous';
+    i.onload = ()=>res(i); i.onerror = ()=>rej(new Error('image indisponible'));
+    i.src = url;
+  });
+}
+
+// Rouages exposés pour le diagnostic. Sans eux, toute vérification ponctuelle depuis la
+// console échoue sur « n'est pas défini » — ça m'est arrivé assez de fois dans ce projet
+// pour que ce soit désormais un réflexe.
+window.BC = { composer, extraire, couverture, couvertureIllustration, ecartCoins, aireQuad, hauteurVueMm,
+              detecteur, SITUATIONS, REGLAGES, resultats:()=>resultats,
+              regler:(p)=>Object.assign(REGLAGES,p) };
+
+$('lancer').addEventListener('click', lancer);
+$('stop').addEventListener('click', ()=>{ arret = true; $('etat').textContent = 'arrêt demandé…'; });
+$('vider').addEventListener('click', ()=>{ $('grille').innerHTML=''; $('journal').textContent=''; });
+
+// Repères physiques, affichés d'emblée : ils disent déjà l'essentiel avant tout test.
+journal('carte 63 × 88 mm · champ vertical 62°');
+for(const d of [10,12,15,20,25,30,40]){
+  const h = hauteurVueMm(d, 1);
+  journal('  à ' + String(d).padStart(2) + ' cm : hauteur vue ' + Math.round(h) + ' mm'
+    + ' → carte à ' + Math.round(100*88/h) + ' % de l\'image');
+}
+</script>
+</body>
+</html>
