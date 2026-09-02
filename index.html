@@ -802,6 +802,39 @@
     background:rgba(255,255,255,.07); color:#e6edf3; border:1px solid rgba(255,255,255,.16);
     font-size:12px;
   }
+  /* ── Scanner test : volontairement sommaire, on juge la capture, pas la mise en page ── */
+  /* Le cadre ne prend que la moitié de la hauteur : tout l'intérêt de cette page est de
+     voir la carte identifiée JUSTE EN DESSOUS, sans faire défiler. Un aperçu plein écran
+     repousserait le verdict hors de vue, ce qui est précisément ce qu'on veut éviter. */
+  .st-cadre{ position:relative; width:100%; max-width:520px; margin:0 auto; background:#000;
+    border-radius:12px; overflow:hidden; aspect-ratio:3/4; max-height:34vh; }
+  /* Le titre et l'explication ne servent qu'une fois : sur téléphone ils volaient au verdict
+     la place qui lui revient. Ils restent lisibles, simplement discrets. */
+  /* La barre du bas déborde sur la page, et son bouton central plus encore : sans cette
+     réserve, la dernière ligne se lit à moitié derrière lui. */
+  #section-scantest{ padding-bottom:96px; }
+  #section-scantest h2{ font-size:19px; margin:4px 0 4px; }
+  #section-scantest > .hint{ font-size:11.5px; line-height:1.35; margin:0 0 10px; }
+  .st-etat{ margin:8px 0; }
+  .st-actions{ margin-bottom:10px; }
+  #st-video{ width:100%; height:100%; object-fit:cover; display:block; }
+  #st-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  .st-etat{ text-align:center; color:#9fb0c0; font-size:13px; margin:10px 0; min-height:18px; }
+  .st-actions{ display:flex; gap:10px; justify-content:center; margin-bottom:14px; }
+  .st-actions button, #st-envoyer{ padding:10px 18px; border-radius:10px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; font-size:14px; }
+  #st-envoyer{ display:block; margin:0 auto 20px; }
+  #st-resultat{ display:flex; gap:12px; align-items:center; max-width:520px; margin:0 auto 12px;
+    padding:12px; border-radius:12px; border:1px solid rgba(63,185,80,.4); background:rgba(63,185,80,.08); }
+  #st-resultat.rebut{ border-color:rgba(224,85,63,.45); background:rgba(224,85,63,.08); }
+  #st-resultat[hidden]{ display:none; }
+  #st-photo{ width:64px; height:89px; object-fit:cover; border-radius:6px; flex:none; }
+  .st-infos{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
+  .st-infos b{ color:#e6edf3; font-size:15px; }
+  .st-infos span{ color:#9fb0c0; font-size:12px; font-family:ui-monospace,monospace; }
+  .st-verdict{ display:flex; flex-direction:column; gap:6px; flex:none; }
+  .st-verdict button{ padding:7px 12px; border-radius:8px; font-size:13px; cursor:pointer;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
   /* ── Bandeau des seuils, toujours visible en plein écran caméra ────────────────────
      Posé SOUS la rangée de boutons (roue dentée à gauche, croix à droite) et au-dessus du
      cadre de visée, qui est centré : la carte n'est jamais recouverte. */
@@ -1885,7 +1918,10 @@
   .menu-modes button{flex:1; padding:10px 12px; font-size:13px; font-weight:700;}
   .navbar{
     position:fixed; left:0; right:0; bottom:0; z-index:200;
-    display:grid; grid-template-columns:repeat(5, 1fr); align-items:end;
+    /* Colonnes AUTOMATIQUES, et non plus cinq en dur : le nombre d'entrées visibles change
+       avec le mode (vendeur / collection) et l'onglet Test en a ajouté une septième. Figé à
+       cinq, la barre passait à la ligne et recouvrait le bas de la page. */
+    display:grid; grid-auto-flow:column; grid-auto-columns:1fr; align-items:end;
     /* Opacité descendue de 0,94 à 0,58 : à 0,94 le flou d'arrière-plan était calculé mais
        invisible, le fond étant déjà couvert. C'est en laissant passer le contenu qu'on voit
        qu'il défile SOUS la barre, ce qui situe la barre au-dessus de la page au lieu de la
@@ -1906,6 +1942,9 @@
     background:linear-gradient(to top, rgba(10,13,22,.72), transparent);
   }
   /* Le repli d'hier est devenu le seul chemin : voir le commentaire de .navbar. */
+  /* Les libellés se compriment sans déborder quand la barre se remplit. */
+  .nav-item{ min-width:0; }
+  .nav-item .nav-lbl{ font-size:10px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
   .nav-item{
     position:relative; background:none; border:0; cursor:pointer; color:var(--muted);
     display:flex; flex-direction:column; align-items:center; gap:2px; padding:5px 2px;
@@ -4251,6 +4290,9 @@
     <span class="nav-fab"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.9 8.4V5.5A2.6 2.6 0 0 1 5.5 2.9h2.9M15.6 2.9h2.9a2.6 2.6 0 0 1 2.6 2.6v2.9M21.1 15.6v2.9a2.6 2.6 0 0 1-2.6 2.6h-2.9M8.4 21.1H5.5a2.6 2.6 0 0 1-2.6-2.6v-2.9"/><circle cx="12" cy="12" r="5.5"/><path d="M6.5 12h2.6M14.9 12h2.6"/><circle cx="12" cy="12" r="2.2"/></svg></span>
     <span class="nav-lbl">Scanner</span>
   </button>
+  <button class="nav-item" data-tab="scantest">
+    <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.4" y="2.8" width="15.2" height="18.4" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="4.4" y="2.8" width="15.2" height="18.4" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M8.2 8.4h7.6M8.2 12h7.6M8.2 15.6h4.4" stroke="var(--t1)" stroke-width="1.7" opacity=".8"/></svg></span><span class="nav-lbl">Test</span>
+  </button>
   <button class="nav-item" data-mode="vendeur" data-tab="listes">
     <span class="nav-ico"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" fill="var(--t2)" opacity=".26"/><rect x="3.4" y="4.2" width="17.2" height="15.6" rx="2.4" stroke="var(--t1)" stroke-width="1.7"/><path d="M7.4 9h9M7.4 12.4h9M7.4 15.8h5.4" stroke="var(--t1)" stroke-width="1.7"/></svg></span><span class="nav-lbl">Listes</span>
   </button>
@@ -4588,6 +4630,39 @@
         dit plutôt qu'un classeur vide qui ressemblerait à une panne.
       </p>
     </div>
+  </section>
+
+  <!-- ══ SCANNER TEST ══ Reprise à zéro : la boucle du banc, une extraction rapide, un
+       cadre pour valider. Aucun état partagé avec le scanner principal — voir le bloc ST
+       dans le script pour la raison chiffrée. -->
+  <section class="section" id="section-scantest">
+    <h2>Scanner test</h2>
+    <p class="hint">Reprise à zéro sur la boucle du banc. Rien d'autre : ni file, ni validation
+       automatique, ni fiche complète. On remettra les pièces une par une, en mesurant.</p>
+    <div class="st-cadre">
+      <video id="st-video" autoplay playsinline muted></video>
+      <canvas id="st-overlay"></canvas>
+    </div>
+    <p id="st-etat" class="st-etat">caméra fermée</p>
+    <div class="st-actions">
+      <button class="btn-gold" id="st-ouvrir">Ouvrir la caméra</button>
+      <button id="st-fermer" hidden>Fermer</button>
+    </div>
+
+    <div id="st-resultat" hidden>
+      <img id="st-photo" alt="">
+      <div class="st-infos">
+        <b id="st-nom"></b>
+        <span id="st-detail"></span>
+      </div>
+      <div class="st-verdict">
+        <button class="btn-gold" id="st-garder">Garder</button>
+        <button id="st-jeter">Ignorer</button>
+      </div>
+    </div>
+
+    <p id="st-liste" class="st-etat"></p>
+    <button id="st-envoyer" hidden>Envoyer dans « À vérifier »</button>
   </section>
 
   <section class="section" id="section-listes">
@@ -5967,7 +6042,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 54;
+const VERSION_APP = 56;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -6795,6 +6870,9 @@ function activerOnglet(nom){
   if(nom === 'ventes') rendreVentes();
   if(nom === 'collection') rendreAccueilCollection();
   if(nom === 'listes') rendreListes();
+  // Le scanner test s'éteint dès qu'on le quitte : une caméra qui survit à sa page, c'est
+  // exactement le genre de charge invisible qu'on cherche à supprimer.
+  if(nom !== 'scantest' && typeof ST !== 'undefined' && ST.flux) stFermer();
   const jeu = JEU_DE_ONGLET[nom];
   if(jeu && jeu !== jeuOuvert) ouvrirJeu(jeu);
   synchroniserMode(nom);
@@ -13404,6 +13482,237 @@ async function viderTravauxDiffères(){
     travauxEnCours = false;
   }
 }
+
+
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// SCANNER TEST — reprise à zéro, sur la boucle du banc et rien d'autre (V.55).
+// ═════════════════════════════════════════════════════════════════════════════════════════
+// Idée de Nikos, et les chiffres lui donnent raison. Temps d'identification médian, moteur
+// identique (webgpu/fp16) d'un bout à l'autre :
+//     V.44  1304 ms   (emb 459 · refs 315 · orb 582)
+//     V.52  3778 ms   (emb 648 · refs 1498 · orb 1632)
+//     V.54  5609 ms   (emb 1078 · refs 2307 · orb 2463)
+// Les TROIS étages ont triplé, y compris l'embedding qui est un calcul de taille fixe. Je ne
+// sais pas démêler ce qui revient à l'appareil de ce qui revient à tout ce que j'ai empilé
+// autour du scanner principal — et c'est bien le problème : quand on ne peut plus attribuer,
+// on ne peut plus corriger.
+//
+// Ce module repart donc de rien. Il ne partage AUCUN état avec le scanner principal : sa
+// caméra, sa boucle, ses variables. On y remet une chose à la fois, en mesurant.
+//
+// Ce qu'il contient, et c'est tout :
+//   • la boucle du banc — score, patience, stabilité, verrou ;
+//   • l'extraction centre+format, mesurée équivalente à l'homographie pour 0,8 ms contre
+//     52,4 (banc de présentation, quatorze gestes) ;
+//   • un cadre en dessous pour valider la carte.
+// Ce qu'il ne contient PAS, volontairement : contrôles de forme, mémoire de la plus nette,
+// bandeau de jauges, atelier, file d'attente, validation automatique, fiche complète,
+// archivage, sauvegarde de session, journal distant. Rien de tout cela n'est condamné — mais
+// chaque pièce devra prouver son prix avant de revenir.
+const ST = {
+  flux:null, piste:null, boucle:false, occupe:false,
+  presentDepuis:0, streak:0, dernierCoins:null, absence:0,
+  retiree:true, coinsCapture:null,
+  cartes:[],            // ce que la session a identifié, en mémoire et nulle part ailleurs
+  enAttente:null,       // carte identifiée, en attente du verdict de l'utilisateur
+};
+// Mêmes valeurs que le banc, délibérément : c'est la configuration qui tournait à 1304 ms.
+const ST_SCORE = 0.35, ST_SCORE_STRICT = 0.5, ST_BOUGE = 0.030;
+const ST_DOUCE = 1200, ST_FRANCHE = 2500;
+
+function stEtat(t){ const e = $('st-etat'); if(e) e.textContent = t; }
+
+async function stOuvrir(){
+  if(ST.flux) return;
+  stEtat('ouverture de la caméra…');
+  try{
+    ST.flux = await navigator.mediaDevices.getUserMedia({
+      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440},
+              advanced:[{focusMode:'continuous'}] }, audio:false });
+  }catch(e){ stEtat('caméra refusée : ' + e.message); return; }
+  const v = $('st-video');
+  v.srcObject = ST.flux;
+  await v.play().catch(()=>{});
+  ST.piste = ST.flux.getVideoTracks()[0];
+  // Objectif principal plutôt que l'ultra grand-angle, quand les capacités trahissent
+  // plusieurs objectifs. Même raisonnement qu'au scanner principal, et même réserve : le
+  // facteur 1,7 est une supposition tant que Nikos ne l'a pas comparé à 1,0.
+  try{
+    const caps = ST.piste.getCapabilities ? ST.piste.getCapabilities() : {};
+    if(caps.zoom && caps.zoom.max / Math.max(caps.zoom.min, 1e-4) >= 5){
+      await ST.piste.applyConstraints({advanced:[{zoom: Math.min(caps.zoom.max, caps.zoom.min * 1.7)}]});
+    }
+  }catch(e){}
+  if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
+    stEtat('préparation du moteur d’identification…');
+    try{ window.relancerInitV2 && window.relancerInitV2(); }catch(e){}
+  }
+  ST.boucle = true;
+  ST.retiree = true; ST.coinsCapture = null; ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
+  stTourner();
+  $('st-ouvrir').hidden = true; $('st-fermer').hidden = false;
+}
+
+function stFermer(){
+  ST.boucle = false;
+  try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
+  ST.flux = null; ST.piste = null;
+  const v = $('st-video'); if(v) v.srcObject = null;
+  stDessiner(null);
+  stEtat('caméra fermée');
+  $('st-ouvrir').hidden = false; $('st-fermer').hidden = true;
+}
+
+function stEcart(a, b){
+  let m = 0;
+  for(const k of ['tl','tr','br','bl']) m = Math.max(m, Math.hypot(a[k][0]-b[k][0], a[k][1]-b[k][1]));
+  return m;
+}
+function stAire(c){
+  const p = [c.tl, c.tr, c.br, c.bl]; let a = 0;
+  for(let i = 0; i < 4; i++){ const q = p[(i+1)%4]; a += p[i][0]*q[1] - q[0]*p[i][1]; }
+  return Math.abs(a)/2;
+}
+
+function stDessiner(coins, couleur){
+  const cv = $('st-overlay'), v = $('st-video');
+  if(!cv || !v) return;
+  const r = v.getBoundingClientRect();
+  if(cv.width !== Math.round(r.width) || cv.height !== Math.round(r.height)){
+    cv.width = Math.round(r.width); cv.height = Math.round(r.height);
+  }
+  const g = cv.getContext('2d');
+  g.clearRect(0, 0, cv.width, cv.height);
+  if(!coins) return;
+  g.strokeStyle = couleur; g.lineWidth = 3; g.lineJoin = 'round';
+  g.beginPath();
+  const p = k => [coins[k][0]*cv.width, coins[k][1]*cv.height];
+  const a = p('tl'), b = p('tr'), c = p('br'), d = p('bl');
+  g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]); g.lineTo(c[0],c[1]); g.lineTo(d[0],d[1]); g.closePath();
+  g.stroke();
+}
+
+// La boucle du banc, à l'identique. Elle ne fait QUE décider s'il faut capturer.
+async function stTourner(){
+  while(ST.boucle){
+    const v = $('st-video');
+    if(!v || !v.videoWidth || ST.occupe){ await new Promise(r => setTimeout(r, 120)); continue; }
+    try{
+      const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
+      const bmp = await createImageBitmap(v, {
+        resizeWidth: Math.round(v.videoWidth*e0), resizeHeight: Math.round(v.videoHeight*e0), resizeQuality:'medium' });
+      const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+      const bon = !!(d && d.corners && d.score != null && d.score >= ST_SCORE);
+
+      if(!bon){
+        stDessiner(null);
+        ST.streak = 0; ST.presentDepuis = 0; ST.dernierCoins = null;
+        if(++ST.absence >= 2) ST.retiree = true;
+        stEtat(ST.enAttente ? 'valide la carte ci-dessous' : 'vise une carte');
+      }else{
+        ST.absence = 0;
+        if(!ST.presentDepuis) ST.presentDepuis = Date.now();
+        const attente = Date.now() - ST.presentDepuis;
+        // Déplacement franc depuis la dernière capture = autre carte, même sans champ vide.
+        if(!ST.retiree && ST.coinsCapture && stEcart(ST.coinsCapture, d.corners) > ST_BOUGE * 3) ST.retiree = true;
+        const bouge = ST.dernierCoins ? stEcart(ST.dernierCoins, d.corners) : Infinity;
+        ST.dernierCoins = d.corners;
+        const seuilBouge = attente >= ST_FRANCHE ? Infinity : attente >= ST_DOUCE ? ST_BOUGE*3 : ST_BOUGE;
+        const seuilScore = attente >= ST_DOUCE ? ST_SCORE : ST_SCORE_STRICT;
+        if(bouge < seuilBouge) ST.streak++; else ST.streak = 0;
+        const stable = ST.streak >= 1;
+        stDessiner(d.corners, stable ? '#3fb950' : '#d29922');
+        if(!ST.enAttente && ST.retiree && d.score >= seuilScore && stable){
+          ST.streak = 0; ST.presentDepuis = 0;
+          await stCapturer(d.corners, v);
+        }else{
+          stEtat(ST.enAttente ? 'valide la carte ci-dessous'
+               : !ST.retiree ? 'carte déjà lue — retire-la ou déplace-la'
+               : stAire(d.corners) < 0.08 ? 'rapproche la carte'
+               : stable ? 'prêt' : 'stabilise…');
+        }
+      }
+    }catch(e){ /* une image ratée ne casse pas la boucle */ }
+    await new Promise(r => setTimeout(r, 60));
+  }
+}
+
+async function stCapturer(coins, v){
+  ST.occupe = true;
+  stEtat('identification…');
+  const t0 = performance.now();
+  try{
+    const cv = extraireCarteCentree(v, coins, v.videoWidth, v.videoHeight);
+    if(!cv){ stEtat('cadrage impossible'); return; }
+    const res = await SCAN_V2.identifierV2(cv, {});
+    const ms = Math.round(performance.now() - t0);
+    if(navigator.vibrate) navigator.vibrate(35);
+    ST.retiree = false; ST.coinsCapture = coins;
+    if(res && res.pick){
+      ST.enAttente = { carte: res.pick, fiabilite: res.fiabilite, categorie: res.categorie,
+                       inliers: res.inliers, ms, photo: cv.toDataURL('image/jpeg', 0.7) };
+    }else{
+      ST.enAttente = { carte: null, fiabilite: 0, categorie: 'rebut', inliers: res ? res.inliers : 0,
+                       ms, photo: cv.toDataURL('image/jpeg', 0.7) };
+    }
+    stRendreAttente();
+  }catch(e){ stEtat('identification : ' + e.message); }
+  finally{ ST.occupe = false; }
+}
+
+function stRendreAttente(){
+  const z = $('st-resultat'); if(!z) return;
+  const a = ST.enAttente;
+  if(!a){ z.hidden = true; return; }
+  z.hidden = false;
+  $('st-photo').src = a.photo;
+  $('st-nom').textContent = a.carte ? (a.carte.name || a.carte.cle) : 'Non reconnue';
+  $('st-detail').textContent = a.carte
+    ? [a.carte.localId ? '#' + a.carte.localId : null, a.fiabilite + ' %',
+       a.inliers + ' inliers', a.ms + ' ms'].filter(Boolean).join(' · ')
+    : a.inliers + ' inliers · ' + a.ms + ' ms';
+  z.classList.toggle('rebut', !a.carte);
+}
+
+function stValider(garder){
+  const a = ST.enAttente;
+  if(a && garder && a.carte) ST.cartes.push(a);
+  ST.enAttente = null;
+  stRendreAttente();
+  stRendreListe();
+  stEtat('carte suivante');
+}
+
+function stRendreListe(){
+  const el = $('st-liste'); if(!el) return;
+  el.textContent = ST.cartes.length
+    ? ST.cartes.length + ' carte(s) retenue(s) · médiane ' + stMediane() + ' ms'
+    : '';
+  $('st-envoyer').hidden = !ST.cartes.length;
+}
+function stMediane(){
+  const t = ST.cartes.map(c => c.ms).sort((a,b)=>a-b);
+  return t.length ? t[t.length>>1] : 0;
+}
+
+// Le seul pont vers l'application : à la demande, et jamais pendant qu'on scanne.
+function stEnvoyerAuLot(){
+  let n = 0;
+  for(const c of ST.cartes){
+    try{ pushToQueue(c.photo, null, 'scanner-test'); n++; }catch(e){}
+  }
+  ST.cartes = [];
+  stRendreListe();
+  stEtat(n + ' carte(s) envoyée(s) dans « À vérifier »');
+}
+
+
+// Branchements du scanner test. Isolés ici : rien de ce bloc ne doit toucher au reste.
+$('st-ouvrir')?.addEventListener('click', stOuvrir);
+$('st-fermer')?.addEventListener('click', stFermer);
+$('st-garder')?.addEventListener('click', ()=> stValider(true));
+$('st-jeter')?.addEventListener('click', ()=> stValider(false));
+$('st-envoyer')?.addEventListener('click', stEnvoyerAuLot);
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
