@@ -201,6 +201,19 @@ function composer(img, o){
   }
   g.restore();
 
+  // Une carte tenue l'est PAR QUELQUE CHOSE. Sans doigts, le banc ne teste que des cartes
+  // posées ou flottantes, et manque le cas où un pouce mange un coin — qui échouait à cent
+  // pour cent au banc de présentation.
+  if(o.doigts){
+    g.fillStyle = 'rgba(58,40,32,.97)';
+    const r = Math.min(SCENE_W, SCENE_H) * 0.055;
+    for(const [u, v] of o.doigts){
+      const p = (() => { const h=(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t];
+        return h(h(quad[0],quad[1],u), h(quad[3],quad[2],u), v); })();
+      g.beginPath(); g.ellipse(p[0], p[1], r*1.6, r, 0.35, 0, Math.PI*2); g.fill();
+    }
+  }
+
   const enFrac = p => [p[0]/SCENE_W, p[1]/SCENE_H];
   return { canvas: cv, coins: { tl:enFrac(quad[0]), tr:enFrac(quad[1]),
                                 br:enFrac(quad[2]), bl:enFrac(quad[3]) },
@@ -276,8 +289,35 @@ function extraire(source, coins, W, H){
 }
 
 // ── Les situations : distance d'abord, puis ce qui la complique ──────────────────────────
+// ── CE QUE CE BANC A ÉTABLI, ET UNE CONTRADICTION À NE PAS ENTERRER ─────────────────────
+// Détection seule, sans rattrapage, trente-quatre cartes par distance :
+//     9 cm (81 % de l'image) 97 %      13 cm (56 %) 91 %
+//    10 cm (73 %)            94 %      14 cm (52 %) 94 %
+//    11 cm (67 %)            91 %      15 cm (49 %) 94 %
+//    12 cm (61 %)            88 %      17 cm (43 %) 94 %
+//                                      20 cm (37 %) 94 %
+// C'est plat, de neuf à vingt centimètres.
+//
+// ⚠️ Or le banc de détection de bench-v2.html donnait, pour les mêmes fractions d'image :
+// 87 % à 55 %, 53 % à 40 %, et ZÉRO à 30 %. Les deux ne peuvent pas avoir raison, et je ne
+// sais pas encore lequel se trompe. Deux différences les séparent : la résolution de scène
+// (1080×1440 ici contre 1280×960 là) et le rendu en perspective par tranches. Toute décision
+// qui s'appuierait sur l'un des deux chiffres doit d'abord trancher ce désaccord — le noter
+// coûte une ligne, le découvrir trop tard coûte une version.
+//
+// Autre chose apprise ici, sur la méthode : à quinze échantillons par cellule, douze
+// centimètres semblait un creux net — 70 % contre 100 % de part et d'autre. À trente-quatre,
+// il n'y a plus de creux. On ne corrige pas sur quinze.
 let REGLAGES = { zoom: 1.0, recadres: [0.55] };
 const SITUATIONS = [
+  // ⚠️ LE CAS NOMINAL D'ABORD. Nikos : « il n'y a jamais de test avec une main proche et une
+  // carte qui remplit bien le cadre ». Il a raison, et c'est une faute de conception : le
+  // repère demande 62 % de la hauteur, soit douze centimètres, et mes situations commençaient
+  // à quinze — où la carte n'occupe que 49 %. Je testais donc tout SAUF l'usage prescrit.
+  {nom:'10 cm, remplit tout', o:{distance:10, rot:0,  incl:4,  pitch:3}},
+  {nom:'12 cm, dans le cadre',o:{distance:12, rot:0,  incl:5,  pitch:4}},
+  {nom:'12 cm, tenue à deux doigts', o:{distance:12, rot:3, incl:7, pitch:5,
+     doigts:[[0.12,0.86],[0.88,0.88]]}},
   {nom:'15 cm, de face',      o:{distance:15, rot:0,  incl:5,  pitch:4}},
   {nom:'20 cm, de face',      o:{distance:20, rot:0,  incl:5,  pitch:4}},
   {nom:'25 cm, de face',      o:{distance:25, rot:0,  incl:6,  pitch:4}},
