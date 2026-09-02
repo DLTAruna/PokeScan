@@ -6127,7 +6127,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 67;
+const VERSION_APP = 69;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13710,12 +13710,14 @@ async function stOuvrir(){
   }
   ST.boucle = true;
   ST.retiree = true; ST.coinsCapture = null; ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
+  stOublierMeilleure();
   stTourner();
   $('st-ouvrir').hidden = true; $('st-fermer').hidden = false;
 }
 
 function stFermer(){
   ST.boucle = false;
+  stOublierMeilleure();
   stPlein(false);
   stEnvoyerBilan();   // fin de session : c'est ici qu'on sait ce qu'elle a valu
   try{ if(ST.flux) ST.flux.getTracks().forEach(t => t.stop()); }catch(e){}
@@ -13724,6 +13726,79 @@ function stFermer(){
   stDessiner(null);
   stEtat('caméra fermée');
   $('st-ouvrir').hidden = false; $('st-fermer').hidden = true;
+}
+
+
+// ── MÉMOIRE DE LA PLUS NETTE ─────────────────────────────────────────────────────────────
+// Le seul gisement pur identifié au banc de cadrage : sur une carte tenue par une main qui
+// bouge, la détection est à CENT pour cent, le cadrage impeccable — couverture d'illustration
+// à cent également — et l'identification tombe à soixante-douze. Vingt-huit points perdus par
+// le seul flou, sur des cartes que tout le reste de la chaîne traite correctement. Aucune
+// autre situation n'a ce profil : partout ailleurs, ce qui échoue échoue à la détection.
+// Mesuré au banc de présentation, qui joue des séquences : identifier l'image de l'instant
+// donne 45 % de justes, identifier la plus nette de la présence en donne 90.
+//
+// Le principe tient en une phrase : la stabilité ne dit rien de la netteté. Une main peut
+// être parfaitement immobile pendant que l'objectif cherche encore son point.
+//
+// ⚠️ La variance du laplacien ne vaut RIEN en absolu — elle dépend autant de l'illustration
+// que de la mise au point : une carte nette à fond sobre score sous une carte floue à fond
+// chargé. On ne s'en sert donc QUE pour comparer des images d'une même présence de carte,
+// même contenu, seule la netteté variant. C'est le seul cas où elle est fiable, et c'est
+// pourquoi il n'y a aucun seuil ici : jamais de rejet, seulement un choix.
+let stMeilleure = null;      // canvas de la plus nette vue depuis que cette carte est là
+let stMeilleureNet = -1;
+let stMeilleursCoins = null;
+let stScratch = null;
+
+function stOublierMeilleure(){ stMeilleureNet = -1; stMeilleursCoins = null; }
+
+// 140×196 : ce calcul tombe à chaque tour, derrière une détection qui coûte déjà ~50 ms.
+// Mesuré côté scanner principal — 200×280 : 2,4 ms ; 140×196 : 1,2 ms — pour un pouvoir de
+// discrimination qui reste de plusieurs centaines entre net et flou.
+function stNettete(video, coins){
+  try{
+    if(!stScratch){ stScratch = document.createElement('canvas'); stScratch.width = 140; stScratch.height = 196; }
+    const w = stScratch.width, h = stScratch.height;
+    const ctx = stScratch.getContext('2d', {willReadFrequently:true});
+    const xs = [coins.tl[0], coins.tr[0], coins.br[0], coins.bl[0]];
+    const ys = [coins.tl[1], coins.tr[1], coins.br[1], coins.bl[1]];
+    // On mesure la CARTE, pas le décor : un arrière-plan chargé ferait monter la variance
+    // sans rien dire de la mise au point.
+    const x0 = Math.max(0, Math.min(...xs)) * video.videoWidth;
+    const y0 = Math.max(0, Math.min(...ys)) * video.videoHeight;
+    const x1 = Math.min(1, Math.max(...xs)) * video.videoWidth;
+    const y1 = Math.min(1, Math.max(...ys)) * video.videoHeight;
+    if(x1 - x0 < 8 || y1 - y0 < 8) return -1;
+    ctx.drawImage(video, x0, y0, x1-x0, y1-y0, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w*h);
+    for(let i = 0, p = 0; i < d.length; i += 4, p++) g[p] = d[i]*0.3 + d[i+1]*0.59 + d[i+2]*0.11;
+    let sum = 0, sq = 0, n = 0;
+    for(let y = 1; y < h-1; y++) for(let x = 1; x < w-1; x++){
+      const p = y*w + x;
+      const L = 4*g[p] - g[p-1] - g[p+1] - g[p-w] - g[p+w];
+      sum += L; sq += L*L; n++;
+    }
+    const m = sum/n;
+    return sq/n - m*m;
+  }catch(e){ return -1; }
+}
+
+// Retient l'image courante si elle est la plus nette depuis que la carte est là. Gardée
+// réduite à EXTRACT_LONG_EDGE, c'est-à-dire exactement ce que l'extraction utilisera : aucune
+// perte, et une seule image en mémoire plutôt qu'une fenêtre entière.
+function stRetenirSiPlusNette(video, coins){
+  const net = stNettete(video, coins);
+  if(net < 0 || net <= stMeilleureNet) return;
+  const ech = Math.min(1, EXTRACT_LONG_EDGE / Math.max(video.videoWidth, video.videoHeight));
+  const vw = Math.max(1, Math.round(video.videoWidth * ech));
+  const vh = Math.max(1, Math.round(video.videoHeight * ech));
+  if(!stMeilleure) stMeilleure = document.createElement('canvas');
+  if(stMeilleure.width !== vw || stMeilleure.height !== vh){ stMeilleure.width = vw; stMeilleure.height = vh; }
+  stMeilleure.getContext('2d').drawImage(video, 0, 0, vw, vh);
+  stMeilleureNet = net;
+  stMeilleursCoins = { tl:[...coins.tl], tr:[...coins.tr], br:[...coins.br], bl:[...coins.bl] };
 }
 
 function stEcart(a, b){
@@ -13858,7 +13933,7 @@ async function stTourner(){
       if(!bon){
         stDessiner(null);
         ST.streak = 0; ST.presentDepuis = 0; ST.dernierCoins = null;
-        if(++ST.absence >= 2) ST.retiree = true;
+        if(++ST.absence >= 2){ ST.retiree = true; stOublierMeilleure(); }
         stEtat(ST.enAttente ? 'valide la carte ci-dessous' : 'vise une carte');
       }else{
         ST.absence = 0;
@@ -13872,14 +13947,31 @@ async function stTourner(){
         const seuilScore = attente >= ST_DOUCE ? ST_SCORE : ST_SCORE_STRICT;
         if(bouge < seuilBouge) ST.streak++; else ST.streak = 0;
         const stable = ST.streak >= 1;
+        // Tant que la carte est là, on retient la plus nette. Rien n'est rejeté : quand le
+        // déclenchement viendra, il aura le choix entre l'image de l'instant et la meilleure
+        // de la présence — et il prendra la meilleure, sans une milliseconde d'attente en
+        // plus puisqu'elle est déjà en mémoire.
+        stRetenirSiPlusNette(v, d.corners);
         stDessiner(d.corners, stable ? '#3fb950' : '#d29922');
         if(!ST.enAttente && ST.retiree && d.score >= seuilScore && stable){
           ST.streak = 0; ST.presentDepuis = 0;
           await stCapturer(d.corners, v);
         }else{
+          // ── DIRE « TROP LOIN » PLUTÔT QUE DE LAISSER DEVINER ────────────────────────
+          // Le seuil vient du banc de cadrage, pas d'une intuition : l'identification tient
+          // entre 89 et 94 % tant que la carte occupe au moins vingt-quatre pour cent de la
+          // hauteur — soit une trentaine de centimètres — et rien en dessous n'a été mesuré
+          // comme utilisable. Une carte de hauteur h occupe une aire de h² sur 1,397 ; à
+          // 0,24 de hauteur cela fait 0,041.
+          // ⚠️ Ce message ne peut s'afficher QUE si la carte est détectée. Quand le détecteur
+          // ne rend rien, on ne sait pas distinguer « trop loin » de « pas de carte » — c'est
+          // exactement ce qui a fait tirer le dernier recours dans le vide. D'où le repère
+          // visuel, qui lui n'a pas besoin qu'on ait détecté quoi que ce soit pour renseigner.
+          const aire = stAire(d.corners);
           stEtat(ST.enAttente ? 'valide la carte ci-dessous'
                : !ST.retiree ? 'carte déjà lue — retire-la ou déplace-la'
-               : stAire(d.corners) < 0.08 ? 'rapproche la carte'
+               : aire < 0.041 ? 'trop loin — rapproche la carte'
+               : aire > 0.34 ? 'trop près — éloigne un peu'
                : stable ? 'prêt' : 'stabilise…');
         }
       }
@@ -13893,7 +13985,19 @@ async function stCapturer(coins, v){
   stEtat('identification…');
   const t0 = performance.now();
   try{
-    const cv = extraireCarteCentree(v, coins, v.videoWidth, v.videoHeight);
+    // ── ON IDENTIFIE LA PLUS NETTE, PAS CELLE DE L'INSTANT ────────────────────────────
+    // La stabilité a déclenché, mais l'objectif cherchait peut-être encore son point à cette
+    // image précise. On prend la meilleure de la présence, AVEC LES COINS QUI VONT AVEC :
+    // reprendre ceux de l'instant sur une image d'il y a trois tours découperait à côté.
+    const src = stMeilleure && stMeilleursCoins ? stMeilleure : v;
+    const srcCoins = src === stMeilleure ? stMeilleursCoins : coins;
+    const srcW = src === stMeilleure ? stMeilleure.width : v.videoWidth;
+    const srcH = src === stMeilleure ? stMeilleure.height : v.videoHeight;
+    const netteteUtilisee = Math.round(stMeilleureNet);
+    // La mémoire est CONSOMMÉE : la carte suivante doit repartir de zéro, sinon elle
+    // hériterait de la netteté de la précédente et ne retiendrait plus jamais rien.
+    stOublierMeilleure();
+    const cv = extraireCarteCentree(src, srcCoins, srcW, srcH);
     if(!cv){ stEtat('cadrage impossible'); return; }
     const res = await SCAN_V2.identifierV2(cv, {});
     const ms = Math.round(performance.now() - t0);
@@ -13901,7 +14005,8 @@ async function stCapturer(coins, v){
     ST.retiree = false; ST.coinsCapture = coins;
     if(res && res.pick){
       ST.enAttente = { carte: res.pick, fiabilite: res.fiabilite, categorie: res.categorie,
-                       inliers: res.inliers, ms, photo: cv.toDataURL('image/jpeg', 0.7) };
+                       inliers: res.inliers, ms, nettete: netteteUtilisee,
+                       photo: cv.toDataURL('image/jpeg', 0.7) };
     }else{
       ST.enAttente = { carte: null, fiabilite: 0, categorie: 'rebut', inliers: res ? res.inliers : 0,
                        ms, photo: cv.toDataURL('image/jpeg', 0.7) };
@@ -13928,7 +14033,7 @@ function stRendreAttente(){
 function stValider(garder){
   const a = ST.enAttente;
   if(a) ST.journal.push({ms:a.ms, fiabilite:a.fiabilite, categorie:a.categorie,
-                         inliers:a.inliers, garde:!!(garder && a.carte)});
+                         inliers:a.inliers, nettete:a.nettete, garde:!!(garder && a.carte)});
   if(a && garder && a.carte) ST.cartes.push(a);
   ST.enAttente = null;
   stRendreAttente();
