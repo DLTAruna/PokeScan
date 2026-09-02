@@ -6136,7 +6136,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 75;
+const VERSION_APP = 76;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13898,24 +13898,32 @@ async function stOuvrir(){
   // OCR coupé pour la durée du scan : voir ST_OCR_NORMAL.
   try{ SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: 99999, OCR_ORB_MS_MAX: 0 }); }catch(e){}
   ST.boucle = true;
+  stBilanSeconde = null;
   ST.retiree = true; ST.coinsCapture = null; ST.presentDepuis = 0; ST.streak = 0; ST.dernierCoins = null;
   stOublierMeilleure();
   stTourner();
   $('st-ouvrir').hidden = true; $('st-fermer').hidden = false;
 }
 
-function stFermer(){
+async function stFermer(){
   ST.boucle = false;
   stOublierMeilleure();
   stArreterBalayage();
   stPlein(false);
-  // L'objectif est éteint : la machine n'a plus qu'à reprendre les cartes douteuses.
-  stSecondeAnalyse();
-  stEnvoyerBilan();   // fin de session : c'est ici qu'on sait ce qu'elle a valu
+  // On éteint AVANT de reprendre les douteuses : le commentaire disait « l'objectif est
+  // éteint » alors que la fermeture venait après. Elle venait après sans conséquence tant
+  // que la seconde analyse n'était pas attendue ; maintenant qu'elle l'est, l'ordre compte.
   stFermerFlux();
   stDessiner(null);
-  stEtat('caméra fermée');
   $('st-ouvrir').hidden = false; $('st-fermer').hidden = true;
+  stEtat('caméra fermée');
+
+  // Et on ATTEND. Sans ce await, le bilan partait avant que la moindre carte ait été
+  // reprise : il comptait donc les « sûres » du premier passage seulement, sur une chaîne
+  // dont j'avais justement retiré l'OCR de départage. Le chiffre a chuté, et je l'ai
+  // d'abord lu comme une régression alors que la mesure avait changé de sens.
+  await stSecondeAnalyse();
+  stEnvoyerBilan();   // fin de session : c'est ici, et seulement ici, qu'on sait ce qu'elle a valu
 }
 
 
@@ -14466,10 +14474,16 @@ function stRendreCompteurs(){
 // rendant la main entre chaque : l'utilisateur vient de revenir à ses listes, l'interface ne
 // doit pas se figer.
 let stSecondeEnCours = false;
+// Ce que la seconde analyse a changé, gardé pour le bilan. Sans cette trace, couper l'OCR
+// pendant le scan est un pari qu'on ne peut ni confirmer ni infirmer : on voit le coût
+// (des cartes qui sortent douteuses) sans jamais voir la contrepartie.
+let stBilanSeconde = null;
 async function stSecondeAnalyse(){
   if(stSecondeEnCours || !ST.aConfirmer.length) return;
   stSecondeEnCours = true;
   const total = ST.aConfirmer.length;
+  const t0 = performance.now();
+  const reprises = [];
   stEtat('seconde analyse : ' + total + ' carte(s) à confirmer…');
   try{
     SCAN_V2.reglagesV2({ OCR_INLIERS_MIN: ST_OCR_NORMAL, OCR_ORB_MS_MAX: ST_OCR_MS_NORMAL });
@@ -14484,6 +14498,9 @@ async function stSecondeAnalyse(){
         cv.width = img.naturalWidth; cv.height = img.naturalHeight;
         cv.getContext('2d').drawImage(img, 0, 0);
         const res = await SCAN_V2.identifierV2(cv, {});
+        reprises.push({ avant:{ cat:e.categorie, fiab:e.fiabilite, inl:e.inliers },
+                        apres:{ cat:res?res.categorie:'rebut', fiab:res?res.fiabilite:0,
+                                inl:res?res.inliers:0, ocr:!!(res && res.ocrLance) } });
         if(stEstSur(res)){
           // Promue : elle rejoint les scannées avec son nouveau verdict.
           ST.pile.push({...e, carte:res.pick, fiabilite:res.fiabilite,
@@ -14500,6 +14517,8 @@ async function stSecondeAnalyse(){
       await new Promise(r => setTimeout(r, 0));
     }
     const promues = ST.aConfirmer.length - restants.length;
+    stBilanSeconde = { n: total, promues, restantes: restants.length,
+                       ms: Math.round(performance.now() - t0), reprises };
     ST.aConfirmer = restants;
     stRendreCompteurs();
     stEtat(promues
@@ -14554,7 +14573,10 @@ function stEnvoyerBilan(){
       moteur:(SCAN_V2.moteurV2 && SCAN_V2.moteurV2()) || '?',
       ms: t[t.length>>1],
       nCartes: j.length,
-      gardees: j.filter(x=>x.garde).length,
+      gardees: j.filter(x=>x.garde).length,          // sûres au premier passage
+      sures: ST.pile.length,                          // sûres au bout du compte
+      aConfirmer: ST.aConfirmer.length,
+      seconde: stBilanSeconde,
       rebuts: j.filter(x=>x.categorie==='rebut').length,
       msMin: t[0], msMax: t[t.length-1],
       // Avec quoi ces chiffres ont-ils été obtenus : modèle, objectif ouvert, zoom appliqué,
@@ -14575,6 +14597,14 @@ $('st-quitter')?.addEventListener('click', stFermer);
 $('st-zoom-moins')?.addEventListener('click', ()=> stZoomer(-1));
 $('st-zoom-plus')?.addEventListener('click', ()=> stZoomer(1));
 $('st-objectif-liste')?.addEventListener('change', function(){ stChoisirObjectif(this.value); });
+
+// Filet : attendre la seconde analyse avant d'envoyer le bilan le rend plus juste, mais
+// ouvre une fenêtre de quelques secondes où quitter l'application perdrait la salve entière.
+// On la sauve à la volée si la page passe en arrière-plan. Envoyer deux fois ne coûte rien :
+// stEnvoyerBilan vide le journal, le second appel ne trouve plus rien à dire.
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState === 'hidden' && ST.journal.length) stEnvoyerBilan();
+});
 
 // ---------------- PANNEAU DE RÉSULTAT LIVE ----------------
 // Affiche le résultat d'identification directement sous la caméra, dès que la lecture
