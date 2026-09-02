@@ -769,6 +769,61 @@
      demandant si ça marche encore. On n'anime donc QUE `transform` et `opacity`, les deux
      propriétés que le compositeur traite sur son propre fil, sans le fil principal.
      La barre de progression suit la même règle : `scaleX`, jamais `width`. */
+  /* ── Éditeur d'un seuil, ouvert depuis sa puce ── */
+  #hud-seuils b.cliquable{ cursor:pointer; }
+  #hud-seuils b.cliquable:active{ transform:scale(.96); }
+  #reglage-popup{
+    position:absolute; inset:0; z-index:30; display:flex;
+    align-items:center; justify-content:center; padding:16px;
+    background:rgba(0,0,0,.55); -webkit-backdrop-filter:blur(3px); backdrop-filter:blur(3px);
+  }
+  #reglage-popup[hidden]{ display:none; }
+  .rp-carte{
+    width:100%; max-width:340px; padding:14px 16px 16px;
+    border-radius:14px; border:1px solid rgba(255,255,255,.18);
+    background:#161b22; color:#e6edf3; box-shadow:0 18px 46px rgba(0,0,0,.6);
+  }
+  .rp-tete{ display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .rp-tete b{ color:#e6c25c; font-size:14px; }
+  .rp-tete button{
+    background:rgba(255,255,255,.08); color:#e6edf3; border:1px solid rgba(255,255,255,.18);
+    border-radius:8px; width:28px; height:28px; font-size:13px; cursor:pointer; flex:none;
+  }
+  #rp-desc{ margin:8px 0 12px; font-size:12px; line-height:1.45; color:#9fb0c0; }
+  .rp-val{ text-align:center; margin-bottom:6px; }
+  #rp-valeur{ font-family:ui-monospace,monospace; font-size:26px; color:#e6c25c; }
+  #reglage-popup input[type=range]{ width:100%; accent-color:#e6c25c; }
+  .rp-bornes{
+    display:flex; justify-content:space-between; font-size:10.5px; color:#7d8b99;
+    font-family:ui-monospace,monospace; margin-top:2px;
+  }
+  #rp-defaut{
+    width:100%; margin-top:13px; padding:9px; border-radius:9px; cursor:pointer;
+    background:rgba(255,255,255,.07); color:#e6edf3; border:1px solid rgba(255,255,255,.16);
+    font-size:12px;
+  }
+  /* ── Bandeau des seuils, toujours visible en plein écran caméra ────────────────────
+     Posé SOUS la rangée de boutons (roue dentée à gauche, croix à droite) et au-dessus du
+     cadre de visée, qui est centré : la carte n'est jamais recouverte. */
+  #hud-seuils{
+    position:absolute; top:54px; left:8px; right:8px; z-index:19;
+    display:none; flex-wrap:wrap; gap:4px 5px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:10px; line-height:1.2;
+    pointer-events:auto; cursor:pointer;
+  }
+  #cam-fullscreen-area.fs #hud-seuils{ display:flex; }
+  #hud-seuils.replie > *:not(.hud-resume){ display:none; }
+  #hud-seuils b{
+    display:inline-flex; align-items:baseline; gap:4px;
+    padding:3px 6px; border-radius:6px; font-weight:600;
+    background:rgba(13,17,23,.72); border:1px solid rgba(255,255,255,.14);
+    -webkit-backdrop-filter:blur(5px); backdrop-filter:blur(5px);
+  }
+  #hud-seuils b i{ font-style:normal; color:#7d8b99; font-weight:400; }
+  #hud-seuils b.ok{ color:#3fb950; border-color:rgba(63,185,80,.42); }
+  #hud-seuils b.ko{ color:#e0553f; border-color:rgba(224,85,63,.45); }
+  #hud-seuils b.neutre{ color:#9fb0c0; }
+  #hud-seuils .hud-resume{ color:#e6c25c; }
   /* ── Atelier de réglage : visible en plein écran caméra, discret le reste du temps ── */
   #atelier-bouton{
     position:absolute; top:10px; left:10px; z-index:21;
@@ -4895,6 +4950,23 @@
              fois pour cette raison — scènes dessinées à plat, puis sans une seule scène vide.
              La ligne de jauges dit en direct POURQUOI ça ne part pas ; c'est ce que le banc
              affichait et qui manquait ici depuis toujours. -->
+        <!-- Bandeau permanent : chaque condition du déclenchement, sa mesure et son seuil,
+             en vert ou en rouge. C'est la question de Nikos — « pour comprendre ce qui pose
+             problème » — et elle est juste : jusqu'ici il fallait ouvrir un panneau pour
+             savoir pourquoi ça ne partait pas, donc lâcher la carte des yeux au moment même
+             où il aurait fallu regarder. Un appui le replie. -->
+        <div id="hud-seuils" title="Appuie pour replier"></div>
+        <!-- Éditeur d'un seul seuil, ouvert en touchant sa puce dans le bandeau. -->
+        <div id="reglage-popup" hidden>
+          <div class="rp-carte">
+            <div class="rp-tete"><b id="rp-titre"></b><button id="rp-fermer" type="button">✕</button></div>
+            <p id="rp-desc"></p>
+            <div class="rp-val"><span id="rp-valeur"></span></div>
+            <input type="range" id="rp-curseur">
+            <div class="rp-bornes"><span id="rp-min"></span><span id="rp-max"></span></div>
+            <button id="rp-defaut" type="button">Remettre la valeur par défaut</button>
+          </div>
+        </div>
         <button id="atelier-bouton" type="button" title="Réglages en direct">⚙</button>
         <div id="atelier" hidden>
           <div class="at-tete">
@@ -5895,7 +5967,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 50;
+const VERSION_APP = 52;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -10740,7 +10812,7 @@ let v2PresentDepuis = 0;
 // seule la taille compte. Et l'utilisateur, lui, voit parfaitement sa carte : d'où « je la
 // vois clairement mais ça ne déclenche pas ». Un ultra grand-angle à 0,6× suffit à faire
 // passer une carte de 28 % à 10 % du cadre, soit du confort à la zone de panne.
-const AIRE_CONFORT_V2 = 0.15, AIRE_LIMITE_V2 = 0.08;
+const AIRE_CONFORT_V2 = 0.15; let AIRE_LIMITE_V2 = 0.08;
 function airePartCarte(c){
   const p = [c.tl, c.tr, c.br, c.bl];
   let a = 0;
@@ -12634,6 +12706,9 @@ const ATELIER_REGLAGES = [
   {n:'RECADRE_APRES', l:'Rattrapage après N images', min:0, max:30, pas:1,
    a:'Images sans détection avant de retenter sur un recadrage central. Bas = rattrape les cartes lointaines, mais coûte une détection.',
    get:()=>RECADRE_APRES, set:v=>RECADRE_APRES=v},
+  {n:'AIRE_LIMITE_V2', l:'Aire minimale de la carte', min:0.01, max:0.5, pas:0.01,
+   a:'En dessous, le cadre passe au rouge (« rapproche-toi »). Ne bloque plus la capture depuis la V.40, c’est un repère.',
+   get:()=>AIRE_LIMITE_V2, set:v=>AIRE_LIMITE_V2=v},
   {n:'GUIDE_H', l:'Hauteur du cadre de visée', min:0.3, max:0.95, pas:0.01,
    a:'Repère visuel seulement. Le détecteur veut une carte à plus de 55 % de la hauteur.',
    get:()=>GUIDE_H, set:v=>GUIDE_H=v},
@@ -12713,27 +12788,114 @@ function atelierRafraichir(){
 
 // Jauges : appelées à chaque tour de boucle. Elles disent l'état de CHAQUE condition, pour
 // qu'un non-déclenchement cesse d'être un mystère.
+// Deux sorties, nourries par le même état : le bandeau permanent en haut de la caméra, et le
+// bloc de texte du panneau de réglages quand il est ouvert. Le bandeau est le principal —
+// devoir ouvrir un panneau pour savoir pourquoi ça ne part pas oblige à lâcher la carte des
+// yeux au moment précis où il faut regarder.
 let atelierDernierRendu = 0;
 function majJaugesAtelier(d){
-  const el = $('atelier-jauges'), pan = $('atelier');
-  if(!el || !pan || pan.hidden) return;
   const now = performance.now();
   if(now - atelierDernierRendu < 120) return;   // 8 Hz : lisible, et sans coût
   atelierDernierRendu = now;
+
+  const hud = $('hud-seuils');
+  const el = $('atelier-jauges'), pan = $('atelier');
+  const panneauOuvert = pan && !pan.hidden;
+  if(!hud && !panneauOuvert) return;
+
+  // Une puce = une mesure, son seuil, et un verdict. `n` null → pas de verdict, juste une
+  // valeur de contexte (part du cadre, durée de tenue).
+  const puces = [];
+  // `reglage` : le seuil que cette puce commande. Toucher la puce ouvre son curseur —
+  // on corrige ce qui coince là où on le voit, sans passer par le menu ni lâcher la carte.
+  const puce = (nom, valeur, seuil, verdict, reglage) => puces.push({nom, valeur, seuil, verdict, reglage});
+
+  // Sans détection il n'y a rien à comparer : on l'annonce en clair plutôt que d'aligner
+  // des puces vides, et le résumé porte le message au lieu de le répéter.
+  let resumeForce = null;
   if(!d || !d.vue){
-    el.innerHTML = '<span class="ko">aucune carte vue</span>  score '
-      + (d && d.score != null ? d.score.toFixed(2) : '—') + '/' + MIN_SCORE.toFixed(2)
-      + '\nabsence ' + v2AbsenceStreak + ' images';
-    return;
+    resumeForce = '✗ aucune carte vue';
+    puce('score', d && d.score != null ? d.score.toFixed(2) : '—', MIN_SCORE.toFixed(2), null, 'MIN_SCORE');
+    puce('absence', v2AbsenceStreak + ' img', null, null, 'RECADRE_APRES');
+  }else{
+    // Le seuil en vigueur dépend de la patience : on ouvre celui qui s'applique à cet instant.
+    puce('score',  d.score.toFixed(2), d.seuilScore.toFixed(2), d.score >= d.seuilScore,
+         d.tenue >= V2_PATIENCE_DOUCE ? 'MIN_SCORE' : 'SCORE_STRICT');
+    puce('bougé',  d.bouge === Infinity ? 'inf' : d.bouge.toFixed(3),
+                   d.seuilBouge === Infinity ? 'inf' : d.seuilBouge.toFixed(3), d.stable, 'V2_BOUGE_BASE');
+    puce('sym',    d.sym.toFixed(3),  SYM_MAX.toFixed(2),  d.sym  <= SYM_MAX,  'SYM_MAX');
+    puce('format', d.prop.toFixed(3), PROP_MAX.toFixed(2), d.prop <= PROP_MAX, 'PROP_MAX');
+    puce('cadre',  Math.round(d.aire * 100) + '%', null, d.aire >= AIRE_LIMITE_V2, 'AIRE_LIMITE_V2');
+    puce('tenue',  (d.tenue / 1000).toFixed(1) + 's', null, null, 'V2_PATIENCE_DOUCE');
+    puce('verrou', d.dejaLue ? 'fermé' : 'ouvert', null, !d.dejaLue);
   }
-  const oui = (b) => '<span class="' + (b ? 'ok' : 'ko') + '">' + (b ? 'ok' : 'non') + '</span>';
-  el.innerHTML =
-      'score  ' + d.score.toFixed(2) + ' / ' + d.seuilScore.toFixed(2) + '   ' + oui(d.score >= d.seuilScore)
-    + '\nbouge  ' + (d.bouge === Infinity ? '   inf' : d.bouge.toFixed(3)) + ' / ' + (d.seuilBouge === Infinity ? 'inf' : d.seuilBouge.toFixed(3)) + '   ' + oui(d.stable)
-    + '\nsym    ' + d.sym.toFixed(3) + ' / ' + SYM_MAX.toFixed(2) + '   ' + oui(d.sym <= SYM_MAX)
-    + '\nformat ' + d.prop.toFixed(3) + ' / ' + PROP_MAX.toFixed(2) + '   ' + oui(d.prop <= PROP_MAX)
-    + '\ncadre  ' + Math.round(d.aire * 100) + ' %' + (d.aire < AIRE_LIMITE_V2 ? '  (trop petite)' : '')
-    + '\ntenue  ' + (d.tenue / 1000).toFixed(1) + ' s    verrou ' + oui(!d.dejaLue);
+
+  if(hud){
+    // Résumé en tête : ce qui manque, en un mot. Quand tout est vert, il dit « prêt ».
+    const manque = puces.filter(p => p.verdict === false).map(p => p.nom);
+    const resume = resumeForce || (manque.length ? '✗ ' + manque.join(' ') : '✓ prêt');
+    hud.innerHTML = '<b class="hud-resume">' + resume + '</b>' + puces.map(p =>
+      '<b data-reglage="' + (p.reglage || '') + '" class="' + (p.reglage ? 'cliquable ' : '') + (p.verdict === null ? 'neutre' : (p.verdict ? 'ok' : 'ko')) + '">'
+      + '<i>' + p.nom + '</i>' + p.valeur
+      + (p.seuil != null ? '<i>/' + p.seuil + '</i>' : '') + '</b>').join('');
+  }
+
+  if(panneauOuvert && el){
+    el.innerHTML = puces.map(p =>
+      p.nom.padEnd(7) + String(p.valeur).padStart(7)
+      + (p.seuil != null ? ' / ' + p.seuil : '')
+      + (p.verdict === null ? '' : '  <span class="' + (p.verdict ? 'ok' : 'ko') + '">'
+         + (p.verdict ? 'ok' : 'non') + '</span>')).join('\n');
+  }
+}
+
+
+// ── Éditeur d'un seuil, ouvert en touchant sa puce ────────────────────────────────────────
+// Le bandeau dit ce qui coince ; il fallait encore ouvrir le menu, faire défiler, retrouver
+// le bon curseur — et pendant ce temps la carte n'est plus devant l'objectif. On corrige donc
+// là où on lit : la puce rouge est le bouton de son propre réglage.
+let rpCourant = null;
+function ouvrirReglage(nom){
+  const r = ATELIER_REGLAGES.find(x => x.n === nom);
+  const pop = $('reglage-popup');
+  if(!r || !pop) return;
+  // Les défauts sont relevés à la première ouverture du menu ; si on arrive ici avant, on
+  // les note maintenant, sinon « remettre la valeur par défaut » n'aurait rien à remettre.
+  if(ATELIER_DEFAUTS[r.n] === undefined) ATELIER_DEFAUTS[r.n] = r.get();
+  rpCourant = r;
+  $('rp-titre').textContent = r.l;
+  $('rp-desc').textContent = r.a;
+  $('rp-min').textContent = 'min ' + atelierFormat(r.min, r.pas);
+  $('rp-max').textContent = atelierFormat(r.max, r.pas) + ' max';
+  const c = $('rp-curseur');
+  c.min = r.min; c.max = r.max; c.step = r.pas; c.value = r.get();
+  $('rp-valeur').textContent = atelierFormat(r.get(), r.pas);
+  pop.hidden = false;
+}
+function fermerReglage(){ $('reglage-popup').hidden = true; rpCourant = null; }
+
+function brancherReglagePopup(){
+  const pop = $('reglage-popup'); if(!pop || pop.dataset.pret) return;
+  pop.dataset.pret = '1';
+  $('rp-curseur').addEventListener('input', function(){
+    if(!rpCourant) return;
+    const v = parseFloat(this.value);
+    rpCourant.set(v);
+    $('rp-valeur').textContent = atelierFormat(v, rpCourant.pas);
+    atelierEnregistrer();
+    atelierRafraichir();     // le menu, s'il a déjà été construit, doit suivre
+  });
+  $('rp-defaut').addEventListener('click', ()=>{
+    if(!rpCourant || ATELIER_DEFAUTS[rpCourant.n] === undefined) return;
+    const v = ATELIER_DEFAUTS[rpCourant.n];
+    rpCourant.set(v);
+    $('rp-curseur').value = v;
+    $('rp-valeur').textContent = atelierFormat(v, rpCourant.pas);
+    atelierEnregistrer(); atelierRafraichir();
+  });
+  $('rp-fermer').addEventListener('click', fermerReglage);
+  // Toucher le fond ferme ; toucher la carte ne doit pas, d'où le test sur la cible.
+  pop.addEventListener('click', e => { if(e.target === pop) fermerReglage(); });
 }
 
 function atelierBrancher(){
@@ -12744,6 +12906,14 @@ function atelierBrancher(){
     atelierConstruire(); atelierRafraichir();
     pan.hidden = !pan.hidden;
   });
+  // Le bandeau se replie d'un appui : il reste le résumé, qui suffit une fois qu'on a
+  // compris ce qui coince, et l'image redevient dégagée.
+  $('hud-seuils')?.addEventListener('click', function(e){
+    const puce = e.target.closest('b[data-reglage]');
+    if(puce && puce.dataset.reglage){ ouvrirReglage(puce.dataset.reglage); return; }
+    this.classList.toggle('replie');   // hors d'une puce : on replie
+  });
+  brancherReglagePopup();
   $('atelier-fermer')?.addEventListener('click', ()=>{ pan.hidden = true; });
   $('atelier-defaut')?.addEventListener('click', ()=>{
     for(const r of ATELIER_REGLAGES) if(ATELIER_DEFAUTS[r.n] !== undefined) r.set(ATELIER_DEFAUTS[r.n]);
