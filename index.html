@@ -6128,7 +6128,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 72;
+const VERSION_APP = 73;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -13850,12 +13850,35 @@ const ST_GUIDE_H = 0.45;
 // trop près et la réussite retombe (87 % à douze centimètres) ; en deçà de 0,26 le détecteur
 // commence à ne plus rien voir. Entre les deux, de seize à trente centimètres, tout se tient
 // entre 89 et 94 %.
-const ST_TROP_PRES = 0.60, ST_TROP_LOIN = 0.26;
+// ── UNE SEULE BORNE, ET C'EST LA PETITE ─────────────────────────────────────────────────
+// J'avais posé une borne haute — « trop près » au-delà de 60 % de la hauteur — sur la foi
+// d'une seule cellule à douze centimètres et d'une explication que je n'avais pas vérifiée :
+// que trop près, le détecteur n'aurait plus de fond où lire un contour. Nikos a demandé sur
+// quoi elle reposait, et la réponse honnête est : pas grand-chose. Mes propres mesures la
+// contredisent.
+//     détection seule, cartes ordinaires, n=34 par distance
+//        9 cm (81 % de l'image)  97 %   ← le meilleur score jamais relevé
+//       10 cm (73 %)             94 %
+//       11 cm (67 %)             91 %
+//       12 cm (61 %)             88 %
+//       14 cm (52 %)             94 %
+//       20 cm (37 %)             94 %
+// Il y a un creux modeste autour de onze-douze centimètres, retrouvé sur deux séries sur
+// trois — et l'inverse à neuf, où je fais mon meilleur résultat. Je n'ai jamais testé plus
+// près.
+// L'asymétrie, elle, est franche et documentée : à trente centimètres la détection seule
+// tombe à 48 % et seul le rattrapage la sauve. Loin est un mur, près coûte au pire quelques
+// points. On n'alerte donc que sur le mur.
+// ⚠️ Il reste un cas où la proximité casse vraiment : quand la carte DÉBORDE du cadre, ses
+// coins sortent de l'image et le détecteur rend des coins faux avec une grande confiance —
+// 0,26 d'erreur de position pour un score de 0,97, mesuré. Mais cela n'arrive pas à 60 % de
+// la hauteur, cela arrive au-delà de cent, et cela se détecte à ce que les coins touchent le
+// bord — pas à un seuil de taille déduit.
+const ST_TROP_LOIN = 0.26;
 // Les mêmes bornes, exprimées en aire : c'est ce que la boucle sait mesurer. Les dériver
 // plutôt que de les ressaisir évite que le dessin et le verdict divergent — ils l'avaient
 // déjà fait une fois, chacun avec ses propres nombres.
 const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
-const ST_AIRE_PRES = ST_TROP_PRES*ST_TROP_PRES/(88/63);
 
 
 // ── LE CADRE SUIT LA CARTE AU LIEU DE SAUTER ─────────────────────────────────────────────
@@ -14038,48 +14061,24 @@ function stDessiner(coins, etat, texte){
   const ech = Math.min(cv.width / vw, cv.height / vh);
   const iw = vw * ech, ih = vh * ech;
   const ix = (cv.width - iw)/2, iy = (cv.height - ih)/2;
-  // ── LE REPÈRE EST UNE ZONE, PAS UNE CIBLE ───────────────────────────────────────────
-  // Idée de Nikos, et le banc lui donne raison : entre seize et trente centimètres,
-  // l'identification reste plate entre 89 et 94 %. Il n'y a pas de taille à viser, il y a
-  // une plage large. Un cadre unique sur-spécifie une contrainte qui n'existe pas — et
-  // c'est très exactement ce qui l'a fait rapprocher la carte à l'excès pendant plusieurs
-  // versions, jusqu'à travailler au creux de la courbe.
-  // On dessine donc les deux bornes MESURÉES : au-delà de la grande on est trop près, en
-  // deçà de la petite on est trop loin. Tout ce qui tombe entre les deux convient, et le
-  // voile discret entre elles le dit sans avoir à l'écrire.
-  const bornes = [
-    [ST_TROP_PRES, 'rgba(255,255,255,.34)'],   // au-delà : trop près
-    [ST_TROP_LOIN, 'rgba(255,255,255,.34)'],   // en deçà : trop loin
-  ];
+  // ── LE REPÈRE DIT UN MINIMUM, PAS UNE CIBLE ─────────────────────────────────────────
+  // Une seule borne, la petite : « au moins cette taille ». Tout ce qui est plus grand
+  // convient, y compris une carte qui remplit l'écran. Le rectangle est donc un plancher, et
+  // les équerres marquent la taille la plus confortable — 94 % à seize centimètres — sans
+  // rien interdire au-dessus.
   const rect = f => { const h = ih*f, w = h/CARD_RATIO;
     return {x: ix + (iw-w)/2, y: iy + (ih-h)/2, w, h}; };
-  const grand = rect(ST_TROP_PRES), petit = rect(ST_TROP_LOIN);
+  const plancher = rect(ST_TROP_LOIN);
+  g.setLineDash([7, 6]);
+  g.strokeStyle = coins ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.34)';
+  g.lineWidth = 2;
+  g.strokeRect(plancher.x, plancher.y, plancher.w, plancher.h);
+  g.setLineDash([]);
 
-  // Le voile : peint sur le grand rectangle puis découpé du petit, il ne subsiste que la
-  // bande. C'est elle qui porte le message — « amène le bord de ta carte là-dedans ».
-  g.save();
-  g.globalAlpha = coins ? 0.05 : 0.11;
-  g.fillStyle = '#fff';
-  g.beginPath();
-  g.rect(grand.x, grand.y, grand.w, grand.h);
-  g.rect(petit.x, petit.y, petit.w, petit.h);
-  g.fill('evenodd');
-  g.restore();
-
-  g.lineWidth = 2; g.lineCap = 'round'; g.setLineDash([]);
-  for(const [f, couleur] of bornes){
-    const r = rect(f);
-    g.strokeStyle = coins ? 'rgba(255,255,255,.18)' : couleur;
-    g.strokeRect(r.x, r.y, r.w, r.h);
-  }
-
-  // Les équerres marquent le milieu de la plage, là où la mesure est la meilleure — 94 % à
-  // seize centimètres. C'est une indication, pas une consigne : rien n'oblige à s'y tenir,
-  // et le reste de la bande marche presque aussi bien.
   const mid = rect(ST_GUIDE_H);
   const eq = Math.min(mid.w, mid.h) * 0.14;
-  g.strokeStyle = coins ? 'rgba(255,255,255,.26)' : 'rgba(255,255,255,.62)';
-  g.lineWidth = 3;
+  g.strokeStyle = coins ? 'rgba(255,255,255,.24)' : 'rgba(255,255,255,.58)';
+  g.lineWidth = 3; g.lineCap = 'round';
   for(const [x, y, dx, dy] of [[mid.x,mid.y,1,1],[mid.x+mid.w,mid.y,-1,1],
                                [mid.x+mid.w,mid.y+mid.h,-1,-1],[mid.x,mid.y+mid.h,1,-1]]){
     g.beginPath();
@@ -14165,7 +14164,6 @@ async function stTourner(){
         let etat = 'pret', etiquette = null;
         if(!ST.retiree){ etat = 'ko'; etiquette = 'déjà lue — retire-la'; }
         else if(aireVue < ST_AIRE_LOIN){ etat = 'ko'; etiquette = 'trop loin'; }
-        else if(aireVue > ST_AIRE_PRES){ etat = 'ko'; etiquette = 'trop près'; }
         else if(d.score < seuilScore){ etat = 'presque'; etiquette = 'je cherche…'; }
         else if(!stable){ etat = 'presque'; etiquette = 'stabilise'; }
         // Tant que la carte est là, on retient la plus nette. Rien n'est rejeté : quand le
