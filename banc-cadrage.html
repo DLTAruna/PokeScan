@@ -310,24 +310,22 @@ function extraire(source, coins, W, H){
 // il n'y a plus de creux. On ne corrige pas sur quinze.
 let REGLAGES = { zoom: 1.0, recadres: [0.55] };
 const SITUATIONS = [
-  // ⚠️ LE CAS NOMINAL D'ABORD. Nikos : « il n'y a jamais de test avec une main proche et une
-  // carte qui remplit bien le cadre ». Il a raison, et c'est une faute de conception : le
-  // repère demande 62 % de la hauteur, soit douze centimètres, et mes situations commençaient
-  // à quinze — où la carte n'occupe que 49 %. Je testais donc tout SAUF l'usage prescrit.
-  {nom:'10 cm, remplit tout', o:{distance:10, rot:0,  incl:4,  pitch:3}},
-  {nom:'12 cm, dans le cadre',o:{distance:12, rot:0,  incl:5,  pitch:4}},
-  {nom:'12 cm, tenue à deux doigts', o:{distance:12, rot:3, incl:7, pitch:5,
-     doigts:[[0.12,0.86],[0.88,0.88]]}},
-  {nom:'15 cm, de face',      o:{distance:15, rot:0,  incl:5,  pitch:4}},
-  {nom:'20 cm, de face',      o:{distance:20, rot:0,  incl:5,  pitch:4}},
-  {nom:'25 cm, de face',      o:{distance:25, rot:0,  incl:6,  pitch:4}},
-  {nom:'30 cm, de face',      o:{distance:30, rot:0,  incl:6,  pitch:5}},
-  {nom:'20 cm, inclinée 15°', o:{distance:20, rot:8,  incl:16, pitch:10}},
-  {nom:'20 cm, inclinée 30°', o:{distance:20, rot:12, incl:30, pitch:16}},
-  {nom:'20 cm, décentrée',    o:{distance:20, rot:5,  incl:8,  pitch:5, dx:0.16, dy:0.09}},
-  {nom:'25 cm, pénombre',     o:{distance:25, rot:5,  incl:8,  pitch:5, lumiere:0.55}},
-  {nom:'20 cm, main qui bouge',o:{distance:20, rot:6, incl:10, pitch:7, flou:1.8}},
-  {nom:'20 cm, fond encombré',o:{distance:20, rot:6,  incl:9,  pitch:6, fond:'encombré'}},
+  // Recentrées sur le repère de la V.67 : 0,45 de hauteur, soit seize à dix-huit centimètres.
+  // Les extrêmes restent, parce qu'un utilisateur ne vise jamais juste et qu'il faut savoir
+  // ce qu'il en coûte de part et d'autre.
+  {nom:'12 cm, trop près',    o:{distance:12, rot:0,  incl:5,  pitch:4}},
+  {nom:'16 cm, dans le repère',o:{distance:16, rot:0, incl:5,  pitch:4}},
+  {nom:'18 cm, dans le repère',o:{distance:18, rot:0, incl:6,  pitch:4}},
+  {nom:'16 cm, à deux doigts',o:{distance:16, rot:3,  incl:7,  pitch:5, doigts:[[0.12,0.86],[0.88,0.88]]}},
+  {nom:'22 cm, un peu loin',  o:{distance:22, rot:0,  incl:6,  pitch:5}},
+  {nom:'30 cm, bras tendu',   o:{distance:30, rot:4,  incl:8,  pitch:6}},
+  {nom:'17 cm, inclinée 15°', o:{distance:17, rot:8,  incl:16, pitch:10}},
+  {nom:'17 cm, inclinée 30°', o:{distance:17, rot:12, incl:30, pitch:16}},
+  {nom:'17 cm, décentrée',    o:{distance:17, rot:5,  incl:8,  pitch:5, dx:0.16, dy:0.09}},
+  {nom:'17 cm, pénombre',     o:{distance:17, rot:5,  incl:8,  pitch:5, lumiere:0.5}},
+  {nom:'17 cm, main qui bouge',o:{distance:17, rot:6, incl:10, pitch:7, flou:1.8}},
+  {nom:'17 cm, fond encombré',o:{distance:17, rot:6,  incl:9,  pitch:6, fond:'encombré'}},
+  {nom:'17 cm, sur table claire',o:{distance:17, rot:5, incl:8, pitch:5, fond:'clair'}},
 ];
 
 // ── Boucle ───────────────────────────────────────────────────────────────────────────────
@@ -467,20 +465,40 @@ async function lancer(){
   await V2.initV2({ onProgress:(p,m)=> { $('etat').textContent = m || ('chargement ' + Math.round(p*100) + ' %'); } })
     .catch(e => { $('etat').textContent = 'index indisponible : ' + e.message; });
 
-  const cat = V2.catalogueV2().filter(c => c.image);
+  const tout = V2.catalogueV2().filter(c => c.image);
+  // Cartes spéciales — full art, SAR, or, secrètes — repérées par leur numéro au-delà du
+  // total imprimé du set, faute de rareté dans le catalogue. Ce sont celles sans bordure
+  // blanche, et donc les plus dures pour un détecteur de contours : les mélanger à parts
+  // égales évite un banc qui ne mesurerait que le cas facile.
+  const parSet = {};
+  for(const k of tout){
+    const n = parseInt(String(k.numero).replace(/D/g,''), 10);
+    if(Number.isFinite(n)) (parSet[k.setId] = parSet[k.setId] || []).push({...k, n});
+  }
+  const speciales = [];
+  for(const l of Object.values(parSet)){
+    if(l.length < 40) continue;
+    const max = Math.max(...l.map(x => x.n));
+    for(const k of l) if(k.n > max*0.88) speciales.push(k);
+  }
+  const ordinaires = tout.filter(k => !speciales.some(sp => sp.cle === k.cle));
+  journal('cartes : ' + tout.length + ' dont ' + speciales.length + ' spéciales — tirage à parts égales');
+  const tirer = () => Math.random() < 0.5
+    ? {c: speciales[Math.floor(Math.random()*speciales.length)], type:'spéciale'}
+    : {c: ordinaires[Math.floor(Math.random()*ordinaires.length)], type:'ordinaire'};
   const nCartes = +$('n').value || 200, pas = +$('pas').value || 10;
-  journal('catalogue : ' + cat.length + ' cartes · ' + SITUATIONS.length + ' situations par carte');
+  journal(SITUATIONS.length + ' situations par carte');
 
   let fait = 0;
   for(let i = 0; i < nCartes && !arret; i++){
-    const carte = cat[Math.floor(Math.random()*cat.length)];
+    const {c: carte, type} = tirer();
     let img;
     try{ img = await chargerIllustration(carte.image); }
     catch(e){ journal('image indisponible : ' + carte.cle); continue; }
 
     for(const s of SITUATIONS){
       if(arret) break;
-      try{ resultats.push(await passer(carte, img, s)); }
+      try{ resultats.push({...(await passer(carte, img, s)), type}); }
       catch(e){ journal('scène ratée (' + s.nom + ') : ' + e.message); }
       fait++;
       $('etat').textContent = fait + ' scènes · ' + (i+1) + '/' + nCartes + ' cartes · '
@@ -499,12 +517,24 @@ async function lancer(){
 // Volontairement conservateur. Un banc qui se règle lui-même trop vite finit par optimiser
 // son propre bruit — c'est ce qui m'est arrivé sur le seuil de symétrie, calé deux fois sur
 // des données qui ne pouvaient pas le trancher.
+// Ce que le palier doit dire : où ça coince, et si l'écart tient la route ou n'est que du
+// bruit. Un banc qui se corrige tout seul trop vite optimise son propre bruit — j'ai failli
+// le faire deux fois dans cette session, sur un creux à douze centimètres qui a disparu en
+// passant de quinze à trente-quatre échantillons. On rapporte donc, on ne décide pas.
 async function examiner(nCartes){
-  const recents = resultats.slice(-SITUATIONS.length * 10);
-  const loin = recents.filter(r => r.partHauteur < 0.45);
-  const tauxLoin = loin.length ? loin.filter(r => r.vu).length / loin.length : 1;
-  journal('— après ' + nCartes + ' cartes : ' + Math.round(100*recents.filter(r=>r.juste).length/recents.length)
-    + ' % identifiées, dont ' + Math.round(100*tauxLoin) + ' % vues au-delà de 25 cm');
+  const par = {};
+  for(const r of resultats){
+    par[r.situation] = par[r.situation] || {n:0, juste:0};
+    par[r.situation].n++; if(r.juste) par[r.situation].juste++;
+  }
+  const classe = Object.entries(par)
+    .map(([k,v]) => ({k, t: v.juste/v.n, n: v.n}))
+    .sort((x,y) => x.t - y.t);
+  const pire = classe.slice(0,3).map(x => x.k + ' ' + Math.round(x.t*100) + ' % (n=' + x.n + ')');
+  const sp = resultats.filter(r => r.type === 'spéciale'), or = resultats.filter(r => r.type === 'ordinaire');
+  const pct = l => l.length ? Math.round(100*l.filter(r=>r.juste).length/l.length) + ' %' : '—';
+  journal('— après ' + nCartes + ' cartes · ordinaires ' + pct(or) + ' · spéciales ' + pct(sp)
+    + '  |  plus faibles : ' + pire.join(' · '));
 }
 
 function chargerIllustration(base){
