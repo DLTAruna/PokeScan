@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 109;
+const VERSION_APP = 110;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14949,6 +14949,37 @@ function xxReserveBas(){
 
 function xxEtat(t){ const e = $('xx-etat'); if(e) e.textContent = t; }
 
+// ── POURQUOI LE MOTEUR EST CELUI-LÀ, ET DANS QUEL ÉTAT EST L'APPAREIL ─────────────────
+// La salve du 3 septembre au soir a rendu « moteur = wasm/q8 » : le téléphone n'utilise pas
+// WebGPU. Reste à savoir POURQUOI, et scan-v2 le sait déjà — diagV2() garde « navigator.gpu=…
+// adapter=… » puis la raison de chaque tentative échouée. Ce n'était relayé qu'à l'atelier.
+//
+// Nikos avance une hypothèse : son Samsung était sous les vingt pour cent de batterie, et
+// l'économiseur d'énergie de l'appareil bride le processeur graphique — Chrome peut alors
+// refuser l'adaptateur. Le journal ne peut ni la confirmer ni l'infirmer : le dernier relevé
+// de batterie datait de sept heures avant. Il est donc pris à chaque capture, avec la
+// mention de la charge, pour que la corrélation se lise au lieu de se supposer.
+let xxBatterie = null;
+async function xxLireBatterie(){
+  try{
+    if(!navigator.getBattery) return null;
+    const b = await navigator.getBattery();
+    xxBatterie = { pct: Math.round(b.level * 100), charge: !!b.charging };
+  }catch(e){ xxBatterie = null; }
+  return xxBatterie;
+}
+
+let xxDiagMoteurEnvoye = false;
+function xxDiagMoteur(){
+  if(xxDiagMoteurEnvoye) return;
+  try{
+    const d = window.SCAN_V2 && SCAN_V2.diagV2 && SCAN_V2.diagV2();
+    if(!d || !d.length) return;
+    xxDiagMoteurEnvoye = true;
+    diagPush('err', {msg: 'XX moteur — ' + d.join(' | ').slice(0, 400)});
+  }catch(e){}
+}
+
 // ── LE DÉBOGAGE : pourquoi ça ne déclenche pas ─────────────────────────────────────────
 // Trois conditions, et trois seulement, retiennent la capture : le score du détecteur, la
 // stabilité de la carte entre deux images, et le fait que la carte précédente ait été
@@ -15431,7 +15462,10 @@ async function xxCapturer(){
                // Ce que le détecteur rendait à l'instant du déclenchement : sans ces deux
                // nombres, tout débat sur les seuils se tient à l'aveugle.
                score: XX.dernierDebug && XX.dernierDebug.score,
-               bouge: XX.dernierDebug && XX.dernierDebug.bouge };
+               bouge: XX.dernierDebug && XX.dernierDebug.bouge,
+               batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge };
+    xxDiagMoteur();
+    xxLireBatterie();
 
     xxDetails(e);
   }catch(err){ xxEtat('capture : ' + err.message); }
@@ -15876,6 +15910,7 @@ async function xxOuvrir(){
   if(XX.flux) return;
   xxEtat('ouverture de la caméra…');
   if(!await xxFlux(null)) return;
+  await xxLireBatterie();
   await xxMajObjectifs();
   xxPlein(true);
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
