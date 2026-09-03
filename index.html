@@ -831,17 +831,24 @@
   @media (prefers-reduced-motion: reduce){ #xx-photo.pose{ animation:none; } }
 
   /* La pile. */
+  /* Jaune, la couleur du mode « vendeur » : c'est le bouton qui compte ce qu'on ramasse. */
   #xx-pile{ position:absolute; top:10px; right:10px; z-index:14;
-    display:flex; align-items:center; gap:8px; padding:8px 14px;
-    border-radius:999px; cursor:pointer; font-size:13px; color:#e6edf3;
-    border:1px solid rgba(255,255,255,.2); background:rgba(13,17,23,.85);
+    display:flex; align-items:center; gap:7px; padding:8px 14px 8px 11px;
+    border-radius:999px; cursor:pointer; font-size:13px; color:#1a1206; font-weight:700;
+    border:1px solid rgba(255,255,255,.28);
+    background:linear-gradient(135deg,#ffe066,var(--mode-vendeur) 60%,var(--accent-dark));
+    box-shadow:0 4px 14px rgba(255,203,5,.28);
     -webkit-tap-highlight-color:transparent; transition:transform .12s ease; }
   #xx-pile:active{ transform:scale(.94); }
   #xx-pile[hidden]{ display:none; }
-  #xx-pile.alerte{ border-color:rgba(240,112,92,.6); }
+  #xx-pile.alerte{ box-shadow:0 4px 14px rgba(240,112,92,.45); border-color:rgba(200,50,35,.6); }
+  .xx-pile-ico{ width:17px; height:17px; flex:none; opacity:.85; }
   #xx-pile b{ font-variant-numeric:tabular-nums; font-size:14px; }
-  #xx-pile em{ font-style:normal; color:#8fe0a0; font-size:12px; font-variant-numeric:tabular-nums; }
+  #xx-pile em{ font-style:normal; color:#4a3a06; font-size:12px; font-weight:700;
+    font-variant-numeric:tabular-nums; }
   #xx-pile em:empty{ display:none; }
+  #xx-pile.bond{ animation:xx-bond .4s cubic-bezier(.2,1.5,.4,1); }
+  @keyframes xx-bond{ 0%{transform:scale(1);} 35%{transform:scale(1.14);} 100%{transform:scale(1);} }
 
   #xx-quitter{ position:absolute; top:10px; left:10px; z-index:15;
     width:36px; height:36px; border-radius:50%; cursor:pointer; display:none;
@@ -866,6 +873,39 @@
     box-shadow:0 6px 22px rgba(0,0,0,.45); }
   body.xx-plein #xx-fiche{ background:rgba(10,13,18,.72); border-color:rgba(255,255,255,.18); }
   #xx-fiche[hidden]{ display:none; }
+  /* ── LISERÉ TOURNANT, JAUNE ET VIOLET ──────────────────────────────────────────────
+     Les deux couleurs du site — l'or du mode vendeur, le violet du mode collectionneur.
+     Un dégradé conique qui tourne lentement : un liseré fixe ferait décoration, celui-ci
+     dit que la fiche est vivante, qu'une carte vient d'y arriver.
+     Fait au masque plutôt qu'à la bordure : `border-image` ne suit pas les coins arrondis,
+     et un second élément posé dessus mangerait les clics. Deux pixels, pas plus — au-delà
+     ça cesse d'être un liseré. */
+  @property --xx-angle{ syntax:'<angle>'; initial-value:0deg; inherits:false; }
+  #xx-fiche::after{
+    content:''; position:absolute; inset:0; border-radius:13px; padding:1.5px;
+    background:conic-gradient(from var(--xx-angle),
+      var(--mode-vendeur), var(--mode-collec), var(--mode-vendeur));
+    -webkit-mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor; mask:linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    mask-composite:exclude;
+    animation:xx-tourne 5.5s linear infinite;
+    pointer-events:none;
+  }
+  @keyframes xx-tourne{ to{ --xx-angle:360deg; } }
+  /* Le halo, derrière : même dégradé, flouté. Il vit hors de la fiche parce que les deux
+     pseudo-éléments de celle-ci sont déjà pris — filigrane et liseré. */
+  #xx-halo{
+    position:absolute; left:8px; right:8px; bottom:8px; height:100px; z-index:11;
+    border-radius:16px; pointer-events:none;
+    background:conic-gradient(from var(--xx-angle),
+      var(--mode-vendeur), var(--mode-collec), var(--mode-vendeur));
+    filter:blur(13px); opacity:.42;
+    animation:xx-tourne 5.5s linear infinite;
+  }
+  #xx-halo[hidden]{ display:none; }
+  @media (prefers-reduced-motion: reduce){
+    #xx-fiche::after, #xx-halo{ animation:none; }
+  }
   /* ── FILIGRANE DE LA CARTE LUE ─────────────────────────────────────────────────────
      La carte qu'on vient de scanner, en grand et presque effacée, sous le texte. Elle dit
      de quelle carte on parle avant même qu'on ait lu le nom — la vignette de gauche est
@@ -874,14 +914,10 @@
      Cadré sur l'ILLUSTRATION, pas sur la carte : le Pokémon est à 32 % de la hauteur, pas
      à 50 — c'est la valeur que scan-v2 utilise déjà pour ses empreintes
      (CENTRE_ILLUSTRATION). Centrer sur la carte donnerait le bloc d'attaques.
-     Un reste de couleur, volontairement : entièrement blanchi, le filigrane pouvait être
-     n'importe quelle carte. Ce qu'on veut lui faire dire, c'est « voilà CELLE que tu
-     tiens » — et c'est la couleur qui le dit.
-     Le réglage tient à une contrainte que j'ai d'abord ratée : sur un panneau sombre, un
-     filigrane sombre disparaît. Baisser la luminosité pour laisser sortir la couleur l'a
-     rendu invisible. Il faut donc le garder CLAIR et compenser par la saturation. Le
-     contraste à 0,55 tire les extrêmes vers le gris moyen : c'est lui qui empêche une
-     illustration claire de noyer le texte — vérifié sur un Roucool presque blanc. */
+     BLANCHI, et c'est un retour en arrière assumé. J'avais laissé un reste de couleur pour
+     qu'on reconnaisse la carte ; à l'usage Nikos ne voyait plus rien — la couleur diluée à
+     dix-sept pour cent ne dit pas « c'est ta carte », elle brouille juste le fond. Le
+     blanc pur se lit comme un filigrane, ce qu'il est. */
   #xx-fiche::before{
     content:''; position:absolute; inset:0; border-radius:13px;
     background-image:var(--xx-filigrane, none);
@@ -890,8 +926,8 @@
        ne tenait pas. En dessous de 100 il cesse en revanche de couvrir et devient une
        pastille au milieu — essayé à 70 %, l'effet se perd. */
     background-size:120% auto; background-position:50% 32%; background-repeat:no-repeat;
-    filter:grayscale(.35) brightness(1.9) contrast(.55) saturate(1.6);
-    opacity:.17; pointer-events:none;
+    filter:grayscale(1) brightness(2.2) contrast(.4);
+    opacity:.18; pointer-events:none;
   }
   /* Le contenu passe au-dessus du filigrane. */
   #xx-photo, .xx-lignes, .xx-cotes{ position:relative; z-index:1; }
@@ -1003,6 +1039,8 @@
   body.xx-plein #xx-pile{ top:calc(10px + env(safe-area-inset-top)); }
   body.xx-plein #xx-quitter{ display:flex; top:calc(10px + env(safe-area-inset-top)); }
   body.xx-plein #xx-fiche{ bottom:calc(10px + env(safe-area-inset-bottom));
+    max-width:520px; margin:0 auto; }
+  body.xx-plein #xx-halo{ bottom:calc(10px + env(safe-area-inset-bottom));
     max-width:520px; margin:0 auto; }
   body.xx-plein #xx-qte-bloc{ bottom:calc(112px + env(safe-area-inset-bottom)); }
   body.xx-plein #xx-liste, body.xx-plein #xx-recherche{
@@ -5012,6 +5050,12 @@
       <div id="xx-vol" hidden></div>
 
       <button id="xx-pile" type="button" hidden aria-label="Voir la pile">
+        <svg class="xx-pile-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <rect x="7.5" y="7.5" width="11" height="14" rx="2"/>
+          <path d="M5.2 18.4A2 2 0 0 1 4 16.6V6a2 2 0 0 1 2-2h8.6a2 2 0 0 1 1.8 1.1"/>
+          <path d="M2.9 15.4A2 2 0 0 1 2 13.8V4.4"/>
+        </svg>
         <b id="xx-pile-n">0</b><em id="xx-pile-prix"></em>
       </button>
       <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
@@ -5031,6 +5075,10 @@
         <span id="xx-qte">×1</span>
         <button id="xx-qte-plus" type="button" aria-label="Un de plus">+</button>
       </div>
+
+      <!-- Le halo : le même dégradé que le liseré, flouté et posé derrière. C'est lui qui
+           fait « respirer » la fiche sur l'image de la caméra. -->
+      <div id="xx-halo" hidden aria-hidden="true"></div>
 
       <!-- La fiche, comme en V1 : nom et numéro en tête, puis set, fiabilité, prix. -->
       <div id="xx-fiche" hidden>
@@ -6558,7 +6606,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 97;
+const VERSION_APP = 98;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14825,20 +14873,80 @@ function xxDessinerCadre(etat){
   const R = { x:(T.l-gw)/2, y:(libre-gh)/2, w:gw, h:gh };
   const radius = Math.min(R.w, R.h) * 0.055;
   const couleur = XX_COULEURS[etat] || XX_COULEURS.attente;
+  XX.etat = etat;
 
+  // Avancement de l'éclat de capture, nul le reste du temps. La cloche monte à 1 puis
+  // retombe : elle donne l'impulsion, elle ne la maintient pas.
+  const p = XX.eclat ? Math.min(1, (performance.now() - XX.eclat) / XX_ECLAT_MS) : 0;
+  const cloche = p > 0 && p < 1 ? Math.sin(Math.PI * Math.min(1, p * 1.3)) : 0;
+
+  // Le voile s'éclaircit le temps de l'éclat : l'écran s'ouvre au moment de la lecture.
   g.save();
-  g.fillStyle = 'rgba(0,0,0,.46)';
+  g.fillStyle = 'rgba(0,0,0,' + (0.46 - 0.17 * cloche).toFixed(3) + ')';
   g.beginPath();
   g.rect(0, 0, T.l, T.h);
   rectCartePath(g, R, radius);
   g.fill('evenodd');
   g.restore();
 
+  // Un filet continu, très discret. Quatre crochets seuls flottent dans le noir ; le filet
+  // leur rend le rectangle qu'ils désignent, sans peser sur l'image.
   g.save();
-  g.strokeStyle = couleur; g.lineCap = 'round'; g.lineJoin = 'round';
-  g.lineWidth = Math.max(3, T.l*0.0072);
-  dessinerCoins(g, R, radius);
+  g.strokeStyle = 'rgba(255,255,255,' + (0.14 + 0.4 * cloche).toFixed(3) + ')';
+  g.lineWidth = 1;
+  rectCartePath(g, R, radius);
+  g.stroke();
   g.restore();
+
+  // Le balayage : une bande de lumière traverse le repère, de l'or au violet — les deux
+  // couleurs du site. C'est le geste qui dit « je viens de lire cette carte ».
+  if(cloche > 0){
+    g.save();
+    rectCartePath(g, R, radius);
+    g.clip();
+    const t = p * p * (3 - 2 * p);                     // départ et arrivée adoucis
+    const y = R.y - R.h * 0.25 + R.h * 1.5 * t;
+    const bande = R.h * 0.20, a = (0.30 * cloche).toFixed(3);
+    const grad = g.createLinearGradient(0, y - bande, 0, y + bande);
+    grad.addColorStop(0,    'rgba(255,203,5,0)');
+    grad.addColorStop(0.46, 'rgba(255,203,5,' + a + ')');
+    grad.addColorStop(0.56, 'rgba(124,92,255,' + a + ')');
+    grad.addColorStop(1,    'rgba(124,92,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(R.x, y - bande, R.w, bande * 2);
+    g.restore();
+  }
+
+  // Les crochets. Au repos, la couleur d'état — rouge, orange, vert — avec un halo qui les
+  // décolle de l'image. À la lecture ils s'écartent, s'épaississent et virent à l'or.
+  const ecart = 14 * cloche;
+  const E = { x:R.x - ecart, y:R.y - ecart, w:R.w + ecart * 2, h:R.h + ecart * 2 };
+  g.save();
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.shadowColor = cloche > 0.04 ? '#ffcb05' : couleur;
+  g.shadowBlur = 7 + 16 * cloche;
+  g.strokeStyle = cloche > 0.04 ? '#ffcb05' : couleur;
+  g.lineWidth = Math.max(3, T.l * 0.0072) * (1 + 0.55 * cloche);
+  dessinerCoins(g, E, radius + ecart * 0.6);
+  g.restore();
+}
+
+// L'éclat ne dure que le temps d'une capture, et il n'anime QUE pendant ce temps-là. Une
+// boucle permanente pour faire respirer le viseur coûterait une rAF à chaque image pour un
+// effet que personne ne regarde — c'est précisément ce qui alourdissait les versions
+// précédentes. Ici la rAF naît à la capture et meurt six cents millisecondes plus tard.
+const XX_ECLAT_MS = 640;
+function xxEclater(){
+  if(window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  XX.eclat = performance.now();
+  if(XX.eclatRaf) return;
+  const pas = () => {
+    const fini = performance.now() - XX.eclat >= XX_ECLAT_MS;
+    if(fini){ XX.eclat = 0; XX.eclatRaf = 0; }
+    xxDessinerCadre(XX.etat || 'attente');
+    if(!fini) XX.eclatRaf = requestAnimationFrame(pas);
+  };
+  XX.eclatRaf = requestAnimationFrame(pas);
 }
 
 // ── LE ZOOM ────────────────────────────────────────────────────────────────────────────
@@ -14916,6 +15024,7 @@ async function xxCapturer(){
     if(!cv){ xxEtat('carte non cadrée — recommence'); return; }
     const photo = cv.toDataURL('image/jpeg', 0.7);
     if(navigator.vibrate) { try{ navigator.vibrate(30); }catch(e){} }
+    xxEclater();
 
     const e = { carte:null, categorie:null, fiabilite:0, inliers:0, ms:0,
                 photo, prix:null, set:null, total:null, qte:1,
@@ -14964,10 +15073,20 @@ function xxVoler(photo, coins){
   const dx = d.left + d.width/2 - (x0 + w/2);
   const dy = d.top + d.height/2 - (y0 + h/2);
   const ech = Math.min(d.width/w, d.height/h);
+  // Trois temps, et le premier est le nouveau : la carte grandit d'abord vers le
+  // spectateur — elle « sort de l'écran » — avant de partir se ranger. Le trajet direct
+  // disait où va la carte ; celui-ci dit d'abord qu'on l'a attrapée.
+  // Tout cela se joue pendant l'identification, qui prend plus longtemps : l'animation
+  // n'ajoute pas une milliseconde au scan.
   const anim = el.animate([
-    { transform:'translate(0,0) scale(1)', opacity:1 },
-    { transform:'translate(' + dx + 'px,' + dy + 'px) scale(' + ech + ')', opacity:.25 },
-  ], { duration:420, easing:'cubic-bezier(.45,0,.2,1)' });
+    { transform:'translate(0,0) scale(1)', opacity:1, filter:'brightness(1)',
+      offset:0, easing:'cubic-bezier(.2,1.35,.45,1)' },
+    { transform:'translate(' + (dx*0.05).toFixed(1) + 'px,' + (dy*0.03 - 12).toFixed(1) + 'px) scale(1.3)',
+      opacity:1, filter:'brightness(1.22)',
+      offset:0.36, easing:'cubic-bezier(.55,0,.2,1)' },
+    { transform:'translate(' + dx + 'px,' + dy + 'px) scale(' + ech + ')',
+      opacity:.2, filter:'brightness(1)', offset:1 },
+  ], { duration:660 });
   anim.onfinish = () => {
     el.hidden = true; el.style.backgroundImage = '';
     cible.classList.remove('pose'); void cible.offsetWidth; cible.classList.add('pose');
@@ -15030,6 +15149,7 @@ async function xxDetails(e){
 function xxRendreFiche(e){
   const z = $('xx-fiche'); if(!z) return;
   z.hidden = false;
+  const halo = $('xx-halo'); if(halo) halo.hidden = false;
   $('xx-photo').src = e.photo;
   const enCours = e.categorie === null;
   const rate = !enCours && xxRate(e);
@@ -15073,7 +15193,10 @@ function xxRendrePile(){
   const p = $('xx-pile'); if(!p) return;
   const n = XX.pile.filter(e => e.categorie !== null).length;
   p.hidden = !n;
-  $('xx-pile-n').textContent = String(XX.pile.reduce((s,e)=> s + (e.categorie!==null ? e.qte : 0), 0));
+  const total = XX.pile.reduce((s,e)=> s + (e.categorie!==null ? e.qte : 0), 0);
+  if(total > (XX.pileVue || 0)){ p.classList.remove('bond'); void p.offsetWidth; p.classList.add('bond'); }
+  XX.pileVue = total;
+  $('xx-pile-n').textContent = String(total);
   $('xx-pile-prix').textContent = XX.valeur > 0
     ? XX.valeur.toFixed(XX.valeur >= 100 ? 0 : 2) + ' €' : '';
   const rates = XX.pile.filter(xxRate).length;
@@ -15117,7 +15240,7 @@ function xxRendreListe(){
         }
         xxRendrePile(); xxRendreListe();
         const der = XX.pile[XX.pile.length-1];
-        if(der) xxRendreFiche(der); else $('xx-fiche').hidden = true;
+        if(der) xxRendreFiche(der); else { $('xx-fiche').hidden = true; $('xx-halo').hidden = true; }
       });
       f.appendChild(i); f.appendChild(c); f.appendChild(b);
       g.appendChild(f);
@@ -15308,7 +15431,7 @@ function xxJeter(){
   if(e.prix != null) XX.valeur = Math.max(0, XX.valeur - e.prix * e.qte);
   XX.pile.pop();
   const der = XX.pile[XX.pile.length-1];
-  if(der) xxRendreFiche(der); else $('xx-fiche').hidden = true;
+  if(der) xxRendreFiche(der); else { $('xx-fiche').hidden = true; $('xx-halo').hidden = true; }
   xxRendrePile();
   xxEtat('scan supprimé');
 }
