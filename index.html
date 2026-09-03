@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 106;
+const VERSION_APP = 107;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -17337,8 +17337,16 @@ async function gererScanV2(sourceForRead, corners, score, t0, dejaAcquitte, preE
   setOverlayTarget('ok', corners);
   validerObjectifCourant();
   capturedThisSession++;
+  // Le MOTEUR d'inférence et la ventilation des étapes partent enfin au diagnostic. Ils
+  // existaient dans la réponse d'identifierV2 depuis toujours, et n'étaient relayés qu'à
+  // l'atelier — donc absents des soixante-dix-neuf relevés du journal. Or c'est LA question
+  // qui décide de tout : si le téléphone tourne sur WebGPU, l'essentiel est déjà accéléré ;
+  // s'il retombe sur WASM, il est de surcroît mono-fil faute d'isolation cross-origin, et il
+  // reste un facteur trois ou quatre à prendre sans dépenser un centime. Sans cette ligne on
+  // optimise à l'aveugle, ou pire, on achète un serveur pour un problème qu'on n'a pas.
   diagPush('try', {ok:true, hint:'capture-v2', score, ocrMs:Math.round(performance.now()-t0),
-                   fiab:res.fiabilite, cat:res.categorie, inliers:res.inliers, v2ms:res.ms});
+                   fiab:res.fiabilite, cat:res.categorie, inliers:res.inliers, v2ms:res.ms,
+                   moteur:res.moteur, T:res.T});
 
   SCAN_V2.relayV2({
     fichier: 'live', cardId: res.pick.cle, attendu: res.pick.cle, predit: res.pick.cle,
