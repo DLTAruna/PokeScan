@@ -866,6 +866,30 @@
     box-shadow:0 6px 22px rgba(0,0,0,.45); }
   body.xx-plein #xx-fiche{ background:rgba(10,13,18,.72); border-color:rgba(255,255,255,.18); }
   #xx-fiche[hidden]{ display:none; }
+  /* ── FILIGRANE DE LA CARTE LUE ─────────────────────────────────────────────────────
+     La carte qu'on vient de scanner, en grand et presque effacée, sous le texte. Elle dit
+     de quelle carte on parle avant même qu'on ait lu le nom — la vignette de gauche est
+     trop petite pour ça, et c'est précisément ce qu'on regarde en premier quand on
+     dépouille vite.
+     Cadré sur l'ILLUSTRATION, pas sur la carte : le Pokémon est à 32 % de la hauteur, pas
+     à 50 — c'est la valeur que scan-v2 utilise déjà pour ses empreintes
+     (CENTRE_ILLUSTRATION). Centrer sur la carte donnerait le bloc d'attaques.
+     Blanchi et posé à dix-huit pour cent, valeur réglée à l'œil : en dessous il ne se voit
+     pas, au-delà le texte cesse d'être lisible sur les illustrations claires — et c'est le
+     texte qui porte l'information. */
+  #xx-fiche::before{
+    content:''; position:absolute; inset:0; border-radius:13px;
+    background-image:var(--xx-filigrane, none);
+    /* 100 % : la plus petite taille qui couvre encore toute la largeur du cadre. En
+       dessous, l'image cesse de couvrir et le filigrane devient une pastille au milieu —
+       essayé à 70 %, l'effet se perd. On en voit alors un cinquième de la hauteur de la
+       carte, pris à 32 % : la bande de l'illustration. */
+    background-size:100% auto; background-position:50% 32%; background-repeat:no-repeat;
+    filter:grayscale(1) brightness(2.2) contrast(.4);
+    opacity:.18; pointer-events:none;
+  }
+  /* Le contenu passe au-dessus du filigrane. */
+  #xx-photo, .xx-lignes, .xx-cotes{ position:relative; z-index:1; }
   /* Elle monte d'un cran en apparaissant : le mouvement dit « voici le verdict » sans qu'il
      faille le lire pour le remarquer. */
   #xx-fiche{ animation:xx-monte .22s cubic-bezier(.2,1,.3,1); }
@@ -6529,7 +6553,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 95;
+const VERSION_APP = 96;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15007,6 +15031,9 @@ function xxRendreFiche(e){
   const montrable = !enCours && !rate && !!e.carte;
   z.classList.toggle('sure', xxSure(e));
   z.classList.toggle('rebut', rate);
+  // Le filigrane, c'est la photo qu'on vient de prendre — pas l'image de référence : on
+  // montre ce qu'on a lu, pas ce qu'on croit avoir reconnu.
+  z.style.setProperty('--xx-filigrane', e.photo ? 'url(' + e.photo + ')' : 'none');
   $('xx-nom').textContent = enCours ? 'analyse…' : (montrable ? (e.carte.name || e.carte.cle) : 'Non reconnue');
   $('xx-num').textContent = montrable
     ? '#' + (e.carte.numero || e.carte.localId || '?') + (e.total ? '/' + e.total : '') : '';
