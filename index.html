@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 114;
+const VERSION_APP = 115;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15462,6 +15462,9 @@ async function xxCapturer(){
                fiab: e.fiabilite, cat: e.categorie, inliers: e.inliers,
                zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length,
                moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle,
+               // Le secours par le nom : sans ces deux champs, impossible de savoir depuis le
+               // journal s il s est déclenché, ni sur quelle lecture il a tranché.
+               nomSecours: !!(res && res.nomSecours), nomLu: (res && res.nomLu) || undefined,
                // Ce que le détecteur rendait à l'instant du déclenchement : sans ces deux
                // nombres, tout débat sur les seuils se tient à l'aveugle.
                score: XX.dernierDebug && XX.dernierDebug.score,
@@ -25875,7 +25878,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=33';
+import * as V2 from './scan-v2.js?v=34';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);

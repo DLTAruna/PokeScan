@@ -1009,7 +1009,11 @@ export async function identifierV2(carte, opts = {}) {
   // coûtent déjà leur seconde et ne rendent rien ; y ajouter l'OCR est le seul moment où il
   // vaut son prix.
   let nomLu = '', nomSecours = false;
-  if (R.NOM_ACTIF && ocr && inl < R.NOM_INLIERS_MAX) {
+  // Le garde-fou thermique vaut ici aussi : quand le dernier appariement a traîné, l appareil
+  // chauffe et ce n est pas le moment de lui demander une inférence de plus. Le départage par
+  // le numéro le respectait, ce secours l ignorait — sur une longue salve, c est précisément
+  // la fin de session qui en aurait souffert.
+  if (R.NOM_ACTIF && ocr && inl < R.NOM_INLIERS_MAX && dernierOrbMs < R.OCR_ORB_MS_MAX) {
     try {
       const r = await chrono('ocrNom', ocrLire(bandeHaute(carte)));
       nomLu = (r && r.text) || '';
