@@ -874,19 +874,24 @@
      Cadré sur l'ILLUSTRATION, pas sur la carte : le Pokémon est à 32 % de la hauteur, pas
      à 50 — c'est la valeur que scan-v2 utilise déjà pour ses empreintes
      (CENTRE_ILLUSTRATION). Centrer sur la carte donnerait le bloc d'attaques.
-     Blanchi et posé à dix-huit pour cent, valeur réglée à l'œil : en dessous il ne se voit
-     pas, au-delà le texte cesse d'être lisible sur les illustrations claires — et c'est le
-     texte qui porte l'information. */
+     Un reste de couleur, volontairement : entièrement blanchi, le filigrane pouvait être
+     n'importe quelle carte. Ce qu'on veut lui faire dire, c'est « voilà CELLE que tu
+     tiens » — et c'est la couleur qui le dit.
+     Le réglage tient à une contrainte que j'ai d'abord ratée : sur un panneau sombre, un
+     filigrane sombre disparaît. Baisser la luminosité pour laisser sortir la couleur l'a
+     rendu invisible. Il faut donc le garder CLAIR et compenser par la saturation. Le
+     contraste à 0,55 tire les extrêmes vers le gris moyen : c'est lui qui empêche une
+     illustration claire de noyer le texte — vérifié sur un Roucool presque blanc. */
   #xx-fiche::before{
     content:''; position:absolute; inset:0; border-radius:13px;
     background-image:var(--xx-filigrane, none);
-    /* 100 % : la plus petite taille qui couvre encore toute la largeur du cadre. En
-       dessous, l'image cesse de couvrir et le filigrane devient une pastille au milieu —
-       essayé à 70 %, l'effet se perd. On en voit alors un cinquième de la hauteur de la
-       carte, pris à 32 % : la bande de l'illustration. */
-    background-size:100% auto; background-position:50% 32%; background-repeat:no-repeat;
-    filter:grayscale(1) brightness(2.2) contrast(.4);
-    opacity:.18; pointer-events:none;
+    /* 120 % : la colonne de boutons occupe déjà le bord droit, le filigrane n'a donc pas
+       besoin de couvrir toute la largeur. J'étais descendu à 100 % pour cette raison, qui
+       ne tenait pas. En dessous de 100 il cesse en revanche de couvrir et devient une
+       pastille au milieu — essayé à 70 %, l'effet se perd. */
+    background-size:120% auto; background-position:50% 32%; background-repeat:no-repeat;
+    filter:grayscale(.35) brightness(1.9) contrast(.55) saturate(1.6);
+    opacity:.17; pointer-events:none;
   }
   /* Le contenu passe au-dessus du filigrane. */
   #xx-photo, .xx-lignes, .xx-cotes{ position:relative; z-index:1; }
@@ -6553,7 +6558,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 96;
+const VERSION_APP = 97;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
