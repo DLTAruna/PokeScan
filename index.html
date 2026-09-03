@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 108;
+const VERSION_APP = 109;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15309,7 +15309,15 @@ async function xxDetecterMulti(v){
 
   const bmp = await createImageBitmap(v, { resizeWidth: lw, resizeHeight: lh, resizeQuality:'medium' });
   const plein = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
-  if(plein && plein.corners && plein.score >= XX_MIN_SCORE) return { ...plein, echelle:1 };
+  // Le recadrage n'est plus un SECOURS, il est systématique — la salve du 3 septembre au soir
+  // a tranché. Sur les douze captures abouties, celles passées par le recadrage donnent cinq
+  // lectures sûres sur six et 87 points d'appariement médians ; celles jugées sur l'image
+  // entière, deux sur six et des inliers à 1, 4, 5. Le recadrage ne rattrape donc pas
+  // seulement une détection manquée : il rend des coins plus justes, donc un redressement
+  // plus fidèle, donc une lecture meilleure. Cinquante millisecondes pour ce résultat-là ne
+  // se discutent pas.
+  const assezBon = plein && plein.corners && plein.score >= 0.9;
+  if(assezBon) return { ...plein, echelle:1 };
 
   // Second essai, sur la partie centrale. Les coins reviennent dans le repère de la
   // vignette : il faut les ramener dans celui de l'image entière, sans quoi le repère et le
@@ -15331,9 +15339,16 @@ async function xxDetecterMulti(v){
   return { score: centre.score, corners: coins, echelle: XX_RECADRE };
 }
 
-async function xxRedresserVideo(v){
+// `coinsConnus` : ceux que la BOUCLE vient de valider. Sans eux, la capture relançait une
+// détection complète et pouvait contredire la décision qui l'avait déclenchée — sept fois
+// sur dix-neuf lors de la salve du 3 septembre au soir, en 140 à 260 millisecondes, soit un
+// tiers des prises perdues sans qu'aucune image ne soit lue. La boucle avait pourtant vu la
+// carte, stable, à un score suffisant, quelques dizaines de millisecondes plus tôt : rien ne
+// justifie de lui redemander son avis, et tout justifie d'utiliser le sien.
+async function xxRedresserVideo(v, coinsConnus){
   const long = Math.max(v.videoWidth, v.videoHeight);
-  const d = await xxDetecterMulti(v);
+  let d = coinsConnus ? { corners: coinsConnus, score: 1, echelle: XX.echelle || 1 } : null;
+  if(!d) d = await xxDetecterMulti(v);
   if(!d || !d.corners || d.score == null || d.score < XX_MIN_SCORE) return null;
   XX.echelle = d.echelle || 1;
 
@@ -15375,7 +15390,7 @@ async function xxCapturer(){
   try{
     const v = $('xx-video');
     const coins = XX.dernierCoins;
-    const cv = await xxRedresserVideo(v);
+    const cv = await xxRedresserVideo(v, coins);
     if(!cv){ xxEtat('carte non cadrée — recommence'); return; }
     const photo = cv.toDataURL('image/jpeg', 0.7);
     if(navigator.vibrate) { try{ navigator.vibrate(30); }catch(e){} }
@@ -15412,7 +15427,11 @@ async function xxCapturer(){
     mesure = { hint:'xx', reel: Math.round(performance.now() - t0), v2ms: e.ms,
                fiab: e.fiabilite, cat: e.categorie, inliers: e.inliers,
                zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length,
-               moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle };
+               moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle,
+               // Ce que le détecteur rendait à l'instant du déclenchement : sans ces deux
+               // nombres, tout débat sur les seuils se tient à l'aveugle.
+               score: XX.dernierDebug && XX.dernierDebug.score,
+               bouge: XX.dernierDebug && XX.dernierDebug.bouge };
 
     xxDetails(e);
   }catch(err){ xxEtat('capture : ' + err.message); }
