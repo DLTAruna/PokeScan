@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 105;
+const VERSION_APP = 106;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -24263,18 +24263,53 @@ async function amorcerHistorique(card){
   }catch(e){}
 }
 
+// Aucun service gratuit ne publie l'historique dont on a besoin — vérifié en septembre 2026,
+// et le détail est dans la note ci-dessous. Cardmarket n'expose pas de série temporelle ;
+// les revendeurs qui en tiennent une la réservent à leurs offres payantes (trois jours de
+// recul sur le palier gratuit du principal d'entre eux, et le marché européen en supplément).
+// L'historique de cette application reste donc le sien : un relevé par jour, construit ici.
+// Raison de plus pour qu'il soit COMPLET.
 async function noterCotesDuJour(){
   const h = await chargerHistoriqueCotes();
   const jour = new Date().toISOString().slice(0, 10);
   let change = false;
-  for(const e of batch){
-    const c = parseFloat(e.marketPrice);
-    if(!c || !e.cardId) continue;
-    const pts = h[e.cardId] || (h[e.cardId] = []);
+
+  const poser = (cardId, cote) => {
+    if(!cardId || !(cote > 0)) return;
+    const pts = h[cardId] || (h[cardId] = []);
     const dernier = pts[pts.length - 1];
-    if(dernier && dernier.j === jour){ if(dernier.v !== c){ dernier.v = c; change = true; } }
-    else { pts.push({j: jour, v: c}); change = true; if(pts.length > 730) pts.shift(); }
+    if(dernier && dernier.j === jour){ if(dernier.v !== cote){ dernier.v = cote; change = true; } }
+    else { pts.push({j: jour, v: cote}); change = true; if(pts.length > 730) pts.shift(); }
+  };
+
+  // Le lot du jour. La devise est vérifiée : une carte dont TCGdex ne donne qu'un prix
+  // TCGplayer arrive en dollars, et la verser dans une série en euros produirait une marche
+  // qui n'existe pas sur le marché.
+  for(const e of batch){
+    if(e.marketCurrency && e.marketCurrency !== 'EUR') continue;
+    poser(e.cardId, parseFloat(e.marketPrice));
   }
+
+  // Et la COLLECTION, ce qui manquait. Seules les cartes passées par le lot du jour étaient
+  // relevées : une carte rangée depuis un mois ne repassant plus par le lot, sa courbe
+  // s'arrêtait le jour où on l'avait scannée. L'historique qu'on croyait tenir ne portait
+  // donc que sur une poignée de cartes récentes — précisément pas celles qu'on garde et
+  // dont on veut suivre la valeur.
+  // Rien n'est téléchargé pour autant : on ne relève que les fiches déjà en mémoire. Aller
+  // chercher le reste ferait des centaines d'appels par jour pour une courbe.
+  if(typeof collection !== 'undefined' && collection.size){
+    const vus = new Set();
+    for(const e of collection.values()){
+      if(!e.cardId || vus.has(e.cardId)) continue;
+      vus.add(e.cardId);
+      const d = detailsCartes.get(e.cardId);
+      if(!d) continue;
+      const p = getBestPrice(d);
+      if(p.currency !== 'EUR') continue;
+      poser(e.cardId, p.market);
+    }
+  }
+
   if(change){ try{ await idbSet('meta', {key: CLE_HISTO_ITEM, parCarte: h, at: Date.now()}); }catch(e){} }
 }
 
