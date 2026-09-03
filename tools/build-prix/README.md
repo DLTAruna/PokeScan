@@ -67,3 +67,44 @@ jamais connues — une carte n'a pas bondi parce qu'on a changé de source.
 
 Télécharge, décompresse, ne garde que la catégorie 3, et écrit une série par `productId`.
 Compter environ 4 Mo téléchargés et 87 Mo décompressés transitoirement par journée.
+
+## La devise
+
+Les archives TCGCSV sont en dollars. Les convertir au taux d'**aujourd'hui** serait une
+faute : l'euro a bougé de plusieurs pour cent sur la période, et cette variation-là se
+retrouverait dans la courbe comme si la carte l'avait faite. C'est le taux **du jour de
+chaque relevé** qui compte.
+
+Source : le service de données de la BCE, taux de référence quotidien, gratuit et sans clé.
+
+    https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A?startPeriod=…&format=csvdata
+
+Il fait autorité — Frankfurter, souvent cité, n'en est qu'un miroir : vérifié, les deux
+donnent 1,1662 dollar pour un euro au 25 août 2026. La BCE ne publie que les jours ouvrés ;
+week-ends et fériés reprennent le dernier taux connu.
+
+### La conversion se fait à l'affichage, et voici pourquoi
+
+Convertir dès la reconstitution donnait un résultat juste mais deux fois plus lourd. En
+dollars, une carte dont le prix ne bouge pas pendant trois semaines s'écrit *une* valeur et
+vingt `null` ; en euros, le taux bougeant chaque jour, les vingt et un jours deviennent
+vingt et une valeurs différentes — la compression par répétition ne mordait plus.
+
+Les séries sont donc publiées **en dollars**, compressées, et la table des taux quotidiens
+est publiée **à côté**, alignée sur le même index de jours : 938 nombres, treize kilo-octets,
+partagés par les 45 000 séries. L'application divise à l'affichage.
+
+    prix en euros = v[i] / taux.v[i]
+
+Vérifié sur Dracaufeu `base1-4` holo : 855,52 $ au 24 août, taux 1,1664 → **733,47 €**, et le
+calcul fait à l'affichage redonne exactement la série qu'une conversion en dur produisait.
+
+On y gagne trois choses : le poids, la possibilité d'afficher aussi les dollars, et le fait
+qu'une correction de taux ne demande pas de tout reconstruire.
+
+## Ce que ces euros sont, et ne sont pas
+
+C'est le prix du marché **américain**, exprimé en euros. Ce n'est pas un prix Cardmarket :
+les deux marchés n'ont pas les mêmes niveaux. Cette série sert à lire une tendance longue,
+pas à fixer un prix de vente — pour cela, c'est la série Cardmarket qui fait foi. Les deux
+restent séparées : les fondre dessinerait des marches que le marché n'a jamais connues.

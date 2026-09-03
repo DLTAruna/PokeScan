@@ -81,6 +81,37 @@ async function reduireJour(jour, tmp, cmd7z){
   return { releves };
 }
 
+// ── LE TAUX DE CHANGE, JOUR PAR JOUR ─────────────────────────────────────────────────
+// Les archives TCGCSV sont en dollars. Les convertir au taux d'AUJOURD'HUI serait une
+// faute : l'euro a bougé de plusieurs pour cent sur la période, et cette variation-là se
+// retrouverait dans la courbe comme si la carte l'avait faite. On prend donc le taux du
+// jour de chaque relevé.
+//
+// Source : le service de données de la BCE, taux de référence quotidien, gratuit et sans
+// clé. Il fait autorité — Frankfurter, souvent cité, n'en est qu'un miroir : vérifié, les
+// deux donnent 1,1662 dollar pour un euro au 25 août 2026.
+//
+// La BCE ne publie que les jours ouvrés. Les week-ends et fériés reprennent le dernier taux
+// connu : c'est ce que fait n'importe quelle comptabilité, et une carte vendue un dimanche
+// l'est bien au taux du vendredi.
+async function tauxEuro(depuis, jusqu){
+  const url = 'https://data-api.ecb.europa.eu/service/data/EXR/D.USD.EUR.SP00.A'
+    + '?startPeriod=' + depuis + '&endPeriod=' + jusqu + '&format=csvdata';
+  const r = await fetch(url, { headers: { 'User-Agent': AGENT } });
+  if(!r.ok) throw new Error('taux BCE indisponibles (HTTP ' + r.status + ')');
+  const lignes = (await r.text()).split('\n');
+  const tete = lignes[0].split(',');
+  const iJour = tete.indexOf('TIME_PERIOD'), iVal = tete.indexOf('OBS_VALUE');
+  const brut = new Map();
+  for(const l of lignes.slice(1)){
+    const c = l.split(',');
+    const v = parseFloat(c[iVal]);
+    if(c[iJour] && v > 0) brut.set(c[iJour], v);
+  }
+  if(!brut.size) throw new Error('aucun taux reçu de la BCE');
+  return brut;
+}
+
 async function main(){
   const o = args();
   const depuis = o.depuis || '2024-02-08';
@@ -123,6 +154,39 @@ async function main(){
   // d'objets auraient débordé la mémoire.
   const presents = liste.filter(j => fs.existsSync(path.join(dJours, `${j}.json`)));
   const n = presents.length;
+
+  // ── LA CONVERSION SE FAIT À L'AFFICHAGE, PAS ICI ──────────────────────────────────
+  // Convertir dès la reconstitution donnait un résultat juste mais deux fois plus lourd, et
+  // pour une raison qui vaut d'être notée : en dollars, une carte dont le prix ne bouge pas
+  // pendant trois semaines s'écrit une valeur et vingt nulls ; en euros, le taux bougeant
+  // chaque jour, les vingt et un jours deviennent vingt et une valeurs différentes. La
+  // compression par répétition, qui divise le poids par plusieurs, ne mordait plus.
+  //
+  // On publie donc les séries en dollars — telles que la source les donne, compressées — et
+  // À CÔTÉ la table des taux quotidiens, alignée sur le même index de jours. Neuf cent
+  // trente-huit nombres, quelques kilo-octets, partagés par les quarante-cinq mille séries.
+  // L'application divise à l'affichage : les euros sont exacts au jour près, on garde la
+  // possibilité de montrer les dollars, et rien n'est recalculé si un taux est corrigé.
+  //
+  // `--devise eur` reste possible pour figer les euros dans les fichiers, mais ce n'est plus
+  // le défaut.
+  const enEuros = String(o.devise || '').toLowerCase() === 'eur';
+  const taux = new Array(n).fill(null);
+  {
+    const brut = await tauxEuro(depuis, jusqu);
+    let dernier = null;
+    for(const [i, jour] of presents.entries()){
+      if(brut.has(jour)) dernier = brut.get(jour);
+      taux[i] = dernier;
+    }
+    // Les tout premiers jours peuvent précéder le premier taux publié : on les rattrape
+    // avec le plus ancien connu plutôt que de les perdre.
+    const premier = taux.find(t => t != null);
+    for(let i = 0; i < n && taux[i] == null; i++) taux[i] = premier;
+    console.log('taux BCE : ' + brut.size + ' jours ouvrés, '
+      + taux.filter(t => t != null).length + '/' + n + ' journées couvertes');
+  }
+
   const series = new Map();
   for(const [i, jour] of presents.entries()){
     let j; try{ j = JSON.parse(fs.readFileSync(path.join(dJours, `${jour}.json`), 'utf8')); }
@@ -130,10 +194,12 @@ async function main(){
     for(const cle in j){
       let s = series.get(cle);
       if(!s){ s = new Float32Array(n).fill(NaN); series.set(cle, s); }
-      s[i] = j[cle];
+      // Le taux BCE s'exprime en dollars POUR UN euro : on divise.
+      s[i] = enEuros && taux[i] ? j[cle] / taux[i] : j[cle];
     }
   }
-  console.log(`passe 2 : ${series.size} séries sur ${n} journées`);
+  console.log(`passe 2 : ${series.size} séries sur ${n} journées, en `
+    + (enEuros ? 'euros' : 'dollars'));
 
   // Une valeur n'est écrite que si elle CHANGE — un prix bouge rarement d'un jour à l'autre,
   // et sans cela un an pèserait 252 mégaoctets. À la lecture, null signifie « comme la
@@ -154,6 +220,15 @@ async function main(){
   }
   for(const [p, contenu] of paquets)
     fs.writeFileSync(path.join(sortie, `${p}.json`), JSON.stringify(contenu));
+
+  // La table des taux, alignée sur le même index que les séries : `d` est la première
+  // journée, `v[i]` le nombre de dollars pour un euro ce jour-là. Prix en euros =
+  // prix en dollars / v[i].
+  fs.writeFileSync(path.join(sortie, 'taux.json'), JSON.stringify({
+    source: 'BCE, taux de référence quotidien USD/EUR',
+    sens: 'dollars pour un euro — diviser un prix en dollars par cette valeur',
+    d: presents[0], v: taux.map(t => t == null ? null : +t.toFixed(4))
+  }));
 
   const octets = fs.readdirSync(sortie)
     .filter(f => f.endsWith('.json'))
