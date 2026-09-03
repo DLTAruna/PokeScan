@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 120;
+const VERSION_APP = 121;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -11302,7 +11302,14 @@ let SCORE_STRICT = 0.5;   // exigence pendant la première seconde (voir la pati
 // 512 laisse une marge confortable au-dessus du seuil où la précision commencerait à
 // bouger, tout en divisant le coût par deux. Ne concerne QUE la détection : le
 // redressement et l'OCR travaillent toujours sur l'image caméra pleine résolution.
-const DETECT_LONG_EDGE = 512;
+const DETECT_LONG_EDGE = 512;   // essayé à 320 : voir la note ci-dessous
+// Réduire cette taille ne sert à rien, et c'est mesuré plutôt que supposé. Décomposition
+// d'un tour de boucle, carte présente : extraction de l'image 8 ms, dessin du repère 0 ms,
+// DÉTECTION 131 ms. Tout est dans l'inférence, et le modèle redimensionne à sa propre taille
+// d'entrée : lui donner 320 au lieu de 512 fait tomber l'inférence à 114 ms — dix-sept
+// millisecondes — et le déclenchement ne bouge pas d'un cheveu, 510 contre 507. Le gain se
+// perd dans le bruit, et une image plus petite fragiliserait la détection des cartes
+// lointaines. On reste à 512.
 
 // Même principe que DETECT_LONG_EDGE, mais pour le redressement (extractDocument, fil
 // principal) : la caméra peut sortir des frames bien plus grandes (souvent 3000-4000px de
@@ -15350,8 +15357,13 @@ async function xxDetecterMulti(v, complet){
   const e0 = Math.min(1, DETECT_LONG_EDGE / long);
   const lw = Math.round(v.videoWidth * e0), lh = Math.round(v.videoHeight * e0);
 
+  const tA = performance.now();
   const bmp = await createImageBitmap(v, { resizeWidth: lw, resizeHeight: lh, resizeQuality:'medium' });
+  const tB = performance.now();
   const plein = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+  // Décomposition d'un tour de boucle : sans elle on ne sait pas si le temps part dans
+  // l'extraction de l'image, dans le détecteur, ou dans le dessin du repère.
+  XX.tImage = Math.round(tB - tA); XX.tDetect = Math.round(performance.now() - tB);
   // Hors capture, une détection franche suffit : on ne paie la seconde échelle que si la
   // première ne trouve rien d'exploitable.
   if(!complet && plein && plein.corners && plein.score >= XX_MIN_SCORE)
@@ -15812,6 +15824,7 @@ async function xxTourner(){
     if(!v || !v.videoWidth || XX.occupe){ await new Promise(r => setTimeout(r, 120)); continue; }
     try{
       const d = await xxDetecterMulti(v, false);
+      const tD = performance.now();
       const bon = !!(d && d.corners && d.score != null && d.score >= XX_MIN_SCORE);
 
       if(!bon){
@@ -15851,8 +15864,10 @@ async function xxTourner(){
         // camp. Une piste qui ne survit pas à l'inversion n'est pas une piste.
         const stable = XX.streak >= 1;
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
+        XX.tDessin = Math.round(performance.now() - tD);
         XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
-          bouge, seuilBouge, stable, retiree: XX.retiree, attente, periode: XX.periode };
+          bouge, seuilBouge, stable, retiree: XX.retiree, attente, periode: XX.periode,
+          tImage: XX.tImage, tDetect: XX.tDetect, tDessin: XX.tDessin };
         xxMajDebug(XX.dernierDebug);
 
         if(XX.retiree && d.score >= seuilScore && stable){
