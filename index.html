@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 104;
+const VERSION_APP = 105;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14960,18 +14960,30 @@ const XX_DEBUG_CLE = 'pokescanDebugXX';
 function xxEch(t){
   return String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 }
+let xxDebugRendu = '';
 function xxMajDebug(info){
   if(!XX.debug) return;
   const d = $('xx-debug'); if(!d) return;
   const puce = (t, e) => '<span class="' + (e == null ? '' : e ? 'ok' : 'non') + '">'
     + xxEch(t) + '</span>';
   const n = (v, k) => v == null ? '—' : (isFinite(v) ? (+v).toFixed(k) : '∞');
-  d.innerHTML =
+  const html =
       puce('score ' + n(info.score, 2) + ' ≥ ' + n(info.seuilScore, 2), info.scoreOk)
     + puce('bougé ' + n(info.bouge, 3) + ' < ' + n(info.seuilBouge, 3), info.stable)
     + puce('carte retirée', info.retiree)
-    + puce('vue ' + (info.attente ? (info.attente/1000).toFixed(1).replace('.', ',') + ' s' : '—'), null)
+    // Arrondi à la seconde, et ce n'est pas cosmétique : au dixième, ce compteur changeait
+    // à chaque tour de boucle et le panneau se réécrivait quand même, ce qui vidait le frein
+    // ci-dessous de son intérêt. À la seconde, neuf tours sur dix ne changent plus rien.
+    + puce('vue ' + (info.attente ? Math.round(info.attente/1000) + ' s' : '—'), null)
     + '<span class="cam">' + xxEch(XX.infoCam || 'caméra : —') + '</span>';
+  // Écrire innerHTML relance l'analyse du HTML puis la mise en page — à chaque tour de la
+  // boucle de détection, soit une dizaine de fois par seconde, pour un panneau dont la
+  // plupart des tours ne changent rien. On ne réécrit que ce qui diffère. Le compteur « vue »
+  // change au dixième de seconde près, donc le panneau reste vivant sans être refait pour
+  // rien.
+  if(html === xxDebugRendu) return;
+  xxDebugRendu = html;
+  d.innerHTML = html;
 }
 // Tout voir, ou remplir l'écran. Le choix survit à la session : c'est un goût, pas un
 // réglage à refaire à chaque ouverture.
@@ -14997,6 +15009,7 @@ function xxBasculerCadrage(){
 
 function xxBasculerDebug(){
   XX.debug = !XX.debug;
+  xxDebugRendu = '';                       // le panneau repart d'une page blanche
   const d = $('xx-debug'), b = $('xx-debug-b');
   if(d) d.hidden = !XX.debug;
   if(b) b.classList.toggle('actif', XX.debug);
@@ -15311,6 +15324,10 @@ async function xxCapturer(){
   if(XX.occupe) return;
   XX.occupe = true;
   xxEtat('identification…');
+  // L'horloge part AVANT le redressement : ce qu'on veut connaître, c'est le délai vu par
+  // celui qui tient la carte, pas la somme des étapes du moteur.
+  const t0 = performance.now();
+  let mesure = null;
   try{
     const v = $('xx-video');
     const coins = XX.dernierCoins;
@@ -15340,9 +15357,23 @@ async function xxCapturer(){
     xxEtat(e.carte ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
                    : '✕ non reconnue — carte suivante');
 
+    // Ce banc n'a JAMAIS rien mesuré. Quatre-vingt-quatorze relevés de scan dorment dans le
+    // journal, tous du scanner principal ; pas un seul de XX. Impossible, donc, de comparer
+    // deux versions de ce banc sur autre chose qu'une impression — et c'est exactement ce
+    // qu'on nous demandait de faire. Le même relevé que le scanner principal, avec le même
+    // sens : « reel » est le temps de bout en bout, « v2ms » la somme des étapes du moteur,
+    // qui se recouvrent et dépasse donc souvent le temps réel.
+    mesure = { hint:'xx', reel: Math.round(performance.now() - t0), v2ms: e.ms,
+               fiab: e.fiabilite, cat: e.categorie, inliers: e.inliers,
+               zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length };
+
     xxDetails(e);
   }catch(err){ xxEtat('capture : ' + err.message); }
-  finally{ XX.occupe = false; }
+  finally{
+    XX.occupe = false;
+    if(mesure) diagPush('try', mesure);
+    else diagPush('try', {hint:'xx', reel: Math.round(performance.now() - t0), echec:true});
+  }
 }
 
 // La vignette descend vers la fiche. Sans ce trajet, la fiche change de contenu sans qu'on
