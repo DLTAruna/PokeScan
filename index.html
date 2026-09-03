@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 118;
+const VERSION_APP = 119;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15006,6 +15006,7 @@ function xxMajDebug(info){
     // à chaque tour de boucle et le panneau se réécrivait quand même, ce qui vidait le frein
     // ci-dessous de son intérêt. À la seconde, neuf tours sur dix ne changent plus rien.
     + puce('vue ' + (info.attente ? Math.round(info.attente/1000) + ' s' : '—'), null)
+    + puce('boucle ' + (info.periode != null ? info.periode + ' ms' : '—'), null)
     + '<span class="cam">' + xxEch(XX.infoCam || 'caméra : —') + '</span>';
   // Écrire innerHTML relance l'analyse du HTML puis la mise en page — à chaque tour de la
   // boucle de détection, soit une dizaine de fois par seconde, pour un panneau dont la
@@ -15333,13 +15334,28 @@ function xxEcartCoins(a, b){
 // pas être net à quinze centimètres.
 const XX_RECADRE = 0.66;   // part linéaire gardée au second essai
 
-async function xxDetecterMulti(v){
+// `complet` : faut-il TOUJOURS essayer les deux échelles, ou seulement quand la première
+// échoue ? La réponse n'est pas la même selon qui demande.
+//
+// La boucle de détection tourne en continu et n'a besoin que de savoir OÙ est la carte, à peu
+// près, pour poser le repère et juger la stabilité. Lui imposer deux détections à chaque tour
+// double son coût — et cette boucle, il en faut deux tours pour déclencher : c'est la moitié
+// des cinq cents millisecondes d'attente.
+//
+// La capture, elle, n'a lieu qu'une fois et décide de tout : la justesse des coins y commande
+// la qualité du redressement, donc de la lecture. C'est là que les deux échelles se justifient,
+// et la mesure l'avait montré — 87 points d'appariement médians contre 14.
+async function xxDetecterMulti(v, complet){
   const long = Math.max(v.videoWidth, v.videoHeight);
   const e0 = Math.min(1, DETECT_LONG_EDGE / long);
   const lw = Math.round(v.videoWidth * e0), lh = Math.round(v.videoHeight * e0);
 
   const bmp = await createImageBitmap(v, { resizeWidth: lw, resizeHeight: lh, resizeQuality:'medium' });
   const plein = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+  // Hors capture, une détection franche suffit : on ne paie la seconde échelle que si la
+  // première ne trouve rien d'exploitable.
+  if(!complet && plein && plein.corners && plein.score >= XX_MIN_SCORE)
+    return { ...plein, echelle:1 };
   // Je m'étais annoncé « systématique » et je ne l'étais pas : la version précédente rendait
   // l'image entière dès que son score dépassait 0,9, ce qui arrive presque toujours. Résultat,
   // sur les vingt-huit captures de la salve suivante, le recadrage n'a JAMAIS été tenté — et
@@ -15381,8 +15397,14 @@ async function xxDetecterMulti(v){
 // justifie de lui redemander son avis, et tout justifie d'utiliser le sien.
 async function xxRedresserVideo(v, coinsConnus){
   const long = Math.max(v.videoWidth, v.videoHeight);
+  // La capture REPREND les coins que la boucle vient de valider, et ne redétecte que faute de
+  // mieux. J'avais essayé l'inverse — une détection complète à deux échelles au moment de la
+  // prise — en pensant y gagner en justesse. Mesuré : les points d'appariement ne bougent pas
+  // (147 contre 152 de médiane), et la capture passe de 79 à 297 ms. Or c'est précisément le
+  // seul délai que l'utilisateur subit, carte en main. Deux cent dix-huit millisecondes payées
+  // pour rien : on garde les coins de la boucle.
   let d = coinsConnus ? { corners: coinsConnus, score: 1, echelle: XX.echelle || 1 } : null;
-  if(!d) d = await xxDetecterMulti(v);
+  if(!d) d = await xxDetecterMulti(v, true);
   if(!d || !d.corners || d.score == null || d.score < XX_MIN_SCORE) return null;
   XX.echelle = d.echelle || 1;
 
@@ -15518,7 +15540,7 @@ async function xxIdentifier(e, t0){
                zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length,
                moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle,
                nomSecours: !!(res && res.nomSecours), nomLu: (res && res.nomLu) || undefined,
-               prepare: avaitPre || undefined,
+               prepare: avaitPre || undefined, periode: XX.periode,
                score: XX.dernierDebug && XX.dernierDebug.score,
                bouge: XX.dernierDebug && XX.dernierDebug.bouge,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
@@ -15791,11 +15813,17 @@ async function xxSecondeAnalyse(){
 
 // ── La boucle du banc, inchangée ───────────────────────────────────────────────────────
 async function xxTourner(){
+  let dernierTour = 0;
   while(XX.boucle){
+    // La période réelle de la boucle : c'est elle qui commande le délai de déclenchement,
+    // puisqu'il en faut deux tours. Sans la mesurer, on optimise à l'aveugle.
+    { const t = performance.now();
+      if(dernierTour) XX.periode = Math.round(t - dernierTour);
+      dernierTour = t; }
     const v = $('xx-video');
     if(!v || !v.videoWidth || XX.occupe){ await new Promise(r => setTimeout(r, 120)); continue; }
     try{
-      const d = await xxDetecterMulti(v);
+      const d = await xxDetecterMulti(v, false);
       const bon = !!(d && d.corners && d.score != null && d.score >= XX_MIN_SCORE);
 
       if(!bon){
@@ -15837,7 +15865,7 @@ async function xxTourner(){
         const stable = XX.streak >= 1;
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
         XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
-          bouge, seuilBouge, stable, retiree: XX.retiree, attente };
+          bouge, seuilBouge, stable, retiree: XX.retiree, attente, periode: XX.periode };
         xxMajDebug(XX.dernierDebug);
 
         if(XX.retiree && d.score >= seuilScore && stable){
@@ -15852,7 +15880,11 @@ async function xxTourner(){
         }
       }
     }catch(e){ /* une image ratée ne casse pas la boucle */ }
-    await new Promise(r => setTimeout(r, 60));
+    // Soixante millisecondes de pause fixe à chaque tour, soit un quart du temps de boucle
+    // passé à ne rien faire. La pause existe pour rendre la main au navigateur — l'affichage,
+    // les gestes, la file d'identification — mais un tour de boucle en dure déjà cent cinquante
+    // pendant lesquels tout cela s'exécute. Quatre suffisent à céder le fil sans le gaspiller.
+    await new Promise(r => setTimeout(r, 4));
   }
 }
 
