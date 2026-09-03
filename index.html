@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 103;
+const VERSION_APP = 104;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15199,7 +15199,6 @@ async function xxAllerZoom(z){
   try{
     await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
-    try{ localStorage.setItem(XX_ZOOM_CLE, String(XX.zoom)); }catch(e){}
     diagPush('err', {msg:'XX zoom: demandé ' + cible + ' — obtenu '
       + (XX.zoom != null ? XX.zoom : 'inconnu')});
     xxMajZoom(); xxInfoCam();
@@ -15258,29 +15257,12 @@ function xxPinceFin(e){
   const etait = xxDoigts.size;
   xxDoigts.delete(e.pointerId);
   if(etait === 2 && XX.zoom != null){
-    // Le geste terminé, on retient et on consigne — pas pendant, ce serait des centaines
-    // d'écritures pour un seul mouvement.
-    try{ localStorage.setItem(XX_ZOOM_CLE, String(XX.zoom)); }catch(err){}
+    // Consigné à la fin du geste seulement — pendant, ce serait des centaines d'entrées pour
+    // un seul mouvement. Rien n'est retenu d'une session à l'autre, voir xxFlux.
     diagPush('err', {msg:'XX zoom (pincement) : ' + XX.zoom});
     xxInfoCam();
   }
   xxPinceEcart = 0;
-}
-
-async function xxZoomer(sens){
-  if(!XX.piste || !XX.caps) return;
-  const pas = XX.caps.step && XX.caps.step > 0 ? Math.max(XX.caps.step, 0.1) : 0.1;
-  const bas = XX.caps.min, haut = XX.caps.max;
-  const actuel = XX.zoom != null ? XX.zoom : bas;
-  // Un pas MULTIPLICATIF. L'ancien pas additif de 0,2 demandait cent quarante-cinq pressions
-  // pour traverser une plage de 1 à 30 : le bouton existait, il ne servait à rien.
-  const cible = Math.max(bas, Math.min(haut, actuel * (sens > 0 ? 1.3 : 1/1.3)));
-  try{
-    await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
-    XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
-    try{ localStorage.setItem(XX_ZOOM_CLE, String(XX.zoom)); }catch(e){}
-    xxMajZoom();
-  }catch(e){ xxEtat('zoom refusé : ' + e.message); }
 }
 
 function xxEcartCoins(a, b){
@@ -15708,17 +15690,16 @@ async function xxFlux(deviceId){
     XX.caps = caps.zoom || null;
     XX.zoomNatif = reglage.zoom != null ? reglage.zoom : null;
     if(XX.caps){
-      const memo = parseFloat(localStorage.getItem(XX_ZOOM_CLE));
-      const plafond = XX.caps.max;
-      // Sans préférence, on demande explicitement le MINIMUM de la plage. La V.99 laissait
-      // le réglage natif, en suivant la règle du scanner principal — ne rien imposer. Mais
-      // sur le Pixel de Nikos ce natif EST déjà un 2× : ne rien imposer, c'est accepter un
-      // recadrage qu'on n'a pas choisi. Demander le minimum n'est pas une supposition sur
-      // l'appareil — c'est lui demander le champ le plus large qu'il accepte de donner.
-      const cible = Number.isFinite(memo) ? Math.max(XX.caps.min, Math.min(plafond, memo))
-                                          : XX.caps.min;
-      await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
+      // TOUJOURS le minimum, et plus jamais une valeur mémorisée. Le zoom était retenu d'une
+      // session à l'autre ; depuis que le pincement l'écrit, il suffisait de terminer une
+      // séance un peu zoomé pour que la caméra rouvre ainsi le lendemain — et à fort zoom on
+      // ne voit plus une carte mais sa texture, donc le détecteur ne trouve plus rien. Une
+      // préférence dont une mauvaise valeur rend l'outil inutilisable, sans que rien à
+      // l'écran n'en donne la raison, n'a pas à survivre à la session. Le pincement et
+      // l'échelle restent là pour ajuster pendant qu'on scanne.
+      await XX.piste.applyConstraints({advanced:[{zoom: XX.caps.min}]});
     }
+    try{ localStorage.removeItem(XX_ZOOM_CLE); }catch(e){}
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : null;
     xxInfoCam();
     // Ce banc avalait tout cela dans un catch vide : sur un appareil qu'on ne peut pas
@@ -15839,9 +15820,14 @@ $('xx-cadrage')?.addEventListener('click', xxBasculerCadrage);
   if(cadre){
     cadre.addEventListener('pointerdown', xxPinceDebut);
     cadre.addEventListener('pointermove', xxPinceBouge, {passive:false});
-    cadre.addEventListener('pointerup', xxPinceFin);
-    cadre.addEventListener('pointercancel', xxPinceFin);
-    cadre.addEventListener('pointerleave', xxPinceFin);
+    // Les relâchements sont écoutés sur la FENÊTRE, pas sur le cadre. Un doigt qui quitte
+    // l'élément — ou dont le relâchement se perd, ce qui arrive au tactile — laissait son
+    // identifiant dans la table ; au toucher suivant on croyait à deux doigts et le zoom
+    // partait sur un rapport calculé avec un point fantôme. Sur la fenêtre, aucun
+    // relâchement n'échappe. Et « pointerleave » disparaît : sortir du cadre au milieu d'un
+    // pincement n'est pas la fin du geste.
+    window.addEventListener('pointerup', xxPinceFin);
+    window.addEventListener('pointercancel', xxPinceFin);
   }
 }
 // « Remplir » par défaut : c'est lui qui donne le grand cadre de visée. En « contain », le
