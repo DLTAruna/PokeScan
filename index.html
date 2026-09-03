@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 117;
+const VERSION_APP = 118;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15824,6 +15824,16 @@ async function xxTourner(){
         const seuilScore = attente >= XX_PATIENCE.douce ? XX_MIN_SCORE : 0.5;
 
         if(bouge < seuilBouge) XX.streak++; else XX.streak = 0;
+        // Deux images consécutives stables. J'ai voulu m'en passer quand le score est franc,
+        // pour économiser une boucle sur les 509 ms de déclenchement — mesuré A/B sur le même
+        // corpus, dans les deux ordres : AUCUN gain. Et la raison est structurelle. 
+        // vaut l'infini à la première détection d'une carte, faute de coins précédents à
+        // comparer : une règle « score franc ET peu de mouvement » ne peut donc jamais se
+        // déclencher sur la première image. Elle attendait la seconde, exactement comme le
+        // compteur qu'elle prétendait remplacer.
+        // L'écart de 255 ms que j'avais cru voir venait de l'ordre des passes : la seconde
+        // profite des descripteurs mis en cache par la première. En inversant, il change de
+        // camp. Une piste qui ne survit pas à l'inversion n'est pas une piste.
         const stable = XX.streak >= 1;
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
         XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
