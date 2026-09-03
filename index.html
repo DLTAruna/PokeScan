@@ -859,6 +859,7 @@
   #xx-zoom{ position:absolute; left:10px; bottom:50%; z-index:14;
     display:flex; flex-direction:column; align-items:center; gap:6px; }
   #xx-zoom[hidden]{ display:none; }
+  #xx-objectif{ font-size:17px !important; }
   #xx-zoom button{ width:38px; height:38px; border-radius:50%; cursor:pointer; font-size:19px;
     display:flex; align-items:center; justify-content:center; line-height:1;
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#e6edf3; }
@@ -5061,9 +5062,11 @@
       <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
 
       <div id="xx-zoom" hidden>
-        <button id="xx-zoom-moins" type="button" aria-label="Réduire le zoom">−</button>
-        <span id="xx-zoom-txt">×1.0</span>
-        <button id="xx-zoom-plus" type="button" aria-label="Augmenter le zoom">+</button>
+        <button id="xx-zoom-plus" type="button" aria-label="Rapprocher">+</button>
+        <span id="xx-zoom-txt">large</span>
+        <button id="xx-zoom-moins" type="button" aria-label="Élargir">−</button>
+        <!-- N'apparaît que si l'appareil expose vraiment plusieurs caméras arrière. -->
+        <button id="xx-objectif" type="button" hidden aria-label="Changer d'objectif">⟳</button>
       </div>
 
       <!-- La quantité, au-dessus de la fiche et à l'horizontale : c'est un geste qu'on
@@ -6606,7 +6609,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 98;
+const VERSION_APP = 99;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14827,7 +14830,7 @@ const XX_ZOOM_MAX = 3;
 const XX = { flux:null, piste:null, boucle:false, occupe:false,
              presentDepuis:0, streak:0, dernierCoins:null, absence:0,
              retiree:true, coinsCapture:null, pile:[], valeur:0,
-             caps:null, zoom:null };
+             caps:null, zoom:null, objectifs:[] };
 
 function xxEtat(t){ const e = $('xx-etat'); if(e) e.textContent = t; }
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
@@ -14950,11 +14953,26 @@ function xxEclater(){
 }
 
 // ── LE ZOOM ────────────────────────────────────────────────────────────────────────────
+// Ce que ce bouton affiche n'est PAS une magnification absolue, et c'est tout le correctif.
+// Le nombre que le navigateur appelle « zoom » n'a aucune sémantique garantie d'un appareil
+// à l'autre — le scanner principal l'avait déjà consigné, ce banc l'avait oublié. Relevé sur
+// le Samsung : plage 1…30, alors que l'appli du constructeur affiche 0,6×…30× — le « 1 » du
+// navigateur y est l'ultra grand-angle. Relevé sur le Pixel 7 Pro de Nikos : le « ×1,0 » que
+// nous affichions correspond au 2× du constructeur, donc à une carte approchée déjà recadrée
+// numériquement — d'où le bruit.
+// On cesse donc d'afficher un nombre qui prétend au réel. Ce qui est montré, c'est ce que
+// NOTRE bouton ajoute au champ le plus large que ce flux sait donner : « large » quand nous
+// n'ajoutons rien, « +1,4× » au-dessus. La valeur brute part au diagnostic, seul endroit où
+// elle veut dire quelque chose.
 function xxMajZoom(){
   const t = $('xx-zoom-txt'), bloc = $('xx-zoom');
   if(!bloc) return;
   bloc.hidden = !XX.caps;
-  if(t) t.textContent = XX.zoom != null ? '×' + (+XX.zoom).toFixed(1) : '×?';
+  if(!t) return;
+  if(XX.zoom == null || !XX.caps){ t.textContent = '×?'; t.title = ''; return; }
+  const f = XX.zoom / Math.max(XX.caps.min, 1e-4);
+  t.textContent = f <= 1.02 ? 'large' : '+' + f.toFixed(1).replace('.', ',') + '×';
+  t.title = 'zoom caméra brut : ' + XX.zoom + ' (plage ' + XX.caps.min + '…' + XX.caps.max + ')';
 }
 async function xxZoomer(sens){
   if(!XX.piste || !XX.caps) return;
@@ -14966,7 +14984,7 @@ async function xxZoomer(sens){
   try{
     await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
-    try{ localStorage.setItem('pokescanZoomXX', String(XX.zoom)); }catch(e){}
+    try{ localStorage.setItem(XX_ZOOM_CLE, String(XX.zoom)); }catch(e){}
     xxMajZoom();
   }catch(e){ xxEtat('zoom refusé : ' + e.message); }
 }
@@ -15353,35 +15371,98 @@ async function xxTourner(){
   }
 }
 
-async function xxOuvrir(){
-  if(XX.flux) return;
-  xxEtat('ouverture de la caméra…');
+// Le flux, isolé de l'ouverture : le bouton d'objectif le rejoue avec un autre appareil.
+const XX_ZOOM_CLE = 'pokescanZoomXX';
+async function xxFlux(deviceId){
   try{
     XX.flux = await navigator.mediaDevices.getUserMedia({
-      video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1440},
+      video:{ ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:{ideal:'environment'}}),
+              width:{ideal:1920}, height:{ideal:1440},
               advanced:[{focusMode:'continuous'}] }, audio:false });
-  }catch(e){ xxEtat('caméra refusée : ' + e.message); return; }
+  }catch(e){ xxEtat('caméra refusée : ' + e.message); return false; }
   const v = $('xx-video');
   v.srcObject = XX.flux;
   await v.play().catch(()=>{});
   XX.piste = XX.flux.getVideoTracks()[0];
-  // Zoom : on reprend la valeur mémorisée, sinon on vise l'objectif principal comme le
-  // scanner principal, et on borne pour ne pas atteindre le téléobjectif.
+  // AUCUNE valeur de zoom n'est imposée. Ce banc appliquait FACTEUR_PRINCIPAL — 1,7× le
+  // minimum — pour « viser l'objectif principal » : un facteur déduit d'UN Samsung, où le
+  // « 1 » du navigateur est l'ultra grand-angle. Sur un appareil dont le minimum est déjà
+  // l'objectif principal, ce même geste n'est plus qu'un recadrage numérique : on jette des
+  // pixels et on remonte le bruit, exactement ce que Nikos constate de près sur son Pixel.
+  // La règle que le scanner principal avait déjà arrêtée, et que ce banc doit suivre : la
+  // caméra ouvre sur SON réglage natif, et l'on ne réapplique que ce que l'utilisateur a
+  // lui-même choisi ici.
   try{
     const caps = XX.piste.getCapabilities ? XX.piste.getCapabilities() : {};
+    const reglage = XX.piste.getSettings ? XX.piste.getSettings() : {};
     XX.caps = caps.zoom || null;
     if(XX.caps){
-      const memo = parseFloat(localStorage.getItem('pokescanZoomXX'));
-      const deduit = XX.caps.max / Math.max(XX.caps.min, 1e-4) >= 5
-        ? Math.min(XX.caps.max, XX.caps.min * FACTEUR_PRINCIPAL) : XX.caps.min;
-      const haut = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
-      const cible = Math.max(XX.caps.min, Math.min(haut,
-        Number.isFinite(memo) ? memo : deduit));
-      await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
+      const memo = parseFloat(localStorage.getItem(XX_ZOOM_CLE));
+      if(Number.isFinite(memo)){
+        const haut = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
+        await XX.piste.applyConstraints({advanced:[{zoom:
+          Math.max(XX.caps.min, Math.min(haut, memo))}]});
+      }
     }
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : null;
-  }catch(e){}
+    // Ce banc avalait tout cela dans un catch vide : sur un appareil qu'on ne peut pas
+    // tester, le diagnostic est la seule façon de savoir ce qu'il expose vraiment.
+    diagPush('err', {msg:'XX caméra: ' + (reglage.width || '?') + 'x' + (reglage.height || '?')
+      + ' — zoom ' + (XX.caps ? XX.caps.min + '…' + XX.caps.max + ' pas ' + (XX.caps.step != null ? XX.caps.step : '?')
+                              : 'non exposé')
+      + ' — réglé sur ' + (XX.zoom != null ? XX.zoom : 'inconnu')
+      + ' — objectif ' + (reglage.deviceId ? String(reglage.deviceId).slice(0, 8) : '?')});
+  }catch(e){ diagPush('err', {msg:"XX caméra: zoom refusé — " + e.message}); }
   xxMajZoom();
+  return true;
+}
+
+// Certains téléphones exposent chaque objectif comme un appareil séparé, d'autres les
+// fusionnent en une caméra logique où le zoom ne fait que recadrer. On ne peut le savoir
+// qu'en énumérant — et quand il y a bien plusieurs caméras arrière, ce bouton est le SEUL
+// recours pour élargir le champ : le zoom, lui, ne descend jamais sous le minimum du flux,
+// même quand ce minimum est déjà un recadrage.
+async function xxMajObjectifs(){
+  const b = $('xx-objectif'); if(!b) return;
+  try{
+    const l = await navigator.mediaDevices.enumerateDevices();
+    const video = l.filter(d => d.kind === 'videoinput');
+    const arriere = video.filter(d => !/front|user|avant|face/i.test(d.label || ''));
+    XX.objectifs = arriere.length >= 2 ? arriere : video;
+    b.hidden = XX.objectifs.length < 2;
+    if(XX.objectifs.length >= 2){
+      diagPush('err', {msg:'XX caméra: ' + XX.objectifs.length + ' objectifs — '
+        + XX.objectifs.map(d => d.label || d.deviceId.slice(0, 8)).join(' | ')});
+    }
+  }catch(e){ b.hidden = true; }
+}
+
+async function xxObjectifSuivant(){
+  if(!XX.objectifs || XX.objectifs.length < 2 || XX.occupe) return;
+  const actuel = XX.piste && XX.piste.getSettings ? XX.piste.getSettings().deviceId : null;
+  const i = XX.objectifs.findIndex(d => d.deviceId === actuel);
+  const suiv = XX.objectifs[(i + 1) % XX.objectifs.length];
+  // La boucle de détection tolère un flux absent, mais pas une piste en train de mourir :
+  // on lui emprunte son propre verrou le temps de la bascule.
+  XX.occupe = true;
+  try{
+    try{ if(XX.flux) XX.flux.getTracks().forEach(t => t.stop()); }catch(e){}
+    XX.flux = null; XX.piste = null; XX.caps = null; XX.zoom = null;
+    // Le zoom mémorisé appartenait à l'objectif précédent : il n'a plus de sens ici.
+    try{ localStorage.removeItem(XX_ZOOM_CLE); }catch(e){}
+    if(await xxFlux(suiv.deviceId)){
+      XX.retiree = true; XX.coinsCapture = null; XX.presentDepuis = 0;
+      XX.streak = 0; XX.dernierCoins = null; XX.absence = XX_ABSENCE;
+      xxEtat('objectif : ' + (suiv.label || 'suivant'));
+    }
+  } finally{ XX.occupe = false; }
+}
+
+async function xxOuvrir(){
+  if(XX.flux) return;
+  xxEtat('ouverture de la caméra…');
+  if(!await xxFlux(null)) return;
+  await xxMajObjectifs();
   xxPlein(true);
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     xxEtat('préparation du moteur d’identification…');
@@ -15398,7 +15479,7 @@ async function xxFermer(){
   XX.boucle = false;
   xxPlein(false);
   try{ if(XX.flux) XX.flux.getTracks().forEach(t => t.stop()); }catch(e){}
-  XX.flux = null; XX.piste = null; XX.caps = null;
+  XX.flux = null; XX.piste = null; XX.caps = null; XX.zoom = null;
   const v = $('xx-video'); if(v) v.srcObject = null;
   xxDessinerCadre('attente');
   $('xx-ouvrir').hidden = false; $('xx-fermer').hidden = true;
@@ -15410,6 +15491,7 @@ async function xxFermer(){
 $('xx-ouvrir')?.addEventListener('click', xxOuvrir);
 $('xx-fermer')?.addEventListener('click', xxFermer);
 $('xx-quitter')?.addEventListener('click', xxFermer);
+$('xx-objectif')?.addEventListener('click', xxObjectifSuivant);
 $('xx-zoom-moins')?.addEventListener('click', ()=> xxZoomer(-1));
 $('xx-zoom-plus')?.addEventListener('click', ()=> xxZoomer(1));
 $('xx-qte-moins')?.addEventListener('click', ()=> xxQuantite(-1));
