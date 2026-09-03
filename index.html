@@ -6507,7 +6507,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 93;
+const VERSION_APP = 94;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -8837,7 +8837,12 @@ async function getSetCardList(setId){
   if(!r.ok) return [];
   const detail = await r.json();
   const list = (detail.cards || []).filter(c=>c.image).map(c=>({id:c.id, localId:c.localId, image:c.image}));
-  await idbSet('cardLists', {setId, list, cachedAt: Date.now()});
+  // Le total imprimé (« 019/189 ») arrivait déjà dans cette réponse et repartait à la
+  // poubelle. Le garder évite un second appel réseau pour la même information — l'index
+  // interne, lui, ne le porte pas : il ne connaît que les cartes du pack, secrètes
+  // comprises, ce qui n'est pas le dénominateur imprimé sur la carte.
+  await idbSet('cardLists', {setId, list, official: detail.cardCount?.official ?? null,
+                             cachedAt: Date.now()});
   return list;
 }
 
@@ -14921,15 +14926,20 @@ function xxVoler(photo, coins){
 // ── Le total imprimé du set, mis en cache ──────────────────────────────────────────────
 // Le détail de carte ne le porte pas : il faut interroger le set. Une fois par set et par
 // session, ce qui est négligeable, et sans jamais retenir l'affichage.
+// Le total imprimé passe par le cache de sets DÉJÀ en place (IndexedDB, un set ne change
+// pratiquement jamais une fois publié). Première version : un appel réseau par set et par
+// session, gardé en mémoire seulement — un appel de plus vers tcgdex alors que toute la
+// chaîne d'identification, elle, tient sur notre index interne. Corrigé.
 const xxTotaux = {};
 async function xxTotalSet(setId){
   if(!setId) return null;
   if(xxTotaux[setId] !== undefined) return xxTotaux[setId];
   xxTotaux[setId] = null;
   try{
-    const r = await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId);
-    if(r.ok){ const d = await r.json(); xxTotaux[setId] = d.cardCount?.official ?? null; }
-  }catch(e){}
+    let e = await idbGet('cardLists', setId);
+    if(!e || e.official === undefined){ await getSetCardList(setId); e = await idbGet('cardLists', setId); }
+    xxTotaux[setId] = e && e.official != null ? e.official : null;
+  }catch(err){}
   return xxTotaux[setId];
 }
 
