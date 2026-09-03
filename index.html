@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 127;
+const VERSION_APP = 128;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14933,6 +14933,10 @@ const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
 // correction de rotation. C'est le point de comparaison, il ne bouge pas.
 // Autour : plein écran sans bordure, viseur du capteur principal, zoom, pile et fiche.
 const XX_MIN_SCORE = 0.35;
+// Au-dessus, le détecteur est catégorique et l'on capture sans attendre une seconde image.
+// En dessous, on la demande : c'est le compromis entre le tour de boucle économisé et les
+// déclenchements intempestifs.
+const XX_SCORE_FRANC = 0.98;
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const XX_ABSENCE = 2;
@@ -15581,7 +15585,15 @@ async function xxCapturer(){
 
     e = { carte:null, categorie:null, fiabilite:0, inliers:0, ms:0,
           photo, prix:null, set:null, total:null, qte:1,
-          canvas:cv, reprise:false, msCapture: Math.round(performance.now() - t0) };
+          canvas:cv, reprise:false, msCapture: Math.round(performance.now() - t0),
+          // Le score et le bougé de l'instant où l'on déclenche, figés ICI. Le relevé les
+          // lisait dans l'état de débogage au moment de l'identification — donc plusieurs
+          // images plus tard, souvent après que la carte a été retirée. D'où des rebuts
+          // enregistrés avec un score de 0,000 : la mesure décrivait l'écran vide, pas la
+          // décision. Huit des treize rebuts de la dernière salve sont dans ce cas, et j'ai
+          // failli en tirer des conclusions.
+          declScore: XX.dernierDebug && XX.dernierDebug.score,
+          declBouge: XX.dernierDebug && XX.dernierDebug.bouge };
     XX.pile.push(e);
     XX.retiree = false; XX.coinsCapture = coins;
     xxVoler(photo, coins);
@@ -15641,8 +15653,7 @@ async function xxIdentifier(e, t0){
                // pilote refuse le palier demandé.
                resReelle: (() => { try{ const r = XX.piste.getSettings();
                  return r.width + "x" + r.height; }catch(e){ return undefined; } })(),
-               score: XX.dernierDebug && XX.dernierDebug.score,
-               bouge: XX.dernierDebug && XX.dernierDebug.bouge,
+               score: e.declScore, bouge: e.declBouge,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
                iso: self.crossOriginIsolated === true };
     xxDiagMoteur();
@@ -15989,7 +16000,19 @@ async function xxTourner(){
         // Le risque demeure : capturer pendant que la carte se déplace donne une image filée.
         // D'où un interrupteur plutôt qu'une suppression — le panneau de débogage le
         // bascule, le relevé note lequel des deux régimes a produit chaque scan.
-        const stable = XX.stabilite ? XX.streak >= 1 : true;
+        // ── QUAND PEUT-ON SE PASSER DE LA SECONDE IMAGE ? ──────────────────────────
+        // Supprimer la confirmation a fait gagner un tour de boucle — une à deux secondes sur
+        // le téléphone — mais Nikos constate que « ça déclenche n'importe comment ». C'est
+        // cohérent : la seconde image ne servait pas seulement à mesurer le mouvement, elle
+        // écartait les détections d'UNE SEULE image, celles où le détecteur se trompe un
+        // instant. Un tel accident ne se répète pas ; c'est bien ce qui le rendait filtrable.
+        //
+        // Plutôt que de choisir entre la lenteur et le hasard, on gradue : une détection
+        // franche se passe de confirmation, une détection tiède l'exige. Le seuil est haut —
+        // au banc, une carte correctement cadrée rend un score de 1,00, et les cas douteux
+        // tournaient autour de 0,25 à 0,9.
+        const franche = d.score >= XX_SCORE_FRANC;
+        const stable = XX.stabilite ? XX.streak >= 1 : (franche || XX.streak >= 1);
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
         XX.tDessin = Math.round(performance.now() - tD);
         XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
