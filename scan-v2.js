@@ -49,7 +49,8 @@ const R = {
   NOM_ACTIF: true,
   NOM_INLIERS_MAX: 20,  // au-dessus, l'appariement se suffit à lui-même
   NOM_ECART_MAX: 2,     // lettres de différence tolérées
-  NOM_CANDIDATS: 24,    // profondeur de présélection fouillée
+  NOM_CANDIDATS: 24,    // candidats issus de l'appariement, fouillés d'abord
+  NOM_PROFONDEUR: 500,  // …puis le classement par empreinte, bien plus loin
   ORB_PREMIER: 6,      // candidats appariés au premier passage (voir l'ORB en deux temps)
   GEO_INLIERS: 20,     // géométrie franche → « sûre » même si la sigmoïde reste basse
   GEO_DOM: 0.6,
@@ -860,7 +861,15 @@ async function empreinte(carte) {
     for (let j = 0; j < D; j++) s += q8[o + j] * ev[j];
     return { cle: c.cle, s: s * c.inv };
   }).sort((a, b) => b.s - a.s);
-  return { embTop: parEmb[0].s, court: parEmb.slice(0, R.SHORT).map(x => x.cle) };
+  // `large` : le même classement par empreinte, mais poussé bien plus loin. L'appariement
+  // ORB ne travaille que sur `court` — dix-huit candidats, c'est son budget. Mais le
+  // secours par le nom, lui, ne coûte qu'une comparaison de chaînes : il peut fouiller cinq
+  // cents cartes sans que personne ne le sente. Or c'est exactement ce qu'il fallait :
+  // relevé sur la photo 170 du set 151, l'OCR lisait « Carapuce » sans erreur, mais Carapuce
+  // n'était PAS dans les dix-huit — la présélection proposait Crapustule, Natu, Léboulérou.
+  // Le nom était juste et inutilisable, faute de candidat à désigner.
+  return { embTop: parEmb[0].s, court: parEmb.slice(0, R.SHORT).map(x => x.cle),
+           large: parEmb.slice(0, R.NOM_PROFONDEUR).map(x => x.cle) };
 }
 
 // À passer ensuite à identifierV2 dans `opts.pre`. Rend null plutôt que de jeter : un
@@ -881,7 +890,7 @@ export async function identifierV2(carte, opts = {}) {
 
   // 1. embedding → shortlist. Peut avoir été calculé D'AVANCE (voir preparerV2).
   const pre = opts.pre && opts.pre.court ? opts.pre : null;
-  const { embTop, court } = pre || await chrono('emb', empreinte(carte));
+  const { embTop, court, large } = pre || await chrono('emb', empreinte(carte));
   if (pre && pre.T && pre.T.emb != null) T.embAvance = pre.T.emb;
   // Ce que l'embedding SEUL proposait, avant que l'ORB ne reclasse. Sans cette trace, on ne
   // peut pas savoir ce qu'on jette quand l'ORB devient aveugle (image floue ET réduite :
@@ -1009,12 +1018,15 @@ export async function identifierV2(carte, opts = {}) {
       // La présélection de l'empreinte D'ABORD, le classement ORB ensuite :
       // quand l'appariement échoue son ordre ne vaut rien, alors que l'empreinte, elle, a
       // bien rapproché la carte de quelque chose.
-      const fouille = [...new Set([...(court || []), ...ranked])]
-        .slice(0, R.NOM_CANDIDATS);
-      const gagnant = fouille.find(cle => {
-        const c = cleToCard.get(cle);
-        return c && nomTrouve(nomLu, c.name, R.NOM_ECART_MAX);
-      });
+      const porteLeNom = cle => { const c = cleToCard.get(cle);
+        return c && nomTrouve(nomLu, c.name, R.NOM_ECART_MAX); };
+      // D'abord les candidats que l'appariement a examinés : s'il y a là une carte du bon
+      // nom, c'est la meilleure réponse possible.
+      const proches = [...new Set([...(court || []), ...ranked])].slice(0, R.NOM_CANDIDATS);
+      let gagnant = proches.find(porteLeNom);
+      // Sinon on descend le classement par empreinte. L'ordre reste celui de la ressemblance
+      // visuelle : la première carte du bon nom est donc la plus proche de ce qu'on a vu.
+      if(!gagnant && large) gagnant = large.find(porteLeNom);
       if (gagnant) {
         pick = gagnant; nomSecours = true;
         inl = Math.max(inl, orbScores[gagnant] || 0);
