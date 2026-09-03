@@ -6714,7 +6714,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 123;
+const VERSION_APP = 124;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15591,6 +15591,15 @@ async function xxIdentifier(e, t0){
                moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle,
                nomSecours: !!(res && res.nomSecours), nomLu: (res && res.nomLu) || undefined,
                periode: XX.periode,
+               // La résolution DEMANDÉE, portée par chaque scan. Sans elle, séparer trois
+               // salves de paliers différents demanderait de recoller les horodatages avec
+               // les lignes caméra — et j ai déjà perdu une salve entière faute d avoir
+               // instrumenté le bon endroit.
+               res: XX_RES.nom, resL: XX_RES.l,
+               // Et la résolution OBTENUE, qui peut différer : c est elle qui compte si le
+               // pilote refuse le palier demandé.
+               resReelle: (() => { try{ const r = XX.piste.getSettings();
+                 return r.width + "x" + r.height; }catch(e){ return undefined; } })(),
                score: XX.dernierDebug && XX.dernierDebug.score,
                bouge: XX.dernierDebug && XX.dernierDebug.bouge,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
