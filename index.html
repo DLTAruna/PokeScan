@@ -855,6 +855,11 @@
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
     -webkit-tap-highlight-color:transparent; }
   #xx-debug-b.actif{ color:#0d1117; background:var(--mode-collec); border-color:transparent; }
+  #xx-res{ height:30px; min-width:34px; padding:0 8px; border-radius:15px; cursor:pointer;
+    font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
+    -webkit-tap-highlight-color:transparent; }
+  #xx-res[hidden]{ display:none; }
   #xx-cadrage{ width:30px; height:30px; border-radius:50%; cursor:pointer;
     display:flex; align-items:center; justify-content:center; padding:0;
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
@@ -5131,6 +5136,8 @@
         <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
         <p id="xx-etat" class="xx-etat">caméra fermée</p>
         <button id="xx-debug-b" type="button" aria-label="Afficher le débogage">i</button>
+        <!-- Ne sert qu'à l'essai : fait tourner la résolution demandée à la caméra. -->
+        <button id="xx-res" type="button" hidden aria-label="Résolution de la caméra">HD</button>
         <!-- Voir tout le champ, ou remplir l'écran. Remplir coûte quarante pour cent de la
              largeur sur un écran allongé : c'est un choix, plus un défaut. -->
         <button id="xx-cadrage" type="button" aria-label="Cadrage : tout voir ou remplir">
@@ -6707,7 +6714,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 122;
+const VERSION_APP = 123;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15046,6 +15053,33 @@ function xxBasculerCadrage(){
                     : 'tout le champ est visible');
 }
 
+// Le bouton de résolution ne s'affiche qu'avec le panneau de débogage : c'est un instrument
+// d'essai, pas un réglage d'usage.
+function xxMajRes(){
+  const b = $('xx-res'); if(!b) return;
+  b.hidden = !XX.debug;
+  b.textContent = XX_RES.nom === 'haute' ? 'HD' : XX_RES.nom === 'moyenne' ? 'MD' : 'SD';
+  b.title = 'caméra demandée : ' + XX_RES.l + '×' + XX_RES.h;
+}
+async function xxBasculerRes(){
+  const i = (XX_RES_PALIERS.indexOf(XX_RES) + 1) % XX_RES_PALIERS.length;
+  XX_RES = XX_RES_PALIERS[i];
+  try{ localStorage.setItem(XX_RES_CLE, String(i)); }catch(e){}
+  xxMajRes();
+  // Il faut rouvrir le flux pour que la nouvelle contrainte s'applique.
+  if(XX.flux){
+    xxEtat('caméra : ' + XX_RES.l + '×' + XX_RES.h + '…');
+    XX.occupe = true;
+    try{
+      try{ XX.flux.getTracks().forEach(t => t.stop()); }catch(e){}
+      XX.flux = null; XX.piste = null; XX.caps = null; XX.zoom = null;
+      await xxFlux(null);
+      XX.retiree = true; XX.coinsCapture = null; XX.dernierCoins = null;
+      XX.presentDepuis = 0; XX.streak = 0; XX.absence = XX_ABSENCE;
+    } finally{ XX.occupe = false; }
+  }
+}
+
 function xxBasculerDebug(){
   XX.debug = !XX.debug;
   xxDebugRendu = '';                       // le panneau repart d'une page blanche
@@ -15053,6 +15087,7 @@ function xxBasculerDebug(){
   if(d) d.hidden = !XX.debug;
   if(b) b.classList.toggle('actif', XX.debug);
   try{ localStorage.setItem(XX_DEBUG_CLE, XX.debug ? '1' : '0'); }catch(e){}
+  xxMajRes();
   if(XX.debug) xxMajDebug(XX.dernierDebug || {});
 }
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
@@ -15904,12 +15939,43 @@ async function xxTourner(){
 }
 
 // Le flux, isolé de l'ouverture : le bouton d'objectif le rejoue avec un autre appareil.
+// ── LA RÉSOLUTION DEMANDÉE À LA CAMÉRA ───────────────────────────────────────────────
+// Mesuré au banc, dix cartes dégradées et tremblantes à chaque palier :
+//
+//   1440×1920   déclenchement 448 ms   inliers 102   9 sûres/10
+//   1080×1440   déclenchement 407 ms   inliers  98   8 sûres/10
+//    720× 960   déclenchement 332 ms   inliers  96   9 sûres/10
+//
+// Cent seize millisecondes gagnées sur le déclenchement — un quart — pour six points
+// d'appariement en moins et une qualité de lecture inchangée. Les deux tiers du temps de
+// boucle servaient à extraire les pixels d'une image 1440×1920 ; en demander quatre fois
+// moins les rend au scanner.
+//
+// MAIS le dépôt garde une observation contraire, faite sur l'appareil et non au banc :
+// demander une résolution basse a déjà poussé le pilote caméra d'un Samsung vers un mode
+// capteur dégradé où l'AUTOFOCUS ne s'engageait plus. Mon banc ne peut pas reproduire cela —
+// il n'a pas d'objectif à faire le point. Le gain est donc démontré, le risque aussi, et
+// aucun des deux ne peut trancher l'autre depuis ici.
+//
+// D'où ce réglage plutôt qu'un changement imposé : le bouton du panneau de débogage fait
+// tourner les trois paliers, le choix survit à la session, et la résolution obtenue est déjà
+// affichée. Une salve par palier suffira à décider sur l'appareil qui compte.
+const XX_RES_PALIERS = [ {l:1920, h:1440, nom:'haute'},
+                         {l:1440, h:1080, nom:'moyenne'},
+                         {l:960,  h:720,  nom:'basse'} ];
+const XX_RES_CLE = 'pokescanResXX';
+let XX_RES = XX_RES_PALIERS[0];
+try{
+  const i = parseInt(localStorage.getItem(XX_RES_CLE), 10);
+  if(i >= 0 && i < XX_RES_PALIERS.length) XX_RES = XX_RES_PALIERS[i];
+}catch(e){}
+
 const XX_ZOOM_CLE = 'pokescanZoomXX';
 async function xxFlux(deviceId){
   try{
     XX.flux = await navigator.mediaDevices.getUserMedia({
       video:{ ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:{ideal:'environment'}}),
-              width:{ideal:1920}, height:{ideal:1440},
+              width:{ideal:XX_RES.l}, height:{ideal:XX_RES.h},
               // PAS de contrainte de cadence, et c'est un retour en arrière assumé. Je
               // l'avais ajoutée pour priver le mode nuit de son budget de temps par image.
               // Nikos a constaté aussitôt après une capture moins bonne et une analyse plus
@@ -16065,6 +16131,7 @@ $('xx-quitter')?.addEventListener('click', xxFermer);
 $('xx-objectif')?.addEventListener('click', xxObjectifSuivant);
 $('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
 $('xx-cadrage')?.addEventListener('click', xxBasculerCadrage);
+$('xx-res')?.addEventListener('click', xxBasculerRes);
 {
   const cadre = document.querySelector('#section-xx .xx-cadre');
   if(cadre){
