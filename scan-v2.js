@@ -605,6 +605,10 @@ export function moteurV2() { return moteurEmb; }
 export function diagV2() { return diagEmb; }
 export function setV2() { return setsCharges(); }
 export function trancheV2() { return manifest?.slice || null; }
+// Les sets du manifeste : nom lisible et dénominateur imprimé, construits avec les packs.
+// Une carte identifiée peut donc afficher « Ténèbres Embrasées » et « /189 » sans un seul
+// appel réseau — l'index interne portait déjà tout le reste.
+export function setsV2() { return manifest?.sets || null; }
 // Catalogue chargé, pour le banc : de quoi tirer un échantillon au hasard dans TOUTE la
 // tranche plutôt que dans le seul set des 31 photos. Copie superficielle — le banc n'a
 // aucune raison de tenir l'index par référence.

@@ -69,7 +69,7 @@ async function effacerControle() {
 
 // —— build ————————————————————————————————————————————————————————
 async function construireSet(setId) {
-  const { nom, cartes } = await cartesDuSet(setId);
+  const { nom, officiel, cartes } = await cartesDuSet(setId);
   S.current = { set: setId, name: nom, cards: cartes.length, done: 0, step: 'start' };
   journal(`Set ${setId} (${nom}) — ${cartes.length} cartes`);
   const rows = [];
@@ -117,7 +117,8 @@ async function construireSet(setId) {
   }
   journal(`Set ${setId} : pack + ${rows.length} blobs ORB envoyés (${(pack.length / 1e6).toFixed(1)} Mo)`);
   S.current = null;
-  return { cards: rows.length, bytes: pack.length, embRows: rows.map(r => ({ cle: r.cle, numero: r.numero, name: r.name, image: r.image, setId, emb: r.emb })) };
+  return { cards: rows.length, bytes: pack.length, nom, officiel,
+           embRows: rows.map(r => ({ cle: r.cle, numero: r.numero, name: r.name, image: r.image, setId, emb: r.emb })) };
 }
 
 async function construireIndexGlobal(tousLesEmb) {
@@ -191,7 +192,12 @@ async function main() {
       }
     }
     if (res) {
-      manifest.sets[id] = { name: S.sets.list.includes(id) ? id : id, cards: res.cards, bytes: res.bytes, builtAt: new Date().toISOString() };
+      // `name` valait l'identifiant répété (« swsh3 » comme nom de « swsh3 ») : un
+      // placeholder que personne n'avait remplacé. Le vrai nom lisible et le dénominateur
+      // imprimé sont désormais gardés — quelques kilo-octets pour 142 sets, et l'application
+      // n'a plus à les demander à tcgdex.
+      manifest.sets[id] = { name: res.nom || id, officiel: res.officiel ?? null,
+                            cards: res.cards, bytes: res.bytes, builtAt: new Date().toISOString() };
       manifest.updatedAt = new Date().toISOString();
       await put('manifest.json', JSON.stringify(manifest), 'application/json');
       embGlobal.push(...res.embRows);

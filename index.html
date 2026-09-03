@@ -832,9 +832,11 @@
 
   /* La pile. */
   #xx-pile{ position:absolute; top:10px; right:10px; z-index:14;
-    display:flex; align-items:center; gap:8px; padding:6px 12px;
+    display:flex; align-items:center; gap:8px; padding:8px 14px;
     border-radius:999px; cursor:pointer; font-size:13px; color:#e6edf3;
-    border:1px solid rgba(255,255,255,.2); background:rgba(13,17,23,.85); }
+    border:1px solid rgba(255,255,255,.2); background:rgba(13,17,23,.85);
+    -webkit-tap-highlight-color:transparent; transition:transform .12s ease; }
+  #xx-pile:active{ transform:scale(.94); }
   #xx-pile[hidden]{ display:none; }
   #xx-pile.alerte{ border-color:rgba(240,112,92,.6); }
   #xx-pile b{ font-variant-numeric:tabular-nums; font-size:14px; }
@@ -864,6 +866,11 @@
     box-shadow:0 6px 22px rgba(0,0,0,.45); }
   body.xx-plein #xx-fiche{ background:rgba(10,13,18,.72); border-color:rgba(255,255,255,.18); }
   #xx-fiche[hidden]{ display:none; }
+  /* Elle monte d'un cran en apparaissant : le mouvement dit « voici le verdict » sans qu'il
+     faille le lire pour le remarquer. */
+  #xx-fiche{ animation:xx-monte .22s cubic-bezier(.2,1,.3,1); }
+  @keyframes xx-monte{ from{ transform:translateY(10px); opacity:0; } to{ transform:none; opacity:1; } }
+  @media (prefers-reduced-motion: reduce){ #xx-fiche{ animation:none; } }
   #xx-photo{ width:56px; height:78px; object-fit:cover; border-radius:6px; flex:none;
     background:#0a0a0a; align-self:center; }
   .xx-lignes{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;
@@ -874,24 +881,33 @@
   .xx-tete span{ font-size:11.5px; color:#9fb0c0; font-variant-numeric:tabular-nums; flex:none; }
   #xx-fiche.sure .xx-tete b{ color:#8ce89b; }
   #xx-fiche.rebut .xx-tete b{ color:#ff9d8b; }
-  .xx-ligne{ display:flex; justify-content:space-between; gap:10px; font-size:11.5px; }
-  .xx-ligne > span:first-child{ color:#7d8b99; }
+  .xx-ligne{ display:flex; justify-content:space-between; gap:10px; font-size:12px;
+    line-height:1.45; }
+  .xx-ligne > span:first-child{ color:#7d8b99; flex:none; }
   .xx-ligne > span:last-child{ color:#c9d4de; overflow:hidden; text-overflow:ellipsis;
     white-space:nowrap; font-variant-numeric:tabular-nums; }
+  /* Le prix est l'information qu'on cherche en premier quand on dépouille pour vendre. */
+  .xx-ligne.prix > span:last-child{ color:#8fe0a0; font-weight:600; font-size:13px; }
 
-  /* Quantité : deux petits boutons, empilés pour ne pas voler de largeur au texte. */
-  #xx-qte-bloc{ display:flex; flex-direction:column; align-items:center; justify-content:center;
-    gap:3px; flex:none; }
+  /* Quantité : horizontale, centrée, posée AU-DESSUS de la fiche. */
+  #xx-qte-bloc{ position:absolute; left:0; right:0; bottom:106px; z-index:13;
+    display:flex; align-items:center; justify-content:center; gap:14px; }
   #xx-qte-bloc[hidden]{ display:none; }
-  #xx-qte-bloc button{ width:28px; height:24px; border-radius:7px; cursor:pointer; font-size:14px;
-    line-height:1; display:flex; align-items:center; justify-content:center;
-    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); color:#e6edf3; }
-  #xx-qte{ font-size:12px; color:#e6edf3; font-variant-numeric:tabular-nums; }
+  #xx-qte-bloc button{ width:40px; height:40px; border-radius:50%; cursor:pointer;
+    font-size:21px; line-height:1; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.88); color:#e6edf3;
+    -webkit-tap-highlight-color:transparent; transition:transform .12s ease, background .12s ease; }
+  #xx-qte-bloc button:active{ transform:scale(.9); background:rgba(230,194,92,.24); }
+  #xx-qte{ min-width:44px; text-align:center; font-size:16px; font-weight:600; color:#e6edf3;
+    font-variant-numeric:tabular-nums; background:rgba(13,17,23,.88); border-radius:999px;
+    padding:6px 12px; border:1px solid rgba(255,255,255,.18); }
 
   /* Les deux gestes de correction, à droite : plus hauts que larges. */
   .xx-cotes{ display:flex; gap:6px; flex:none; }
-  .xx-cotes button{ width:34px; border-radius:9px; cursor:pointer; display:flex;
-    align-items:center; justify-content:center; padding:0; }
+  .xx-cotes button{ width:36px; border-radius:10px; cursor:pointer; display:flex;
+    align-items:center; justify-content:center; padding:0;
+    -webkit-tap-highlight-color:transparent; transition:transform .12s ease; }
+  .xx-cotes button:active{ transform:scale(.92); }
   .xx-cotes svg{ width:19px; height:19px; }
   #xx-jeter{ border:1px solid rgba(240,112,92,.55); background:rgba(200,60,45,.26); color:#ffb8a8; }
   #xx-editer{ border:1px solid rgba(90,150,240,.55); background:rgba(50,110,220,.26); color:#b8d2ff; }
@@ -959,6 +975,7 @@
   body.xx-plein #xx-quitter{ display:flex; top:calc(10px + env(safe-area-inset-top)); }
   body.xx-plein #xx-fiche{ bottom:calc(10px + env(safe-area-inset-bottom));
     max-width:520px; margin:0 auto; }
+  body.xx-plein #xx-qte-bloc{ bottom:calc(112px + env(safe-area-inset-bottom)); }
   body.xx-plein #xx-liste, body.xx-plein #xx-recherche{
     top:calc(56px + env(safe-area-inset-top));
     bottom:calc(110px + env(safe-area-inset-bottom)); max-width:520px; margin:0 auto; }
@@ -4976,6 +4993,16 @@
         <button id="xx-zoom-plus" type="button" aria-label="Augmenter le zoom">+</button>
       </div>
 
+      <!-- La quantité, au-dessus de la fiche et à l'horizontale : c'est un geste qu'on
+           répète, il doit tomber sous le pouce sans viser, et rester lisible quand la fiche
+           est déjà dense. Coincée dans la colonne de droite, elle disputait sa largeur au
+           nom de la carte. -->
+      <div id="xx-qte-bloc" hidden>
+        <button id="xx-qte-moins" type="button" aria-label="Un de moins">−</button>
+        <span id="xx-qte">×1</span>
+        <button id="xx-qte-plus" type="button" aria-label="Un de plus">+</button>
+      </div>
+
       <!-- La fiche, comme en V1 : nom et numéro en tête, puis set, fiabilité, prix. -->
       <div id="xx-fiche" hidden>
         <img id="xx-photo" alt="">
@@ -4983,12 +5010,7 @@
           <div class="xx-tete"><b id="xx-nom">—</b><span id="xx-num"></span></div>
           <div class="xx-ligne"><span>Set</span><span id="xx-set">—</span></div>
           <div class="xx-ligne"><span>Fiabilité</span><span id="xx-fiab">—</span></div>
-          <div class="xx-ligne"><span>Prix</span><span id="xx-prix">—</span></div>
-        </div>
-        <div id="xx-qte-bloc" hidden>
-          <button id="xx-qte-plus" type="button" aria-label="Un de plus">+</button>
-          <span id="xx-qte">×1</span>
-          <button id="xx-qte-moins" type="button" aria-label="Un de moins">−</button>
+          <div class="xx-ligne prix"><span>Prix</span><span id="xx-prix">—</span></div>
         </div>
         <!-- Les deux gestes de correction, à droite de la fiche : jeter, ou choisir à la
              main. Plus hauts que larges pour être atteignables au pouce sans viser. -->
@@ -6507,7 +6529,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 94;
+const VERSION_APP = 95;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14718,7 +14740,7 @@ const XX_ABSENCE = 2;
 // centré sur la hauteur totale avait sa moitié basse dessous. On centre donc sur la place
 // réellement libre.
 const XX_GUIDE_H = 0.62;      // hauteur du repère, en fraction de l'IMAGE
-const XX_BAS_RESERVE = 168;   // place gardée en bas pour la fiche, en pixels d'écran
+const XX_BAS_RESERVE = 210;   // fiche + rangée de quantité, en pixels d'écran
 // Zoom : borné haut pour ne jamais atteindre le téléobjectif. Le navigateur n'expose qu'une
 // caméra logique et ne dit jamais quel objectif est actif — on ne peut donc pas « éliminer »
 // le téléobjectif, seulement rester en deçà du facteur où l'appareil bascule dessus. Trois
@@ -14930,10 +14952,26 @@ function xxVoler(photo, coins){
 // pratiquement jamais une fois publié). Première version : un appel réseau par set et par
 // session, gardé en mémoire seulement — un appel de plus vers tcgdex alors que toute la
 // chaîne d'identification, elle, tient sur notre index interne. Corrigé.
-const xxTotaux = {};
+// Nom lisible du set et dénominateur imprimé : d'ABORD le manifeste, qui les porte depuis
+// que le builder les garde — zéro appel réseau. Le repli sur tcgdex ne sert qu'aux packs
+// construits avant ce changement, et disparaîtra au prochain build.
+const xxTotaux = {}, xxNoms = {};
+function xxSetManifeste(setId){
+  try{ const s = SCAN_V2.setsV2 && SCAN_V2.setsV2(); return (s && s[setId]) || null; }catch(e){ return null; }
+}
+function xxNomSet(setId){
+  if(!setId) return null;
+  if(xxNoms[setId] !== undefined) return xxNoms[setId];
+  const m = xxSetManifeste(setId);
+  // Les anciens manifestes écrivaient l'identifiant comme nom : ce n'en est pas un.
+  xxNoms[setId] = (m && m.name && m.name !== setId) ? m.name : null;
+  return xxNoms[setId];
+}
 async function xxTotalSet(setId){
   if(!setId) return null;
   if(xxTotaux[setId] !== undefined) return xxTotaux[setId];
+  const m = xxSetManifeste(setId);
+  if(m && m.officiel != null){ xxTotaux[setId] = m.officiel; return m.officiel; }
   xxTotaux[setId] = null;
   try{
     let e = await idbGet('cardLists', setId);
@@ -14972,7 +15010,7 @@ function xxRendreFiche(e){
   $('xx-nom').textContent = enCours ? 'analyse…' : (montrable ? (e.carte.name || e.carte.cle) : 'Non reconnue');
   $('xx-num').textContent = montrable
     ? '#' + (e.carte.numero || e.carte.localId || '?') + (e.total ? '/' + e.total : '') : '';
-  $('xx-set').textContent = montrable ? (e.set || e.carte.setId) : '—';
+  $('xx-set').textContent = montrable ? (e.set || xxNomSet(e.carte.setId) || e.carte.setId) : '—';
   $('xx-fiab').textContent = enCours ? '—' : e.fiabilite + ' %';
   $('xx-prix').textContent = e.prix != null ? e.prix.toFixed(2) + ' €' : '—';
   $('xx-qte').textContent = '×' + e.qte;
@@ -25076,7 +25114,7 @@ Promise.all([workerCall('init'), detectWorkerCall('init')]).catch(()=>{
      (voir REPRISE.md) : ce n'est plus un choix, `chk-scan-v2` reste forcé coché — voir le
      commentaire à côté de la case, dans les réglages. -->
 <script type="module">
-import * as V2 from './scan-v2.js?v=29';
+import * as V2 from './scan-v2.js?v=30';
 window.SCAN_V2 = V2;
 
 const $$ = id => document.getElementById(id);

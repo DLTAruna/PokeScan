@@ -198,7 +198,12 @@ export async function cartesDuSet(setId) {
       setId, localId, image, name: c.name || '',
     });
   }
-  return { nom: d.name || setId, cartes };
+  // `cardCount.official` est le dénominateur IMPRIMÉ sur la carte — le « /189 » de
+  // « 019/189 ». Il arrivait déjà dans cette réponse et repartait à la poubelle, si bien que
+  // l'application devait le redemander à tcgdex carte par carte. Il ne peut pas se déduire
+  // du pack : celui-ci contient les cartes secrètes, donc son plus grand numéro dépasse le
+  // total imprimé — 237 là où la carte dit 203.
+  return { nom: d.name || setId, officiel: d.cardCount?.official ?? null, cartes };
 }
 
 export async function setsDeLaSerie(serieId) {
