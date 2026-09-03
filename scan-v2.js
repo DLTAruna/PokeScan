@@ -874,12 +874,22 @@ async function empreinte(carte) {
 
 // À passer ensuite à identifierV2 dans `opts.pre`. Rend null plutôt que de jeter : un
 // pré-calcul raté ne doit jamais empêcher le scan qui suit.
-export async function preparerV2(carte) {
+// `orb: true` : on profite du même passage pour aller chercher les descripteurs de la
+// présélection. Mesuré sur vingt cartes, l'étape refs oscille entre 18 et 445 ms selon
+// qu'ils sont en cache ou non — 216 ms de médiane. Les demander pendant que l'utilisateur
+// stabilise encore sa carte les rend gratuits au moment de la lecture.
+export async function preparerV2(carte, opts = {}) {
   if (!pret) return null;
   try {
     const t0 = performance.now();
     const r = await empreinte(carte);
-    return { ...r, T: { emb: Math.round(performance.now() - t0) } };
+    const T = { emb: Math.round(performance.now() - t0) };
+    if (opts.orb) {
+      const t1 = performance.now();
+      try { await assurerOrbCartes(r.court); } catch (e) {}
+      T.refs = Math.round(performance.now() - t1);
+    }
+    return { ...r, T };
   } catch (e) { return null; }
 }
 
