@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 126;
+const VERSION_APP = 127;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15558,9 +15558,16 @@ async function xxRedresserVideo(v, coinsConnus){
 // Désormais la capture pose la photo dans la pile, affiche « analyse… », relâche le verrou,
 // et l'identification part dans une file. On enchaîne la carte suivante pendant que la
 // précédente se lit.
+// Un délai plancher entre deux prises. Le verrou « déjà lue » reste la protection de fond ;
+// ceci n'est qu'une ceinture — aucune main ne présente deux cartes différentes en moins de
+// six cents millisecondes, et si le verrou se rouvrait à tort, on ne veut pas que la file
+// d'analyse double pour autant.
+const XX_ENTRE_PRISES = 600;
 async function xxCapturer(){
   if(XX.occupe) return;
+  if(XX.dernierePrise && performance.now() - XX.dernierePrise < XX_ENTRE_PRISES) return;
   XX.occupe = true;
+  XX.dernierePrise = performance.now();
   const t0 = performance.now();
   let e = null, coins = null;
   try{
@@ -15592,7 +15599,11 @@ async function xxCapturer(){
 // simultanées — et ferait s'empiler des tâches que l'appareil ne peut pas mener de front.
 let xxFileId = Promise.resolve();
 function xxEnfiler(e, t0){
-  xxFileId = xxFileId.then(() => xxIdentifier(e, t0)).catch(() => {});
+  XX.fileLongueur = (XX.fileLongueur || 0) + 1;
+  xxFileId = xxFileId
+    .then(() => xxIdentifier(e, t0))
+    .catch(() => {})
+    .then(() => { XX.fileLongueur = Math.max(0, (XX.fileLongueur || 1) - 1); });
 }
 
 async function xxIdentifier(e, t0){
@@ -15617,6 +15628,10 @@ async function xxIdentifier(e, t0){
                moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle,
                nomSecours: !!(res && res.nomSecours), nomLu: (res && res.nomLu) || undefined,
                periode: XX.periode,
+               // Ce que « reel » ne dit pas : combien de lectures attendaient déjà leur tour.
+               // La somme des étapes vaut 1 865 ms, l'affichage 6 483 — l'écart est de
+               // l'attente en file, et sans ce compteur on l'imputerait au moteur.
+               file: XX.fileLongueur,
                // La résolution DEMANDÉE, portée par chaque scan. Sans elle, séparer trois
                // salves de paliers différents demanderait de recoller les horodatages avec
                // les lignes caméra — et j ai déjà perdu une salve entière faute d avoir
@@ -15914,7 +15929,7 @@ async function xxTourner(){
 
       if(!bon){
         xxDessinerCadre('attente');
-        XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null;
+        XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null; XX.loin = 0;
         if(++XX.absence >= XX_ABSENCE) XX.retiree = true;
         xxEtat('vise la carte');
         XX.dernierDebug = { score: d && d.score != null ? d.score : null,
@@ -15925,8 +15940,24 @@ async function xxTourner(){
         XX.absence = 0;
         if(!XX.presentDepuis) XX.presentDepuis = Date.now();
         const attente = Date.now() - XX.presentDepuis;
-        if(!XX.retiree && XX.coinsCapture
-           && xxEcartCoins(XX.coinsCapture, d.corners) > XX_BOUGE_BASE * 3) XX.retiree = true;
+        // ── ROUVRIR LE VERROU « DÉJÀ LUE » ──────────────────────────────────────────
+        // Une seule image éloignée de la position capturée suffisait à réarmer. Tant que la
+        // capture exigeait une seconde image de confirmation, le tremblement n'avait pas le
+        // temps de produire cet écart. Sans elle, il le produit sans cesse : relevé sur le
+        // téléphone, l'écart atteint 0,43 · 0,33 · 0,11 — tous au-dessus du seuil de 0,09 —
+        // et la même carte était recapturée aussitôt. Dix captures sur vingt-deux étaient des
+        // doublons pris à moins de deux secondes d'intervalle, chacun ajoutant une analyse à
+        // la file et une image floue à la pile : treize rebuts sur vingt-deux.
+        //
+        // Le tremblement est ERRATIQUE — un grand écart, puis un petit. Un vrai changement de
+        // carte, lui, DURE. On demande donc deux images consécutives loin de la position
+        // capturée, ce que la main qui tremble ne produit pas et qu'une carte remplacée
+        // produit toujours.
+        if(!XX.retiree && XX.coinsCapture){
+          if(xxEcartCoins(XX.coinsCapture, d.corners) > XX_BOUGE_BASE * 4) XX.loin = (XX.loin || 0) + 1;
+          else XX.loin = 0;
+          if(XX.loin >= 2) XX.retiree = true;
+        }
 
         const bouge = XX.dernierCoins ? xxEcartCoins(XX.dernierCoins, d.corners) : Infinity;
         XX.dernierCoins = d.corners;
