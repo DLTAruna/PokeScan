@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 119;
+const VERSION_APP = 120;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15435,32 +15435,27 @@ async function xxRedresserVideo(v, coinsConnus){
 // L'image découpée existe dès la capture, l'identification demande sept cents millisecondes
 // et la cote un aller-retour réseau. Tout afficher à la fin laissait une seconde entière
 // sans le moindre retour.
-// ── PRÉPARER PENDANT QU'ON ATTEND ────────────────────────────────────────────────────
-// Entre le moment où la carte est reconnue stable et celui où la capture part, il s'écoule
-// une boucle de détection entière — un demi-millier de millisecondes, mesuré, pendant
-// lesquelles on ne fait que regarder. Or l'identification qui suivra passe 381 ms à calculer
-// l'empreinte et 216 à chercher les descripteurs : les deux ne dépendent que de l'image, pas
-// de l'instant. Autant les faire là.
+// ── POURQUOI IL N'Y A PLUS DE PRÉPARATION ANTICIPÉE ─────────────────────────────────
+// L'idée était bonne sur le papier : entre l'instant où la carte se pose et celui où la
+// capture part, on ne fait que regarder — autant calculer là l'empreinte et charger les
+// descripteurs, puisqu'ils ne dépendent que de l'image.
 //
-// L'empreinte est calculée sur l'image d'AVANT la capture. C'est sans conséquence : elle ne
-// sert qu'à dresser la présélection, et l'appariement ORB, lui, travaillera bel et bien sur
-// la photo prise. Une carte jugée stable ne bouge pas assez entre deux images pour changer
-// ses dix-huit plus proches voisines.
-// Ce qu'on retient est la PROMESSE, pas le résultat, et c'est le correctif. La préparation
-// dure environ sept cents millisecondes tandis que la boucle tourne toutes les deux cent
-// cinquante : quand la capture part, elle est presque toujours encore en vol. En ne gardant
-// que le résultat, on ne trouvait donc jamais rien — mesuré, zéro capture préparée sur vingt.
-// La promesse, elle, se laisse attendre par l'identification, qui n'est plus sur le chemin
-// critique depuis qu'elle est détachée : l'avance prise est encaissée quoi qu'il arrive.
-function xxPreparer(v, coins){
-  if(XX.prePromesse || !coins) return;
-  XX.prePromesse = (async () => {
-    try{
-      const cv = await xxRedresserVideo(v, coins);
-      return cv ? await SCAN_V2.preparerV2(cv, { orb: true }) : null;
-    }catch(e){ return null; }
-  })();
-}
+// Mesuré en A/B sur dix cartes dégradées, préparation active puis coupée :
+//
+//                        avec        sans
+//   carte vue           367 ms      268 ms
+//   jugée stable        736 ms      500 ms
+//   cycle de confirm.   349 ms      222 ms
+//   période de boucle   223 ms      192 ms
+//   analyse             978 ms     1174 ms
+//
+// Elle fait bien gagner 196 ms d'analyse. Mais elle en coûte 236 au déclenchement, parce
+// qu'elle dispute à la boucle le même détecteur et le même fil d'exécution — la carte est
+// même VUE cent millisecondes plus tard. Or depuis que l'identification est détachée,
+// l'analyse se déroule pendant qu'on présente la carte suivante : personne ne l'attend. Le
+// déclenchement, lui, se subit carte en main.
+//
+// Déplacer du temps de l'invisible vers le visible pour un solde nul, c'est reculer. Retiré.
 
 // La capture REND LA MAIN dès que la photo est prise. L'identification, elle, se poursuit
 // derrière.
@@ -15491,10 +15486,7 @@ async function xxCapturer(){
 
     e = { carte:null, categorie:null, fiabilite:0, inliers:0, ms:0,
           photo, prix:null, set:null, total:null, qte:1,
-          canvas:cv, reprise:false, msCapture: Math.round(performance.now() - t0),
-          // La préparation lancée pendant l'attente suit la carte à laquelle elle appartient.
-          prePromesse: XX.prePromesse || null };
-    XX.prePromesse = null;
+          canvas:cv, reprise:false, msCapture: Math.round(performance.now() - t0) };
     XX.pile.push(e);
     XX.retiree = false; XX.coinsCapture = coins;
     xxVoler(photo, coins);
@@ -15518,11 +15510,7 @@ function xxEnfiler(e, t0){
 async function xxIdentifier(e, t0){
   let mesure = null;
   try{
-    // On attend ici, et seulement ici, la préparation lancée pendant que la carte se posait.
-    const pre = e.prePromesse ? await e.prePromesse : null;
-    e.prePromesse = null;
-    const avaitPre = !!(pre && pre.court);
-    const res = await SCAN_V2.identifierV2(e.canvas, avaitPre ? { pre } : {});
+    const res = await SCAN_V2.identifierV2(e.canvas, {});
     e.carte = res && res.pick ? res.pick : null;
     e.categorie = res ? res.categorie : 'rebut';
     e.fiabilite = res ? res.fiabilite : 0;
@@ -15540,7 +15528,7 @@ async function xxIdentifier(e, t0){
                zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length,
                moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle,
                nomSecours: !!(res && res.nomSecours), nomLu: (res && res.nomLu) || undefined,
-               prepare: avaitPre || undefined, periode: XX.periode,
+               periode: XX.periode,
                score: XX.dernierDebug && XX.dernierDebug.score,
                bouge: XX.dernierDebug && XX.dernierDebug.bouge,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
@@ -15829,7 +15817,6 @@ async function xxTourner(){
       if(!bon){
         xxDessinerCadre('attente');
         XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null;
-        XX.prePromesse = null;         // plus de carte, plus de présélection valable
         if(++XX.absence >= XX_ABSENCE) XX.retiree = true;
         xxEtat('vise la carte');
         XX.dernierDebug = { score: d && d.score != null ? d.score : null,
@@ -15872,8 +15859,6 @@ async function xxTourner(){
           XX.streak = 0; XX.presentDepuis = 0;
           await xxCapturer();
         }else{
-          // La carte est là et va probablement être prise : on prend de l'avance.
-          if(XX.retiree && d.score >= XX_MIN_SCORE) xxPreparer(v, d.corners);
           xxEtat(!XX.retiree ? 'lue — retire la carte ou déplace-la'
                : stable ? 'prêt'
                : attente >= XX_PATIENCE.douce ? 'tiens encore un instant…' : 'stabilise…');
