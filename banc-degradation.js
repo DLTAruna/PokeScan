@@ -94,3 +94,25 @@ export async function compresser(c, q) {
 export async function photographier(src, P = REEL, fond) {
   return compresser(degrader(src, P, fond), P.qualite);
 }
+
+// ── LE TREMBLEMENT DE LA MAIN ────────────────────────────────────────────────────────
+// Un banc qui montre une carte parfaitement immobile ne peut RIEN dire du contrôle de
+// stabilité : « bougé » y vaut zéro, la condition passe toujours, et l'on conclurait à tort
+// qu'elle ne sert à rien. Il faut donc trembler.
+//
+// Relevé avec six pixels d'amplitude, ce qui correspond à une main posée : « bougé » s'établit
+// entre 0,002 et 0,012 pour un seuil à 0,030. Le contrôle passe donc du premier coup dans le
+// cas courant — son coût n'est pas l'attente, mais le cycle de détection supplémentaire qu'il
+// impose, mesuré à 268 ms. En revanche il fait bien son travail quand la carte se déplace
+// vraiment : les deux relevés au-dessus du seuil (0,224 et 0,084) correspondaient à l'instant
+// où la carte change de position.
+//
+// À appeler à chaque image du flux, pas une fois par carte : c'est le mouvement ENTRE les
+// images que le scanner mesure.
+export function trembler(g, dessin, amplitude = 6, roulis = 0.004) {
+  g.save();
+  g.translate((Math.random() - 0.5) * amplitude, (Math.random() - 0.5) * amplitude);
+  g.rotate((Math.random() - 0.5) * roulis);
+  dessin(g);
+  g.restore();
+}
