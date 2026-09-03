@@ -855,6 +855,12 @@
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
     -webkit-tap-highlight-color:transparent; }
   #xx-debug-b.actif{ color:#0d1117; background:var(--mode-collec); border-color:transparent; }
+  #xx-stab{ height:30px; min-width:34px; padding:0 8px; border-radius:15px; cursor:pointer;
+    font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
+    -webkit-tap-highlight-color:transparent; }
+  #xx-stab[hidden]{ display:none; }
+  #xx-stab.actif{ color:#0d1117; background:var(--mode-collec); border-color:transparent; }
   #xx-res{ height:30px; min-width:34px; padding:0 8px; border-radius:15px; cursor:pointer;
     font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
@@ -5138,6 +5144,8 @@
         <button id="xx-debug-b" type="button" aria-label="Afficher le débogage">i</button>
         <!-- Ne sert qu'à l'essai : fait tourner la résolution demandée à la caméra. -->
         <button id="xx-res" type="button" hidden aria-label="Résolution de la caméra">HD</button>
+        <!-- Exige-t-on une seconde image avant de capturer ? -->
+        <button id="xx-stab" type="button" hidden aria-label="Confirmation par une seconde image">1×</button>
         <!-- Voir tout le champ, ou remplir l'écran. Remplir coûte quarante pour cent de la
              largeur sur un écran allongé : c'est un choix, plus un défaut. -->
         <button id="xx-cadrage" type="button" aria-label="Cadrage : tout voir ou remplir">
@@ -6714,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 124;
+const VERSION_APP = 125;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14949,6 +14957,8 @@ const XX = { flux:null, piste:null, boucle:false, occupe:false,
              retiree:true, coinsCapture:null, pile:[], valeur:0,
              caps:null, zoom:null, zoomNatif:null, objectifs:[], infoCam:'',
              debug:false, dernierDebug:null, remplir:true, etat:'attente',
+             stabilite:false,   // par défaut SANS la seconde image, à la demande de Nikos
+             stabilite:false,   // par défaut SANS la seconde image, à la demande de Nikos
              zoomEnCours:false };
 
 // La barre du bas se dimensionne toute seule ; le viseur la MESURE au lieu de supposer sa
@@ -15080,6 +15090,21 @@ async function xxBasculerRes(){
   }
 }
 
+function xxMajStab(){
+  const b = $('xx-stab'); if(!b) return;
+  b.hidden = !XX.debug;
+  b.textContent = XX.stabilite ? '2×' : '1×';
+  b.classList.toggle('actif', !!XX.stabilite);
+  b.title = XX.stabilite ? 'deux images requises avant capture'
+                         : 'capture dès la première détection';
+}
+function xxBasculerStab(){
+  XX.stabilite = !XX.stabilite;
+  try{ localStorage.setItem('pokescanStabXX', XX.stabilite ? '1' : '0'); }catch(e){}
+  xxMajStab();
+  xxEtat(XX.stabilite ? 'capture après confirmation' : 'capture immédiate');
+}
+
 function xxBasculerDebug(){
   XX.debug = !XX.debug;
   xxDebugRendu = '';                       // le panneau repart d'une page blanche
@@ -15088,6 +15113,7 @@ function xxBasculerDebug(){
   if(b) b.classList.toggle('actif', XX.debug);
   try{ localStorage.setItem(XX_DEBUG_CLE, XX.debug ? '1' : '0'); }catch(e){}
   xxMajRes();
+  xxMajStab();
   if(XX.debug) xxMajDebug(XX.dernierDebug || {});
 }
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
@@ -15595,7 +15621,7 @@ async function xxIdentifier(e, t0){
                // salves de paliers différents demanderait de recoller les horodatages avec
                // les lignes caméra — et j ai déjà perdu une salve entière faute d avoir
                // instrumenté le bon endroit.
-               res: XX_RES.nom, resL: XX_RES.l,
+               res: XX_RES.nom, resL: XX_RES.l, stab: !!XX.stabilite,
                // Et la résolution OBTENUE, qui peut différer : c est elle qui compte si le
                // pilote refuse le palier demandé.
                resReelle: (() => { try{ const r = XX.piste.getSettings();
@@ -15921,7 +15947,18 @@ async function xxTourner(){
         // L'écart de 255 ms que j'avais cru voir venait de l'ordre des passes : la seconde
         // profite des descripteurs mis en cache par la première. En inversant, il change de
         // camp. Une piste qui ne survit pas à l'inversion n'est pas une piste.
-        const stable = XX.streak >= 1;
+        // ── LA CONFIRMATION PAR UNE SECONDE IMAGE, DÉSORMAIS OPTIONNELLE ──────────────
+        // Elle exige deux détections consécutives peu éloignées. Mon banc la jugeait peu
+        // coûteuse : un tour de boucle, 179 ms. Les relevés du téléphone disent tout autre
+        // chose — la boucle y tourne entre 451 et 1949 ms, parce que l'identification de la
+        // carte précédente accapare l'appareil. Un second tour n'y coûte donc pas deux
+        // centièmes de seconde mais entre une et deux SECONDES. C'est ce que Nikos voit
+        // quand la puce « bougé » reste rouge, et il a raison de vouloir l'essayer sans.
+        //
+        // Le risque demeure : capturer pendant que la carte se déplace donne une image filée.
+        // D'où un interrupteur plutôt qu'une suppression — le panneau de débogage le
+        // bascule, le relevé note lequel des deux régimes a produit chaque scan.
+        const stable = XX.stabilite ? XX.streak >= 1 : true;
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
         XX.tDessin = Math.round(performance.now() - tD);
         XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
@@ -16141,6 +16178,8 @@ $('xx-objectif')?.addEventListener('click', xxObjectifSuivant);
 $('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
 $('xx-cadrage')?.addEventListener('click', xxBasculerCadrage);
 $('xx-res')?.addEventListener('click', xxBasculerRes);
+$('xx-stab')?.addEventListener('click', xxBasculerStab);
+try{ XX.stabilite = localStorage.getItem('pokescanStabXX') === '1'; }catch(e){}
 {
   const cadre = document.querySelector('#section-xx .xx-cadre');
   if(cadre){
