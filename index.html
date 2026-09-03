@@ -855,6 +855,12 @@
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
     -webkit-tap-highlight-color:transparent; }
   #xx-debug-b.actif{ color:#0d1117; background:var(--mode-collec); border-color:transparent; }
+  #xx-focus{ height:30px; min-width:34px; padding:0 8px; border-radius:15px; cursor:pointer;
+    font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
+    -webkit-tap-highlight-color:transparent; }
+  #xx-focus[hidden]{ display:none; }
+  #xx-focus.actif{ color:#1a1206; background:var(--mode-vendeur); border-color:transparent; }
   #xx-stab{ height:30px; min-width:34px; padding:0 8px; border-radius:15px; cursor:pointer;
     font-size:11px; font-weight:700; display:flex; align-items:center; justify-content:center;
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
@@ -5146,6 +5152,8 @@
         <button id="xx-res" type="button" hidden aria-label="Résolution de la caméra">HD</button>
         <!-- Exige-t-on une seconde image avant de capturer ? -->
         <button id="xx-stab" type="button" hidden aria-label="Confirmation par une seconde image">1×</button>
+        <!-- Distance de mise au point, pour chercher hors de la plage macro. -->
+        <button id="xx-focus" type="button" hidden aria-label="Mise au point">AF</button>
         <!-- Voir tout le champ, ou remplir l'écran. Remplir coûte quarante pour cent de la
              largeur sur un écran allongé : c'est un choix, plus un défaut. -->
         <button id="xx-cadrage" type="button" aria-label="Cadrage : tout voir ou remplir">
@@ -6722,7 +6730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 133;
+const VERSION_APP = 134;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14955,22 +14963,11 @@ const XX_BOUGE_MAX = 0.20;
 // d'encombrer la pile. Deux, et pas davantage — le secours par le nom travaille jusqu'à vingt,
 // et l'on ne veut pas jeter ce qu'il sait encore rattraper.
 const XX_INLIERS_VIDE = 2;
-// ── MISE AU POINT FIXE : DÉBRAYÉE, ET VOICI POURQUOI ────────────────────────────────
-// Premier essai : 0,30 passé à focusDistance en croyant l'unité en MÈTRES. Résultat, tout
-// flou, plus une seule photo possible. L'unité est la DIOPTRIE — l'inverse d'une distance
-// — et la plage déclarée par l'appareil le disait déjà si j'avais su la lire :
-//
-//   min 0,105 dioptrie  =  1/0,105  =  9,5 m      (quasi l'infini)
-//   max 5,22  dioptries =  1/5,22   =  0,19 m     (la limite macro)
-//
-// Demander « 0,30 » revenait donc à faire le point à 3,3 mètres : tout ce qui est proche est
-// hors champ de netteté. Pour viser trente centimètres il fallait 1/0,30 = 3,33 dioptries.
-//
-// La conversion est corrigée ci-dessous, mais le réglage reste DÉBRAYÉ. Une mise au point
-// imposée qui se trompe rend l'outil inutilisable, alors que l'automatique, même imparfait,
-// laisse toujours une chance. On ne rallume qu'après l'avoir vérifié sur l'appareil.
-const XX_FOCUS_FIXE = false;
-const XX_FOCUS_M = 0.30;                       // en mètres, converti juste avant l'envoi
+// La leçon de l'essai raté, gardée là où elle sert : focusDistance s'exprime en DIOPTRIES,
+// l'inverse d'une distance. Un appareil qui déclare 0,105 à 5,22 fait le point de 9,5 m à
+// 19 cm. Passer « 0,30 » en croyant demander trente centimètres visait 3,3 mètres et rendait
+// tout flou. La conversion vit désormais dans xxAppliquerFocus, avec les paliers en
+// centimètres — la seule unité qu'on puisse juger à l'œil.
 const XX_EXIGER_RETRAIT = false;   // essai : voir la boucle de détection
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
@@ -15144,6 +15141,68 @@ async function xxBasculerRes(){
   }
 }
 
+// ── LA MISE AU POINT, À L'ESSAI ──────────────────────────────────────────────────────
+// Les paliers sont donnés en centimètres — ce qu'on peut juger à l'œil — et convertis en
+// dioptries au moment de l'envoi, l'unité que la caméra attend. C'est cette confusion qui a
+// rendu l'outil inutilisable : demander « 0,30 » faisait le point à 3,3 mètres.
+//
+// « AF » rend la main à l'appareil. Le changement s'applique SANS rouvrir le flux, donc
+// l'effet se voit immédiatement dans le viseur, avant même de scanner quoi que ce soit —
+// c'est tout l'intérêt d'un bouton plutôt que d'une constante à déployer.
+const XX_FOCUS_PALIERS = [
+  { nom:'AF', cm:null },      // automatique, la mise au point de l'appareil
+  { nom:'20', cm:20 }, { nom:'25', cm:25 }, { nom:'30', cm:30 },
+  { nom:'40', cm:40 }, { nom:'60', cm:60 },
+];
+let xxFocusI = 0;
+try{
+  const i = parseInt(localStorage.getItem('pokescanFocusXX'), 10);
+  if(i >= 0 && i < XX_FOCUS_PALIERS.length) xxFocusI = i;
+}catch(e){}
+
+function xxMajFocus(){
+  const b = $('xx-focus'); if(!b) return;
+  b.hidden = !XX.debug;
+  const p = XX_FOCUS_PALIERS[xxFocusI];
+  b.textContent = p.nom;
+  b.classList.toggle('actif', p.cm != null);
+  b.title = p.cm == null ? 'mise au point automatique'
+                         : 'mise au point fixée à ' + p.cm + ' cm';
+}
+
+async function xxAppliquerFocus(){
+  const p = XX_FOCUS_PALIERS[xxFocusI];
+  if(!XX.piste) return;
+  let caps = {};
+  try{ caps = XX.piste.getCapabilities ? XX.piste.getCapabilities() : {}; }catch(e){}
+  try{
+    if(p.cm == null){
+      if(caps.focusMode && caps.focusMode.includes('continuous'))
+        await XX.piste.applyConstraints({advanced:[{focusMode:'continuous'}]});
+      xxEtat('mise au point : automatique');
+    } else {
+      if(!(caps.focusMode && caps.focusMode.includes('manual')) || !caps.focusDistance){
+        xxEtat('mise au point fixe non supportée'); return;
+      }
+      // Dioptries = inverse de la distance en mètres, borné par ce que l'appareil accepte.
+      const d = Math.max(caps.focusDistance.min,
+                Math.min(caps.focusDistance.max, 1 / (p.cm / 100)));
+      await XX.piste.applyConstraints({advanced:[{focusMode:'manual', focusDistance:d}]});
+      const r = XX.piste.getSettings ? XX.piste.getSettings() : {};
+      xxEtat('mise au point : ' + p.cm + ' cm');
+      diagPush('err', {msg:'XX focus ' + p.cm + ' cm = ' + d.toFixed(2)
+        + ' dioptries — obtenu mode=' + r.focusMode + ' dist=' + r.focusDistance});
+    }
+  }catch(err){ xxEtat('mise au point refusée : ' + (err && err.message)); }
+}
+
+async function xxBasculerFocus(){
+  xxFocusI = (xxFocusI + 1) % XX_FOCUS_PALIERS.length;
+  try{ localStorage.setItem('pokescanFocusXX', String(xxFocusI)); }catch(e){}
+  xxMajFocus();
+  await xxAppliquerFocus();
+}
+
 function xxMajStab(){
   const b = $('xx-stab'); if(!b) return;
   b.hidden = !XX.debug;
@@ -15168,6 +15227,7 @@ function xxBasculerDebug(){
   try{ localStorage.setItem(XX_DEBUG_CLE, XX.debug ? '1' : '0'); }catch(e){}
   xxMajRes();
   xxMajStab();
+  xxMajFocus();
   if(XX.debug) xxMajDebug(XX.dernierDebug || {});
 }
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
@@ -15732,7 +15792,8 @@ async function xxIdentifier(e, t0){
                // pilote refuse le palier demandé.
                resReelle: (() => { try{ const r = XX.piste.getSettings();
                  return r.width + "x" + r.height; }catch(e){ return undefined; } })(),
-               score: e.declScore, bouge: e.declBouge, vu: e.declVu, vide: vide || undefined,
+               score: e.declScore, bouge: e.declBouge, vu: e.declVu,
+               focus: XX_FOCUS_PALIERS[xxFocusI].nom, vide: vide || undefined,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
                iso: self.crossOriginIsolated === true };
     xxDiagMoteur();
@@ -16188,35 +16249,7 @@ async function xxFlux(deviceId){
     const caps = XX.piste.getCapabilities ? XX.piste.getCapabilities() : {};
     const reglage = XX.piste.getSettings ? XX.piste.getSettings() : {};
     XX.caps = caps.zoom || null;
-    // ── ÉCARTER LA MACRO ─────────────────────────────────────────────────────────────
-    // L'appareil bascule tout seul en macro dès que la carte approche, et l'image devient
-    // trop bruitée pour être lue : les points d'appariement tombent de 56 à 25 de médiane, et
-    // l'appariement met deux à trois fois plus longtemps parce qu'il doit épuiser tous les
-    // candidats avant d'échouer. La lenteur et l'échec sont le même phénomène.
-    //
-    // Le navigateur n'a pas de commande « pas de macro », mais cet appareil-ci déclare
-    // focusDistance de 0,105 à 5,22 mètre — relevé au diagnostic. On peut donc lui IMPOSER
-    // une distance de mise au point, ce qui revient à lui interdire la plage macro.
-    //
-    // Trente centimètres : la distance à laquelle on tient naturellement une carte pour
-    // qu'elle remplisse le repère, et bien au-delà du domaine macro. Si l'appareil refuse le
-    // mode manuel, on retombe sans bruit sur le continu — la mise au point automatique reste
-    // préférable à une distance fixe erronée.
-    if(XX_FOCUS_FIXE && caps.focusMode && caps.focusMode.includes('manual')
-       && caps.focusDistance){
-      // En dioptries : l'inverse de la distance voulue, borné à ce que l'appareil accepte.
-      const dioptries = 1 / XX_FOCUS_M;
-      const d = Math.max(caps.focusDistance.min, Math.min(caps.focusDistance.max, dioptries));
-      try{
-        await XX.piste.applyConstraints({advanced:[{focusMode:'manual', focusDistance:d}]});
-        const r2 = XX.piste.getSettings ? XX.piste.getSettings() : {};
-        diagPush('err', {msg:'XX mise au point imposée : ' + d.toFixed(2) + ' dioptries ('
-          + (1/d).toFixed(2) + ' m) — obtenu mode='
-          + r2.focusMode + ' dist=' + r2.focusDistance});
-      }catch(err){
-        diagPush('err', {msg:'XX mise au point : manuel refusé — ' + (err && err.message)});
-      }
-    }
+    if(xxFocusI > 0) await xxAppliquerFocus();
 
     XX.zoomNatif = reglage.zoom != null ? reglage.zoom : null;
     if(XX.caps){
@@ -16364,6 +16397,7 @@ $('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
 $('xx-cadrage')?.addEventListener('click', xxBasculerCadrage);
 $('xx-res')?.addEventListener('click', xxBasculerRes);
 $('xx-stab')?.addEventListener('click', xxBasculerStab);
+$('xx-focus')?.addEventListener('click', xxBasculerFocus);
 try{ XX.stabilite = localStorage.getItem('pokescanStabXX') === '1'; }catch(e){}
 {
   const cadre = document.querySelector('#section-xx .xx-cadre');
