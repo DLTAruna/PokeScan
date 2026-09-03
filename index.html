@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 132;
+const VERSION_APP = 133;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14955,10 +14955,22 @@ const XX_BOUGE_MAX = 0.20;
 // d'encombrer la pile. Deux, et pas davantage — le secours par le nom travaille jusqu'à vingt,
 // et l'on ne veut pas jeter ce qu'il sait encore rattraper.
 const XX_INLIERS_VIDE = 2;
-// Mise au point fixe, pour tenir l'appareil hors de sa plage macro. Passer à false rend la
-// mise au point automatique.
-const XX_FOCUS_FIXE = true;
-const XX_FOCUS_M = 0.30;
+// ── MISE AU POINT FIXE : DÉBRAYÉE, ET VOICI POURQUOI ────────────────────────────────
+// Premier essai : 0,30 passé à focusDistance en croyant l'unité en MÈTRES. Résultat, tout
+// flou, plus une seule photo possible. L'unité est la DIOPTRIE — l'inverse d'une distance
+// — et la plage déclarée par l'appareil le disait déjà si j'avais su la lire :
+//
+//   min 0,105 dioptrie  =  1/0,105  =  9,5 m      (quasi l'infini)
+//   max 5,22  dioptries =  1/5,22   =  0,19 m     (la limite macro)
+//
+// Demander « 0,30 » revenait donc à faire le point à 3,3 mètres : tout ce qui est proche est
+// hors champ de netteté. Pour viser trente centimètres il fallait 1/0,30 = 3,33 dioptries.
+//
+// La conversion est corrigée ci-dessous, mais le réglage reste DÉBRAYÉ. Une mise au point
+// imposée qui se trompe rend l'outil inutilisable, alors que l'automatique, même imparfait,
+// laisse toujours une chance. On ne rallume qu'après l'avoir vérifié sur l'appareil.
+const XX_FOCUS_FIXE = false;
+const XX_FOCUS_M = 0.30;                       // en mètres, converti juste avant l'envoi
 const XX_EXIGER_RETRAIT = false;   // essai : voir la boucle de détection
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
@@ -16192,11 +16204,14 @@ async function xxFlux(deviceId){
     // préférable à une distance fixe erronée.
     if(XX_FOCUS_FIXE && caps.focusMode && caps.focusMode.includes('manual')
        && caps.focusDistance){
-      const d = Math.max(caps.focusDistance.min, Math.min(caps.focusDistance.max, XX_FOCUS_M));
+      // En dioptries : l'inverse de la distance voulue, borné à ce que l'appareil accepte.
+      const dioptries = 1 / XX_FOCUS_M;
+      const d = Math.max(caps.focusDistance.min, Math.min(caps.focusDistance.max, dioptries));
       try{
         await XX.piste.applyConstraints({advanced:[{focusMode:'manual', focusDistance:d}]});
         const r2 = XX.piste.getSettings ? XX.piste.getSettings() : {};
-        diagPush('err', {msg:'XX mise au point imposée : ' + d + ' m — obtenu mode='
+        diagPush('err', {msg:'XX mise au point imposée : ' + d.toFixed(2) + ' dioptries ('
+          + (1/d).toFixed(2) + ' m) — obtenu mode='
           + r2.focusMode + ' dist=' + r2.focusDistance});
       }catch(err){
         diagPush('err', {msg:'XX mise au point : manuel refusé — ' + (err && err.message)});
