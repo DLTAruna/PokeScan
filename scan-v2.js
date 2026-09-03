@@ -334,10 +334,33 @@ function demarrerOrb() {
           // Homographie RANSAC sur les 8 meilleurs candidats par nombre de correspondances.
           // (16 auparavant : chaque RANSAC coûte ~150 ms, sur téléphone modeste c'était 2 s
           // rien que là. La bonne carte est quasi toujours dans les 8 premiers en brut.)
-          const out = pre.map((p,i) => ({ cle: p.cle, good: p.good,
-            score: (i < 8 && p.good >= 8) ? inliers(p.s, p.d, p.good) : p.good*0.1 }));
+          //
+          // ── ARRÊT ANTICIPÉ, ET IL EST EXACT ─────────────────────────────────────────
+          // Un candidat ne peut pas avoir plus d'inliers que de correspondances brutes :
+          // l'homographie ne fait qu'écarter des paires, jamais en inventer. Donc dès que le
+          // meilleur score obtenu atteint le nombre de correspondances du candidat suivant,
+          // AUCUN des suivants ne peut le dépasser — la liste étant triée par ce nombre.
+          // Ce n'est pas une heuristique : c'est une borne, et s'arrêter là ne change
+          // strictement aucun classement.
+          //
+          // Les deux premiers sont toutefois toujours évalués. La marge entre le premier et le
+          // second nourrit l'indice de fiabilité ; se contenter d'une borne pour le second la
+          // ferait paraître plus large qu'elle n'est, et l'on annoncerait une certitude qu'on
+          // n'a pas.
+          //
+          // Relevé sur le téléphone de Nikos : l'appariement coûtait 1 900 ms de médiane, soit
+          // huit homographies. Dans le cas courant il n'en restera que deux.
+          const out = []; let meilleur = 0, faits = 0;
+          for(let i = 0; i < pre.length; i++){
+            const p = pre[i];
+            const peutGagner = i < 2 || p.good > meilleur;
+            const evalue = i < 8 && p.good >= 8 && peutGagner;
+            const sc = evalue ? inliers(p.s, p.d, p.good) : p.good*0.1;
+            if(evalue){ faits++; if(sc > meilleur) meilleur = sc; }
+            out.push({ cle: p.cle, good: p.good, score: sc });
+          }
           bf.delete(); qd.delete(); out.sort((a,b)=>b.score-a.score);
-          postMessage({id, ok:true, out}); return;
+          postMessage({id, ok:true, out, ransac: faits}); return;
         }
       }catch(err){ postMessage({id, ok:false, error:String(err&&err.message||err)}); }
     };
