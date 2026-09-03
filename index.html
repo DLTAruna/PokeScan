@@ -1102,6 +1102,9 @@
   body.xx-plein .xx-cadre{
     position:fixed; inset:0; z-index:300; width:100vw; max-width:none;
     height:100vh; height:100dvh; max-height:none; aspect-ratio:auto; border-radius:0; margin:0;
+    /* Sans cela, le navigateur s'empare du pincement pour zoomer la PAGE : le geste
+       n'arrive jamais jusqu'à nous. Il n'y a rien à faire défiler en plein écran. */
+    touch-action:none;
   }
   body.xx-plein #xx-video, body.xx-plein #xx-overlay{
     position:absolute; inset:0; width:100%; height:100%;
@@ -6704,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 102;
+const VERSION_APP = 103;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14931,7 +14934,8 @@ const XX = { flux:null, piste:null, boucle:false, occupe:false,
              presentDepuis:0, streak:0, dernierCoins:null, absence:0,
              retiree:true, coinsCapture:null, pile:[], valeur:0,
              caps:null, zoom:null, zoomNatif:null, objectifs:[], infoCam:'',
-             debug:false, dernierDebug:null, remplir:false, etat:'attente' };
+             debug:false, dernierDebug:null, remplir:true, etat:'attente',
+             zoomEnCours:false };
 
 // La barre du bas se dimensionne toute seule ; le viseur la MESURE au lieu de supposer sa
 // hauteur. Un plancher malgré tout : sans lui, le repère bondirait à l'apparition de la
@@ -15200,6 +15204,67 @@ async function xxAllerZoom(z){
       + (XX.zoom != null ? XX.zoom : 'inconnu')});
     xxMajZoom(); xxInfoCam();
   }catch(e){ xxEtat('zoom refusé : ' + e.message); }
+}
+
+// Le zoom brut, sans mémoire ni journal : c'est celui que le pincement appelle en rafale.
+// Un verrou, parce qu'un doigt qui glisse produit des dizaines d'événements par seconde et
+// qu'applyConstraints est asynchrone — les empiler ferait la queue jusqu'à ce que l'image
+// retarde sur le geste.
+async function xxZoomBrut(z){
+  if(!XX.piste || !XX.caps || XX.zoomEnCours) return;
+  const cible = Math.max(XX.caps.min, Math.min(XX.caps.max, z));
+  if(XX.zoom != null && Math.abs(cible - XX.zoom) < Math.max(XX.caps.step || 0.1, 0.05) * 0.9) return;
+  XX.zoomEnCours = true;
+  try{
+    await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
+    XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
+    xxMajZoom();
+  }catch(e){}
+  finally{ XX.zoomEnCours = false; }
+}
+
+// ── LE PINCEMENT ──────────────────────────────────────────────────────────────────────
+// Deux doigts sur l'image, et le zoom suit l'écartement. C'est le geste qu'on fait sans y
+// penser dans n'importe quelle appli caméra, et il vaut mieux que six paliers : il donne
+// TOUTE la plage en continu, donc la possibilité de chercher le point où l'image devient
+// nette au lieu de sauter par-dessus.
+const xxDoigts = new Map();
+let xxPinceEcart = 0, xxPinceDepart = 1;
+
+function xxEcartDoigts(){
+  const p = [...xxDoigts.values()];
+  return p.length < 2 ? 0 : Math.hypot(p[0].x - p[1].x, p[0].y - p[1].y);
+}
+function xxPinceDebut(e){
+  // Les commandes gardent leurs propres appuis : on ne pince que sur l'image.
+  if(e.target.closest('button, input, #xx-liste, #xx-recherche, #xx-bas')) return;
+  xxDoigts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if(xxDoigts.size === 2){
+    xxPinceEcart = xxEcartDoigts();
+    xxPinceDepart = XX.zoom != null ? XX.zoom : (XX.caps ? XX.caps.min : 1);
+  }
+}
+function xxPinceBouge(e){
+  if(!xxDoigts.has(e.pointerId)) return;
+  xxDoigts.set(e.pointerId, {x:e.clientX, y:e.clientY});
+  if(xxDoigts.size !== 2 || !xxPinceEcart || !XX.caps) return;
+  e.preventDefault();
+  // Le zoom suit le RAPPORT des écartements : écarter du double double le zoom, quel que
+  // soit l'endroit où l'on a posé les doigts.
+  xxZoomBrut(xxPinceDepart * (xxEcartDoigts() / xxPinceEcart));
+}
+function xxPinceFin(e){
+  if(!xxDoigts.has(e.pointerId)) return;
+  const etait = xxDoigts.size;
+  xxDoigts.delete(e.pointerId);
+  if(etait === 2 && XX.zoom != null){
+    // Le geste terminé, on retient et on consigne — pas pendant, ce serait des centaines
+    // d'écritures pour un seul mouvement.
+    try{ localStorage.setItem(XX_ZOOM_CLE, String(XX.zoom)); }catch(err){}
+    diagPush('err', {msg:'XX zoom (pincement) : ' + XX.zoom});
+    xxInfoCam();
+  }
+  xxPinceEcart = 0;
 }
 
 async function xxZoomer(sens){
@@ -15614,16 +15679,15 @@ async function xxFlux(deviceId){
     XX.flux = await navigator.mediaDevices.getUserMedia({
       video:{ ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:{ideal:'environment'}}),
               width:{ideal:1920}, height:{ideal:1440},
-              // Trente images par seconde, en IDÉAL — jamais en exact, un appareil qui ne
-              // peut pas les tenir doit rester utilisable. Le scanner principal le demande
-              // depuis longtemps et dit pourquoi : un mode nuit par empilement d'expositions
-              // longues — la cause documentée du bruit en faible lumière — est physiquement
-              // incompatible avec une cadence élevée, les deux se disputant le même budget
-              // de temps par image. Demander 30 i/s n'éclaire pas la pièce, mais retire au
-              // pilote la marge dont ce mode a besoin pour s'enclencher tout seul. Ce banc
-              // ne le demandait pas : une ligne d'écart, et un bien meilleur candidat au
-              // « c'est bruité » que le recadrage.
-              frameRate:{ideal:30},
+              // PAS de contrainte de cadence, et c'est un retour en arrière assumé. Je
+              // l'avais ajoutée pour priver le mode nuit de son budget de temps par image.
+              // Nikos a constaté aussitôt après une capture moins bonne et une analyse plus
+              // longue — les deux vont ensemble : une image moins nette donne moins de
+              // points à l'appariement, qui creuse alors plus loin. Demander une cadence
+              // peut pousser le pilote vers un mode capteur dégradé, exactement ce que le
+              // scanner principal a déjà constaté en demandant une résolution basse. Une
+              // hypothèse non vérifiée qui coïncide avec une régression ne se défend pas :
+              // elle se retire.
               advanced:[{focusMode:'continuous'}] }, audio:false });
   }catch(e){ xxEtat('caméra refusée : ' + e.message); return false; }
   const v = $('xx-video');
@@ -15770,7 +15834,21 @@ $('xx-quitter')?.addEventListener('click', xxFermer);
 $('xx-objectif')?.addEventListener('click', xxObjectifSuivant);
 $('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
 $('xx-cadrage')?.addEventListener('click', xxBasculerCadrage);
-try{ XX.remplir = localStorage.getItem(XX_REMPLIR_CLE) === '1'; }catch(e){}
+{
+  const cadre = document.querySelector('#section-xx .xx-cadre');
+  if(cadre){
+    cadre.addEventListener('pointerdown', xxPinceDebut);
+    cadre.addEventListener('pointermove', xxPinceBouge, {passive:false});
+    cadre.addEventListener('pointerup', xxPinceFin);
+    cadre.addEventListener('pointercancel', xxPinceFin);
+    cadre.addEventListener('pointerleave', xxPinceFin);
+  }
+}
+// « Remplir » par défaut : c'est lui qui donne le grand cadre de visée. En « contain », le
+// champ entier tient dans l'écran, donc l'image est plus petite, donc le repère aussi —
+// visé plus petit, on cadre la carte plus loin, et on la lit moins bien. Le champ complet
+// reste à un appui du bouton de cadrage pour qui en a besoin.
+try{ XX.remplir = localStorage.getItem(XX_REMPLIR_CLE) !== '0'; }catch(e){ XX.remplir = true; }
 xxAppliquerCadrage();
 // La préférence de débogage survit à la session : quand on chasse un déclenchement, on ne
 // veut pas rallumer le panneau à chaque ouverture.
