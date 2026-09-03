@@ -32,6 +32,24 @@ const R = {
   OCR_DOM_MAX: 0.6,    // …mais un 2e candidat au coude à coude. Voir l'étape 4.
   OCR_MARGE_MAX: 35,   // …et un coude-à-coude EN ABSOLU, pas seulement en proportion.
   OCR_ORB_MS_MAX: 1800, // session chaude (dernier ORB au-delà) → on ne lance pas l'OCR
+  // ─── Le SECOURS PAR LE NOM. L'OCR ci-dessus ne sert qu'à départager deux candidats déjà
+  // solides : il exige inl ≥ OCR_INLIERS_MIN, donc il ne se déclenche JAMAIS sur un échec.
+  // Par construction, il ne pouvait rien rattraper. Celui-ci fait l'inverse : il n'intervient
+  // que lorsque l'appariement a échoué, et il lit le NOM plutôt que le numéro.
+  //
+  // Mesuré sur les 31 photos de référence : 24 noms lus sur 31 (77 %), en 471 ms médians.
+  // Les échecs se trompent d'une lettre — « Carabatte » pour Carabaffe, « Rentincel » pour
+  // Reptincel — d'où la comparaison tolérante : à deux lettres près on retrouve la carte,
+  // ce qui porte le taux autour de 87 %. Le nom n'a pas à être lu juste, il a seulement à
+  // désigner un candidat parmi dix-huit.
+  //
+  // Le numéro, lui, est la chose la plus dure à lire de toute la carte : la bande basse rend
+  // le texte de description avant de rendre le numéro. C'est ce qui expliquait le 0/28 des
+  // essais de secours précédents — on visait la mauvaise cible.
+  NOM_ACTIF: true,
+  NOM_INLIERS_MAX: 20,  // au-dessus, l'appariement se suffit à lui-même
+  NOM_ECART_MAX: 2,     // lettres de différence tolérées
+  NOM_CANDIDATS: 24,    // profondeur de présélection fouillée
   ORB_PREMIER: 6,      // candidats appariés au premier passage (voir l'ORB en deux temps)
   GEO_INLIERS: 20,     // géométrie franche → « sûre » même si la sigmoïde reste basse
   GEO_DOM: 0.6,
@@ -74,6 +92,75 @@ function bandeBasse(carte) {
   x.drawImage(carte, 0, sy, W, sh, 0, 0, c.width, c.height);
   return c;
 }
+// La bande du NOM : en haut de la carte redressée, grands caractères sur fond franc. Sept
+// cent vingt pixels de large suffisent — au-delà l'OCR ralentit sans mieux lire, en deçà les
+// accents se perdent.
+const BANDE_NOM = { y: 0.035, h: 0.11, large: 720 };
+function bandeHaute(carte) {
+  const W = carte.width, H = carte.height;
+  const sy = Math.round(H * BANDE_NOM.y), sh = Math.round(H * BANDE_NOM.h);
+  const c = document.createElement('canvas');
+  c.width = BANDE_NOM.large;
+  c.height = Math.max(24, Math.round(BANDE_NOM.large * sh / W));
+  const x = c.getContext('2d'); x.imageSmoothingQuality = 'high';
+  x.drawImage(carte, 0, sy, W, sh, 0, 0, c.width, c.height);
+  return c;
+}
+
+// Accents, casse et ponctuation retirés : l'OCR rend « DracaufeueX » là où le catalogue dit
+// « Dracaufeu-ex », et ces deux-là désignent la même carte.
+function nomNormalise(t) {
+  return String(t || '').toLowerCase().normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+}
+
+// Distance de Levenshtein bornée : on n'a pas besoin de la valeur exacte, seulement de
+// savoir si elle dépasse le seuil. Sortir tôt évite de comparer des mots sans rapport.
+function ecartMots(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prec = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cour = [i];
+    let mini = i;
+    for (let j = 1; j <= b.length; j++) {
+      const v = Math.min(prec[j] + 1, cour[j - 1] + 1, prec[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      cour[j] = v; if (v < mini) mini = v;
+    }
+    if (mini > max) return max + 1;
+    prec = cour;
+  }
+  return prec[b.length];
+}
+
+// Le nom du catalogue apparaît-il dans ce que l'OCR a rendu ? On cherche d'abord tel quel,
+// puis à deux lettres près sur chaque fenêtre de la bonne longueur — c'est ce qui rattrape
+// « Carabatte » pour Carabaffe.
+// La tolérance doit suivre la LONGUEUR du nom, et c'est un correctif, pas un raffinement.
+// Avec deux lettres d'écart accordées à tout le monde, « Natu » — quatre lettres — a été
+// retenu sur un texte qui disait « Carapuce » : « capu » est à deux éditions de « natu ».
+// Une identification fausse est pire qu'un rebut, puisqu'elle ne se signale pas. Un nom
+// court doit donc être lu exactement ; seuls les longs, où l'OCR se trompe d'une lettre
+// sans ambiguïté possible, méritent de la marge.
+function marge(nom) { const n = nomNormalise(nom).length; return n <= 4 ? 0 : n <= 7 ? 1 : 2; }
+function nomTrouve(texteOcr, nomCarte, plafond) {
+  const max = Math.min(plafond, marge(nomCarte));
+  const t = nomNormalise(texteOcr), n = nomNormalise(nomCarte);
+  if (n.length < 4 || !t) return false;
+  if (max === 0) { const r = nomNormalise(String(nomCarte).split(/[-s]/)[0]);
+    return t.includes(n) || (r.length >= 4 && t.includes(r)); }
+  if (t.includes(n)) return true;
+  const racine = nomNormalise(String(nomCarte).split(/[-\s]/)[0]);
+  const cible = racine.length >= 4 ? racine : n;
+  if (t.includes(cible)) return true;
+  const L = cible.length;
+  for (let i = 0; i + L - max <= t.length; i++)
+    for (let d = -max; d <= max; d++) {
+      const bout = t.substr(i, L + d);
+      if (bout.length >= 4 && ecartMots(bout, cible, max) <= max) return true;
+    }
+  return false;
+}
+
 const cosinus = (a, b) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; };
 function chargerImage(src) {
   return new Promise((res, rej) => { const i = new Image(); i.crossOrigin = 'anonymous';
@@ -907,6 +994,35 @@ export async function identifierV2(carte, opts = {}) {
     }
   }
 
+  // ─── SECOURS PAR LE NOM ─────────────────────────────────────────────────────────────
+  // L'appariement n'a rien donné de solide : plutôt que de rendre un rebut, on lit le nom
+  // écrit sur la carte et on cherche qui, dans la présélection, le porte. Ces captures-là
+  // coûtent déjà leur seconde et ne rendent rien ; y ajouter l'OCR est le seul moment où il
+  // vaut son prix.
+  let nomLu = '', nomSecours = false;
+  if (R.NOM_ACTIF && ocr && inl < R.NOM_INLIERS_MAX) {
+    try {
+      const r = await chrono('ocrNom', ocrLire(bandeHaute(carte)));
+      nomLu = (r && r.text) || '';
+    } catch (e) {}
+    if (nomLu) {
+      // La présélection de l'empreinte D'ABORD, le classement ORB ensuite :
+      // quand l'appariement échoue son ordre ne vaut rien, alors que l'empreinte, elle, a
+      // bien rapproché la carte de quelque chose.
+      const fouille = [...new Set([...(court || []), ...ranked])]
+        .slice(0, R.NOM_CANDIDATS);
+      const gagnant = fouille.find(cle => {
+        const c = cleToCard.get(cle);
+        return c && nomTrouve(nomLu, c.name, R.NOM_ECART_MAX);
+      });
+      if (gagnant) {
+        pick = gagnant; nomSecours = true;
+        inl = Math.max(inl, orbScores[gagnant] || 0);
+        marge = 0;
+      }
+    }
+  }
+
   const cible = pick && cleToCard.get(pick);
   const ocrOk = !!cible && ocrCands.some(c => c.number === cible.numero);
   const dom = inl > 0 ? marge / inl : 0;
@@ -921,15 +1037,21 @@ export async function identifierV2(carte, opts = {}) {
   // sigmoïde (calibrée prudemment) reste à ~77 %.
   const geoFranche = inl >= R.GEO_INLIERS && dom >= R.GEO_DOM;
   let categorie;
-  if (!pick || (inl < R.INLIERS_MIN && !ocrOk)) categorie = 'rebut';
+  if (!pick || (inl < R.INLIERS_MIN && !ocrOk && !nomSecours)) categorie = 'rebut';
   else if (fiabilite >= 80 || ocrOk || geoFranche) categorie = 'sure';
   else categorie = 'douteuse';
+  // Une carte retrouvée par son nom seul est « à vérifier », jamais « sûre » : le nom ne
+  // distingue pas deux impressions du même Pokémon, et l'appariement n'a rien confirmé. La
+  // fiabilité annoncée le dit — plafonnée, pour ne pas laisser croire à une certitude.
+  if (nomSecours && categorie !== 'sure') categorie = 'douteuse';
 
   scansV2++; scansDepuisRecyclage++;   // (noterPickV2 — mode « classeur » — retiré, voir plus haut)
 
   return {
     pick: cible ? { cle: cible.cle, numero: cible.numero, name: cible.name, setId: cible.setId, localId: cible.localId, image: cible.image } : null,
-    fiabilite, categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, embPremier, ocrTxt, ocrLance, ocrOk,
+    fiabilite: nomSecours && !ocrOk ? Math.min(fiabilite, 60) : fiabilite,
+    categorie, inliers: Math.round(inl), marge: Math.round(marge), embTop, embPremier, ocrTxt, ocrLance, ocrOk,
+    nomLu, nomSecours,
     packTelecharge, setsCharges: setsCharges(),
     // Somme des seules ÉTAPES : T porte aussi refsDetail, qui est une ventilation de
     // `refs` et non une durée de plus — l'additionner compterait deux fois, et comme c'est
