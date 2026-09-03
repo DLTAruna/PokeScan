@@ -6730,7 +6730,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 134;
+const VERSION_APP = 135;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14968,7 +14968,13 @@ const XX_INLIERS_VIDE = 2;
 // 19 cm. Passer « 0,30 » en croyant demander trente centimètres visait 3,3 mètres et rendait
 // tout flou. La conversion vit désormais dans xxAppliquerFocus, avec les paliers en
 // centimètres — la seule unité qu'on puisse juger à l'œil.
-const XX_EXIGER_RETRAIT = false;   // essai : voir la boucle de détection
+// Le retrait de la carte est de nouveau EXIGÉ entre deux prises. L'essai sans lui, demandé
+// par Nikos, a répondu : le scanner prend « plein de photos inutiles ». C'est logique — sans
+// cette condition, une carte laissée devant l'objectif est reprise toutes les six cents
+// millisecondes, le seul frein restant étant le délai plancher. Et ces prises-là ne sont pas
+// jetées par le filtre des captures à vide, puisqu'elles lisent parfaitement la carte : ce
+// sont des doublons valides, ce qu'aucun filtre de qualité ne peut écarter.
+const XX_EXIGER_RETRAIT = true;
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const XX_ABSENCE = 2;
@@ -16161,11 +16167,9 @@ async function xxTourner(){
           tImage: XX.tImage, tDetect: XX.tDetect, tDessin: XX.tDessin };
         xxMajDebug(XX.dernierDebug);
 
-        // `XX_EXIGER_RETRAIT` à false : la carte n'a plus besoin d'avoir été retirée entre
-        // deux prises. C'est un réglage d'ESSAI demandé par Nikos — il ouvre la porte à
-        // recapturer la même carte, ce que le délai plancher entre prises et le filtre des
-        // deux images limitent sans l'empêcher. Une ligne à remettre à true si les doublons
-        // reviennent.
+        // Le verrou « déjà lue » : sans lui, une carte laissée devant l'objectif est reprise
+        // indéfiniment. Il se rouvre quand la carte s'absente, ou qu'elle s'éloigne
+        // franchement de sa position sur deux images — voir plus haut.
         if((!XX_EXIGER_RETRAIT || XX.retiree) && d.score >= seuilScore && stable){
           XX.streak = 0; XX.presentDepuis = 0;
           await xxCapturer();
