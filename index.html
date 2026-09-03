@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 107;
+const VERSION_APP = 108;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15285,13 +15285,57 @@ function xxEcartCoins(a, b){
 }
 
 // ── La capture du banc : nouvelle détection, puis redressement projectif ────────────────
-async function xxRedresserVideo(v){
+// ── DÉTECTER À DEUX ÉCHELLES ──────────────────────────────────────────────────────────
+// Le détecteur est entraîné sur une carte qui REMPLIT le cadre. Dès qu'elle n'en occupe
+// plus qu'une partie, son score s'effondre — mesuré aujourd'hui sur une image de six cartes
+// étalées : 5,5 × 10⁻¹⁰, aucun coin. Or c'est exactement ce que décrit Nikos, « j'éloigne un
+// peu la carte et le score reste très faible ». Ce n'est donc pas un réglage à desserrer :
+// c'est le détecteur qui ne reconnaît plus ce qu'on lui montre.
+//
+// Le remède est celui qui a fait passer la même image de zéro à un score de 1,0 : recadrer.
+// On tente l'image entière ; si elle ne donne rien de bon, on retente sur sa partie
+// centrale, où la carte se retrouve proportionnellement plus grande. Le second essai ne
+// coûte qu'une cinquantaine de millisecondes et n'a lieu que lorsque le premier échoue.
+//
+// Effet de bord recherché : on peut enfin tenir la carte un peu en retrait, ce qui la garde
+// à une distance où l'objectif fait le point — l'ultra grand-angle des téléphones ne sait
+// pas être net à quinze centimètres.
+const XX_RECADRE = 0.66;   // part linéaire gardée au second essai
+
+async function xxDetecterMulti(v){
   const long = Math.max(v.videoWidth, v.videoHeight);
   const e0 = Math.min(1, DETECT_LONG_EDGE / long);
-  const bmp = await createImageBitmap(v, {resizeWidth: Math.round(v.videoWidth*e0),
-    resizeHeight: Math.round(v.videoHeight*e0), resizeQuality:'medium'});
-  const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+  const lw = Math.round(v.videoWidth * e0), lh = Math.round(v.videoHeight * e0);
+
+  const bmp = await createImageBitmap(v, { resizeWidth: lw, resizeHeight: lh, resizeQuality:'medium' });
+  const plein = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+  if(plein && plein.corners && plein.score >= XX_MIN_SCORE) return { ...plein, echelle:1 };
+
+  // Second essai, sur la partie centrale. Les coins reviennent dans le repère de la
+  // vignette : il faut les ramener dans celui de l'image entière, sans quoi le repère et le
+  // redressement viseraient à côté.
+  const cw = Math.round(v.videoWidth * XX_RECADRE), chh = Math.round(v.videoHeight * XX_RECADRE);
+  const sx = Math.round((v.videoWidth - cw) / 2), sy = Math.round((v.videoHeight - chh) / 2);
+  const bmp2 = await createImageBitmap(v, sx, sy, cw, chh,
+    { resizeWidth: Math.round(cw * e0), resizeHeight: Math.round(chh * e0), resizeQuality:'medium' });
+  const centre = await detectWorkerCall('detect', {bitmap:bmp2}, [bmp2]);
+  if(!centre || !centre.corners) return plein;
+
+  const fx = XX_RECADRE, fy = XX_RECADRE;
+  const ox = sx / v.videoWidth, oy = sy / v.videoHeight;
+  const coins = {};
+  for(const k of ['tl','tr','br','bl'])
+    coins[k] = [ ox + centre.corners[k][0] * fx, oy + centre.corners[k][1] * fy ];
+  // On ne retient le recadrage que s'il fait MIEUX : sinon le premier essai reste la vérité.
+  if(plein && plein.score != null && centre.score != null && centre.score <= plein.score) return plein;
+  return { score: centre.score, corners: coins, echelle: XX_RECADRE };
+}
+
+async function xxRedresserVideo(v){
+  const long = Math.max(v.videoWidth, v.videoHeight);
+  const d = await xxDetecterMulti(v);
   if(!d || !d.corners || d.score == null || d.score < XX_MIN_SCORE) return null;
+  XX.echelle = d.echelle || 1;
 
   const sc = await getScanic();
   const ech = Math.min(1, EXTRACT_LONG_EDGE / long);
@@ -15363,9 +15407,12 @@ async function xxCapturer(){
     // qu'on nous demandait de faire. Le même relevé que le scanner principal, avec le même
     // sens : « reel » est le temps de bout en bout, « v2ms » la somme des étapes du moteur,
     // qui se recouvrent et dépasse donc souvent le temps réel.
+    // Le moteur d'inférence et la ventilation des étapes : je les avais ajoutés au scanner
+    // principal alors que Nikos éprouve celui-ci. Vingt-quatre relevés pour rien.
     mesure = { hint:'xx', reel: Math.round(performance.now() - t0), v2ms: e.ms,
                fiab: e.fiabilite, cat: e.categorie, inliers: e.inliers,
-               zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length };
+               zoom: XX.zoom, remplir: !!XX.remplir, pile: XX.pile.length,
+               moteur: res && res.moteur, T: res && res.T, echelle: XX.echelle };
 
     xxDetails(e);
   }catch(err){ xxEtat('capture : ' + err.message); }
@@ -15633,11 +15680,7 @@ async function xxTourner(){
     const v = $('xx-video');
     if(!v || !v.videoWidth || XX.occupe){ await new Promise(r => setTimeout(r, 120)); continue; }
     try{
-      const e0 = Math.min(1, DETECT_LONG_EDGE / Math.max(v.videoWidth, v.videoHeight));
-      const bmp = await createImageBitmap(v, {
-        resizeWidth: Math.round(v.videoWidth*e0), resizeHeight: Math.round(v.videoHeight*e0),
-        resizeQuality:'medium' });
-      const d = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
+      const d = await xxDetecterMulti(v);
       const bon = !!(d && d.corners && d.score != null && d.score >= XX_MIN_SCORE);
 
       if(!bon){
