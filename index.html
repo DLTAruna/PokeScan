@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 130;
+const VERSION_APP = 131;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14961,7 +14961,22 @@ const XX_ABSENCE = 2;
 // Le repère est remonté : le cadre d'information occupe le bas de l'écran, et un viseur
 // centré sur la hauteur totale avait sa moitié basse dessous. On centre donc sur la place
 // réellement libre.
-const XX_GUIDE_H = 0.62;      // hauteur du repère, en fraction de l'IMAGE
+// Le repère occupe volontairement une part MODESTE de l'image, et c'est mesuré, pas supposé.
+//
+// Deux raisons convergentes. La première tient à la lecture : au banc, sur vingt cartes de
+// treize sets, celles cadrées entre 36 et 45 % de la hauteur ont donné 121 points
+// d'appariement médians et se sont lues plus VITE que celles cadrées à 84-93 % — 2 096 ms
+// contre 2 740. Une carte qui remplit le cadre donne plus de points à apparier, donc plus de
+// travail, sans rien apporter à la certitude.
+//
+// La seconde vient de Nikos : son appareil bascule en macro quand la carte approche, et la
+// macro d'un téléphone est un capteur pauvre — d'où le bruit. Aucune commande navigateur ne
+// la désactive. Le seul remède est de ne pas approcher, et le repère est ce qui dicte la
+// distance : c'est lui qu'on règle, pas la caméra.
+//
+// 0,62 était le réglage d'avant, 0,55 laisse une bonne dizaine de centimètres de plus. Il
+// reste largement au-dessus des 36 % où la lecture tient encore.
+const XX_GUIDE_H = 0.55;      // hauteur du repère, en fraction de l'IMAGE
 const XX_BAS_MIN = 170;       // plancher de la place gardée en bas, en pixels d'écran
 const XX_DEBUG_HAUT = 84;     // place prise par le panneau de débogage, quand il est là
 // Zoom : borné haut pour ne jamais atteindre le téléobjectif. Le navigateur n'expose qu'une
@@ -16165,6 +16180,22 @@ async function xxFlux(deviceId){
     try{ localStorage.removeItem(XX_ZOOM_CLE); }catch(e){}
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : null;
     xxInfoCam();
+    // ── LE MODE MACRO ────────────────────────────────────────────────────────────────
+    // Nikos constate que son appareil bascule tout seul en macro quand la carte approche, et
+    // que l'image devient très bruitée — sur la plupart des téléphones, la macro est un
+    // capteur secondaire bien plus pauvre, ou un mode qui pousse la sensibilité.
+    //
+    // Le navigateur n'expose aucune commande « pas de macro ». Les seuls leviers possibles
+    // sont focusMode et focusDistance, et rien ne garantit qu'ils existent sur cet appareil.
+    // On les relève donc avant d'imaginer un correctif — c'est la seule façon de savoir si
+    // une piste logicielle existe, ou s'il faut simplement tenir la carte plus loin.
+    try{
+      diagPush('err', {msg: 'XX mise au point : focusMode=' + JSON.stringify(caps.focusMode || null)
+        + ' focusDistance=' + JSON.stringify(caps.focusDistance || null)
+        + ' réglage=' + JSON.stringify({ mode: reglage.focusMode, dist: reglage.focusDistance })
+        + ' capacités=' + Object.keys(caps).join(',')});
+    }catch(e){}
+
     // Ce banc avalait tout cela dans un catch vide : sur un appareil qu'on ne peut pas
     // tester, le diagnostic est la seule façon de savoir ce qu'il expose vraiment.
     diagPush('err', {msg:'XX caméra: ' + (reglage.width || '?') + 'x' + (reglage.height || '?')
