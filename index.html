@@ -813,8 +813,17 @@
      En plein écran : « cover », l'image occupe tout l'écran sans bordure. Le repère est
      calculé DANS LE REPÈRE DE L'IMAGE puis projeté par la même transformation : il désigne
      la même part du champ analysé dans les deux cas. */
+  /* « contain » PARTOUT, y compris en plein écran — et c'est le correctif.
+     Le plein écran était en « cover » : pour remplir un écran très allongé avec un flux
+     en 3/4, il faut agrandir jusqu'à couvrir la hauteur, et à ce facteur près de quarante
+     pour cent de la LARGEUR sortent de l'écran. Sur un flux 1440×1920 vu dans 412×915,
+     l'image occupe 690 px pour 412 disponibles : on n'en montrait que 60 %. C'était un
+     recadrage d'environ 1,7× — le « ×2 » que Nikos voyait sans le trouver dans la caméra,
+     parce qu'il n'y a jamais été. Le zoom se plaignait à tort.
+     En « contain » on voit tout le champ analysé, au prix de deux bandes noires. Le bouton
+     de cadrage rend l'ancien comportement à qui préfère l'écran plein. */
   #xx-video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
-  body.xx-plein #xx-video{ object-fit:cover; }
+  body.xx-remplir #xx-video{ object-fit:cover; }
   #xx-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
   .xx-etat{ text-align:center; color:#9fb0c0; font-size:13px; margin:10px 0; min-height:18px; }
   .xx-actions{ display:flex; gap:10px; justify-content:center; margin:0 0 16px; }
@@ -846,6 +855,15 @@
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
     -webkit-tap-highlight-color:transparent; }
   #xx-debug-b.actif{ color:#0d1117; background:var(--mode-collec); border-color:transparent; }
+  #xx-cadrage{ width:30px; height:30px; border-radius:50%; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; padding:0;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
+    -webkit-tap-highlight-color:transparent; }
+  #xx-cadrage svg{ width:17px; height:17px; }
+  /* Les deux barres montrent ce qu'on perd : présentes quand l'écran est rempli. */
+  #xx-cadrage .xx-cadrage-in{ opacity:0; }
+  #xx-cadrage.actif{ color:#1a1206; background:var(--mode-vendeur); border-color:transparent; }
+  #xx-cadrage.actif .xx-cadrage-in{ opacity:1; }
 
   /* ── LE PANNEAU DE DÉBOGAGE, sous la barre et au-dessus du viseur ─────────────────── */
   #xx-debug{ position:absolute; left:10px; right:10px; z-index:13;
@@ -1087,8 +1105,13 @@
   }
   body.xx-plein #xx-video, body.xx-plein #xx-overlay{
     position:absolute; inset:0; width:100%; height:100%;
-    min-width:100vw; min-height:100vh;
   }
+  /* Une règle générale de la feuille — « video { max-height:65vh } », posée pour les vidéos
+     de la page — s'appliquait aussi à ce flux. En plein écran, l'image n'a donc JAMAIS
+     occupé l'écran : elle était plafonnée aux deux tiers de sa hauteur, et le « cover »
+     recadrait à l'intérieur de cette boîte-là. C'est ce plafond qui rendait mes calculs de
+     champ faux, et il n'apparaissait dans aucune règle visant #xx-video. */
+  body.xx-plein #xx-video{ max-height:none; }
   body.xx-plein #xx-haut{ padding-top:calc(10px + env(safe-area-inset-top)); }
   body.xx-plein #xx-quitter{ display:flex; }
   body.xx-plein #xx-bas{ bottom:calc(10px + env(safe-area-inset-bottom));
@@ -5105,6 +5128,15 @@
         <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
         <p id="xx-etat" class="xx-etat">caméra fermée</p>
         <button id="xx-debug-b" type="button" aria-label="Afficher le débogage">i</button>
+        <!-- Voir tout le champ, ou remplir l'écran. Remplir coûte quarante pour cent de la
+             largeur sur un écran allongé : c'est un choix, plus un défaut. -->
+        <button id="xx-cadrage" type="button" aria-label="Cadrage : tout voir ou remplir">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="2"/>
+            <path class="xx-cadrage-in" d="M8 8v8M16 8v8"/>
+          </svg>
+        </button>
         <button id="xx-pile" type="button" hidden aria-label="Voir la pile">
           <svg class="xx-pile-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
                stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -6672,7 +6704,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 101;
+const VERSION_APP = 102;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14899,7 +14931,7 @@ const XX = { flux:null, piste:null, boucle:false, occupe:false,
              presentDepuis:0, streak:0, dernierCoins:null, absence:0,
              retiree:true, coinsCapture:null, pile:[], valeur:0,
              caps:null, zoom:null, zoomNatif:null, objectifs:[], infoCam:'',
-             debug:false, dernierDebug:null };
+             debug:false, dernierDebug:null, remplir:false, etat:'attente' };
 
 // La barre du bas se dimensionne toute seule ; le viseur la MESURE au lieu de supposer sa
 // hauteur. Un plancher malgré tout : sans lui, le repère bondirait à l'apparition de la
@@ -14937,6 +14969,28 @@ function xxMajDebug(info){
     + puce('vue ' + (info.attente ? (info.attente/1000).toFixed(1).replace('.', ',') + ' s' : '—'), null)
     + '<span class="cam">' + xxEch(XX.infoCam || 'caméra : —') + '</span>';
 }
+// Tout voir, ou remplir l'écran. Le choix survit à la session : c'est un goût, pas un
+// réglage à refaire à chaque ouverture.
+const XX_REMPLIR_CLE = 'pokescanRemplirXX';
+function xxAppliquerCadrage(){
+  document.body.classList.toggle('xx-remplir', !!XX.remplir);
+  const b = $('xx-cadrage');
+  if(b){
+    b.classList.toggle('actif', !!XX.remplir);
+    b.title = XX.remplir ? "L'écran est rempli — une part du champ sort de l'écran"
+                         : 'Tout le champ est visible';
+  }
+  xxDessinerCadre(XX.etat || 'attente');
+  xxInfoCam();
+}
+function xxBasculerCadrage(){
+  XX.remplir = !XX.remplir;
+  try{ localStorage.setItem(XX_REMPLIR_CLE, XX.remplir ? '1' : '0'); }catch(e){}
+  xxAppliquerCadrage();
+  xxEtat(XX.remplir ? "écran rempli — le champ est rogné sur les côtés"
+                    : 'tout le champ est visible');
+}
+
 function xxBasculerDebug(){
   XX.debug = !XX.debug;
   const d = $('xx-debug'), b = $('xx-debug-b');
@@ -14965,10 +15019,23 @@ function xxProjection(){
     cv.width = Math.round(l*dpr); cv.height = Math.round(h*dpr);
   }
   const vw = v.videoWidth || l, vh = v.videoHeight || h;
+  // La boîte du <video> mesurée, et non supposée égale à celle du canevas. C'est en la
+  // mesurant qu'on a découvert le plafond ci-dessus : les deux éléments partagent la même
+  // règle de taille, et se retrouvaient pourtant l'un à 812 pixels et l'autre à 528. Tant
+  // qu'on supposait, le repère se dessinait à un endroit où l'image n'était pas.
+  const rc = cv.getBoundingClientRect(), rv = v.getBoundingClientRect();
+  const bx = rv.left - rc.left, by = rv.top - rc.top;
+  const bw = rv.width || l, bh = rv.height || h;
   const plein = document.body.classList.contains('xx-plein');
-  const ech = plein ? Math.max(l/vw, h/vh) : Math.min(l/vw, h/vh);
+  // L'échelle doit suivre le CADRAGE, pas le plein écran : c'est « cover » qui impose le
+  // maximum, et le plein écran n'est plus forcément en « cover ». Confondre les deux, c'est
+  // dessiner le repère à un endroit où l'image n'est pas.
+  const remplir = document.body.classList.contains('xx-remplir');
+  const ech = remplir ? Math.max(bw/vw, bh/vh) : Math.min(bw/vw, bh/vh);
   const iw = vw*ech, ih = vh*ech;
-  return { l, h, dpr, iw, ih, ix:(l-iw)/2, iy:(h-ih)/2, plein };
+  // Ce qu'on montre vraiment du champ capté : entier en « contain », rogné en « cover ».
+  const champ = Math.min(1, bw/iw) * Math.min(1, bh/ih);
+  return { l, h, dpr, iw, ih, ix: bx + (bw-iw)/2, iy: by + (bh-ih)/2, plein, champ };
 }
 
 function xxDessinerCadre(etat){
@@ -15547,6 +15614,16 @@ async function xxFlux(deviceId){
     XX.flux = await navigator.mediaDevices.getUserMedia({
       video:{ ...(deviceId ? {deviceId:{exact:deviceId}} : {facingMode:{ideal:'environment'}}),
               width:{ideal:1920}, height:{ideal:1440},
+              // Trente images par seconde, en IDÉAL — jamais en exact, un appareil qui ne
+              // peut pas les tenir doit rester utilisable. Le scanner principal le demande
+              // depuis longtemps et dit pourquoi : un mode nuit par empilement d'expositions
+              // longues — la cause documentée du bruit en faible lumière — est physiquement
+              // incompatible avec une cadence élevée, les deux se disputant le même budget
+              // de temps par image. Demander 30 i/s n'éclaire pas la pièce, mais retire au
+              // pilote la marge dont ce mode a besoin pour s'enclencher tout seul. Ce banc
+              // ne le demandait pas : une ligne d'écart, et un bien meilleur candidat au
+              // « c'est bruité » que le recadrage.
+              frameRate:{ideal:30},
               advanced:[{focusMode:'continuous'}] }, audio:false });
   }catch(e){ xxEtat('caméra refusée : ' + e.message); return false; }
   const v = $('xx-video');
@@ -15585,6 +15662,7 @@ async function xxFlux(deviceId){
     diagPush('err', {msg:'XX caméra: ' + (reglage.width || '?') + 'x' + (reglage.height || '?')
       + ' — zoom ' + (XX.caps ? XX.caps.min + '…' + XX.caps.max + ' pas ' + (XX.caps.step != null ? XX.caps.step : '?')
                               : 'non exposé')
+      + ' — ' + (reglage.frameRate ? Math.round(reglage.frameRate) + ' i/s' : 'cadence inconnue')
       + ' — natif ' + (XX.zoomNatif != null ? XX.zoomNatif : 'inconnu')
       + ' — réglé sur ' + (XX.zoom != null ? XX.zoom : 'inconnu')
       + ' — objectif ' + (reglage.deviceId ? String(reglage.deviceId).slice(0, 8) : '?')});
@@ -15596,7 +15674,11 @@ async function xxFlux(deviceId){
 function xxInfoCam(){
   const r = XX.piste && XX.piste.getSettings ? XX.piste.getSettings() : {};
   const nom = (XX.objectifs || []).find(d => d.deviceId === r.deviceId);
+  const T = xxProjection();
   XX.infoCam = (r.width || '?') + '×' + (r.height || '?')
+    + (r.frameRate ? ' · ' + Math.round(r.frameRate) + ' i/s' : ' · cadence ?')
+    // La part du champ capté qui arrive à l'écran. C'est elle qu'on croyait être un zoom.
+    + (T ? ' · champ ' + Math.round(T.champ * 100) + ' %' : '')
     + ' · zoom ' + (XX.zoom != null ? XX.zoom : '?')
     + (XX.caps ? ' de ' + XX.caps.min + ' à ' + XX.caps.max : ' non exposé')
     + (XX.zoomNatif != null ? ' · natif ' + XX.zoomNatif : '')
@@ -15687,6 +15769,9 @@ $('xx-fermer')?.addEventListener('click', xxFermer);
 $('xx-quitter')?.addEventListener('click', xxFermer);
 $('xx-objectif')?.addEventListener('click', xxObjectifSuivant);
 $('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
+$('xx-cadrage')?.addEventListener('click', xxBasculerCadrage);
+try{ XX.remplir = localStorage.getItem(XX_REMPLIR_CLE) === '1'; }catch(e){}
+xxAppliquerCadrage();
 // La préférence de débogage survit à la session : quand on chasse un déclenchement, on ne
 // veut pas rallumer le panneau à chaque ouverture.
 try{ if(localStorage.getItem(XX_DEBUG_CLE) === '1') xxBasculerDebug(); }catch(e){}
