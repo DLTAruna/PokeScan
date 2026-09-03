@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 111;
+const VERSION_APP = 112;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15340,15 +15340,16 @@ async function xxDetecterMulti(v){
 
   const bmp = await createImageBitmap(v, { resizeWidth: lw, resizeHeight: lh, resizeQuality:'medium' });
   const plein = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
-  // Le recadrage n'est plus un SECOURS, il est systématique — la salve du 3 septembre au soir
-  // a tranché. Sur les douze captures abouties, celles passées par le recadrage donnent cinq
-  // lectures sûres sur six et 87 points d'appariement médians ; celles jugées sur l'image
-  // entière, deux sur six et des inliers à 1, 4, 5. Le recadrage ne rattrape donc pas
-  // seulement une détection manquée : il rend des coins plus justes, donc un redressement
-  // plus fidèle, donc une lecture meilleure. Cinquante millisecondes pour ce résultat-là ne
-  // se discutent pas.
-  const assezBon = plein && plein.corners && plein.score >= 0.9;
-  if(assezBon) return { ...plein, echelle:1 };
+  // Je m'étais annoncé « systématique » et je ne l'étais pas : la version précédente rendait
+  // l'image entière dès que son score dépassait 0,9, ce qui arrive presque toujours. Résultat,
+  // sur les vingt-huit captures de la salve suivante, le recadrage n'a JAMAIS été tenté — et
+  // les points d'appariement se sont effondrés à quatorze de médiane, contre quatre-vingt-sept
+  // pour les captures recadrées de la salve d'avant. Un score de détection à 1,00 ne dit pas
+  // que les coins sont justes : il dit qu'il y a une carte. Ce sont deux choses différentes,
+  // et c'est la justesse des coins qui décide de la qualité du redressement, donc de la
+  // lecture.
+  // Les deux échelles sont donc calculées à chaque fois, et la meilleure gagne — à égalité,
+  // le recadrage, qui travaille sur une carte proportionnellement plus grande.
 
   // Second essai, sur la partie centrale. Les coins reviennent dans le repère de la
   // vignette : il faut les ramener dans celui de l'image entière, sans quoi le repère et le
@@ -15358,15 +15359,17 @@ async function xxDetecterMulti(v){
   const bmp2 = await createImageBitmap(v, sx, sy, cw, chh,
     { resizeWidth: Math.round(cw * e0), resizeHeight: Math.round(chh * e0), resizeQuality:'medium' });
   const centre = await detectWorkerCall('detect', {bitmap:bmp2}, [bmp2]);
-  if(!centre || !centre.corners) return plein;
+  if(!centre || !centre.corners) return plein ? { ...plein, echelle:1 } : null;
 
   const fx = XX_RECADRE, fy = XX_RECADRE;
   const ox = sx / v.videoWidth, oy = sy / v.videoHeight;
   const coins = {};
   for(const k of ['tl','tr','br','bl'])
     coins[k] = [ ox + centre.corners[k][0] * fx, oy + centre.corners[k][1] * fy ];
-  // On ne retient le recadrage que s'il fait MIEUX : sinon le premier essai reste la vérité.
-  if(plein && plein.score != null && centre.score != null && centre.score <= plein.score) return plein;
+  // À égalité de score, le recadrage l'emporte : il a jugé sur une carte proportionnellement
+  // plus grande, donc ses coins sont plus fins.
+  if(plein && plein.score != null && centre.score != null && centre.score < plein.score)
+    return { ...plein, echelle:1 };
   return { score: centre.score, corners: coins, echelle: XX_RECADRE };
 }
 
@@ -15463,7 +15466,11 @@ async function xxCapturer(){
                // nombres, tout débat sur les seuils se tient à l'aveugle.
                score: XX.dernierDebug && XX.dernierDebug.score,
                bouge: XX.dernierDebug && XX.dernierDebug.bouge,
-               batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge };
+               batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
+               // L'empreinte est passée de 636 à 707 ms APRÈS la mise en place de l'isolation
+               // cross-origin : soit elle n'est pas active sur l'appareil, soit ONNX ne
+               // parallélise pas ce modèle. Sans ce booléen on ne peut pas les distinguer.
+               iso: self.crossOriginIsolated === true };
     xxDiagMoteur();
     xxLireBatterie();
 
