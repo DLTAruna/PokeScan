@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 128;
+const VERSION_APP = 129;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14936,7 +14936,21 @@ const XX_MIN_SCORE = 0.35;
 // Au-dessus, le détecteur est catégorique et l'on capture sans attendre une seconde image.
 // En dessous, on la demande : c'est le compromis entre le tour de boucle économisé et les
 // déclenchements intempestifs.
-const XX_SCORE_FRANC = 0.98;
+// Le seuil de franchise ne sert plus. Relevé sur le téléphone : les rebuts déclenchent à
+// 1,00 aussi souvent que les bonnes lectures — le détecteur est confiant sur des formes qui
+// ne sont pas des cartes lisibles. Sa confiance porte sur « y a-t-il un quadrilatère », pas
+// sur « est-il lisible ». Aucun seuil de score ne pouvait donc trier.
+//
+// Ce qui trie, c'est la PRÉSENCE SUR DEUX IMAGES : huit des treize rebuts sont des captures
+// sur la toute première détection, contre trois des dix lectures sûres. Une forme aperçue un
+// instant ne se retrouve pas à l'image suivante ; une carte tenue en main, si.
+//
+// En revanche on n'exige plus que le mouvement soit FAIBLE, et c'est la différence avec la
+// règle d'origine. Les valeurs relevées se chevauchent trop pour trancher — 0,141 donne une
+// lecture sûre, 0,152 un rebut. Le seuil de 0,030 remettait le compteur à zéro sans cesse et
+// coûtait plusieurs tours de boucle pour rien. Il ne reste qu'un garde-fou large, qui écarte
+// le geste franc et laisse passer la main qui tremble.
+const XX_BOUGE_MAX = 0.20;
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const XX_ABSENCE = 2;
@@ -15592,10 +15606,11 @@ async function xxCapturer(){
           // enregistrés avec un score de 0,000 : la mesure décrivait l'écran vide, pas la
           // décision. Huit des treize rebuts de la dernière salve sont dans ce cas, et j'ai
           // failli en tirer des conclusions.
+          declVu: XX.vu,
           declScore: XX.dernierDebug && XX.dernierDebug.score,
           declBouge: XX.dernierDebug && XX.dernierDebug.bouge };
     XX.pile.push(e);
-    XX.retiree = false; XX.coinsCapture = coins;
+    XX.retiree = false; XX.coinsCapture = coins; XX.vu = 0;
     xxVoler(photo, coins);
     xxRendreFiche(e);
     xxRendrePile();
@@ -15653,7 +15668,7 @@ async function xxIdentifier(e, t0){
                // pilote refuse le palier demandé.
                resReelle: (() => { try{ const r = XX.piste.getSettings();
                  return r.width + "x" + r.height; }catch(e){ return undefined; } })(),
-               score: e.declScore, bouge: e.declBouge,
+               score: e.declScore, bouge: e.declBouge, vu: e.declVu,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
                iso: self.crossOriginIsolated === true };
     xxDiagMoteur();
@@ -15940,7 +15955,7 @@ async function xxTourner(){
 
       if(!bon){
         xxDessinerCadre('attente');
-        XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null; XX.loin = 0;
+        XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null; XX.loin = 0; XX.vu = 0;
         if(++XX.absence >= XX_ABSENCE) XX.retiree = true;
         xxEtat('vise la carte');
         XX.dernierDebug = { score: d && d.score != null ? d.score : null,
@@ -16011,8 +16026,9 @@ async function xxTourner(){
         // franche se passe de confirmation, une détection tiède l'exige. Le seuil est haut —
         // au banc, une carte correctement cadrée rend un score de 1,00, et les cas douteux
         // tournaient autour de 0,25 à 0,9.
-        const franche = d.score >= XX_SCORE_FRANC;
-        const stable = XX.stabilite ? XX.streak >= 1 : (franche || XX.streak >= 1);
+        // Deux images où la carte est là, et un mouvement pas franchement grand.
+        XX.vu = (XX.vu || 0) + 1;
+        const stable = XX.vu >= 2 && (!isFinite(bouge) || bouge < XX_BOUGE_MAX);
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
         XX.tDessin = Math.round(performance.now() - tD);
         XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
