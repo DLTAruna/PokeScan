@@ -204,6 +204,15 @@ async function main(){
   // Une valeur n'est écrite que si elle CHANGE — un prix bouge rarement d'un jour à l'autre,
   // et sans cela un an pèserait 252 mégaoctets. À la lecture, null signifie « comme la
   // veille », ce qui vaut aussi pour une journée sans relevé : les deux cas se confondent.
+  // Réparti par le reste de la division du productId : l'application n'en télécharge qu'un
+  // pour la carte qu'elle affiche, au lieu d'un index unique énorme.
+  //
+  // Mille vingt-quatre paquets et non deux cent cinquante-six : sur trente et un mois, la
+  // première répartition donnait des paquets de 743 Ko — acceptable sur une fibre, pesant
+  // sur un téléphone en boutique, pour lire UNE carte. À mille vingt-quatre, chaque paquet
+  // tombe sous les deux cents kilo-octets et porte encore une quarantaine de séries : les
+  // cartes voisines d'un même lot profitent souvent du même téléchargement.
+  const N_PAQUETS = +(o.paquets || 1024);
   const paquets = new Map();
   for(const [cle, s] of series){
     let i0 = 0; while(i0 < n && Number.isNaN(s[i0])) i0++;
@@ -214,7 +223,7 @@ async function main(){
       const x = Number.isNaN(s[i]) ? null : Math.round(s[i] * 100) / 100;
       if(x === null || x === prec) v.push(null); else { v.push(x); prec = x; }
     }
-    const p = parseInt(cle, 10) % 256;
+    const p = parseInt(cle, 10) % N_PAQUETS;
     const b = paquets.get(p) || (paquets.set(p, {}), paquets.get(p));
     b[cle] = { d: presents[i0], v };
   }
