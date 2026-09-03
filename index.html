@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 131;
+const VERSION_APP = 132;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14955,6 +14955,11 @@ const XX_BOUGE_MAX = 0.20;
 // d'encombrer la pile. Deux, et pas davantage — le secours par le nom travaille jusqu'à vingt,
 // et l'on ne veut pas jeter ce qu'il sait encore rattraper.
 const XX_INLIERS_VIDE = 2;
+// Mise au point fixe, pour tenir l'appareil hors de sa plage macro. Passer à false rend la
+// mise au point automatique.
+const XX_FOCUS_FIXE = true;
+const XX_FOCUS_M = 0.30;
+const XX_EXIGER_RETRAIT = false;   // essai : voir la boucle de détection
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const XX_ABSENCE = 2;
@@ -16083,7 +16088,12 @@ async function xxTourner(){
           tImage: XX.tImage, tDetect: XX.tDetect, tDessin: XX.tDessin };
         xxMajDebug(XX.dernierDebug);
 
-        if(XX.retiree && d.score >= seuilScore && stable){
+        // `XX_EXIGER_RETRAIT` à false : la carte n'a plus besoin d'avoir été retirée entre
+        // deux prises. C'est un réglage d'ESSAI demandé par Nikos — il ouvre la porte à
+        // recapturer la même carte, ce que le délai plancher entre prises et le filtre des
+        // deux images limitent sans l'empêcher. Une ligne à remettre à true si les doublons
+        // reviennent.
+        if((!XX_EXIGER_RETRAIT || XX.retiree) && d.score >= seuilScore && stable){
           XX.streak = 0; XX.presentDepuis = 0;
           await xxCapturer();
         }else{
@@ -16166,6 +16176,33 @@ async function xxFlux(deviceId){
     const caps = XX.piste.getCapabilities ? XX.piste.getCapabilities() : {};
     const reglage = XX.piste.getSettings ? XX.piste.getSettings() : {};
     XX.caps = caps.zoom || null;
+    // ── ÉCARTER LA MACRO ─────────────────────────────────────────────────────────────
+    // L'appareil bascule tout seul en macro dès que la carte approche, et l'image devient
+    // trop bruitée pour être lue : les points d'appariement tombent de 56 à 25 de médiane, et
+    // l'appariement met deux à trois fois plus longtemps parce qu'il doit épuiser tous les
+    // candidats avant d'échouer. La lenteur et l'échec sont le même phénomène.
+    //
+    // Le navigateur n'a pas de commande « pas de macro », mais cet appareil-ci déclare
+    // focusDistance de 0,105 à 5,22 mètre — relevé au diagnostic. On peut donc lui IMPOSER
+    // une distance de mise au point, ce qui revient à lui interdire la plage macro.
+    //
+    // Trente centimètres : la distance à laquelle on tient naturellement une carte pour
+    // qu'elle remplisse le repère, et bien au-delà du domaine macro. Si l'appareil refuse le
+    // mode manuel, on retombe sans bruit sur le continu — la mise au point automatique reste
+    // préférable à une distance fixe erronée.
+    if(XX_FOCUS_FIXE && caps.focusMode && caps.focusMode.includes('manual')
+       && caps.focusDistance){
+      const d = Math.max(caps.focusDistance.min, Math.min(caps.focusDistance.max, XX_FOCUS_M));
+      try{
+        await XX.piste.applyConstraints({advanced:[{focusMode:'manual', focusDistance:d}]});
+        const r2 = XX.piste.getSettings ? XX.piste.getSettings() : {};
+        diagPush('err', {msg:'XX mise au point imposée : ' + d + ' m — obtenu mode='
+          + r2.focusMode + ' dist=' + r2.focusDistance});
+      }catch(err){
+        diagPush('err', {msg:'XX mise au point : manuel refusé — ' + (err && err.message)});
+      }
+    }
+
     XX.zoomNatif = reglage.zoom != null ? reglage.zoom : null;
     if(XX.caps){
       // TOUJOURS le minimum, et plus jamais une valeur mémorisée. Le zoom était retenu d'une
