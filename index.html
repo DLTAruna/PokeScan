@@ -831,8 +831,39 @@
   @media (prefers-reduced-motion: reduce){ #xx-photo.pose{ animation:none; } }
 
   /* La pile. */
+  /* ── BARRE DU HAUT : fermer, état, débogage, pile ──────────────────────────────────
+     Une seule rangée en flex. L'état y prend la place qui reste et se tronque au lieu de
+     passer à la ligne — il chevauchait le bouton de pile dès qu'il était un peu long. */
+  #xx-haut{ position:absolute; top:0; left:0; right:0; z-index:14;
+    display:flex; align-items:center; gap:8px; padding:10px 10px 0;
+    pointer-events:none; }
+  #xx-haut > *{ pointer-events:auto; flex:none; }
+  #xx-haut #xx-etat{ flex:1; min-width:0; margin:0; text-align:left; font-size:12.5px;
+    color:#e6edf3; text-shadow:0 1px 6px rgba(0,0,0,.9); pointer-events:none;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  #xx-debug-b{ width:30px; height:30px; border-radius:50%; cursor:pointer; font-size:13px;
+    font-style:italic; font-weight:700; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#9fb0c0;
+    -webkit-tap-highlight-color:transparent; }
+  #xx-debug-b.actif{ color:#0d1117; background:var(--mode-collec); border-color:transparent; }
+
+  /* ── LE PANNEAU DE DÉBOGAGE, sous la barre et au-dessus du viseur ─────────────────── */
+  #xx-debug{ position:absolute; left:10px; right:10px; z-index:13;
+    top:calc(46px + env(safe-area-inset-top));
+    display:flex; flex-wrap:wrap; gap:5px; align-items:center;
+    font-size:10.5px; font-variant-numeric:tabular-nums; line-height:1;
+    pointer-events:none; }
+  #xx-debug[hidden]{ display:none; }
+  #xx-debug span{ padding:4px 7px; border-radius:6px; border:1px solid transparent;
+    background:rgba(13,17,23,.86); color:#c9d4de; white-space:nowrap; }
+  #xx-debug span.ok{ color:#8ce89b; border-color:rgba(60,180,100,.45);
+    background:rgba(20,60,35,.8); }
+  #xx-debug span.non{ color:#ff9d8b; border-color:rgba(240,112,92,.5);
+    background:rgba(70,25,20,.8); }
+  #xx-debug span.cam{ width:100%; white-space:normal; color:#9fb0c0; }
+
   /* Jaune, la couleur du mode « vendeur » : c'est le bouton qui compte ce qu'on ramasse. */
-  #xx-pile{ position:absolute; top:10px; right:10px; z-index:14;
+  #xx-pile{ z-index:14;
     display:flex; align-items:center; gap:7px; padding:8px 14px 8px 11px;
     border-radius:999px; cursor:pointer; font-size:13px; color:#1a1206; font-weight:700;
     border:1px solid rgba(255,255,255,.28);
@@ -850,13 +881,16 @@
   #xx-pile.bond{ animation:xx-bond .4s cubic-bezier(.2,1.5,.4,1); }
   @keyframes xx-bond{ 0%{transform:scale(1);} 35%{transform:scale(1.14);} 100%{transform:scale(1);} }
 
-  #xx-quitter{ position:absolute; top:10px; left:10px; z-index:15;
+  #xx-quitter{ z-index:15;
     width:36px; height:36px; border-radius:50%; cursor:pointer; display:none;
     align-items:center; justify-content:center; font-size:16px;
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#e6edf3; }
 
-  /* Le zoom, à portée de pouce sur le bord gauche. */
-  #xx-zoom{ position:absolute; left:10px; bottom:50%; z-index:14;
+  /* Le zoom sur le bord DROIT, centré sur la hauteur laissée libre par la barre du bas.
+     À gauche il tombait en travers du viseur ; à droite il longe le bord, là où le pouce
+     est déjà quand on tient l'appareil. */
+  #xx-zoom{ position:absolute; right:10px; z-index:14;
+    top:50%; transform:translateY(-50%);
     display:flex; flex-direction:column; align-items:center; gap:6px; }
   #xx-zoom[hidden]{ display:none; }
   #xx-objectif{ font-size:17px !important; }
@@ -868,7 +902,7 @@
     border:1px solid rgba(255,255,255,.18); }
 
   /* La fiche, comme en V1. */
-  #xx-fiche{ position:absolute; left:8px; right:8px; bottom:8px; z-index:12;
+  #xx-fiche{ position:relative; z-index:1;
     display:flex; gap:10px; align-items:stretch; padding:9px 10px; border-radius:13px;
     border:1px solid rgba(255,255,255,.14); background:rgba(19,24,31,.93);
     box-shadow:0 6px 22px rgba(0,0,0,.45); }
@@ -896,7 +930,7 @@
   /* Le halo, derrière : même dégradé, flouté. Il vit hors de la fiche parce que les deux
      pseudo-éléments de celle-ci sont déjà pris — filigrane et liseré. */
   #xx-halo{
-    position:absolute; left:8px; right:8px; bottom:8px; height:100px; z-index:11;
+    position:absolute; inset:-3px; z-index:0;
     border-radius:16px; pointer-events:none;
     background:conic-gradient(from var(--xx-angle),
       var(--mode-vendeur), var(--mode-collec), var(--mode-vendeur));
@@ -955,9 +989,15 @@
   /* Le prix est l'information qu'on cherche en premier quand on dépouille pour vendre. */
   .xx-ligne.prix > span:last-child{ color:#8fe0a0; font-weight:600; font-size:13px; }
 
-  /* Quantité : horizontale, centrée, posée AU-DESSUS de la fiche. */
-  #xx-qte-bloc{ position:absolute; left:0; right:0; bottom:106px; z-index:13;
-    display:flex; align-items:center; justify-content:center; gap:14px; }
+  /* La barre du bas empile ce qui doit l'être — quantité puis fiche — avec un écart
+     déclaré une fois. C'est elle que le viseur mesure pour savoir où s'arrêter. */
+  #xx-bas{ position:absolute; left:8px; right:8px; bottom:8px; z-index:12;
+    display:flex; flex-direction:column; gap:10px; pointer-events:none; }
+  #xx-bas > *{ pointer-events:auto; }
+  #xx-fiche-boite{ position:relative; }
+
+  /* Quantité : horizontale, centrée, au-dessus de la fiche. */
+  #xx-qte-bloc{ display:flex; align-items:center; justify-content:center; gap:14px; }
   #xx-qte-bloc[hidden]{ display:none; }
   #xx-qte-bloc button{ width:40px; height:40px; border-radius:50%; cursor:pointer;
     font-size:21px; line-height:1; display:flex; align-items:center; justify-content:center;
@@ -1037,21 +1077,13 @@
     position:absolute; inset:0; width:100%; height:100%;
     min-width:100vw; min-height:100vh;
   }
-  body.xx-plein #xx-pile{ top:calc(10px + env(safe-area-inset-top)); }
-  body.xx-plein #xx-quitter{ display:flex; top:calc(10px + env(safe-area-inset-top)); }
-  body.xx-plein #xx-fiche{ bottom:calc(10px + env(safe-area-inset-bottom));
+  body.xx-plein #xx-haut{ padding-top:calc(10px + env(safe-area-inset-top)); }
+  body.xx-plein #xx-quitter{ display:flex; }
+  body.xx-plein #xx-bas{ bottom:calc(10px + env(safe-area-inset-bottom));
     max-width:520px; margin:0 auto; }
-  body.xx-plein #xx-halo{ bottom:calc(10px + env(safe-area-inset-bottom));
-    max-width:520px; margin:0 auto; }
-  body.xx-plein #xx-qte-bloc{ bottom:calc(112px + env(safe-area-inset-bottom)); }
   body.xx-plein #xx-liste, body.xx-plein #xx-recherche{
     top:calc(56px + env(safe-area-inset-top));
     bottom:calc(110px + env(safe-area-inset-bottom)); max-width:520px; margin:0 auto; }
-  body.xx-plein #xx-etat{
-    position:fixed; top:calc(16px + env(safe-area-inset-top)); left:58px; right:120px;
-    z-index:302; color:#e6edf3; text-shadow:0 1px 6px rgba(0,0,0,.9); margin:0;
-    pointer-events:none;
-  }
 
   /* ═══════════════════════════════════════════════════════════════════════════════════
      SCANNER TEST — l'apparence
@@ -5050,16 +5082,31 @@
       <canvas id="xx-overlay"></canvas>
       <div id="xx-vol" hidden></div>
 
-      <button id="xx-pile" type="button" hidden aria-label="Voir la pile">
-        <svg class="xx-pile-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-             stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <rect x="7.5" y="7.5" width="11" height="14" rx="2"/>
-          <path d="M5.2 18.4A2 2 0 0 1 4 16.6V6a2 2 0 0 1 2-2h8.6a2 2 0 0 1 1.8 1.1"/>
-          <path d="M2.9 15.4A2 2 0 0 1 2 13.8V4.4"/>
-        </svg>
-        <b id="xx-pile-n">0</b><em id="xx-pile-prix"></em>
-      </button>
-      <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
+      <!-- ── TROIS RÉGIONS, ET RIEN ENTRE ELLES ──────────────────────────────────────
+           Tout était posé en absolu avec des décalages réglés à la main — une fiche à huit
+           pixels du bas, une rangée de quantité à cent six, une réserve de deux cent dix
+           dans le script. Trois chiffres à tenir d'accord, et rien pour les y forcer : d'où
+           l'impression d'empilement. Ils sont remplacés par deux barres qui se disposent
+           seules, et une colonne sur le bord. Le viseur, lui, mesure la barre du bas au
+           lieu de supposer sa hauteur. -->
+      <div id="xx-haut">
+        <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
+        <p id="xx-etat" class="xx-etat">caméra fermée</p>
+        <button id="xx-debug-b" type="button" aria-label="Afficher le débogage">i</button>
+        <button id="xx-pile" type="button" hidden aria-label="Voir la pile">
+          <svg class="xx-pile-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+               stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="7.5" y="7.5" width="11" height="14" rx="2"/>
+            <path d="M5.2 18.4A2 2 0 0 1 4 16.6V6a2 2 0 0 1 2-2h8.6a2 2 0 0 1 1.8 1.1"/>
+            <path d="M2.9 15.4A2 2 0 0 1 2 13.8V4.4"/>
+          </svg>
+          <b id="xx-pile-n">0</b><em id="xx-pile-prix"></em>
+        </button>
+      </div>
+
+      <!-- Les conditions du déclenchement, en clair. Vert quand la condition est tenue,
+           rouge quand c'est elle qui retient la capture. -->
+      <div id="xx-debug" hidden></div>
 
       <div id="xx-zoom" hidden>
         <button id="xx-zoom-plus" type="button" aria-label="Rapprocher">+</button>
@@ -5069,19 +5116,20 @@
         <button id="xx-objectif" type="button" hidden aria-label="Changer d'objectif">⟳</button>
       </div>
 
-      <!-- La quantité, au-dessus de la fiche et à l'horizontale : c'est un geste qu'on
-           répète, il doit tomber sous le pouce sans viser, et rester lisible quand la fiche
-           est déjà dense. Coincée dans la colonne de droite, elle disputait sa largeur au
-           nom de la carte. -->
-      <div id="xx-qte-bloc" hidden>
-        <button id="xx-qte-moins" type="button" aria-label="Un de moins">−</button>
-        <span id="xx-qte">×1</span>
-        <button id="xx-qte-plus" type="button" aria-label="Un de plus">+</button>
-      </div>
+      <!-- La barre du bas : la quantité, puis la fiche. Un vrai flux avec un écart déclaré,
+           plus deux positions absolues à garder d'accord. -->
+      <div id="xx-bas">
+        <!-- La quantité, à l'horizontale : c'est un geste qu'on répète, il doit tomber sous
+             le pouce sans viser. -->
+        <div id="xx-qte-bloc" hidden>
+          <button id="xx-qte-moins" type="button" aria-label="Un de moins">−</button>
+          <span id="xx-qte">×1</span>
+          <button id="xx-qte-plus" type="button" aria-label="Un de plus">+</button>
+        </div>
 
-      <!-- Le halo : le même dégradé que le liseré, flouté et posé derrière. C'est lui qui
-           fait « respirer » la fiche sur l'image de la caméra. -->
-      <div id="xx-halo" hidden aria-hidden="true"></div>
+        <div id="xx-fiche-boite">
+          <!-- Le halo : le même dégradé que le liseré, flouté et posé derrière. -->
+          <div id="xx-halo" hidden aria-hidden="true"></div>
 
       <!-- La fiche, comme en V1 : nom et numéro en tête, puis set, fiabilité, prix. -->
       <div id="xx-fiche" hidden>
@@ -5101,6 +5149,8 @@
           <button id="xx-editer" type="button" title="Choisir la carte à la main" aria-label="Choisir la carte à la main">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>
           </button>
+        </div>
+      </div>
         </div>
       </div>
 
@@ -5128,7 +5178,6 @@
       </div>
     </div>
 
-    <p id="xx-etat" class="xx-etat">caméra fermée</p>
     <div class="xx-actions">
       <button class="btn-gold" id="xx-ouvrir">Ouvrir la caméra</button>
       <button id="xx-fermer" hidden>Fermer</button>
@@ -6609,7 +6658,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 99;
+const VERSION_APP = 100;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14820,7 +14869,8 @@ const XX_ABSENCE = 2;
 // centré sur la hauteur totale avait sa moitié basse dessous. On centre donc sur la place
 // réellement libre.
 const XX_GUIDE_H = 0.62;      // hauteur du repère, en fraction de l'IMAGE
-const XX_BAS_RESERVE = 210;   // fiche + rangée de quantité, en pixels d'écran
+const XX_BAS_MIN = 170;       // plancher de la place gardée en bas, en pixels d'écran
+const XX_DEBUG_HAUT = 84;     // place prise par le panneau de débogage, quand il est là
 // Zoom : borné haut pour ne jamais atteindre le téléobjectif. Le navigateur n'expose qu'une
 // caméra logique et ne dit jamais quel objectif est actif — on ne peut donc pas « éliminer »
 // le téléobjectif, seulement rester en deçà du facteur où l'appareil bascule dessus. Trois
@@ -14830,9 +14880,53 @@ const XX_ZOOM_MAX = 3;
 const XX = { flux:null, piste:null, boucle:false, occupe:false,
              presentDepuis:0, streak:0, dernierCoins:null, absence:0,
              retiree:true, coinsCapture:null, pile:[], valeur:0,
-             caps:null, zoom:null, objectifs:[] };
+             caps:null, zoom:null, zoomNatif:null, objectifs:[], infoCam:'',
+             debug:false, dernierDebug:null };
+
+// La barre du bas se dimensionne toute seule ; le viseur la MESURE au lieu de supposer sa
+// hauteur. Un plancher malgré tout : sans lui, le repère bondirait à l'apparition de la
+// fiche, et un repère qui bouge tout seul est pire qu'un repère un peu bas.
+function xxReserveBas(){
+  const b = $('xx-bas');
+  if(!b) return XX_BAS_MIN;
+  const h = b.getBoundingClientRect().height;
+  return Math.max(XX_BAS_MIN, h + 18);
+}
 
 function xxEtat(t){ const e = $('xx-etat'); if(e) e.textContent = t; }
+
+// ── LE DÉBOGAGE : pourquoi ça ne déclenche pas ─────────────────────────────────────────
+// Trois conditions, et trois seulement, retiennent la capture : le score du détecteur, la
+// stabilité de la carte entre deux images, et le fait que la carte précédente ait été
+// retirée. Quand rien ne se passe, on ne sait pas laquelle des trois bloque — on suppose.
+// Ce panneau les montre telles quelles, vertes quand elles sont tenues, rouges quand c'est
+// l'une d'elles qui retient. La dernière ligne dit ce que la caméra déclare vraiment : sur
+// un téléphone que je ne peux pas tenir, c'est la seule façon de savoir.
+const XX_DEBUG_CLE = 'pokescanDebugXX';
+function xxEch(t){
+  return String(t).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+}
+function xxMajDebug(info){
+  if(!XX.debug) return;
+  const d = $('xx-debug'); if(!d) return;
+  const puce = (t, e) => '<span class="' + (e == null ? '' : e ? 'ok' : 'non') + '">'
+    + xxEch(t) + '</span>';
+  const n = (v, k) => v == null ? '—' : (isFinite(v) ? (+v).toFixed(k) : '∞');
+  d.innerHTML =
+      puce('score ' + n(info.score, 2) + ' ≥ ' + n(info.seuilScore, 2), info.scoreOk)
+    + puce('bougé ' + n(info.bouge, 3) + ' < ' + n(info.seuilBouge, 3), info.stable)
+    + puce('carte retirée', info.retiree)
+    + puce('vue ' + (info.attente ? (info.attente/1000).toFixed(1).replace('.', ',') + ' s' : '—'), null)
+    + '<span class="cam">' + xxEch(XX.infoCam || 'caméra : —') + '</span>';
+}
+function xxBasculerDebug(){
+  XX.debug = !XX.debug;
+  const d = $('xx-debug'), b = $('xx-debug-b');
+  if(d) d.hidden = !XX.debug;
+  if(b) b.classList.toggle('actif', XX.debug);
+  try{ localStorage.setItem(XX_DEBUG_CLE, XX.debug ? '1' : '0'); }catch(e){}
+  if(XX.debug) xxMajDebug(XX.dernierDebug || {});
+}
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
 
 // ── LE VISEUR : le dessin du capteur principal, et lui seul ─────────────────────────────
@@ -14870,10 +14964,11 @@ function xxDessinerCadre(etat){
   // Le repère est dimensionné en fraction de l'IMAGE : il désigne la même part du champ
   // analysé qu'on rogne ou non. Puis il est centré sur la place LIBRE, pas sur l'écran.
   let gh = T.ih * XX_GUIDE_H, gw = gh / CARD_RATIO;
-  const libre = T.plein ? Math.max(120, T.h - XX_BAS_RESERVE) : T.h;
+  const haut = T.plein && XX.debug ? XX_DEBUG_HAUT : 0;
+  const libre = T.plein ? Math.max(120, T.h - xxReserveBas()) : T.h;
   if(gw > T.l*0.94){ gw = T.l*0.94; gh = gw * CARD_RATIO; }
   if(gh > libre*0.94){ gh = libre*0.94; gw = gh / CARD_RATIO; }
-  const R = { x:(T.l-gw)/2, y:(libre-gh)/2, w:gw, h:gh };
+  const R = { x:(T.l-gw)/2, y:haut + (libre-haut-gh)/2, w:gw, h:gh };
   const radius = Math.min(R.w, R.h) * 0.055;
   const couleur = XX_COULEURS[etat] || XX_COULEURS.attente;
   XX.etat = etat;
@@ -15338,6 +15433,10 @@ async function xxTourner(){
         XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null;
         if(++XX.absence >= XX_ABSENCE) XX.retiree = true;
         xxEtat('vise la carte');
+        XX.dernierDebug = { score: d && d.score != null ? d.score : null,
+          seuilScore: XX_MIN_SCORE, scoreOk: false, bouge: null, seuilBouge: null,
+          stable: false, retiree: XX.retiree, attente: 0 };
+        xxMajDebug(XX.dernierDebug);
       }else{
         XX.absence = 0;
         if(!XX.presentDepuis) XX.presentDepuis = Date.now();
@@ -15356,6 +15455,9 @@ async function xxTourner(){
         if(bouge < seuilBouge) XX.streak++; else XX.streak = 0;
         const stable = XX.streak >= 1;
         xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
+        XX.dernierDebug = { score: d.score, seuilScore, scoreOk: d.score >= seuilScore,
+          bouge, seuilBouge, stable, retiree: XX.retiree, attente };
+        xxMajDebug(XX.dernierDebug);
 
         if(XX.retiree && d.score >= seuilScore && stable){
           XX.streak = 0; XX.presentDepuis = 0;
@@ -15396,25 +15498,44 @@ async function xxFlux(deviceId){
     const caps = XX.piste.getCapabilities ? XX.piste.getCapabilities() : {};
     const reglage = XX.piste.getSettings ? XX.piste.getSettings() : {};
     XX.caps = caps.zoom || null;
+    XX.zoomNatif = reglage.zoom != null ? reglage.zoom : null;
     if(XX.caps){
       const memo = parseFloat(localStorage.getItem(XX_ZOOM_CLE));
-      if(Number.isFinite(memo)){
-        const haut = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
-        await XX.piste.applyConstraints({advanced:[{zoom:
-          Math.max(XX.caps.min, Math.min(haut, memo))}]});
-      }
+      const plafond = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
+      // Sans préférence, on demande explicitement le MINIMUM de la plage. La V.99 laissait
+      // le réglage natif, en suivant la règle du scanner principal — ne rien imposer. Mais
+      // sur le Pixel de Nikos ce natif EST déjà un 2× : ne rien imposer, c'est accepter un
+      // recadrage qu'on n'a pas choisi. Demander le minimum n'est pas une supposition sur
+      // l'appareil — c'est lui demander le champ le plus large qu'il accepte de donner.
+      const cible = Number.isFinite(memo) ? Math.max(XX.caps.min, Math.min(plafond, memo))
+                                          : XX.caps.min;
+      await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
     }
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : null;
+    xxInfoCam();
     // Ce banc avalait tout cela dans un catch vide : sur un appareil qu'on ne peut pas
     // tester, le diagnostic est la seule façon de savoir ce qu'il expose vraiment.
     diagPush('err', {msg:'XX caméra: ' + (reglage.width || '?') + 'x' + (reglage.height || '?')
       + ' — zoom ' + (XX.caps ? XX.caps.min + '…' + XX.caps.max + ' pas ' + (XX.caps.step != null ? XX.caps.step : '?')
                               : 'non exposé')
+      + ' — natif ' + (XX.zoomNatif != null ? XX.zoomNatif : 'inconnu')
       + ' — réglé sur ' + (XX.zoom != null ? XX.zoom : 'inconnu')
       + ' — objectif ' + (reglage.deviceId ? String(reglage.deviceId).slice(0, 8) : '?')});
   }catch(e){ diagPush('err', {msg:"XX caméra: zoom refusé — " + e.message}); }
   xxMajZoom();
   return true;
+}
+
+function xxInfoCam(){
+  const r = XX.piste && XX.piste.getSettings ? XX.piste.getSettings() : {};
+  const nom = (XX.objectifs || []).find(d => d.deviceId === r.deviceId);
+  XX.infoCam = (r.width || '?') + '×' + (r.height || '?')
+    + ' · zoom ' + (XX.zoom != null ? XX.zoom : '?')
+    + (XX.caps ? ' de ' + XX.caps.min + ' à ' + XX.caps.max : ' non exposé')
+    + (XX.zoomNatif != null ? ' · natif ' + XX.zoomNatif : '')
+    + ' · ' + (nom && nom.label ? nom.label
+             : (r.deviceId ? String(r.deviceId).slice(0, 8) : 'objectif ?'));
+  xxMajDebug(XX.dernierDebug || {});
 }
 
 // Certains téléphones exposent chaque objectif comme un appareil séparé, d'autres les
@@ -15434,6 +15555,7 @@ async function xxMajObjectifs(){
       diagPush('err', {msg:'XX caméra: ' + XX.objectifs.length + ' objectifs — '
         + XX.objectifs.map(d => d.label || d.deviceId.slice(0, 8)).join(' | ')});
     }
+    xxInfoCam();
   }catch(e){ b.hidden = true; }
 }
 
@@ -15492,6 +15614,10 @@ $('xx-ouvrir')?.addEventListener('click', xxOuvrir);
 $('xx-fermer')?.addEventListener('click', xxFermer);
 $('xx-quitter')?.addEventListener('click', xxFermer);
 $('xx-objectif')?.addEventListener('click', xxObjectifSuivant);
+$('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
+// La préférence de débogage survit à la session : quand on chasse un déclenchement, on ne
+// veut pas rallumer le panneau à chaque ouverture.
+try{ if(localStorage.getItem(XX_DEBUG_CLE) === '1') xxBasculerDebug(); }catch(e){}
 $('xx-zoom-moins')?.addEventListener('click', ()=> xxZoomer(-1));
 $('xx-zoom-plus')?.addEventListener('click', ()=> xxZoomer(1));
 $('xx-qte-moins')?.addEventListener('click', ()=> xxQuantite(-1));
