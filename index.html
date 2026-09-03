@@ -6707,7 +6707,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 121;
+const VERSION_APP = 122;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -15358,7 +15358,22 @@ async function xxDetecterMulti(v, complet){
   const lw = Math.round(v.videoWidth * e0), lh = Math.round(v.videoHeight * e0);
 
   const tA = performance.now();
-  const bmp = await createImageBitmap(v, { resizeWidth: lw, resizeHeight: lh, resizeQuality:'medium' });
+  // Passer par un petit canevas RÉUTILISÉ plutôt que de demander le redimensionnement à
+  // createImageBitmap : mesuré 107 ms contre 126 pour le tour complet. Le dessin d'une
+  // vidéo dans un canevas est accéléré par le processeur graphique, là où le redimensionnement
+  // demandé à createImageBitmap repasse par le chemin lent.
+  //
+  // Et pour mémoire, puisque j'ai perdu du temps à chercher ailleurs : sur les ~110 ms d'un
+  // tour, l'inférence du détecteur n'en coûte que 40 et l'aller-retour vers le worker 3.
+  // Le reste est l'extraction des pixels d'une vidéo 1440×1920 — un transfert depuis la
+  // mémoire graphique, que seule une résolution de flux plus basse réduirait, au prix de la
+  // qualité de capture.
+  if(!XX.petit || XX.petit.width !== lw || XX.petit.height !== lh){
+    XX.petit = new OffscreenCanvas(lw, lh);
+    XX.petitCtx = XX.petit.getContext('2d', { willReadFrequently: false });
+  }
+  XX.petitCtx.drawImage(v, 0, 0, lw, lh);
+  const bmp = await createImageBitmap(XX.petit);
   const tB = performance.now();
   const plein = await detectWorkerCall('detect', {bitmap:bmp}, [bmp]);
   // Décomposition d'un tour de boucle : sans elle on ne sait pas si le temps part dans
