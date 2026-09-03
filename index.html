@@ -6722,7 +6722,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 129;
+const VERSION_APP = 130;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14951,6 +14951,10 @@ const XX_MIN_SCORE = 0.35;
 // coûtait plusieurs tours de boucle pour rien. Il ne reste qu'un garde-fou large, qui écarte
 // le geste franc et laisse passer la main qui tremble.
 const XX_BOUGE_MAX = 0.20;
+// En dessous, la capture n'a rien lu du tout et n'est pas une carte : elle est jetée au lieu
+// d'encombrer la pile. Deux, et pas davantage — le secours par le nom travaille jusqu'à vingt,
+// et l'on ne veut pas jeter ce qu'il sait encore rattraper.
+const XX_INLIERS_VIDE = 2;
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const XX_ABSENCE = 2;
@@ -15642,10 +15646,38 @@ async function xxIdentifier(e, t0){
     e.fiabilite = res ? res.fiabilite : 0;
     e.inliers = res ? res.inliers : 0;
     e.ms = res ? res.ms : 0;
-    // La fiche n'est rafraîchie que si cette carte est encore celle qu'on montre : sinon on
-    // écrirait le verdict d'une carte sur la fiche de la suivante.
-    if(XX.pile[XX.pile.length - 1] === e) xxRendreFiche(e);
-    xxRendrePile();
+    // ── LA PRISE À VIDE S'EFFACE D'ELLE-MÊME ────────────────────────────────────────
+    // Nikos préfère un scan sûr à un scan rapide, et ne veut pas de captures sans carte. Le
+    // filtre des deux images en écarte l'essentiel AVANT la prise ; celles qui passent quand
+    // même se reconnaissent APRÈS, à leur résultat : zéro, un ou deux points d'appariement,
+    // et aucun nom lu. Aucune carte réelle ne rend cela — même sous un reflet violent, le
+    // banc n'est jamais descendu sous cinq. C'est une main, un bord de table, une carte à
+    // moitié sortie du champ.
+    //
+    // Les laisser dans la pile obligeait à les supprimer une par une. Elles s'effacent
+    // désormais seules, et le verrou se rouvre pour que la vraie carte soit reprise tout de
+    // suite. Le seuil est volontairement bas : au-dessus, on jetterait des cartes que le
+    // secours par le nom sait encore rattraper.
+    const vide = e.categorie === 'rebut' && (e.inliers || 0) <= XX_INLIERS_VIDE
+                 && !(res && res.nomLu);
+    if(vide){
+      const i = XX.pile.indexOf(e);
+      if(i >= 0) XX.pile.splice(i, 1);
+      // Surtout PAS de réarmement : la scène n'a pas changé, et rouvrir le verrou
+      // faisait reprendre le même leurre aussitôt — capture, rejet, capture, sans fin.
+      // Le verrou reste posé sur la position ; il se rouvrira quand la scène bougera
+      // vraiment, ce qui est précisément le cas où il vaut la peine de réessayer.
+      XX.vu = 0;
+      const der = XX.pile[XX.pile.length - 1];
+      if(der) xxRendreFiche(der); else { $('xx-fiche').hidden = true; $('xx-halo').hidden = true; }
+      xxRendrePile();
+      xxEtat('rien de lisible — présente la carte');
+    } else {
+      // La fiche n'est rafraîchie que si cette carte est encore celle qu'on montre : sinon on
+      // écrirait le verdict d'une carte sur la fiche de la suivante.
+      if(XX.pile[XX.pile.length - 1] === e) xxRendreFiche(e);
+      xxRendrePile();
+    }
 
     // « reel » reste le délai de bout en bout, pour rester comparable aux salves passées ;
     // « capture » isole ce que l'utilisateur ATTEND vraiment, carte en main.
@@ -15668,7 +15700,7 @@ async function xxIdentifier(e, t0){
                // pilote refuse le palier demandé.
                resReelle: (() => { try{ const r = XX.piste.getSettings();
                  return r.width + "x" + r.height; }catch(e){ return undefined; } })(),
-               score: e.declScore, bouge: e.declBouge, vu: e.declVu,
+               score: e.declScore, bouge: e.declBouge, vu: e.declVu, vide: vide || undefined,
                batt: xxBatterie && xxBatterie.pct, charge: xxBatterie && xxBatterie.charge,
                iso: self.crossOriginIsolated === true };
     xxDiagMoteur();
