@@ -805,24 +805,14 @@
   body.st-plein{ overflow:hidden; }
   body.st-plein .navbar{ display:none; }
   /* ═══════════════════════════════════════════════════════════════════════════════════
-     ONGLET XX — plein écran, et rien d'autre
+     ONGLET XX
      ═══════════════════════════════════════════════════════════════════════════════════ */
   .xx-cadre{ position:relative; width:100%; max-width:520px; margin:0 auto; background:#000;
     border-radius:14px; overflow:hidden; aspect-ratio:3/4; max-height:56vh; }
-  /* Le cadre du bas se pose SUR l'image : translucide, puisque la caméra occupe tout. */
-  body.xx-plein #xx-resultat{ background:rgba(10,13,18,.72); border-color:rgba(255,255,255,.18); }
-  /* La vignette qui descend vers le cadre du bas. */
-  #xx-vol{ position:fixed; z-index:340; pointer-events:none; border-radius:6px;
-    background-size:cover; background-position:center; box-shadow:0 10px 28px rgba(0,0,0,.55); }
-  #xx-vol[hidden]{ display:none; }
-  #xx-photo.pose{ animation:xx-pose .3s cubic-bezier(.2,1.5,.4,1); }
-  @keyframes xx-pose{ 0%{transform:scale(.85);} 60%{transform:scale(1.06);} 100%{transform:scale(1);} }
-  @media (prefers-reduced-motion: reduce){ #xx-photo.pose{ animation:none; } }
   /* Hors plein écran : « contain », on voit tout le champ analysé.
-     En plein écran : « cover », l'image occupe tout l'écran sans bordure — demande de Nikos,
-     comme la V1. Le repère est alors calculé DANS LE REPÈRE DE L'IMAGE puis projeté par la
-     même transformation : il désigne donc la même part du champ analysé, qu'on rogne ou non.
-     C'est ce calcul qui manquait en V.63 et qui rendait le repère menteur. */
+     En plein écran : « cover », l'image occupe tout l'écran sans bordure. Le repère est
+     calculé DANS LE REPÈRE DE L'IMAGE puis projeté par la même transformation : il désigne
+     la même part du champ analysé dans les deux cas. */
   #xx-video{ width:100%; height:100%; object-fit:contain; display:block; background:#000; }
   body.xx-plein #xx-video{ object-fit:cover; }
   #xx-overlay{ position:absolute; inset:0; width:100%; height:100%; pointer-events:none; z-index:2; }
@@ -832,39 +822,129 @@
     border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#e6edf3; }
   #section-xx{ padding-bottom:96px; }
 
-  /* La pile : décompte et valeur, qui montent à chaque carte. */
+  /* La vignette qui descend vers la fiche. */
+  #xx-vol{ position:fixed; z-index:340; pointer-events:none; border-radius:6px;
+    background-size:cover; background-position:center; box-shadow:0 10px 28px rgba(0,0,0,.55); }
+  #xx-vol[hidden]{ display:none; }
+  #xx-photo.pose{ animation:xx-pose .3s cubic-bezier(.2,1.5,.4,1); }
+  @keyframes xx-pose{ 0%{transform:scale(.85);} 60%{transform:scale(1.06);} 100%{transform:scale(1);} }
+  @media (prefers-reduced-motion: reduce){ #xx-photo.pose{ animation:none; } }
+
+  /* La pile. */
   #xx-pile{ position:absolute; top:10px; right:10px; z-index:14;
     display:flex; align-items:center; gap:8px; padding:6px 12px;
-    border-radius:999px; cursor:default; font-size:13px; color:#e6edf3;
+    border-radius:999px; cursor:pointer; font-size:13px; color:#e6edf3;
     border:1px solid rgba(255,255,255,.2); background:rgba(13,17,23,.85); }
   #xx-pile[hidden]{ display:none; }
+  #xx-pile.alerte{ border-color:rgba(240,112,92,.6); }
   #xx-pile b{ font-variant-numeric:tabular-nums; font-size:14px; }
   #xx-pile em{ font-style:normal; color:#8fe0a0; font-size:12px; font-variant-numeric:tabular-nums; }
   #xx-pile em:empty{ display:none; }
-
-  /* L'identification, sous l'appareil photo. */
-  #xx-resultat{ position:absolute; left:8px; right:8px; bottom:8px; z-index:12;
-    display:flex; gap:11px; align-items:center; padding:9px 11px; border-radius:13px;
-    border:1px solid rgba(255,255,255,.14); background:rgba(19,24,31,.93);
-    box-shadow:0 6px 22px rgba(0,0,0,.45); }
-  #xx-resultat[hidden]{ display:none; }
-  #xx-photo{ width:48px; height:67px; object-fit:cover; border-radius:6px; flex:none;
-    background:#0a0a0a; }
-  .xx-infos{ flex:1; min-width:0; display:flex; flex-direction:column; gap:3px; }
-  .xx-infos b{ font-size:15px; color:#e6edf3;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .xx-infos span{ color:#9fb0c0; font-size:11.5px; font-family:ui-monospace,monospace; }
-  #xx-resultat.sure{ border-color:rgba(63,185,80,.5); }
-  #xx-resultat.sure .xx-infos b{ color:#8ce89b; }
-  #xx-resultat.rebut{ border-color:rgba(240,112,92,.55); }
-  #xx-resultat.rebut .xx-infos b{ color:#ff9d8b; }
 
   #xx-quitter{ position:absolute; top:10px; left:10px; z-index:15;
     width:36px; height:36px; border-radius:50%; cursor:pointer; display:none;
     align-items:center; justify-content:center; font-size:16px;
     border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#e6edf3; }
 
-  /* Plein écran dès que la caméra est ouverte. */
+  /* Le zoom, à portée de pouce sur le bord gauche. */
+  #xx-zoom{ position:absolute; left:10px; bottom:50%; z-index:14;
+    display:flex; flex-direction:column; align-items:center; gap:6px; }
+  #xx-zoom[hidden]{ display:none; }
+  #xx-zoom button{ width:38px; height:38px; border-radius:50%; cursor:pointer; font-size:19px;
+    display:flex; align-items:center; justify-content:center; line-height:1;
+    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#e6edf3; }
+  #xx-zoom-txt{ font-size:11.5px; color:#e6edf3; font-variant-numeric:tabular-nums;
+    background:rgba(13,17,23,.85); border-radius:999px; padding:2px 8px;
+    border:1px solid rgba(255,255,255,.18); }
+
+  /* La fiche, comme en V1. */
+  #xx-fiche{ position:absolute; left:8px; right:8px; bottom:8px; z-index:12;
+    display:flex; gap:10px; align-items:stretch; padding:9px 10px; border-radius:13px;
+    border:1px solid rgba(255,255,255,.14); background:rgba(19,24,31,.93);
+    box-shadow:0 6px 22px rgba(0,0,0,.45); }
+  body.xx-plein #xx-fiche{ background:rgba(10,13,18,.72); border-color:rgba(255,255,255,.18); }
+  #xx-fiche[hidden]{ display:none; }
+  #xx-photo{ width:56px; height:78px; object-fit:cover; border-radius:6px; flex:none;
+    background:#0a0a0a; align-self:center; }
+  .xx-lignes{ flex:1; min-width:0; display:flex; flex-direction:column; gap:2px;
+    justify-content:center; }
+  .xx-tete{ display:flex; align-items:baseline; gap:7px; min-width:0; }
+  .xx-tete b{ font-size:15px; color:#e6edf3; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; }
+  .xx-tete span{ font-size:11.5px; color:#9fb0c0; font-variant-numeric:tabular-nums; flex:none; }
+  #xx-fiche.sure .xx-tete b{ color:#8ce89b; }
+  #xx-fiche.rebut .xx-tete b{ color:#ff9d8b; }
+  .xx-ligne{ display:flex; justify-content:space-between; gap:10px; font-size:11.5px; }
+  .xx-ligne > span:first-child{ color:#7d8b99; }
+  .xx-ligne > span:last-child{ color:#c9d4de; overflow:hidden; text-overflow:ellipsis;
+    white-space:nowrap; font-variant-numeric:tabular-nums; }
+
+  /* Quantité : deux petits boutons, empilés pour ne pas voler de largeur au texte. */
+  #xx-qte-bloc{ display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:3px; flex:none; }
+  #xx-qte-bloc[hidden]{ display:none; }
+  #xx-qte-bloc button{ width:28px; height:24px; border-radius:7px; cursor:pointer; font-size:14px;
+    line-height:1; display:flex; align-items:center; justify-content:center;
+    border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.08); color:#e6edf3; }
+  #xx-qte{ font-size:12px; color:#e6edf3; font-variant-numeric:tabular-nums; }
+
+  /* Les deux gestes de correction, à droite : plus hauts que larges. */
+  .xx-cotes{ display:flex; gap:6px; flex:none; }
+  .xx-cotes button{ width:34px; border-radius:9px; cursor:pointer; display:flex;
+    align-items:center; justify-content:center; padding:0; }
+  .xx-cotes svg{ width:19px; height:19px; }
+  #xx-jeter{ border:1px solid rgba(240,112,92,.55); background:rgba(200,60,45,.26); color:#ffb8a8; }
+  #xx-editer{ border:1px solid rgba(90,150,240,.55); background:rgba(50,110,220,.26); color:#b8d2ff; }
+
+  /* La liste et la recherche : même habillage. */
+  #xx-liste, #xx-recherche{ position:absolute; left:8px; right:8px; top:56px; bottom:96px;
+    z-index:20; padding:10px 12px; border-radius:14px; overflow-y:auto;
+    border:1px solid rgba(255,255,255,.16); background:rgba(13,17,23,.96); }
+  #xx-liste[hidden], #xx-recherche[hidden]{ display:none; }
+  .xx-liste-tete{ display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:8px; position:sticky; top:0; background:inherit; }
+  .xx-liste-tete b{ color:#e6c25c; font-size:13px; }
+  .xx-liste-tete button{ border:none; background:none; color:#9fb0c0; cursor:pointer; font-size:16px; }
+  #xx-liste-note{ margin:0 0 10px; font-size:11.5px; color:#9fb0c0; line-height:1.4; }
+  .xx-groupe{ display:flex; align-items:center; gap:8px; margin:10px 0 6px; font-size:12px; }
+  .xx-groupe b{ color:#e6edf3; }
+  .xx-groupe span{ color:#7d8b99; font-variant-numeric:tabular-nums; }
+  .xx-groupe.sure b{ color:#8ce89b; }
+  .xx-groupe.doute b{ color:#f2c579; }
+  .xx-groupe.rate b{ color:#ff9d8b; }
+  .xx-groupe button{ margin-left:auto; font-size:11px; padding:4px 9px; border-radius:8px;
+    cursor:pointer; border:1px solid rgba(240,112,92,.5); background:rgba(200,60,45,.2);
+    color:#ffb8a8; }
+  .xx-vignettes{ display:flex; flex-wrap:wrap; gap:8px; }
+  .xx-vignettes figure{ margin:0; width:56px; position:relative; }
+  .xx-vignettes img{ width:56px; height:78px; object-fit:cover; border-radius:6px; display:block;
+    border:1px solid rgba(255,255,255,.14); }
+  .xx-vignettes figure.doute img{ border-color:rgba(230,169,60,.6); }
+  .xx-vignettes figure.rate img{ border-color:rgba(240,112,92,.6); }
+  .xx-vignettes figcaption{ font-size:9.5px; color:#9fb0c0; text-align:center; margin-top:2px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .xx-sup{ position:absolute; top:-6px; right:-6px; width:20px; height:20px; border-radius:50%;
+    cursor:pointer; font-size:11px; line-height:1; display:flex; align-items:center;
+    justify-content:center; border:1px solid rgba(255,255,255,.25);
+    background:rgba(20,24,30,.95); color:#ffb8a8; padding:0; }
+  .xx-vide{ color:#7d8b99; font-size:12px; margin:12px 0; text-align:center; }
+
+  /* La recherche rapide : les miniatures d'abord, sans elles on choisit à l'aveugle. */
+  #xx-rech-champ{ width:100%; padding:9px 11px; border-radius:10px; font-size:14px;
+    border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.07); color:#e6edf3;
+    margin-bottom:10px; }
+  #xx-rech-res{ display:flex; flex-wrap:wrap; gap:8px; }
+  #xx-rech-res figure{ margin:0; width:66px; cursor:pointer; }
+  #xx-rech-res img{ width:66px; height:92px; object-fit:cover; border-radius:6px; display:block;
+    border:1px solid rgba(255,255,255,.14); background:#0a0a0a; }
+  #xx-rech-res figure:active img{ border-color:#e6c25c; }
+  #xx-rech-res figcaption{ margin-top:3px; display:flex; flex-direction:column; }
+  #xx-rech-res figcaption b{ font-size:10px; color:#e6edf3; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+  #xx-rech-res figcaption span{ font-size:9px; color:#7d8b99; overflow:hidden;
+    text-overflow:ellipsis; white-space:nowrap; }
+
+  /* Plein écran, sans bordure. */
   body.xx-plein{ overflow:hidden; }
   body.xx-plein .navbar{ display:none; }
   body.xx-plein .xx-cadre{
@@ -877,10 +957,13 @@
   }
   body.xx-plein #xx-pile{ top:calc(10px + env(safe-area-inset-top)); }
   body.xx-plein #xx-quitter{ display:flex; top:calc(10px + env(safe-area-inset-top)); }
-  body.xx-plein #xx-resultat{ bottom:calc(10px + env(safe-area-inset-bottom));
+  body.xx-plein #xx-fiche{ bottom:calc(10px + env(safe-area-inset-bottom));
     max-width:520px; margin:0 auto; }
+  body.xx-plein #xx-liste, body.xx-plein #xx-recherche{
+    top:calc(56px + env(safe-area-inset-top));
+    bottom:calc(110px + env(safe-area-inset-bottom)); max-width:520px; margin:0 auto; }
   body.xx-plein #xx-etat{
-    position:fixed; top:calc(14px + env(safe-area-inset-top)); left:60px; right:120px;
+    position:fixed; top:calc(16px + env(safe-area-inset-top)); left:58px; right:120px;
     z-index:302; color:#e6edf3; text-shadow:0 1px 6px rgba(0,0,0,.9); margin:0;
     pointer-events:none;
   }
@@ -4871,33 +4954,75 @@
        cadre pour valider. Aucun état partagé avec le scanner principal — voir le bloc ST
        dans le script pour la raison chiffrée. -->
   <!-- ═══════════════════════════════════════════════════════════════════════════════════
-       ONGLET XX — le scanner de bench-v2, porté tel quel
+       ONGLET XX — le scanner de bench-v2, avec ce que Nikos a demandé autour
        ═══════════════════════════════════════════════════════════════════════════════════
-       Demande de Nikos : reprendre le scanner du banc, SANS RIEN AJOUTER, sauf la pile avec
-       son prix et l'identification sous l'appareil photo. Caméra en plein écran.
-       Ce qui est repris à l'identique : la boucle et ses seuils, et surtout la capture —
-       nouvelle détection au moment du déclic, puis redressement projectif des quatre coins
-       par scanic, avec correction de rotation si la carte sort couchée.
-       Ce qui n'est PAS repris, parce que le banc ne l'a pas : mémoire de la plus nette,
-       garde-fou de forme, détecteur de reflet, verrou par signature, animations. C'est tout
-       l'intérêt de cet onglet — comparer sans mélanger. -->
+       La boucle et la capture sont celles du banc, inchangées : c'est le point de
+       comparaison. Autour : plein écran sans bordure, viseur du capteur principal, zoom,
+       pile avec sa liste, et la fiche de la V1. -->
   <section class="section" id="section-xx">
     <div class="xx-cadre">
       <video id="xx-video" autoplay playsinline muted></video>
       <canvas id="xx-overlay"></canvas>
+      <div id="xx-vol" hidden></div>
 
-      <button id="xx-pile" type="button" hidden aria-label="Pile de la session">
+      <button id="xx-pile" type="button" hidden aria-label="Voir la pile">
         <b id="xx-pile-n">0</b><em id="xx-pile-prix"></em>
       </button>
       <button id="xx-quitter" type="button" aria-label="Fermer la caméra">✕</button>
 
-      <div id="xx-vol" hidden></div>
-      <div id="xx-resultat" hidden>
+      <div id="xx-zoom" hidden>
+        <button id="xx-zoom-moins" type="button" aria-label="Réduire le zoom">−</button>
+        <span id="xx-zoom-txt">×1.0</span>
+        <button id="xx-zoom-plus" type="button" aria-label="Augmenter le zoom">+</button>
+      </div>
+
+      <!-- La fiche, comme en V1 : nom et numéro en tête, puis set, fiabilité, prix. -->
+      <div id="xx-fiche" hidden>
         <img id="xx-photo" alt="">
-        <div class="xx-infos">
-          <b id="xx-nom"></b>
-          <span id="xx-detail"></span>
+        <div class="xx-lignes">
+          <div class="xx-tete"><b id="xx-nom">—</b><span id="xx-num"></span></div>
+          <div class="xx-ligne"><span>Set</span><span id="xx-set">—</span></div>
+          <div class="xx-ligne"><span>Fiabilité</span><span id="xx-fiab">—</span></div>
+          <div class="xx-ligne"><span>Prix</span><span id="xx-prix">—</span></div>
         </div>
+        <div id="xx-qte-bloc" hidden>
+          <button id="xx-qte-plus" type="button" aria-label="Un de plus">+</button>
+          <span id="xx-qte">×1</span>
+          <button id="xx-qte-moins" type="button" aria-label="Un de moins">−</button>
+        </div>
+        <!-- Les deux gestes de correction, à droite de la fiche : jeter, ou choisir à la
+             main. Plus hauts que larges pour être atteignables au pouce sans viser. -->
+        <div class="xx-cotes">
+          <button id="xx-jeter" type="button" title="Supprimer ce scan" aria-label="Supprimer ce scan">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9.5 7V5h5v2M6.5 7l1 12.5h9L17.5 7M10.5 10.5v6M13.5 10.5v6"/></svg>
+          </button>
+          <button id="xx-editer" type="button" title="Choisir la carte à la main" aria-label="Choisir la carte à la main">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17v3z"/><path d="M14.5 6.5l3 3"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Recherche rapide : par nom ou par numéro, avec les miniatures pour être sûr de
+           choisir la bonne. Sans image, un « Dracaufeu 4 » ne dit pas de quelle réédition
+           il s'agit — et il y en a des dizaines. -->
+      <div id="xx-recherche" hidden>
+        <div class="xx-liste-tete">
+          <b>Recherche rapide</b>
+          <button id="xx-rech-fermer" type="button" aria-label="Fermer">✕</button>
+        </div>
+        <input id="xx-rech-champ" type="search" placeholder="nom ou numéro de la carte"
+               autocomplete="off" enterkeyhint="search">
+        <div id="xx-rech-res"></div>
+      </div>
+
+      <!-- La liste, ouverte par la pile. -->
+      <div id="xx-liste" hidden>
+        <div class="xx-liste-tete">
+          <b>Pile de la session</b>
+          <button id="xx-liste-fermer" type="button" aria-label="Fermer">✕</button>
+        </div>
+        <p id="xx-liste-note"></p>
+        <div id="xx-liste-corps"></div>
       </div>
     </div>
 
@@ -6382,7 +6507,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 91;
+const VERSION_APP = 93;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14574,43 +14699,41 @@ const ST_AIRE_LOIN = ST_TROP_LOIN*ST_TROP_LOIN/(88/63);
 
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
-// ONGLET XX — le scanner de bench-v2, porté sans rien y ajouter
+// ONGLET XX — le scanner de bench-v2, avec ce que Nikos a demandé autour
 // ═════════════════════════════════════════════════════════════════════════════════════════
-// Demande de Nikos : reprendre le scanner du banc tel quel, avec pour seuls ajouts la pile
-// et son prix, et l'identification sous l'appareil photo. Caméra en plein écran.
-//
-// Ce qui est repris À L'IDENTIQUE de bench-v2 : les seuils, la boucle, la patience — et
-// surtout la CAPTURE, qui diffère franchement de celle du scanner de test. Le banc refait
-// une détection au moment du déclic, puis redresse les quatre coins par homographie
-// (scanic.extractDocument) et corrige la rotation si la carte sort couchée. Le scanner de
-// test, lui, identifie une image mémorisée avec un rectangle aligné sur les axes.
-//
-// Ce qui n'est PAS repris, parce que le banc ne l'a pas : mémoire de la plus nette, garde-fou
-// de forme, détecteur de reflet, verrou par signature, empreinte prise d'avance, animations.
-// C'est tout l'intérêt de cet onglet — comparer sans mélanger.
+// La BOUCLE et la CAPTURE restent celles du banc, inchangées : mêmes seuils, nouvelle
+// détection au moment du déclic, redressement projectif des quatre coins par scanic avec
+// correction de rotation. C'est le point de comparaison, il ne bouge pas.
+// Autour : plein écran sans bordure, viseur du capteur principal, zoom, pile et fiche.
 const XX_MIN_SCORE = 0.35;
 const XX_BOUGE_BASE = 0.030;
 const XX_PATIENCE = { douce: 1200, franche: 2500, facteurBouge: 3 };
 const XX_ABSENCE = 2;
+// Le repère est remonté : le cadre d'information occupe le bas de l'écran, et un viseur
+// centré sur la hauteur totale avait sa moitié basse dessous. On centre donc sur la place
+// réellement libre.
+const XX_GUIDE_H = 0.62;      // hauteur du repère, en fraction de l'IMAGE
+const XX_BAS_RESERVE = 168;   // place gardée en bas pour la fiche, en pixels d'écran
+// Zoom : borné haut pour ne jamais atteindre le téléobjectif. Le navigateur n'expose qu'une
+// caméra logique et ne dit jamais quel objectif est actif — on ne peut donc pas « éliminer »
+// le téléobjectif, seulement rester en deçà du facteur où l'appareil bascule dessus. Trois
+// est prudent : les téléobjectifs des appareils courants prennent la main à partir de 3× à 5×.
+const XX_ZOOM_MAX = 3;
 
 const XX = { flux:null, piste:null, boucle:false, occupe:false,
              presentDepuis:0, streak:0, dernierCoins:null, absence:0,
-             retiree:true, coinsCapture:null, pile:[], valeur:0 };
+             retiree:true, coinsCapture:null, pile:[], valeur:0,
+             caps:null, zoom:null };
 
 function xxEtat(t){ const e = $('xx-etat'); if(e) e.textContent = t; }
-
 function xxPlein(actif){ document.body.classList.toggle('xx-plein', !!actif); }
 
-// ── LE VISEUR : le dessin du scanner principal, et lui seul ─────────────────────────────
-// Demande de Nikos : reprendre le design du capteur principal, pas sa logique. On réutilise
-// donc ses deux primitives — rectCartePath et dessinerCoins — plutôt que de les recopier, et
-// on garde la boucle de décision du banc, inchangée.
-// Le repère est exprimé en fraction de l'IMAGE, puis projeté par la même transformation que
-// le quadrilatère détecté. Il désigne donc toujours la même part du champ analysé, que
-// l'aperçu soit en « contain » (hors plein écran) ou en « cover » (plein écran). C'est
-// exactement le calcul qui manquait en V.63, où le repère demandait 37 % de l'image en
-// croyant en demander 55.
-const XX_GUIDE_H = 0.62;
+// ── LE VISEUR : le dessin du capteur principal, et lui seul ─────────────────────────────
+// On réutilise ses deux primitives — rectCartePath et dessinerCoins — plutôt que de les
+// recopier. Le contour dynamique de la carte a été RETIRÉ : il se réajuste cinq à huit fois
+// par seconde sur une carte tenue à la main, et cette respiration continue se lit comme un
+// défaut de fluidité. Un repère immobile donne aussi quelque chose à viser, ce qu'un cadre
+// qui suit la carte ne fait jamais.
 const XX_COULEURS = { attente:'#e0553f', lecture:'#e0a12a', ok:'#3ba55d' };
 
 function xxProjection(){
@@ -14623,14 +14746,13 @@ function xxProjection(){
     cv.width = Math.round(l*dpr); cv.height = Math.round(h*dpr);
   }
   const vw = v.videoWidth || l, vh = v.videoHeight || h;
-  // « cover » en plein écran, « contain » sinon : une seule ligne d'écart.
   const plein = document.body.classList.contains('xx-plein');
   const ech = plein ? Math.max(l/vw, h/vh) : Math.min(l/vw, h/vh);
   const iw = vw*ech, ih = vh*ech;
-  return { l, h, dpr, iw, ih, ix:(l-iw)/2, iy:(h-ih)/2 };
+  return { l, h, dpr, iw, ih, ix:(l-iw)/2, iy:(h-ih)/2, plein };
 }
 
-function xxDessinerCadre(coins, etat){
+function xxDessinerCadre(etat){
   const cv = $('xx-overlay');
   const T = xxProjection();
   if(!cv || !T) return;
@@ -14638,16 +14760,16 @@ function xxDessinerCadre(coins, etat){
   g.setTransform(T.dpr, 0, 0, T.dpr, 0, 0);
   g.clearRect(0, 0, T.l, T.h);
 
-  // Le repère, en fraction d'image puis projeté. Ramené dans l'écran s'il déborde : un
-  // repère qu'on ne voit pas ne sert à rien.
+  // Le repère est dimensionné en fraction de l'IMAGE : il désigne la même part du champ
+  // analysé qu'on rogne ou non. Puis il est centré sur la place LIBRE, pas sur l'écran.
   let gh = T.ih * XX_GUIDE_H, gw = gh / CARD_RATIO;
+  const libre = T.plein ? Math.max(120, T.h - XX_BAS_RESERVE) : T.h;
   if(gw > T.l*0.94){ gw = T.l*0.94; gh = gw * CARD_RATIO; }
-  if(gh > T.h*0.86){ gh = T.h*0.86; gw = gh / CARD_RATIO; }
-  const R = { x:(T.l-gw)/2, y:(T.h-gh)/2, w:gw, h:gh };
+  if(gh > libre*0.94){ gh = libre*0.94; gw = gh / CARD_RATIO; }
+  const R = { x:(T.l-gw)/2, y:(libre-gh)/2, w:gw, h:gh };
   const radius = Math.min(R.w, R.h) * 0.055;
   const couleur = XX_COULEURS[etat] || XX_COULEURS.attente;
 
-  // Voile assombri autour du repère, comme au scanner principal.
   g.save();
   g.fillStyle = 'rgba(0,0,0,.46)';
   g.beginPath();
@@ -14656,24 +14778,33 @@ function xxDessinerCadre(coins, etat){
   g.fill('evenodd');
   g.restore();
 
-  // Le quadrilatère détecté : trait fin, deux fois plus fin que les équerres.
-  if(coins){
-    const p = c => [T.ix + c[0]*T.iw, T.iy + c[1]*T.ih];
-    const [a, b, c2, d] = [p(coins.tl), p(coins.tr), p(coins.br), p(coins.bl)];
-    g.save();
-    g.globalAlpha = 0.85; g.strokeStyle = couleur;
-    g.lineWidth = Math.max(1.6, T.l*0.0032); g.lineJoin = 'round';
-    g.beginPath(); g.moveTo(a[0],a[1]); g.lineTo(b[0],b[1]);
-    g.lineTo(c2[0],c2[1]); g.lineTo(d[0],d[1]); g.closePath(); g.stroke();
-    g.restore();
-  }
-
-  // Les quatre équerres.
   g.save();
   g.strokeStyle = couleur; g.lineCap = 'round'; g.lineJoin = 'round';
   g.lineWidth = Math.max(3, T.l*0.0072);
   dessinerCoins(g, R, radius);
   g.restore();
+}
+
+// ── LE ZOOM ────────────────────────────────────────────────────────────────────────────
+function xxMajZoom(){
+  const t = $('xx-zoom-txt'), bloc = $('xx-zoom');
+  if(!bloc) return;
+  bloc.hidden = !XX.caps;
+  if(t) t.textContent = XX.zoom != null ? '×' + (+XX.zoom).toFixed(1) : '×?';
+}
+async function xxZoomer(sens){
+  if(!XX.piste || !XX.caps) return;
+  const pas = XX.caps.step && XX.caps.step > 0 ? Math.max(XX.caps.step, 0.1) : 0.1;
+  const bas = XX.caps.min;
+  const haut = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
+  const actuel = XX.zoom != null ? XX.zoom : bas;
+  const cible = Math.max(bas, Math.min(haut, actuel + sens * pas * 2));
+  try{
+    await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
+    XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
+    try{ localStorage.setItem('pokescanZoomXX', String(XX.zoom)); }catch(e){}
+    xxMajZoom();
+  }catch(e){ xxEtat('zoom refusé : ' + e.message); }
 }
 
 function xxEcartCoins(a, b){
@@ -14699,7 +14830,6 @@ async function xxRedresserVideo(v){
   frame.getContext('2d').drawImage(v, 0, 0, vw, vh);
   const c = d.corners;
   const cx = (c.tl[0]+c.tr[0]+c.br[0]+c.bl[0])/4, cy = (c.tl[1]+c.tr[1]+c.br[1]+c.bl[1])/4;
-  // Marge de 4 % : le détecteur cadre le visuel de la carte plutôt que son bord physique.
   const M = 0.04, p = (q)=>({x:(cx+(q[0]-cx)*(1+M))*vw, y:(cy+(q[1]-cy)*(1+M))*vh});
   const r = await sc.extractDocument(frame, {topLeft:p(c.tl), topRight:p(c.tr),
     bottomRight:p(c.br), bottomLeft:p(c.bl)}, {output:'canvas'});
@@ -14707,7 +14837,6 @@ async function xxRedresserVideo(v){
   const out = r.output, ratio = out.height/out.width;
   if(Math.abs(ratio-CARD_RATIO)/CARD_RATIO <= 0.25) return out;
   if(Math.abs(ratio-1/CARD_RATIO)*CARD_RATIO > 0.25) return null;
-  // Sortie couchée : on la remet debout plutôt que de la jeter.
   const rot = document.createElement('canvas');
   rot.width = out.height; rot.height = out.width;
   const g = rot.getContext('2d');
@@ -14716,13 +14845,10 @@ async function xxRedresserVideo(v){
   return rot;
 }
 
-// ── LA CAPTURE, EN DEUX TEMPS ──────────────────────────────────────────────────────────
-// Demande de Nikos : la vignette part vers le cadre du bas, une PREMIÈRE analyse s'affiche,
-// puis l'analyse complète quelques instants plus tard.
-// Ce découpage n'est pas décoratif : l'image découpée existe dès la capture, alors que
-// l'identification demande sept cents millisecondes et la cote un aller-retour réseau. Tout
-// afficher à la fin laissait une seconde entière sans le moindre retour — c'est le défaut de
-// fluidité que Nikos décrit depuis le début.
+// ── LA CAPTURE, EN TROIS TEMPS ─────────────────────────────────────────────────────────
+// L'image découpée existe dès la capture, l'identification demande sept cents millisecondes
+// et la cote un aller-retour réseau. Tout afficher à la fin laissait une seconde entière
+// sans le moindre retour.
 async function xxCapturer(){
   if(XX.occupe) return;
   XX.occupe = true;
@@ -14735,34 +14861,33 @@ async function xxCapturer(){
     const photo = cv.toDataURL('image/jpeg', 0.7);
     if(navigator.vibrate) { try{ navigator.vibrate(30); }catch(e){} }
 
-    // ─── PREMIER TEMPS : la carte est prise. On le montre tout de suite.
-    const e = { carte:null, categorie:null, fiabilite:0, inliers:0, ms:0, photo, prix:null };
+    const e = { carte:null, categorie:null, fiabilite:0, inliers:0, ms:0,
+                photo, prix:null, set:null, total:null, qte:1,
+                canvas:cv, reprise:false };
     XX.pile.push(e);
     XX.retiree = false; XX.coinsCapture = coins;
     xxVoler(photo, coins);
-    xxRendreResultat(e);
+    xxRendreFiche(e);
     xxRendrePile();
 
-    // ─── DEUXIÈME TEMPS : le verdict.
     const res = await SCAN_V2.identifierV2(cv, {});
     e.carte = res && res.pick ? res.pick : null;
     e.categorie = res ? res.categorie : 'rebut';
     e.fiabilite = res ? res.fiabilite : 0;
     e.inliers = res ? res.inliers : 0;
     e.ms = res ? res.ms : 0;
-    xxRendreResultat(e);
+    xxRendreFiche(e);
+    xxRendrePile();
     xxEtat(e.carte ? '✓ ' + (e.carte.name || e.carte.cle) + ' — carte suivante'
                    : '✕ non reconnue — carte suivante');
 
-    // ─── TROISIÈME TEMPS : la cote, qui vient du réseau et ne retient personne.
-    xxAjouterValeur(e);
+    xxDetails(e);
   }catch(err){ xxEtat('capture : ' + err.message); }
   finally{ XX.occupe = false; }
 }
 
-// La vignette descend de la carte vers le cadre du bas. Sans ce trajet, le cadre change de
-// contenu sans qu'on sache d'où il vient : on voit un résultat apparaître, pas une carte
-// être lue.
+// La vignette descend vers la fiche. Sans ce trajet, la fiche change de contenu sans qu'on
+// sache d'où il vient : on voit un résultat apparaître, pas une carte être lue.
 function xxVoler(photo, coins){
   const cible = $('xx-photo'), el = $('xx-vol'), cv = $('xx-overlay');
   const T = xxProjection();
@@ -14793,48 +14918,188 @@ function xxVoler(photo, coins){
   };
 }
 
-function xxRendreResultat(e){
-  const z = $('xx-resultat'); if(!z) return;
+// ── Le total imprimé du set, mis en cache ──────────────────────────────────────────────
+// Le détail de carte ne le porte pas : il faut interroger le set. Une fois par set et par
+// session, ce qui est négligeable, et sans jamais retenir l'affichage.
+const xxTotaux = {};
+async function xxTotalSet(setId){
+  if(!setId) return null;
+  if(xxTotaux[setId] !== undefined) return xxTotaux[setId];
+  xxTotaux[setId] = null;
+  try{
+    const r = await fetch('https://api.tcgdex.net/v2/fr/sets/' + setId);
+    if(r.ok){ const d = await r.json(); xxTotaux[setId] = d.cardCount?.official ?? null; }
+  }catch(e){}
+  return xxTotaux[setId];
+}
+
+// Troisième temps : le set, le total et la cote, qui viennent du réseau.
+async function xxDetails(e){
+  if(!e || !e.carte || !e.carte.cle || xxRate(e)) return;
+  try{
+    const carte = await getCardDetailCached(e.carte.cle);
+    if(carte){
+      e.set = carte.set?.name || null;
+      const px = getBestPrice(carte);
+      if(px && px.market){ e.prix = px.market; XX.valeur += px.market; }
+    }
+    e.total = await xxTotalSet(e.carte.setId);
+  }catch(err){ /* pas de détail : le décompte reste juste, seule la fiche est incomplète */ }
+  xxRendrePile();
+  if(XX.pile[XX.pile.length-1] === e) xxRendreFiche(e);
+}
+
+// ── LA FICHE, comme en V1 : nom, set, fiabilité, prix ──────────────────────────────────
+function xxRendreFiche(e){
+  const z = $('xx-fiche'); if(!z) return;
   z.hidden = false;
   $('xx-photo').src = e.photo;
-  // categorie null = premier temps, l'identification n'a pas encore répondu.
   const enCours = e.categorie === null;
-  const sure = e.categorie === 'sure' && e.carte;
-  z.classList.toggle('sure', !!sure);
-  z.classList.toggle('rebut', e.categorie !== null && !e.carte);
-  $('xx-nom').textContent = enCours ? 'analyse…'
-    : (e.carte ? (e.carte.name || e.carte.cle) : 'Non reconnue');
-  $('xx-detail').textContent = enCours ? 'carte prise'
-    : [e.carte && e.carte.localId ? '#' + e.carte.localId : null,
-       e.fiabilite + ' %', e.inliers + ' inliers', e.ms + ' ms',
-       e.prix != null ? e.prix.toFixed(2) + ' €' : null].filter(Boolean).join(' · ');
+  const rate = !enCours && xxRate(e);
+  const montrable = !enCours && !rate && !!e.carte;
+  z.classList.toggle('sure', xxSure(e));
+  z.classList.toggle('rebut', rate);
+  $('xx-nom').textContent = enCours ? 'analyse…' : (montrable ? (e.carte.name || e.carte.cle) : 'Non reconnue');
+  $('xx-num').textContent = montrable
+    ? '#' + (e.carte.numero || e.carte.localId || '?') + (e.total ? '/' + e.total : '') : '';
+  $('xx-set').textContent = montrable ? (e.set || e.carte.setId) : '—';
+  $('xx-fiab').textContent = enCours ? '—' : e.fiabilite + ' %';
+  $('xx-prix').textContent = e.prix != null ? e.prix.toFixed(2) + ' €' : '—';
+  $('xx-qte').textContent = '×' + e.qte;
+  // Pas de quantité sur une carte qu'on n'a pas identifiée : compter des exemplaires
+  // d'un inconnu n'a pas de sens. Le bouton EDIT est là pour ça.
+  const q = $('xx-qte-bloc'); if(q) q.hidden = !montrable;
 }
+
+function xxQuantite(sens){
+  const e = XX.pile[XX.pile.length-1];
+  if(!e || !e.carte) return;
+  const avant = e.qte;
+  e.qte = Math.max(1, Math.min(99, e.qte + sens));
+  if(e.qte !== avant && e.prix != null) XX.valeur += (e.qte - avant) * e.prix;
+  xxRendreFiche(e); xxRendrePile();
+}
+
+// ── LA PILE ────────────────────────────────────────────────────────────────────────────
+// « rebut » veut dire que l'homographie n'a rien confirmé. La chaîne rend malgré tout un
+// candidat — le premier de la présélection visuelle — mais s'y fier serait exactement la
+// mauvaise interprétation qu'on pourchasse : mesuré, un rebut a 0 à 9 inliers quand une
+// réussite en a 54 à 157. On ne montre donc PAS ce nom.
+const xxSure   = e => e.categorie === 'sure' && !!e.carte;
+const xxRate   = e => e.categorie === 'rebut' || (e.categorie !== null && !e.carte);
+const xxDoute  = e => e.categorie !== null && !xxSure(e) && !xxRate(e) && !!e.carte;
 
 function xxRendrePile(){
   const p = $('xx-pile'); if(!p) return;
-  p.hidden = !XX.pile.length;
-  $('xx-pile-n').textContent = String(XX.pile.length);
+  const n = XX.pile.filter(e => e.categorie !== null).length;
+  p.hidden = !n;
+  $('xx-pile-n').textContent = String(XX.pile.reduce((s,e)=> s + (e.categorie!==null ? e.qte : 0), 0));
   $('xx-pile-prix').textContent = XX.valeur > 0
     ? XX.valeur.toFixed(XX.valeur >= 100 ? 0 : 2) + ' €' : '';
+  const rates = XX.pile.filter(xxRate).length;
+  p.classList.toggle('alerte', rates > 0);
+  if(!$('xx-liste').hidden) xxRendreListe();
 }
 
-// La cote arrive après coup : elle passe par le réseau et ne doit jamais retenir le scan.
-async function xxAjouterValeur(e){
-  if(!e || !e.carte || !e.carte.cle) return;
-  try{
-    const carte = await getCardDetailCached(e.carte.cle);
-    if(!carte) return;
-    const px = getBestPrice(carte);
-    if(px && px.market){
-      XX.valeur += px.market; e.prix = px.market;
-      xxRendrePile();
-      // Troisième temps : la cote rejoint la ligne du bas, si la carte y est encore.
-      if(XX.pile[XX.pile.length-1] === e) xxRendreResultat(e);
+function xxRendreListe(){
+  const l = $('xx-liste-corps'); if(!l) return;
+  const groupes = [
+    ['sûres', XX.pile.filter(xxSure), 'sure'],
+    ['à vérifier', XX.pile.filter(xxDoute), 'doute'],
+    ['non reconnues', XX.pile.filter(xxRate), 'rate'],
+  ];
+  l.innerHTML = '';
+  let vide = true;
+  for(const [titre, liste, cls] of groupes){
+    if(!liste.length) continue;
+    vide = false;
+    const h = document.createElement('div');
+    h.className = 'xx-groupe ' + cls;
+    h.innerHTML = '<b>' + titre + '</b><span>' + liste.length + '</span>'
+      + (cls === 'rate' ? '<button data-vider="1">tout supprimer</button>' : '');
+    l.appendChild(h);
+    const g = document.createElement('div');
+    g.className = 'xx-vignettes';
+    for(const e of liste){
+      const f = document.createElement('figure');
+      f.className = cls;
+      const i = document.createElement('img'); i.src = e.photo; i.alt = '';
+      const c = document.createElement('figcaption');
+      c.textContent = (cls !== 'rate' && e.carte) ? (e.carte.name || e.carte.cle) : 'non reconnue';
+      const b = document.createElement('button');
+      b.className = 'xx-sup'; b.type = 'button'; b.textContent = '✕';
+      b.setAttribute('aria-label', 'Supprimer');
+      b.addEventListener('click', ()=>{
+        const k = XX.pile.indexOf(e);
+        if(k >= 0){
+          if(e.prix != null) XX.valeur = Math.max(0, XX.valeur - e.prix * e.qte);
+          XX.pile.splice(k, 1);
+        }
+        xxRendrePile(); xxRendreListe();
+        const der = XX.pile[XX.pile.length-1];
+        if(der) xxRendreFiche(der); else $('xx-fiche').hidden = true;
+      });
+      f.appendChild(i); f.appendChild(c); f.appendChild(b);
+      g.appendChild(f);
     }
-  }catch(err){ /* pas de cote : le décompte reste juste, seul le total est incomplet */ }
+    l.appendChild(g);
+  }
+  if(vide) l.innerHTML = '<p class="xx-vide">pile vide</p>';
+  l.querySelector('[data-vider]')?.addEventListener('click', ()=>{
+    for(const e of XX.pile.filter(xxRate)){
+      const k = XX.pile.indexOf(e); if(k >= 0) XX.pile.splice(k, 1);
+    }
+    xxRendrePile(); xxRendreListe();
+  });
+  const note = $('xx-liste-note');
+  const d = XX.pile.filter(xxDoute).length, r = XX.pile.filter(xxRate).length;
+  if(note) note.textContent = d
+    ? d + ' carte(s) à vérifier — elles seront reprises avec l’OCR à la fermeture de la caméra.'
+    : (r ? r + ' carte(s) non reconnue(s) : reprends-les, ou supprime-les.' : '');
 }
 
-// ── La boucle du banc, verbatim ─────────────────────────────────────────────────────────
+// ── SECONDE ANALYSE, caméra éteinte ────────────────────────────────────────────────────
+// L'OCR de départage est rendu à sa fonction ici, où plus rien ne dispute la machine.
+// ⚠️ Sa portée est limitée, et c'est mesuré : il ne se déclenche qu'à partir de vingt-cinq
+// inliers — donc sur une VRAIE égalité — et sous un reflet saturé il lit le numéro zéro fois
+// sur vingt-huit. Il rattrape des hésitations, pas des photos ratées.
+let xxSecondeEnCours = false;
+async function xxSecondeAnalyse(){
+  const aReprendre = XX.pile.filter(e => xxDoute(e) && e.canvas && !e.reprise);
+  if(xxSecondeEnCours || !aReprendre.length) return;
+  xxSecondeEnCours = true;
+  const avant = SCAN_V2.reglagesV2();
+  try{
+    xxEtat('seconde analyse : ' + aReprendre.length + ' carte(s)…');
+    let promues = 0;
+    for(let i = 0; i < aReprendre.length; i++){
+      const e = aReprendre[i];
+      xxEtat('seconde analyse ' + (i+1) + '/' + aReprendre.length + '…');
+      try{
+        const res = await SCAN_V2.identifierV2(e.canvas, {});
+        e.reprise = true;
+        if(res && res.pick && (res.fiabilite > e.fiabilite || res.categorie === 'sure')){
+          if(e.prix != null) XX.valeur = Math.max(0, XX.valeur - e.prix * e.qte);
+          e.carte = res.pick; e.categorie = res.categorie;
+          e.fiabilite = res.fiabilite; e.inliers = res.inliers;
+          e.prix = null; e.set = null; e.total = null;
+          if(res.categorie === 'sure') promues++;
+          xxDetails(e);
+        }
+      }catch(err){ e.reprise = true; }
+      await new Promise(r => setTimeout(r, 0));
+    }
+    xxRendrePile();
+    xxEtat(promues ? promues + ' carte(s) confirmée(s) à la seconde analyse'
+                   : 'seconde analyse terminée');
+  } finally {
+    try{ SCAN_V2.reglagesV2({OCR_INLIERS_MIN: avant.OCR_INLIERS_MIN,
+                             OCR_ORB_MS_MAX: avant.OCR_ORB_MS_MAX}); }catch(e){}
+    xxSecondeEnCours = false;
+  }
+}
+
+// ── La boucle du banc, inchangée ───────────────────────────────────────────────────────
 async function xxTourner(){
   while(XX.boucle){
     const v = $('xx-video');
@@ -14848,7 +15113,7 @@ async function xxTourner(){
       const bon = !!(d && d.corners && d.score != null && d.score >= XX_MIN_SCORE);
 
       if(!bon){
-        xxDessinerCadre(null);
+        xxDessinerCadre('attente');
         XX.streak = 0; XX.presentDepuis = 0; XX.dernierCoins = null;
         if(++XX.absence >= XX_ABSENCE) XX.retiree = true;
         xxEtat('vise la carte');
@@ -14856,7 +15121,6 @@ async function xxTourner(){
         XX.absence = 0;
         if(!XX.presentDepuis) XX.presentDepuis = Date.now();
         const attente = Date.now() - XX.presentDepuis;
-        // Déplacement franc depuis la dernière capture = autre carte, même sans champ vide.
         if(!XX.retiree && XX.coinsCapture
            && xxEcartCoins(XX.coinsCapture, d.corners) > XX_BOUGE_BASE * 3) XX.retiree = true;
 
@@ -14870,7 +15134,7 @@ async function xxTourner(){
 
         if(bouge < seuilBouge) XX.streak++; else XX.streak = 0;
         const stable = XX.streak >= 1;
-        xxDessinerCadre(d.corners, !XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
+        xxDessinerCadre(!XX.retiree ? 'attente' : stable ? 'ok' : 'lecture');
 
         if(XX.retiree && d.score >= seuilScore && stable){
           XX.streak = 0; XX.presentDepuis = 0;
@@ -14898,6 +15162,23 @@ async function xxOuvrir(){
   v.srcObject = XX.flux;
   await v.play().catch(()=>{});
   XX.piste = XX.flux.getVideoTracks()[0];
+  // Zoom : on reprend la valeur mémorisée, sinon on vise l'objectif principal comme le
+  // scanner principal, et on borne pour ne pas atteindre le téléobjectif.
+  try{
+    const caps = XX.piste.getCapabilities ? XX.piste.getCapabilities() : {};
+    XX.caps = caps.zoom || null;
+    if(XX.caps){
+      const memo = parseFloat(localStorage.getItem('pokescanZoomXX'));
+      const deduit = XX.caps.max / Math.max(XX.caps.min, 1e-4) >= 5
+        ? Math.min(XX.caps.max, XX.caps.min * FACTEUR_PRINCIPAL) : XX.caps.min;
+      const haut = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
+      const cible = Math.max(XX.caps.min, Math.min(haut,
+        Number.isFinite(memo) ? memo : deduit));
+      await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
+    }
+    XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : null;
+  }catch(e){}
+  xxMajZoom();
   xxPlein(true);
   if(!(window.SCAN_V2 && SCAN_V2.pretV2 && SCAN_V2.pretV2())){
     xxEtat('préparation du moteur d’identification…');
@@ -14910,20 +15191,111 @@ async function xxOuvrir(){
   $('xx-ouvrir').hidden = true; $('xx-fermer').hidden = false;
 }
 
-function xxFermer(){
+async function xxFermer(){
   XX.boucle = false;
   xxPlein(false);
   try{ if(XX.flux) XX.flux.getTracks().forEach(t => t.stop()); }catch(e){}
-  XX.flux = null; XX.piste = null;
+  XX.flux = null; XX.piste = null; XX.caps = null;
   const v = $('xx-video'); if(v) v.srcObject = null;
-  xxDessinerCadre(null);
-  xxEtat('caméra fermée');
+  xxDessinerCadre('attente');
   $('xx-ouvrir').hidden = false; $('xx-fermer').hidden = true;
+  xxEtat('caméra fermée');
+  // L'objectif est éteint : la machine n'a plus qu'à reprendre les cartes douteuses.
+  await xxSecondeAnalyse();
 }
 
 $('xx-ouvrir')?.addEventListener('click', xxOuvrir);
 $('xx-fermer')?.addEventListener('click', xxFermer);
 $('xx-quitter')?.addEventListener('click', xxFermer);
+$('xx-zoom-moins')?.addEventListener('click', ()=> xxZoomer(-1));
+$('xx-zoom-plus')?.addEventListener('click', ()=> xxZoomer(1));
+$('xx-qte-moins')?.addEventListener('click', ()=> xxQuantite(-1));
+$('xx-qte-plus')?.addEventListener('click', ()=> xxQuantite(1));
+$('xx-pile')?.addEventListener('click', ()=>{
+  const l = $('xx-liste'); if(!l) return;
+  l.hidden = !l.hidden;
+  if(!l.hidden) xxRendreListe();
+});
+$('xx-liste-fermer')?.addEventListener('click', ()=>{ $('xx-liste').hidden = true; });
+
+// ── JETER LE DERNIER SCAN ───────────────────────────────────────────────────────────────
+// Le geste manquant : une carte prise par erreur — le dos d'une autre, un doublon, un
+// cadrage raté — devait être retrouvée dans la liste pour être enlevée. Ici elle part
+// directement, tant qu'elle est encore la dernière et sous les yeux.
+function xxJeter(){
+  const e = XX.pile[XX.pile.length-1];
+  if(!e) return;
+  if(e.prix != null) XX.valeur = Math.max(0, XX.valeur - e.prix * e.qte);
+  XX.pile.pop();
+  const der = XX.pile[XX.pile.length-1];
+  if(der) xxRendreFiche(der); else $('xx-fiche').hidden = true;
+  xxRendrePile();
+  xxEtat('scan supprimé');
+}
+
+// ── RECHERCHE RAPIDE ───────────────────────────────────────────────────────────────────
+// Par nom ou par numéro, sur le catalogue déjà en mémoire — aucun appel réseau pour
+// chercher, seulement pour les miniatures.
+// Les vignettes ne sont pas un ornement : « Dracaufeu 4 » existe en des dizaines de
+// rééditions, et sans l'image on ne peut pas savoir laquelle on tient. Choisir à l'aveugle
+// serait pire que le doute qu'on essaie de lever.
+function xxNormaliser(s){
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+function xxChercher(q){
+  const res = $('xx-rech-res'); if(!res) return;
+  const t = xxNormaliser(q).trim();
+  res.innerHTML = '';
+  if(t.length < 2){ res.innerHTML = '<p class="xx-vide">tape au moins deux caractères</p>'; return; }
+  let cat = [];
+  try{ cat = SCAN_V2.catalogueV2().filter(c => c.image); }catch(e){}
+  // Un numéro pur cherche d'abord dans les numéros ; sinon on cherche dans les noms.
+  const chiffres = /^\d+$/.test(t);
+  const trouves = [];
+  for(const c of cat){
+    const ok = chiffres
+      ? String(c.numero).replace(/^0+/, '') === t.replace(/^0+/, '')
+      : xxNormaliser(c.name).includes(t);
+    if(ok){ trouves.push(c); if(trouves.length >= 40) break; }
+  }
+  if(!trouves.length){ res.innerHTML = '<p class="xx-vide">aucune carte</p>'; return; }
+  for(const c of trouves){
+    const f = document.createElement('figure');
+    const i = document.createElement('img');
+    i.loading = 'lazy'; i.src = c.image + '/low.webp'; i.alt = '';
+    const cap = document.createElement('figcaption');
+    cap.innerHTML = '<b>' + (c.name || c.cle) + '</b><span>#' + (c.numero || '?') + ' · ' + c.setId + '</span>';
+    f.appendChild(i); f.appendChild(cap);
+    f.addEventListener('click', ()=> xxChoisir(c));
+    res.appendChild(f);
+  }
+}
+
+// La carte choisie à la main remplace le verdict, et devient « sûre » : c'est un humain qui
+// l'a vue. La cote et le set sont repris, l'ancien prix retiré du total.
+function xxChoisir(c){
+  const e = XX.pile[XX.pile.length-1];
+  if(!e) return;
+  if(e.prix != null) XX.valeur = Math.max(0, XX.valeur - e.prix * e.qte);
+  e.carte = { cle:c.cle, numero:c.numero, name:c.name, setId:c.setId, localId:c.localId, image:c.image };
+  e.categorie = 'sure'; e.fiabilite = 100; e.prix = null; e.set = null; e.total = null;
+  e.reprise = true;   // choisie à la main : la seconde analyse n'a rien à y reprendre
+  $('xx-recherche').hidden = true;
+  xxRendreFiche(e); xxRendrePile();
+  xxDetails(e);
+  xxEtat('✓ ' + (c.name || c.cle) + ' — choisie à la main');
+}
+
+$('xx-jeter')?.addEventListener('click', xxJeter);
+$('xx-editer')?.addEventListener('click', ()=>{
+  if(!XX.pile.length) return;
+  const r = $('xx-recherche'); if(!r) return;
+  r.hidden = false;
+  const ch = $('xx-rech-champ');
+  if(ch){ ch.value = ''; xxChercher(''); setTimeout(()=> ch.focus(), 50); }
+});
+$('xx-rech-fermer')?.addEventListener('click', ()=>{ $('xx-recherche').hidden = true; });
+$('xx-rech-champ')?.addEventListener('input', function(){ xxChercher(this.value); });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
 // LE RENDU : À LA DEMANDE, PLUS EN CONTINU
