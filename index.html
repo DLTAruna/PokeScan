@@ -893,10 +893,22 @@
     top:50%; transform:translateY(-50%);
     display:flex; flex-direction:column; align-items:center; gap:6px; }
   #xx-zoom[hidden]{ display:none; }
-  #xx-objectif{ font-size:17px !important; }
-  #xx-zoom button{ width:38px; height:38px; border-radius:50%; cursor:pointer; font-size:19px;
-    display:flex; align-items:center; justify-content:center; line-height:1;
-    border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85); color:#e6edf3; }
+  #xx-objectif{ font-size:17px !important; width:38px; height:38px; border-radius:50%;
+    margin-top:4px; }
+  #xx-zoom button{ cursor:pointer; display:flex; align-items:center; justify-content:center;
+    line-height:1; border:1px solid rgba(255,255,255,.22); background:rgba(13,17,23,.85);
+    color:#e6edf3; -webkit-tap-highlight-color:transparent; }
+  /* `display:flex` posé sur #xx-zoom button écrasait le display:none que le navigateur
+     attache à [hidden] : le bouton d'objectif restait visible même quand le code venait de
+     le cacher. C'est ce qui permettait de basculer sur la caméra frontale sur un appareil
+     qui n'expose qu'un seul objectif arrière. */
+  #xx-zoom button[hidden]{ display:none; }
+  #xx-echelons{ display:flex; flex-direction:column; gap:5px; }
+  .xx-ech{ width:34px; height:34px; border-radius:50% !important; font-size:12px;
+    font-variant-numeric:tabular-nums; transition:transform .12s ease; }
+  .xx-ech:active{ transform:scale(.9); }
+  .xx-ech.actif{ background:var(--mode-vendeur) !important; color:#1a1206 !important;
+    border-color:transparent !important; font-weight:700; }
   #xx-zoom-txt{ font-size:11.5px; color:#e6edf3; font-variant-numeric:tabular-nums;
     background:rgba(13,17,23,.85); border-radius:999px; padding:2px 8px;
     border:1px solid rgba(255,255,255,.18); }
@@ -5108,11 +5120,13 @@
            rouge quand c'est elle qui retient la capture. -->
       <div id="xx-debug" hidden></div>
 
+      <!-- L'échelle de zoom. Les paliers sont construits sur la plage que l'appareil déclare,
+           pas sur des valeurs choisies d'avance : c'est le seul moyen d'atteindre les autres
+           objectifs d'un téléphone qui les fond dans une caméra unique. -->
       <div id="xx-zoom" hidden>
-        <button id="xx-zoom-plus" type="button" aria-label="Rapprocher">+</button>
         <span id="xx-zoom-txt">large</span>
-        <button id="xx-zoom-moins" type="button" aria-label="Élargir">−</button>
-        <!-- N'apparaît que si l'appareil expose vraiment plusieurs caméras arrière. -->
+        <div id="xx-echelons"></div>
+        <!-- N'apparaît que si l'appareil expose vraiment DEUX caméras arrière. -->
         <button id="xx-objectif" type="button" hidden aria-label="Changer d'objectif">⟳</button>
       </div>
 
@@ -6658,7 +6672,7 @@ const BUILD_VERSION = (()=>{
 // qu'on oublie de les incrémenter — tient toujours ; il est désamorcé autrement : c'est
 // Claude qui pousse désormais, donc c'est lui qui le tourne, et BUILD_VERSION reste là,
 // déduit, comme recours quand un doute subsiste. Les deux se corrigent l'un l'autre.
-const VERSION_APP = 100;
+const VERSION_APP = 101;
 
 // ⚠️ TEMPORAIRE — page de présentation désactivée à la demande de Nikos (2026-09-01), le
 // temps de mettre au point le scanner : elle s'interposait devant l'application à chaque
@@ -14875,7 +14889,11 @@ const XX_DEBUG_HAUT = 84;     // place prise par le panneau de débogage, quand 
 // caméra logique et ne dit jamais quel objectif est actif — on ne peut donc pas « éliminer »
 // le téléobjectif, seulement rester en deçà du facteur où l'appareil bascule dessus. Trois
 // est prudent : les téléobjectifs des appareils courants prennent la main à partir de 3× à 5×.
-const XX_ZOOM_MAX = 3;
+// Le zoom ne monte plus à trois fois le minimum. Ce plafond visait à « ne pas atteindre le
+// téléobjectif » ; sur un appareil qui déclare une plage de 1 à 30, il enfermait l'utilisateur
+// dans le premier trentième de ce que la caméra sait faire — et c'est justement en montant
+// que l'OS bascule d'un objectif physique à l'autre. La plage déclarée est désormais offerte
+// en entier.
 
 const XX = { flux:null, piste:null, boucle:false, occupe:false,
              presentDepuis:0, streak:0, dernierCoins:null, absence:0,
@@ -15067,15 +15085,64 @@ function xxMajZoom(){
   if(XX.zoom == null || !XX.caps){ t.textContent = '×?'; t.title = ''; return; }
   const f = XX.zoom / Math.max(XX.caps.min, 1e-4);
   t.textContent = f <= 1.02 ? 'large' : '+' + f.toFixed(1).replace('.', ',') + '×';
+  xxRendreEchelons();
   t.title = 'zoom caméra brut : ' + XX.zoom + ' (plage ' + XX.caps.min + '…' + XX.caps.max + ')';
 }
+// Les paliers, construits sur la plage DÉCLARÉE. Une progression par doublement : elle
+// couvre 1 à 30 en six touches, là où un pas régulier en demanderait des dizaines. C'est
+// aussi, sur un téléphone qui fond ses objectifs dans une caméra logique unique, la seule
+// façon de passer de l'un à l'autre — l'OS bascule tout seul en franchissant les seuils.
+function xxEchelonsZoom(){
+  if(!XX.caps) return [];
+  const min = XX.caps.min, max = XX.caps.max;
+  const out = [min];
+  let z = min * 2;
+  while(z < max * 0.98 && out.length < 6){ out.push(z); z *= 2; }
+  if(max > out[out.length - 1] * 1.05) out.push(max);
+  return out;
+}
+
+function xxRendreEchelons(){
+  const bloc = $('xx-echelons'); if(!bloc) return;
+  const paliers = xxEchelonsZoom();
+  if(!paliers.length){ bloc.innerHTML = ''; return; }
+  const actuel = XX.zoom != null ? XX.zoom : paliers[0];
+  bloc.innerHTML = '';
+  // Du plus rapproché au plus large : le haut de la colonne, c'est le loin.
+  for(const z of [...paliers].reverse()){
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'xx-ech' + (Math.abs(z - actuel) < Math.max(0.05, z * 0.06) ? ' actif' : '');
+    b.textContent = z >= 10 ? String(Math.round(z)) : (Math.round(z * 10) / 10).toString().replace('.', ',');
+    b.setAttribute('aria-label', 'zoom ' + b.textContent);
+    b.addEventListener('click', () => xxAllerZoom(z));
+    bloc.appendChild(b);
+  }
+}
+
+// Un palier demandé, et ce que l'appareil en fait : les deux partent au diagnostic. Rien ne
+// garantit qu'une contrainte annoncée soit honorée, et c'est exactement ce qu'il faut savoir.
+async function xxAllerZoom(z){
+  if(!XX.piste || !XX.caps) return;
+  const cible = Math.max(XX.caps.min, Math.min(XX.caps.max, z));
+  try{
+    await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
+    XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
+    try{ localStorage.setItem(XX_ZOOM_CLE, String(XX.zoom)); }catch(e){}
+    diagPush('err', {msg:'XX zoom: demandé ' + cible + ' — obtenu '
+      + (XX.zoom != null ? XX.zoom : 'inconnu')});
+    xxMajZoom(); xxInfoCam();
+  }catch(e){ xxEtat('zoom refusé : ' + e.message); }
+}
+
 async function xxZoomer(sens){
   if(!XX.piste || !XX.caps) return;
   const pas = XX.caps.step && XX.caps.step > 0 ? Math.max(XX.caps.step, 0.1) : 0.1;
-  const bas = XX.caps.min;
-  const haut = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
+  const bas = XX.caps.min, haut = XX.caps.max;
   const actuel = XX.zoom != null ? XX.zoom : bas;
-  const cible = Math.max(bas, Math.min(haut, actuel + sens * pas * 2));
+  // Un pas MULTIPLICATIF. L'ancien pas additif de 0,2 demandait cent quarante-cinq pressions
+  // pour traverser une plage de 1 à 30 : le bouton existait, il ne servait à rien.
+  const cible = Math.max(bas, Math.min(haut, actuel * (sens > 0 ? 1.3 : 1/1.3)));
   try{
     await XX.piste.applyConstraints({advanced:[{zoom: cible}]});
     XX.zoom = XX.piste.getSettings ? XX.piste.getSettings().zoom : cible;
@@ -15501,7 +15568,7 @@ async function xxFlux(deviceId){
     XX.zoomNatif = reglage.zoom != null ? reglage.zoom : null;
     if(XX.caps){
       const memo = parseFloat(localStorage.getItem(XX_ZOOM_CLE));
-      const plafond = Math.min(XX.caps.max, XX.caps.min * XX_ZOOM_MAX);
+      const plafond = XX.caps.max;
       // Sans préférence, on demande explicitement le MINIMUM de la plage. La V.99 laissait
       // le réglage natif, en suivant la règle du scanner principal — ne rien imposer. Mais
       // sur le Pixel de Nikos ce natif EST déjà un 2× : ne rien imposer, c'est accepter un
@@ -15548,13 +15615,18 @@ async function xxMajObjectifs(){
   try{
     const l = await navigator.mediaDevices.enumerateDevices();
     const video = l.filter(d => d.kind === 'videoinput');
-    const arriere = video.filter(d => !/front|user|avant|face/i.test(d.label || ''));
-    XX.objectifs = arriere.length >= 2 ? arriere : video;
+    // Uniquement l'ARRIÈRE. Le repli sur la liste entière, quand il n'y avait qu'une caméra
+    // arrière, faisait basculer le bouton sur l'objectif selfie — inutile pour lire une
+    // carte, et c'est ce que Nikos a constaté. Relevé sur son appareil : deux entrées en
+    // tout, « camera 1, facing front » et « camera 0, facing back ». Il n'y a donc pas de
+    // second objectif arrière à atteindre : le bouton reste caché, et c'est l'échelle de
+    // zoom qui sert de sélecteur d'objectif.
+    XX.objectifs = video.filter(d => /back|arrière|arriere|environment/i.test(d.label || ''));
+    if(!XX.objectifs.length) XX.objectifs = video.filter(d => !/front|user|avant/i.test(d.label || ''));
     b.hidden = XX.objectifs.length < 2;
-    if(XX.objectifs.length >= 2){
-      diagPush('err', {msg:'XX caméra: ' + XX.objectifs.length + ' objectifs — '
-        + XX.objectifs.map(d => d.label || d.deviceId.slice(0, 8)).join(' | ')});
-    }
+    diagPush('err', {msg:'XX caméra: ' + video.length + ' entrées vidéo, '
+      + XX.objectifs.length + ' arrière — '
+      + video.map(d => d.label || d.deviceId.slice(0, 8)).join(' | ')});
     xxInfoCam();
   }catch(e){ b.hidden = true; }
 }
@@ -15618,8 +15690,7 @@ $('xx-debug-b')?.addEventListener('click', xxBasculerDebug);
 // La préférence de débogage survit à la session : quand on chasse un déclenchement, on ne
 // veut pas rallumer le panneau à chaque ouverture.
 try{ if(localStorage.getItem(XX_DEBUG_CLE) === '1') xxBasculerDebug(); }catch(e){}
-$('xx-zoom-moins')?.addEventListener('click', ()=> xxZoomer(-1));
-$('xx-zoom-plus')?.addEventListener('click', ()=> xxZoomer(1));
+
 $('xx-qte-moins')?.addEventListener('click', ()=> xxQuantite(-1));
 $('xx-qte-plus')?.addEventListener('click', ()=> xxQuantite(1));
 $('xx-pile')?.addEventListener('click', ()=>{
