@@ -48,6 +48,13 @@ const R = {
   // essais de secours précédents — on visait la mauvaise cible.
   NOM_ACTIF: true,
   NOM_INLIERS_MAX: 20,  // au-dessus, l'appariement se suffit à lui-même
+  // Et EN DESSOUS de ce plancher, on ne tente rien non plus. Relevé sur une salve entière :
+  // le secours s'est lancé sur seize captures, toutes à zéro, un ou six points
+  // d'appariement, et n'en a sauvé AUCUNE — pour 380 à 2 110 ms chacune. À zéro point,
+  // l'image ne contient rien de lisible : ni l'appariement ni l'OCR n'y trouveront de nom.
+  // Ces captures-là sont d'ailleurs jetées ensuite par le filtre des prises à vide — on
+  // payait une seconde d'OCR pour une image qu'on allait mettre à la poubelle.
+  NOM_INLIERS_MIN: 3,   // en dessous, l'image n'a rien à lire
   NOM_ECART_MAX: 2,     // lettres de différence tolérées
   NOM_CANDIDATS: 24,    // candidats issus de l'appariement, fouillés d'abord
   NOM_PROFONDEUR: 500,  // …puis le classement par empreinte, bien plus loin
@@ -1046,7 +1053,8 @@ export async function identifierV2(carte, opts = {}) {
   // chauffe et ce n est pas le moment de lui demander une inférence de plus. Le départage par
   // le numéro le respectait, ce secours l ignorait — sur une longue salve, c est précisément
   // la fin de session qui en aurait souffert.
-  if (R.NOM_ACTIF && ocr && inl < R.NOM_INLIERS_MAX && dernierOrbMs < R.OCR_ORB_MS_MAX) {
+  if (R.NOM_ACTIF && ocr && inl >= R.NOM_INLIERS_MIN && inl < R.NOM_INLIERS_MAX
+      && dernierOrbMs < R.OCR_ORB_MS_MAX) {
     try {
       const r = await chrono('ocrNom', ocrLire(bandeHaute(carte)));
       nomLu = (r && r.text) || '';
